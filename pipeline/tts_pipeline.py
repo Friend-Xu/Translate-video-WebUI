@@ -1,0 +1,498 @@
+"""
+TTS Pipeline — 新旧交替期的主编排器
+
+将 EdgeTTSEngine + TimingAdjuster + VideoSegmenter + CaptionRenderer + OpenVoiceCloner
+组装为端到端流水线。
+
+原 `SrtTxtToAudio.EdgeTTS_TXT_To_Audio()` 的入口逻辑分散到 TtsPipeline.run() 中。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import concurrent.futures
+import json
+import os
+from tqdm import tqdm
+import sys
+import threading
+from dataclasses import dataclass, field
+from typing import Callable, Optional, Tuple
+
+from pipeline.tts_config import TTSConfig
+from pipeline.tts_edge import EdgeTTSEngine
+from pipeline.tts_timing import TimingAdjuster, AdjustResult
+from pipeline.tts_video import VideoSegmenter
+from pipeline.tts_caption import CaptionRenderer
+from pipeline.tts_openvoice import ExtraVocalCloner, OpenVoiceConfig, NoopOpenVoiceCloner
+from pipeline.tts_resume import ResumeManager, ResumeState
+
+from pipeline.tts_engine import BaseTTSEngine
+
+
+class TtsPipeline:
+    """TTS 流水线编排器。
+
+    组装 TTS 引擎 → 时序对齐 → 视频段处理 → 字幕渲染 → 声音克隆
+    支持断点续传、单条错误跳过、进度反馈。
+    """
+
+    def __init__(
+        self,
+        config: TTSConfig,
+        tts_engine: Optional[BaseTTSEngine] = None,
+        timing_adjuster: Optional[TimingAdjuster] = None,
+        video_segmenter: Optional[VideoSegmenter] = None,
+        caption_renderer: Optional[CaptionRenderer] = None,
+        openvoice_cloner=None,
+        resume_manager: Optional[ResumeManager] = None,
+    ):
+        """
+        Args:
+            config: TTS 全局配置
+            tts_engine: TTS 引擎（默认 EdgeTTSEngine）
+            timing_adjuster: 时序对齐器
+            video_segmenter: 视频段处理器
+            caption_renderer: 字幕渲染器
+            openvoice_cloner: OpenVoice 声音克隆器
+            resume_manager: 断点续传管理器。为 None 时根据 config.enable_resume 自动创建
+        """
+        self.config = config
+
+        # ── GPU 编码器自动检测（必须在创建默认组件之前） ──────
+        try:
+            from pipeline.gpu_detect import apply_best_encoder_to_config
+            apply_best_encoder_to_config(self.config)
+        except Exception:
+            pass  # 检测失败不影响主流程
+
+        self.engine = tts_engine or self._default_engine()
+        self.timing = timing_adjuster or self._default_timing()
+        self.openvoice = openvoice_cloner or self._default_openvoice()
+        self.caption = caption_renderer or self._default_caption()
+        self.video_seg = video_segmenter or self._default_video()
+
+        # ── 断点续传 ──────────────────────────────────────
+        if resume_manager is not None:
+            self._resume_manager = resume_manager
+        elif config.enable_resume:
+            self._resume_manager = ResumeManager(state_path=config.resume_file)
+        else:
+            self._resume_manager = ResumeManager(state_path=os.devnull)
+            # 禁用自动保存
+            self._resume_manager.save = lambda: None
+
+        # 从 ResumeManager 加载已处理的条目
+        self._processed_pairs: set = self._resume_manager.state.processed_pairs.copy()
+
+        # 多线程同步锁
+        self._lock1 = threading.Lock()
+        self._lock2 = threading.Lock()
+
+        # 运行时状态
+        self._error_subtitles: list = []
+        self._count = 0
+        self._subs_last_count = 0
+        self._call_back = 0
+        self._over_time_audio_list: list = []
+        self._subs_list: list = []
+        self._queue_list: list = []
+
+        # 线程池
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=config.threading_workers
+        )
+
+    # ── 默认组件工厂 ──────────────────────────────────
+
+    def _default_engine(self):
+        """根据 config.engine_type 自动创建 TTS 引擎。"""
+        if self.config.engine_type == "chattts":
+            from pipeline.tts_chattts import ChatTTSEngine
+            return ChatTTSEngine(
+                speaker_seed=self.config.chattts_speaker_seed,
+                model_source=self.config.chattts_model_source,
+                model_path=self.config.chattts_model_path,
+            )
+        return EdgeTTSEngine(
+            voice=self.config.voice,
+        )
+
+    def _default_timing(self) -> TimingAdjuster:
+        return TimingAdjuster(
+            speed_max=self.config.max_speed,
+            base_speed=self.config.base_speed,
+            trail_dir=os.path.join(self.config.output_dir, "trail"),
+            audio_codec=self.config.audio_codec,
+            audio_bitrate=self.config.audio_bitrate,
+        )
+
+    def _default_video(self) -> VideoSegmenter:
+        return VideoSegmenter(
+            video_output_dir=os.path.join(self.config.output_dir, "video"),
+            clone_color=self.config.enable_openvoice,
+            caption=self.config.enable_caption,
+            speed_tolerance=self.config.speed_tolerance,
+            openvoice_cloner=self.openvoice.clone if hasattr(self.openvoice, 'clone') else None,
+            caption_renderer=self._render_caption,
+            video_bitrate=self.config.video_bitrate,
+            video_codec=self.config.video_codec,
+            video_preset=self.config.video_preset,
+            audio_codec=self.config.audio_codec,
+        )
+
+    def _default_caption(self) -> CaptionRenderer:
+        return CaptionRenderer(
+            font_path=self.config.caption_font,
+            font_size=self.config.caption_font_size or None,
+            stroke_width=self.config.caption_stroke_width or 0.5,
+        )
+
+    def _default_openvoice(self):
+        if self.config.enable_openvoice:
+            ov_config = OpenVoiceConfig(
+                enabled=True,
+                model_version=self.config.openvoice_model_version,
+                color_audio_path="./speakers/Color_audio.WAV",
+            )
+            return ExtraVocalCloner(ov_config)
+        return NoopOpenVoiceCloner()
+
+    def _render_caption(self, video, duration: float, text_zh: str, text_eng: str):
+        """字幕渲染回调（给 VideoSegmenter 使用）"""
+        from moviepy import CompositeVideoClip
+        return self.caption.render(video, duration, text_zh, text_eng)
+
+    # ── 条目处理核心逻辑 ──────────────────────────────
+
+    def generate_silence(self, duration: float, output_path: str):
+        """生成静音音频（ffmpeg 版本，绕过 MoviePy 音频管线）。"""
+        import subprocess
+        from pipeline.utils import get_ffmpeg_exe
+        ffmpeg = get_ffmpeg_exe()
+        subprocess.run([
+            ffmpeg, "-y",
+            "-f", "lavfi",
+            "-i", f"anullsrc=r=44100:cl=mono",
+            "-t", f"{duration:.3f}",
+            "-acodec", "pcm_s16le",
+            output_path,
+        ], capture_output=True, check=True)
+
+    def _process_single_subtitle(
+        self,
+        text_zh: str,
+        text_eng: str,
+        start: int,
+        end: int,
+        current_video,
+        instrumental_audio,
+        subs_next=None,
+    ) -> Optional[dict]:
+        """处理单条字幕：TTS → 时序对齐 → 视频段。
+
+        Args:
+            text_zh: 中文字幕
+            text_eng: 英文字幕
+            start: 字幕开始毫秒
+            end: 字幕结束毫秒
+            current_video: 视频剪辑片段
+            instrumental_audio: 背景音乐片段
+            subs_next: 下一条字幕 (start_ms, end_ms, text)
+
+        Returns:
+            成功返回结果字典，跳过返回 None，失败返回含 error 字段的字典
+        """
+        key = (start, end)
+
+        # 断点续传：已处理的直接跳过
+        if key in self._processed_pairs:
+            return None
+
+        output_audio_path = os.path.join(
+            self.config.output_dir, "audio", f"audio_{start}_{end}.wav"
+        )
+
+        try:
+            os.makedirs(os.path.dirname(output_audio_path), exist_ok=True)
+
+            # 1. TTS 合成
+            wav_time = self.engine.synthesize(
+                text_zh, output_audio_path, f"+{self.config.base_speed}%"
+            )
+            wav_time_original = wav_time
+
+            # 2. 时序对齐
+            over_time_path, adj_result = self.timing.align(
+                text=text_zh,
+                wav_time=wav_time,
+                start=start,
+                end=end,
+                output_audio_path=output_audio_path,
+                subs_next=subs_next,
+                tts_synthesize_fn=lambda t, p, r: self.engine.synthesize(t, p, r),
+            )
+
+            # 3. TTS 音频加载
+            from moviepy import AudioFileClip
+            load_path = (
+                over_time_path
+                if over_time_path and over_time_path != output_audio_path
+                else output_audio_path
+            )
+            if not os.path.isfile(load_path):
+                raise FileNotFoundError(f"TTS 音频文件不存在: {load_path}")
+            tts_audio = AudioFileClip(load_path)
+
+            # 4. 视频段处理（统一走 slow_down_video_to_file）
+            #    根据视频时长/TTS时长自动计算 speed_factor，
+            #    sf=1.0 时等价于不变速。
+            self.video_seg.slow_down_video_to_file(
+                current_video, instrumental_audio, tts_audio,
+                load_path, start, text_zh, text_eng, end,
+            )
+
+            tts_audio.close()
+
+            # 标记处理完成
+            self._processed_pairs.add(key)
+            self._resume_manager.mark_processed(start, end)
+            self._resume_manager.save()
+
+            return {
+                "start": start,
+                "end": end,
+                "text_zh": text_zh,
+                "text_eng": text_eng,
+                "wav_time": wav_time_original,
+                "adjustment": adj_result.adjustment_type,
+                "success": True,
+            }
+
+        except FileNotFoundError as e:
+            # 文件缺失：标记为错误，继续处理后续条目
+            error_msg = str(e)
+            self._log_subtitle_error(start, end, text_zh, error_msg)
+            return {"start": start, "end": end, "text_zh": text_zh, "error": error_msg, "success": False}
+
+        except OSError as e:
+            # I/O 错误（磁盘满、权限等）：标记为错误，继续
+            error_msg = f"I/O 错误: {e}"
+            self._log_subtitle_error(start, end, text_zh, error_msg)
+            return {"start": start, "end": end, "text_zh": text_zh, "error": error_msg, "success": False}
+
+        except RuntimeError as e:
+            # TTS 引擎错误（重试耗尽等）：标记为错误，继续
+            error_msg = f"TTS 引擎错误: {e}"
+            self._log_subtitle_error(start, end, text_zh, error_msg)
+            return {"start": start, "end": end, "text_zh": text_zh, "error": error_msg, "success": False}
+
+        except Exception as e:
+            # 其他意外错误：标记为错误，继续
+            error_msg = f"未预期的错误 ({type(e).__name__}): {e}"
+            self._log_subtitle_error(start, end, text_zh, error_msg)
+            return {"start": start, "end": end, "text_zh": text_zh, "error": error_msg, "success": False}
+
+    def _log_subtitle_error(self, start: int, end: int, text: str, error: str):
+        """记录单条字幕的处理错误。"""
+        tqdm.write(f"[ERROR] 字幕 [{start}-{end}] 处理失败: {error}")
+        self._resume_manager.add_error(start, end, text, error)
+        self._resume_manager.save()
+
+    # ── 主入口 ────────────────────────────────────────
+
+    def run(
+        self,
+        video_path: str,
+        instrumental_path: str,
+        chinese_srt_path: str,
+        english_srt_path: str,
+    ):
+        """执行端到端 TTS 流水线。
+
+        对应原版 `SrtTxtToAudio.EdgeTTS_TXT_To_Audio()`。
+        支持断点续传：重新运行时跳过已处理的字幕。
+        支持错误兜底：单条失败不影响后续条目。
+
+        Args:
+            video_path: 原视频路径
+            instrumental_path: 背景音乐 WAV 路径
+            chinese_srt_path: 中文 SRT 字幕路径
+            english_srt_path: 英文 SRT 字幕路径
+        """
+        from moviepy import VideoFileClip, AudioFileClip
+
+        # 加载 SRT
+        from pipeline.tts_config import parse_srt
+        from pipeline.utils import get_ffmpeg_exe
+        subs_cn = parse_srt(chinese_srt_path)
+        subs_en = parse_srt(english_srt_path)
+
+        video = VideoFileClip(video_path)
+        total_duration = video.duration
+        ffmpeg_exe = get_ffmpeg_exe()
+
+        # 设置 ResumeManager 总字幕数
+        self._resume_manager.state.total_subs = len(subs_cn)
+
+        print(f"TTS Pipeline: {len(subs_cn)} 条字幕, 视频总长 {total_duration:.1f}s")
+
+        # 背景音乐：提取各个视频段对应的独立 WAV 片段
+        def _extract_instrumental_segment(seg_start_ms: int, seg_end_ms: int) -> str:
+            """用 ffmpeg 提取一段独立的背景乐文件。"""
+            seg_dir = os.path.join(self.config.output_dir, "audio_segments")
+            os.makedirs(seg_dir, exist_ok=True)
+            seg_path = os.path.join(seg_dir, f"instr_{seg_start_ms}_{seg_end_ms}.wav")
+            if not os.path.isfile(seg_path):
+                import subprocess
+                subprocess.run(
+                    [ffmpeg_exe, "-y", "-i", instrumental_path,
+                     "-ss", str(seg_start_ms / 1000),
+                     "-to", str(seg_end_ms / 1000),
+                     "-acodec", "pcm_s16le",
+                     seg_path],
+                    capture_output=True, check=True,
+                )
+            return seg_path
+
+        # 处理开头/结尾无人声
+        self.video_seg.handle_begin_end_silence(
+            video, instrumental_path, subs_cn, total_duration, _extract_instrumental_segment
+        )
+
+        # ── Global 模式：全局统一调速 ─────────────────
+        if self.config.speed_mode == "global":
+            from pipeline.speed_strategy import create_strategy, StrategyContext
+
+            def _synth_fn(text: str, path: str, rate: str) -> float:
+                return self.engine.synthesize(text, path, rate)
+
+            strategy = create_strategy("global", StrategyContext(
+                trail_dir=os.path.join(self.config.output_dir, "trail"),
+                audio_output_dir=os.path.join(self.config.output_dir, "audio"),
+                video_output_dir=os.path.join(self.config.output_dir, "video"),
+                audio_codec=self.config.audio_codec,
+                audio_bitrate=self.config.audio_bitrate,
+                video_bitrate=self.config.video_bitrate,
+                speed_max=self.config.max_speed,
+                base_speed=self.config.base_speed,
+                video_speed_min=self.config.video_speed_min,
+                video_speed_max=self.config.video_speed_max,
+                search_method=self.config.search_method,
+            ))
+
+            def pbar_fn(idx, total, stats):
+                if hasattr(self, "_pbar"):
+                    self._pbar.update(1)
+                    self._pbar.set_postfix(**stats, refresh=False)
+
+            self._pbar = tqdm(total=len(subs_cn), desc="Global TTS", unit="条", ncols=80)
+            result = strategy.process(
+                subs_cn, subs_en, _synth_fn,
+                video, instrumental_path,
+                self.video_seg, self._resume_manager,
+                progress_callback=pbar_fn,
+            )
+            self._pbar.close()
+            processed = result.total_success
+            skipped = len(subs_cn) - processed - result.total_error
+            errors = result.total_error
+
+        # ── PerSegment 模式：逐段精细调速（原版算法） ──
+        else:
+            # 进度条
+            total = len(subs_cn)
+            skipped = 0
+            errors = 0
+            processed = 0
+
+            pbar = tqdm(total=total, desc="🎤 TTS 转写", unit="条", ncols=80)
+
+            # 迭代每个字幕段
+            for i, (start, end, text_cn) in enumerate(subs_cn):
+                try:
+                    # 安全检查：跳过无效时间戳
+                    if end <= start:
+                        tqdm.write(f"  [WARN] 跳过无效字幕段 #{i}: start={start}ms >= end={end}ms")
+                        skipped += 1
+                        continue
+                    if start < 0 or end < 0:
+                        tqdm.write(f"  [WARN] 跳过负时间戳字幕段 #{i}")
+                        skipped += 1
+                        continue
+
+                    # 断点续传：跳过已处理的
+                    if self._resume_manager.is_processed(start, end):
+                        skipped += 1
+                        continue
+
+                    text_en = subs_en[i][2] if i < len(subs_en) else ""
+
+                    # 获取下一条字幕
+                    subs_next = subs_cn[i + 1] if i + 1 < len(subs_cn) else None
+
+                    # 裁剪视频段（有下一条时扩展到下一条起始，给 TTS 缓冲空间）
+                    video_end = subs_next[0] if subs_next else end
+                    current_video = video.subclipped(start / 1000, video_end / 1000)
+
+                    # 背景乐段同步扩展
+                    instr_seg_path = _extract_instrumental_segment(start, video_end)
+                    instrumental_segment = AudioFileClip(instr_seg_path)
+
+                    result = self._process_single_subtitle(
+                        text_cn, text_en, start, end,
+                        current_video, instrumental_segment,
+                        subs_next=(subs_next[0], subs_next[1], subs_next[2]) if subs_next else None,
+                    )
+
+                    if result and result.get("success"):
+                        processed += 1
+                    elif result and not result.get("success"):
+                        errors += 1
+                    else:
+                        skipped += 1
+
+                    current_video.close()
+                    instrumental_segment.close()
+
+                finally:
+                    pbar.update(1)
+                    pbar.set_postfix(ok=processed, err=errors, skip=skipped, refresh=False)
+
+            pbar.close()
+        video.close()
+
+        # 最终报告
+        print()
+        print("=" * 50)
+        print("TTS Pipeline 完成")
+        print(f"  总计: {total} 条字幕")
+        print(f"  ✅ 成功: {processed}")
+        print(f"  ⏭ 跳过（含断点续传）: {skipped}")
+        if errors > 0:
+            print(f"  ❌ 失败: {errors}")
+            print(f"  错误详情已保存到: {self._resume_manager.state_path}")
+        print("=" * 50)
+
+        # 合并视频段
+        if self.config.enable_merge:
+            self._merge_segments()
+
+    def _merge_segments(self):
+        """合并所有视频段为完整视频。"""
+        from pipeline.video_merger import VideoMerger, MergerConfig
+
+        merger_config = MergerConfig(
+            strategy=self.config.merge_strategy,
+            video_encoder=self.config.video_codec,
+            audio_encoder=self.config.video_audio_codec,
+        )
+        merger = VideoMerger(merger_config)
+
+        segment_dir = self.video_seg.video_output_dir
+        result = merger.merge(segment_dir, self.config.final_output_path)
+
+        if result:
+            print(f"✅ 最终视频已保存: {result}")
+        else:
+            print(f"⚠️ 视频段合并失败，各段仍保留在 {segment_dir}")

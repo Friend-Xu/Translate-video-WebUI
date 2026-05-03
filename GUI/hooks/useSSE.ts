@@ -1,0 +1,53 @@
+import { useEffect, useRef, useCallback } from 'react'
+import type { LogEntry } from '../types'
+
+export function useSSE(
+  jobId: string | null,
+  onLog: (entry: LogEntry) => void,
+  onDone: (status: string) => void,
+) {
+  const sourceRef = useRef<EventSource | null>(null)
+
+  const disconnect = useCallback(() => {
+    sourceRef.current?.close()
+    sourceRef.current = null
+  }, [])
+
+  useEffect(() => {
+    if (!jobId) return
+
+    const es = new EventSource(`/api/pipeline/${jobId}/logs`)
+    sourceRef.current = es
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        const raw: string = data.message || ''
+        const match = raw.match(/^\[(\w+)\]\s*(.*)/)
+        const level = (match?.[1] || 'INFO') as LogEntry['level']
+        const message = match?.[2] || raw
+        const timestamp = new Date().toLocaleTimeString()
+        onLog({ level, message, timestamp })
+      } catch {
+        onLog({ level: 'INFO', message: event.data, timestamp: new Date().toLocaleTimeString() })
+      }
+    }
+
+    es.addEventListener('done', (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        onDone(data.status)
+      } catch {
+        onDone('completed')
+      }
+      disconnect()
+    })
+
+    es.onerror = () => {
+      // EventSource auto-reconnects; close only if job is done
+      disconnect()
+    }
+
+    return disconnect
+  }, [jobId, onLog, onDone, disconnect])
+}

@@ -1,0 +1,49 @@
+# DeepSeek API translation configuration
+# Copy this file to translate.yaml and fill in your API key,
+# or set the DEEPSEEK_API_KEY environment variable.
+
+translate:
+  api_key: 'your-deepseek-api-key-here'   # or set DEEPSEEK_API_KEY env var
+  api_type: deepseek
+  model: deepseek-chat
+  max_tokens: 4000
+  temperature: 0.1
+  top_p: 0.9
+  timeout: 60
+
+  # Source language: ja, en, etc.
+  source_lang: ja
+
+  # Batch translation settings
+  max_group_chars: 500
+  max_group_size: 8
+  output_format: numbered_list
+
+  # Rate limiting
+  rate_limit:
+    min_interval_seconds: 0.5
+    requests_per_minute: 20
+
+  # Concurrency (experimental, disabled by default)
+  concurrency:
+    enabled: false
+    max_workers: 3
+    semaphore_delay: 1.0
+
+  # Fallback strategy
+  fallback_to_single: true
+  manual_fallback: true
+  max_retries: 2
+
+  # Semantic verification
+  semantic_check: true
+  semantic_threshold: 0.65
+
+  # Terminology dictionary
+  terms_dict:
+    enabled: true
+    default_dict: minecraft.json
+    dict_dir: config/terms/
+
+  # Minimum gap between subtitles for grouping
+  min_pause_gap: 0.5

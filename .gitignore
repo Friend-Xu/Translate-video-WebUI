@@ -1,0 +1,83 @@
+# Dependencies
+.venv/
+node_modules/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Model cache (very large, download separately)
+models/
+Model/
+
+# Test/sample videos and outputs
+source_file/
+*_out/
+
+# Logs
+*.log
+
+# Temporary and diagnostic files
+_*.py
+*.wav
+
+# Build artifacts
+*.spec
+build/
+dist/
+*.exe
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment and secrets
+.env
+.env.local
+config/translate.yaml
+
+# ZIP archives
+*.zip
+
+# Large vendored data (keep scripts, exclude data/models)
+Minecraft_dict/MinecraftModLanguage/
+Minecraft_dict/Minecraft-Mods-Translator-master/
+Minecraft_dict/子文件/
+Minecraft_dict/dict.json
+Minecraft_dict/output.txt
+Minecraft_dict/output.srt
+Minecraft_dict/术语模板-*.xlsx
+SwinIR/model_zoo/
+SwinIR/testsets/
+
+# Large media files
+OpenVoice/file/
+*.mp4
+*.mp3
+
+# Generated outputs (keep scripts, exclude outputs)
+web_script/output_links.html
+web_script/output_links.txt
+tools/processed/
+
+# SwinIR non-essentials
+SwinIR/figs/
+SwinIR/cog.yaml
+SwinIR/download-weights.sh
+SwinIR/example
+
+# Backup/copy files
+*备份.*
+*副本.*
+
+# Claude Code (personal config)
+.claude/

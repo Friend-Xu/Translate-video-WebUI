@@ -1,0 +1,93 @@
+# 多语言字幕预设配置
+# 被 Json_Convert_Srt.py 加载为 LANGUAGE_PRESETS，供 SubtitleProcessor 基类使用
+#
+# ── 直接构造参数（传给 EN/JP 处理器构造函数） ──
+#   max_chars:         单段最大字符数（超出触发切分 / 合并上限）
+#   min_duration:      字幕最少显示时长（秒）
+#   max_gap:           两段语音最大允许间隙（秒，超过则断开）
+#   space_optimization:英语空格优化（英语保留单词间空格）
+#
+# ── post_process 参数（SubtitleProcessor 基类条目级 merge → split） ──
+#   merge_gap:         合并触发条件：两段间隔 ≤ merge_gap（秒）
+#   merge_chars:       合并后最大字符数（超限不合并）
+#   merge_dur_max:     合并后最大时长（秒，超限不合并）
+#   split_chars:       拆分触发条件：单条 > split_chars 字符
+#   split_dur:         拆分触发条件：单条 > split_dur 秒
+#   split_chars_min:   拆分后子段最少字符数（用于估算最短时间）
+#   sentence_end:      句末标点集（用于断句 + 合并拒绝判断）
+#   clause_pause:      停顿标点集（用于找次优断点）
+
+ja:
+  max_chars: 35
+  min_duration: 0.8
+  max_gap: 0.3
+  space_optimization: false
+  formatter: japanese
+  merge_gap: 0.3
+  merge_chars: 70
+  merge_dur_max: 5.0
+  split_chars: 160
+  split_dur: 8.0
+  split_chars_min: 5
+  sentence_end: "。！？!?…」』"
+  clause_pause: "、，；,;:"
+
+en:
+  max_chars: 20             # 最大单词数（~3词/秒 × 7秒 ≈ 20词）
+  min_duration: 0.7
+  max_gap: 1.0
+  space_optimization: true   # 保留单词间空格
+  formatter: english
+  merge_gap: 0.3
+  merge_chars: 20
+  merge_dur_max: 5.0
+  split_chars: 200
+  split_dur: 8.0
+  split_chars_min: 5
+  sentence_end: ".!?"
+  clause_pause: ",;:"
+
+zh:
+  max_chars: 25               # 中文字符较宽
+  min_duration: 0.9
+  max_gap: 0.8
+  space_optimization: false
+  formatter: chinese
+  merge_gap: 0.3
+  merge_chars: 60
+  merge_dur_max: 5.0
+  split_chars: 140
+  split_dur: 8.0
+  split_chars_min: 5
+  sentence_end: "。！？!?…"
+  clause_pause: "，；、,;:"
+
+ko:
+  max_chars: 30
+  min_duration: 0.85
+  max_gap: 0.75
+  space_optimization: false
+  formatter: korean
+  merge_gap: 0.3
+  merge_chars: 65
+  merge_dur_max: 5.0
+  split_chars: 150
+  split_dur: 8.0
+  split_chars_min: 5
+  sentence_end: ".?!。?!…"
+  clause_pause: ",，、;；:"
+
+default:
+  max_chars: 45
+  min_duration: 0.75
+  max_gap: 0.85
+  space_optimization: true
+  formatter: general
+  merge_gap: 0.3
+  merge_chars: 75
+  merge_dur_max: 5.0
+  split_chars: 180
+  split_dur: 8.0
+  split_chars_min: 5
+  sentence_end: ".!?"
+  clause_pause: ",;:"

@@ -1,0 +1,392 @@
+1
+00:00:00,000 --> 00:00:04,560
+Today, I'm going to be focusing on making Minecraft as satisfying as possible using mods.
+
+2
+00:00:04,560 --> 00:00:11,860
+If a mod makes the game look satisfying, sound satisfying, or in general just add something that I'd consider satisfying, I'm going to include it.
+
+3
+00:00:11,860 --> 00:00:16,500
+And you know, Minecraft is already a pretty satisfying game, but we can always take that to the next level.
+
+4
+00:00:16,500 --> 00:00:21,980
+Now, for this video, I'm mostly including mods that are going to be client-side, but I do have a few game-changing mods as well.
+
+5
+00:00:21,980 --> 00:00:26,280
+And I'll be sure to keep all the client-side mods first, just to avoid any confusion there.
+
+6
+00:00:26,280 --> 00:00:33,760
+And I have quite a few mods in this video, but if there's any others you'd like to see included, I may do a follow-up to this video in the future, so let me know.
+
+7
+00:00:33,760 --> 00:00:35,400
+So, anyway, let's go ahead and check it out.
+
+8
+00:00:35,400 --> 00:00:42,600
+So, to start things off, we're going to be installing a performance mod, because let's be honest, what's more satisfying than significantly enhancing your FPS?
+
+9
+00:00:42,600 --> 00:00:45,080
+This one, however, is going to come down to preference.
+
+10
+00:00:45,080 --> 00:00:53,120
+You can either use sodium along with iris, continuity, and indium for the best performance possible and overall most compatibility with the rest of the mod list.
+
+11
+00:00:53,120 --> 00:01:01,240
+Or you can use Optifine, which generally doesn't perform quite as well as the other combination, but is pretty much an all-in-one mod and has quite a bit more features at this point.
+
+12
+00:01:01,240 --> 00:01:07,480
+Now, to start things off, we're going to take a look at Fresh Animations, which requires Optifine in order to, you know, actually work.
+
+13
+00:01:07,480 --> 00:01:14,800
+And this is easily one of my favorite things to have installed in Minecraft, because Fresh Animations adds amazing animations to most of the creatures in the game.
+
+14
+00:01:14,800 --> 00:01:18,760
+And with each update, it just continues to get better as it expands the mobs that are covered.
+
+15
+00:01:18,760 --> 00:01:26,160
+A list of satisfying mods would truly be incomplete without this mod, and its only downfall is that as of now, you can't use it with sodium.
+
+16
+00:01:26,160 --> 00:01:31,560
+As an alternative, however, if you'd like to go with sodium, you can always use the Better Animations collection mod.
+
+17
+00:01:31,560 --> 00:01:39,000
+And while in my opinion Fresh Animations is just a little bit better, this mod still provides plenty of really nice animations to many of the creatures in the game.
+
+18
+00:01:39,000 --> 00:01:46,920
+Next, I'll be installing the Stay True resource pack, and it's one of my favorite resource packs available, as it simply enhances the vanilla visuals.
+
+19
+00:01:46,920 --> 00:01:53,880
+Rather than completely changing the textures, it adds variance to them and makes them far less repetitive, and you'll also notice that blocks can blend together.
+
+20
+00:01:53,880 --> 00:01:56,680
+And really, at this point, you can go with whatever resource pack you like.
+
+21
+00:01:56,680 --> 00:01:58,960
+Whatever you find the most satisfying, go with that one.
+
+22
+00:01:58,960 --> 00:02:03,240
+But I decided to go with one that still just generally sticks to the vanilla appearance for this video.
+
+23
+00:02:03,240 --> 00:02:07,760
+Now, next up, we're going to hit another point where once again, you're going to need to make a choice.
+
+24
+00:02:07,760 --> 00:02:10,440
+Option one is Complimentary Shaders Reimagined.
+
+25
+00:02:10,440 --> 00:02:20,160
+The shader looks downright amazing and actually has some pretty great performance, and on the other hand, you can use the Distant Horizons mod, which allows you to run in Minecraft at pretty absurd render distances.
+
+26
+00:02:20,160 --> 00:02:21,320
+So really, it's up to you.
+
+27
+00:02:21,320 --> 00:02:26,800
+Would you rather be able to see really, really far away or have some absolutely fantastic lighting and visuals?
+
+28
+00:02:26,800 --> 00:02:28,360
+Either way, very satisfying.
+
+29
+00:02:28,360 --> 00:02:35,680
+And I would recommend picking one or the other, but I actually did find that if you use these two together while using OptiFine, they somewhat work together.
+
+30
+00:02:35,680 --> 00:02:39,680
+It's a little glitchy though, and the performance isn't great, which is to be expected.
+
+31
+00:02:39,680 --> 00:02:42,640
+But if you'd like to give this a try, you can definitely do so.
+
+32
+00:02:42,640 --> 00:02:47,880
+Alright, now for these next few mods, we're mainly going to be focusing on adding satisfying sounds to the game.
+
+33
+00:02:47,880 --> 00:02:51,960
+And first, we'll be installing Dynamic Surroundings Remastered Fabric Edition.
+
+34
+00:02:51,960 --> 00:02:57,600
+With this mod, you'll get beautiful biome sounds, some new visual effects, and amazing waterfall ambience.
+
+35
+00:02:57,600 --> 00:03:04,880
+And as I've mentioned before, waterfalls in Minecraft having actual waterfall sounds is immensely satisfying to me, so this is just a must-have.
+
+36
+00:03:04,880 --> 00:03:09,400
+And if the official version of Dynamic Surroundings ever gets updated, you can always use that one.
+
+37
+00:03:09,400 --> 00:03:11,240
+But for now, this is what we're sticking with.
+
+38
+00:03:11,240 --> 00:03:18,000
+We'll also be installing Presence Footsteps, which over the past 10 years now has provided incredibly satisfying footstep audio.
+
+39
+00:03:18,000 --> 00:03:23,440
+Not only do you get unique footstep sounds for most blocks, the mod also recognizes each foot on its own.
+
+40
+00:03:23,440 --> 00:03:27,360
+So now you can walk between two different blocks and the sound effect will alternate for each foot.
+
+41
+00:03:32,360 --> 00:03:33,600
+Very satisfying.
+
+42
+00:03:33,600 --> 00:03:41,600
+Next, I've included the Auditory mod, which adds a bunch of new sound effects, most notably for breaking and placing many of the blocks you can find in the game.
+
+43
+00:03:41,600 --> 00:03:49,400
+And this is something we've seen with many of the new blocks in Minecraft, for example Amethyst, and trust me, it's a wonderful thing hearing this feature brought to more blocks.
+
+44
+00:03:49,400 --> 00:03:56,440
+In addition to this, I've also installed Extra Sounds, which adds even more satisfying sounds to the game, mostly focused around the inventory.
+
+45
+00:03:56,440 --> 00:04:01,680
+So when you scroll around, drop items, and move stuff around, you'll be fed all kinds of auditory goodness.
+
+46
+00:04:03,640 --> 00:04:08,840
+Now, moving on from sound-specific mods, everything else I've included really just covers a bit of everything.
+
+47
+00:04:08,840 --> 00:04:15,560
+For starters, we have Camera Overhaul, and this mod adds some pretty satisfying camera movement to the game, all depending on what you're doing.
+
+48
+00:04:15,560 --> 00:04:19,800
+And the default settings for this mod may be a bit nauseating for some people, but do not worry.
+
+49
+00:04:19,800 --> 00:04:22,920
+You can customize the intensity of each of these visual effects.
+
+50
+00:04:22,920 --> 00:04:25,640
+So if you'd like it to be subtle, you can absolutely do that.
+
+51
+00:04:25,640 --> 00:04:29,520
+And if you want to practically be doing barrel rolls when you move around, by all means, go for it.
+
+52
+00:04:29,560 --> 00:04:36,080
+Next, I've installed a pretty small mod called Disable Custom Worlds Advice that saves me from some pretty extraordinary anguish.
+
+53
+00:04:36,080 --> 00:04:40,400
+These incessant popups constantly letting me know that I, in fact, have mods installed.
+
+54
+00:04:40,400 --> 00:04:42,800
+Gone forever. It's really a beautiful thing.
+
+55
+00:04:42,800 --> 00:04:45,560
+And, in addition to that, I've installed Toast Manager.
+
+56
+00:04:45,560 --> 00:04:51,960
+And like Disable Custom Worlds Advice, this mod disables the constant achievement popups you get with each new world.
+
+57
+00:04:51,960 --> 00:04:56,560
+They're fun for the first few times, but can quickly get irritating when you just don't want them anymore.
+
+58
+00:04:56,600 --> 00:04:58,520
+After that, I've installed the Physics mod.
+
+59
+00:04:58,520 --> 00:05:04,840
+And this mod is just loaded to the brim with satisfying features, like mob rag dolls, block breaking physics, and much more.
+
+60
+00:05:04,840 --> 00:05:08,520
+And for the video, I'll be using the Pro version, which includes many more awesome features.
+
+61
+00:05:08,520 --> 00:05:13,040
+Now you'll see things like realistic smoke, better weather visuals, interactive snow, and much more.
+
+62
+00:05:13,040 --> 00:05:16,960
+And hey, if there's any features you don't enjoy with this mod, you can always just change or disable them.
+
+63
+00:05:16,960 --> 00:05:18,000
+Very satisfying.
+
+64
+00:05:18,000 --> 00:05:22,400
+I've also installed the InvMove mod, which allows you to move around while accessing inventories.
+
+65
+00:05:22,400 --> 00:05:24,720
+And this mod was surprisingly client-side.
+
+66
+00:05:24,720 --> 00:05:30,640
+I honestly thought this would be server-side, although I don't make any promises that you won't get banned if you use this on a server or something like that.
+
+67
+00:05:30,640 --> 00:05:35,400
+So if you do plan on using this mod online, I would definitely make sure you're allowed to use it on that server.
+
+68
+00:05:35,400 --> 00:05:41,200
+I've also included the Dynamic Crosshair mod, which changes slash hides your crosshair depending on what you're doing or holding.
+
+69
+00:05:41,200 --> 00:05:49,160
+And this can be especially nice when you have no need for a crosshair, as it frees up some of your HUD, making your game more beautiful and, by extension, satisfying.
+
+70
+00:05:49,200 --> 00:05:55,240
+Now, in order to make third-person more satisfying to use, I'll be installing it both better third-person and camera utils.
+
+71
+00:05:55,240 --> 00:06:03,080
+Better third-person lets you walk around in every direction while playing in third-person, whereas camera utils allows you to customize exactly where the camera sits behind you.
+
+72
+00:06:03,080 --> 00:06:07,240
+And one of the last client-side mods we'll be installing for now is Legendary Tooltips.
+
+73
+00:06:07,240 --> 00:06:10,960
+And this mod simply lets you know when your valuables are in fact valuable.
+
+74
+00:06:10,960 --> 00:06:14,800
+Now they'll have a beautiful golden border that shows that that item is special.
+
+75
+00:06:14,800 --> 00:06:22,240
+And finally, for the last of our client-side mods, I've installed Effective, which adds several very satisfying water-based effects to the game.
+
+76
+00:06:22,240 --> 00:06:30,280
+Now you'll get some really nice visual effects when pretty much anything falls into water, and waterfalls appear much more powerful, I guess, as water splashes everywhere.
+
+77
+00:06:30,280 --> 00:06:37,400
+And this mod also has built-in waterfall sound effects, although I think Dynamic Surroundings does it just a bit better, so I've just gone ahead and muted these.
+
+78
+00:06:37,400 --> 00:06:44,280
+Alright, at this point, every single one of the mods we've installed is client-side, so if you want to use these mods on a server or with friends or something like that,
+
+79
+00:06:44,280 --> 00:06:50,040
+you won't be able to install any of the mods that are upcoming unless those mods are also installed on the server, so keep that in mind.
+
+80
+00:06:50,040 --> 00:06:57,960
+And like I said earlier, I'm not going to be installing that many server-side mods this time around, however, if I do another one of these videos, I'll be sure to include a lot more of both.
+
+81
+00:06:57,960 --> 00:07:00,160
+So we're going to move on to a few server-side mods now.
+
+82
+00:07:00,160 --> 00:07:03,760
+And the first of these mods is both Better Combat and Combat Roll.
+
+83
+00:07:03,760 --> 00:07:09,360
+And these mods are both created by the same developer, and in combination, they make combat incredibly satisfying.
+
+84
+00:07:09,360 --> 00:07:17,320
+And you can also combine these mods with weapon mods like Miriam's Soulsborne Weaponry or Simply Swords to significantly expand the set of weapons available to you.
+
+85
+00:07:17,320 --> 00:07:26,000
+Next, I've selected diagonal fences just because being able to place fences diagonally is both mentally and visually pleasing, and overall just makes fences a whole lot more versatile.
+
+86
+00:07:26,000 --> 00:07:37,240
+And after that, I've installed Visual Workbench, which makes crafting pretty much infinitely more satisfying, as not only do items stay in the crafting table if you exit it, but they also stay on top and show exactly what you're crafting.
+
+87
+00:07:37,240 --> 00:07:41,000
+And truly, this mod just makes the entire crafting experience that much better.
+
+88
+00:07:41,000 --> 00:07:48,640
+And finally, the last mod I'll be showing today is Immersive Portals, and I still consider this to be easily one of those satisfying mods that exists.
+
+89
+00:07:48,640 --> 00:07:56,360
+I mean, when I first came across this mod's predecessor, Better Portals, I was completely mind-blown and really didn't even expect a mod like this to actually exist.
+
+90
+00:07:56,360 --> 00:07:58,440
+But it does, and it works pretty much perfectly.
+
+91
+00:07:58,440 --> 00:08:07,440
+I will mention, though, I was actually getting some crashes using this mod with this mod list, and I think the crashes were being caused due to incompatibility with the physics mod.
+
+92
+00:08:07,440 --> 00:08:10,560
+I'm not 100% sure on that, but I have my suspicions.
+
+93
+00:08:10,560 --> 00:08:13,560
+But hey, give it a try. You guys might have better luck with it than I did.
+
+94
+00:08:13,560 --> 00:08:15,760
+And anyway, that's gonna do it for this video.
+
+95
+00:08:15,760 --> 00:08:24,000
+And as I mentioned before, I would definitely love to do a part two, potentially beyond for this video, as there's many mods out there that I would consider very satisfying.
+
+96
+00:08:24,000 --> 00:08:25,880
+And I mean, yeah, I'd love to expand on it.
+
+97
+00:08:25,920 --> 00:08:30,640
+So be sure to comment some mods below, and I'll be sure to take a look at them and potentially include them in the future.
+
+98
+00:08:30,640 --> 00:08:37,640
+And anyway, let me know what you thought about this video, and if you guys enjoyed, be sure to leave a like, comment, and subscribe, and until next time, thanks for watching.
+

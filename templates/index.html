@@ -1,0 +1,1293 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Translate Video — 视频翻译管线</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
+/* ── Reset & Base ─────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-deep: #020203;
+  --bg-base: #06070E;
+  --bg-elevated: #0C0E1A;
+  --bg-card: rgba(255,255,255,0.03);
+  --surface: rgba(255,255,255,0.05);
+  --surface-hover: rgba(255,255,255,0.08);
+  --foreground: #EDEDEF;
+  --foreground-muted: #8A8F98;
+  --foreground-dim: #5A5F68;
+  --accent: #6366F1;
+  --accent-glow: rgba(99,102,241,0.25);
+  --accent-secondary: #EC4899;
+  --accent-secondary-glow: rgba(236,72,153,0.2);
+  --success: #22C55E;
+  --success-glow: rgba(34,197,94,0.2);
+  --warning: #F59E0B;
+  --error: #EF4444;
+  --border: rgba(255,255,255,0.06);
+  --border-visible: rgba(255,255,255,0.10);
+  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --easing: cubic-bezier(0.16, 1, 0.3, 1);
+  --font-sans: 'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+}
+
+html { font-size: 15px; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-deep);
+  color: var(--foreground);
+  line-height: 1.6;
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Ambient Background ──────────────────────────── */
+.ambient-bg {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+}
+.ambient-blob {
+  position: absolute; border-radius: 50%; filter: blur(120px); opacity: 0.08;
+  animation: blobFloat 20s ease-in-out infinite;
+}
+.ambient-blob:nth-child(1) {
+  width: 600px; height: 600px;
+  background: var(--accent);
+  top: -200px; left: -150px;
+  animation-delay: 0s;
+}
+.ambient-blob:nth-child(2) {
+  width: 500px; height: 500px;
+  background: var(--accent-secondary);
+  bottom: -150px; right: -150px;
+  animation-delay: -7s;
+}
+.ambient-blob:nth-child(3) {
+  width: 400px; height: 400px;
+  background: #8B5CF6;
+  top: 50%; left: 50%;
+  animation-delay: -14s;
+}
+@keyframes blobFloat {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(80px, -60px) scale(1.08); }
+  50% { transform: translate(-40px, 40px) scale(0.95); }
+  75% { transform: translate(-70px, -30px) scale(1.05); }
+}
+
+/* ── Layout ──────────────────────────────────────── */
+.app-container {
+  position: relative; z-index: 1;
+  max-width: 1200px; margin: 0 auto; padding: 24px 24px 80px;
+}
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 0; margin-bottom: 28px;
+  border-bottom: 1px solid var(--border);
+}
+.header-brand {
+  display: flex; align-items: center; gap: 14px;
+}
+.header-logo {
+  width: 42px; height: 42px; border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 0 24px var(--accent-glow);
+}
+.header-logo svg { width: 22px; height: 22px; stroke: #fff; }
+.header-title {
+  font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em;
+  background: linear-gradient(135deg, var(--foreground), var(--foreground-muted));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+.header-status {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.82rem; color: var(--foreground-muted);
+}
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--success); box-shadow: 0 0 8px var(--success-glow);
+}
+.status-dot.idle { background: var(--foreground-dim); box-shadow: none; }
+.status-dot.running { background: var(--accent); box-shadow: 0 0 8px var(--accent-glow); animation: pulse 1.5s infinite; }
+.status-dot.error { background: var(--error); box-shadow: 0 0 8px rgba(239,68,68,0.3); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* ── Main Grid ───────────────────────────────────── */
+.main-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+.main-grid > .full-width { grid-column: 1 / -1; }
+
+/* ── Card Base ───────────────────────────────────── */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 22px 24px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  transition: border-color 0.2s var(--easing), background 0.2s var(--easing);
+}
+.card:hover {
+  background: var(--surface);
+  border-color: var(--border-visible);
+}
+.card-header {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
+}
+.card-icon {
+  width: 34px; height: 34px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.card-icon.step-1 { background: rgba(99,102,241,0.15); color: #818CF8; }
+.card-icon.step-2 { background: rgba(236,72,153,0.15); color: #F472B6; }
+.card-icon.step-3 { background: rgba(34,197,94,0.15); color: #4ADE80; }
+.card-icon.settings { background: rgba(139,92,246,0.15); color: #A78BFA; }
+.card-title { font-size: 0.95rem; font-weight: 600; letter-spacing: -0.01em; }
+.card-subtitle { font-size: 0.78rem; color: var(--foreground-muted); }
+
+/* ── Video Upload Zone ───────────────────────────── */
+.upload-zone {
+  position: relative;
+  border: 2px dashed var(--border-visible);
+  border-radius: var(--radius-xl);
+  padding: 48px 32px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.25s var(--easing);
+  background: var(--bg-card);
+}
+.upload-zone:hover, .upload-zone.drag-over {
+  border-color: var(--accent);
+  background: rgba(99,102,241,0.05);
+  box-shadow: 0 0 48px var(--accent-glow);
+}
+.upload-icon {
+  width: 56px; height: 56px; margin: 0 auto 16px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(99,102,241,0.2), rgba(236,72,153,0.2));
+  display: flex; align-items: center; justify-content: center;
+}
+.upload-icon svg { width: 26px; height: 26px; stroke: var(--accent); }
+.upload-title { font-size: 1.1rem; font-weight: 600; margin-bottom: 6px; }
+.upload-hint { font-size: 0.82rem; color: var(--foreground-muted); }
+.upload-input { display: none; }
+
+.video-selected {
+  display: none;
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-top: 16px;
+}
+.video-selected.active { display: flex; align-items: center; gap: 14px; }
+.video-thumb {
+  width: 80px; height: 48px; border-radius: 8px;
+  background: #1a1a2e; object-fit: cover;
+}
+.video-info { flex: 1; min-width: 0; }
+.video-name { font-weight: 600; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.video-meta { font-size: 0.78rem; color: var(--foreground-muted); margin-top: 2px; }
+.video-remove {
+  width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--border-visible);
+  background: transparent; color: var(--foreground-muted); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s;
+}
+.video-remove:hover { background: rgba(239,68,68,0.15); color: var(--error); border-color: rgba(239,68,68,0.3); }
+
+/* ── Browse Files Button ─────────────────────────── */
+.browse-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 14px; padding: 8px 16px;
+  background: var(--surface); border: 1px solid var(--border-visible);
+  border-radius: var(--radius-sm); color: var(--foreground-muted);
+  font-size: 0.8rem; cursor: pointer; transition: all 0.2s;
+  font-family: var(--font-sans);
+}
+.browse-btn:hover { background: var(--surface-hover); color: var(--foreground); }
+
+/* ── Form Controls ───────────────────────────────── */
+.form-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+}
+.form-group { display: flex; flex-direction: column; gap: 5px; }
+.form-group.full { grid-column: 1 / -1; }
+.form-label {
+  font-size: 0.76rem; font-weight: 500; color: var(--foreground-muted);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.form-select, .form-input {
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border-visible);
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  font-size: 0.88rem;
+  font-family: var(--font-sans);
+  transition: all 0.2s;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.form-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238A8F98' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px;
+}
+.form-select:focus, .form-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+}
+.form-select:hover, .form-input:hover { border-color: var(--foreground-dim); }
+
+input[type="range"] {
+  -webkit-appearance: none; width: 100%; height: 6px;
+  border-radius: 3px; background: var(--surface);
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 18px; height: 18px;
+  border-radius: 50%; background: var(--accent);
+  cursor: pointer; box-shadow: 0 0 12px var(--accent-glow);
+  transition: transform 0.15s;
+}
+input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
+
+.range-row {
+  display: flex; align-items: center; gap: 10px;
+}
+.range-row input[type="range"] { flex: 1; }
+.range-value {
+  font-size: 0.82rem; font-weight: 600; color: var(--accent);
+  min-width: 42px; text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Toggle / Checkbox ───────────────────────────── */
+.toggle-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.toggle-row:last-child { border-bottom: none; }
+.toggle-label { font-size: 0.85rem; font-weight: 500; }
+.toggle-hint { font-size: 0.74rem; color: var(--foreground-muted); }
+.toggle {
+  position: relative; width: 44px; height: 26px; flex-shrink: 0;
+}
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute; inset: 0; border-radius: 26px;
+  background: var(--surface); border: 1px solid var(--border-visible);
+  cursor: pointer; transition: all 0.25s var(--easing);
+}
+.toggle-slider::before {
+  content: ''; position: absolute;
+  width: 20px; height: 20px; left: 2px; top: 2px;
+  border-radius: 50%; background: var(--foreground-muted);
+  transition: all 0.25s var(--easing);
+}
+.toggle input:checked + .toggle-slider { background: var(--accent); border-color: var(--accent); }
+.toggle input:checked + .toggle-slider::before {
+  transform: translateX(18px); background: #fff;
+}
+
+/* ── Step Progress ───────────────────────────────── */
+.steps-bar {
+  display: flex; gap: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.step-item {
+  flex: 1; display: flex; align-items: center; gap: 12px;
+  padding: 16px 20px; position: relative;
+  transition: background 0.3s;
+}
+.step-item + .step-item { border-left: 1px solid var(--border); }
+.step-num {
+  width: 34px; height: 34px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.85rem; font-weight: 700; flex-shrink: 0;
+  background: var(--surface); color: var(--foreground-dim);
+  transition: all 0.4s var(--easing);
+}
+.step-item.done .step-num { background: var(--success); color: #fff; box-shadow: 0 0 16px var(--success-glow); }
+.step-item.running .step-num { background: var(--accent); color: #fff; box-shadow: 0 0 16px var(--accent-glow); animation: pulse 1.2s infinite; }
+.step-item.error .step-num { background: var(--error); color: #fff; }
+.step-label { font-size: 0.82rem; font-weight: 500; }
+.step-sublabel { font-size: 0.7rem; color: var(--foreground-muted); }
+
+/* ── Log Console ─────────────────────────────────── */
+.log-console {
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  height: 260px; overflow-y: auto;
+  padding: 14px 18px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem; line-height: 1.7;
+}
+.log-entry { display: flex; gap: 10px; }
+.log-time { color: var(--foreground-dim); flex-shrink: 0; }
+.log-text { color: var(--foreground-muted); word-break: break-all; }
+.log-entry:has(.log-ok) .log-text { color: #4ADE80; }
+.log-entry:has(.log-err) .log-text { color: #F87171; }
+.log-entry:has(.log-warn) .log-text { color: #FBBF24; }
+.log-console::-webkit-scrollbar { width: 6px; }
+.log-console::-webkit-scrollbar-track { background: transparent; }
+.log-console::-webkit-scrollbar-thumb { background: var(--border-visible); border-radius: 3px; }
+
+/* ── Buttons ─────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 12px 28px; border-radius: var(--radius); border: none;
+  font-size: 0.9rem; font-weight: 600; font-family: var(--font-sans);
+  cursor: pointer; transition: all 0.25s var(--easing);
+  letter-spacing: -0.01em; white-space: nowrap;
+}
+.btn:disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent), #4F46E5);
+  color: #fff; box-shadow: 0 4px 20px var(--accent-glow);
+}
+.btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 32px var(--accent-glow);
+}
+.btn-primary:active:not(:disabled) { transform: scale(0.97); }
+.btn-outline {
+  background: transparent; color: var(--foreground);
+  border: 1px solid var(--border-visible);
+}
+.btn-outline:hover:not(:disabled) { background: var(--surface); border-color: var(--foreground-dim); }
+.btn-danger {
+  background: rgba(239,68,68,0.12); color: var(--error);
+  border: 1px solid rgba(239,68,68,0.2);
+}
+.btn-danger:hover:not(:disabled) { background: rgba(239,68,68,0.2); }
+.btn-sm { padding: 6px 14px; font-size: 0.78rem; border-radius: var(--radius-sm); }
+
+.action-bar {
+  display: flex; align-items: center; gap: 12px; margin-top: 20px;
+}
+.action-bar .spacer { flex: 1; }
+
+/* ── File Browser Modal ──────────────────────────── */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);
+  display: none; align-items: center; justify-content: center;
+}
+.modal-overlay.active { display: flex; }
+.modal {
+  background: var(--bg-elevated); border: 1px solid var(--border-visible);
+  border-radius: var(--radius-xl); width: 680px; max-width: 90vw;
+  max-height: 80vh; display: flex; flex-direction: column;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.5);
+}
+.modal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 18px 24px; border-bottom: 1px solid var(--border);
+}
+.modal-title { font-weight: 600; font-size: 1rem; }
+.modal-close {
+  width: 32px; height: 32px; border-radius: 8px; border: none;
+  background: transparent; color: var(--foreground-muted); cursor: pointer;
+  font-size: 1.2rem; display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s;
+}
+.modal-close:hover { background: var(--surface); color: var(--foreground); }
+.modal-body { flex: 1; overflow-y: auto; padding: 16px 24px; }
+.file-list { list-style: none; }
+.file-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; border-radius: var(--radius-sm);
+  cursor: pointer; transition: background 0.15s;
+}
+.file-item:hover { background: var(--surface); }
+.file-item-icon { color: var(--accent); flex-shrink: 0; }
+.file-item-name { font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-item-size { font-size: 0.78rem; color: var(--foreground-muted); margin-left: auto; flex-shrink: 0; }
+.file-item-dir { font-size: 0.7rem; color: var(--foreground-dim); }
+
+/* ── Toast ───────────────────────────────────────── */
+.toast-container {
+  position: fixed; top: 24px; right: 24px; z-index: 200;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.toast {
+  padding: 12px 20px; border-radius: var(--radius);
+  font-size: 0.85rem; font-weight: 500;
+  animation: toastIn 0.3s var(--easing);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+  max-width: 360px;
+}
+.toast.success { background: #065F46; color: #A7F3D0; border: 1px solid rgba(34,197,94,0.3); }
+.toast.error { background: #7F1D1D; color: #FECACA; border: 1px solid rgba(239,68,68,0.3); }
+@keyframes toastIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ── Output Preview ──────────────────────────────── */
+.output-card {
+  display: none; margin-top: 18px;
+}
+.output-card.active { display: block; }
+.output-preview {
+  display: flex; align-items: center; gap: 16px;
+  padding: 16px 20px; background: var(--surface);
+  border-radius: var(--radius); border: 1px solid var(--border-visible);
+}
+.output-preview-icon {
+  width: 44px; height: 44px; border-radius: 12px;
+  background: rgba(34,197,94,0.15); display: flex;
+  align-items: center; justify-content: center;
+  color: #4ADE80;
+}
+.output-path {
+  font-size: 0.82rem; color: var(--foreground-muted);
+  word-break: break-all;
+}
+
+/* ── Responsive ──────────────────────────────────── */
+@media (max-width: 768px) {
+  .main-grid { grid-template-columns: 1fr; }
+  .form-grid { grid-template-columns: 1fr; }
+  .steps-bar { flex-direction: column; }
+  .step-item + .step-item { border-left: none; border-top: 1px solid var(--border); }
+  .action-bar { flex-wrap: wrap; }
+  .app-container { padding: 16px 12px 60px; }
+  .header { flex-direction: column; align-items: flex-start; gap: 10px; }
+}
+
+/* ── Skip row ────────────────────────────────────── */
+.skip-row {
+  display: flex; gap: 16px; padding: 10px 0;
+}
+.skip-chip {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 14px; border-radius: 20px;
+  background: var(--surface); border: 1px solid var(--border-visible);
+  font-size: 0.78rem; color: var(--foreground-muted); cursor: pointer;
+  transition: all 0.2s; user-select: none;
+}
+.skip-chip:hover { border-color: var(--foreground-dim); }
+.skip-chip.checked {
+  background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.3);
+  color: var(--error);
+}
+.skip-chip svg { width: 14px; height: 14px; }
+</style>
+</head>
+<body>
+
+<div class="ambient-bg">
+  <div class="ambient-blob"></div>
+  <div class="ambient-blob"></div>
+  <div class="ambient-blob"></div>
+</div>
+
+<div class="app-container">
+  <!-- Header -->
+  <header class="header">
+    <div class="header-brand">
+      <div class="header-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="23 7 16 12 23 17 23 7"></polygon>
+          <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+        </svg>
+      </div>
+      <div>
+        <div class="header-title">Translate Video</div>
+        <div style="font-size:0.72rem;color:var(--foreground-dim)">一站式视频翻译管线</div>
+      </div>
+    </div>
+    <div class="header-status" id="headerStatus">
+      <div class="status-dot idle" id="statusDot"></div>
+      <span id="statusText">就绪</span>
+    </div>
+  </header>
+
+  <!-- Video Upload -->
+  <div class="card full-width" style="margin-bottom:18px">
+    <div class="card-header">
+      <div class="card-icon step-1">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="17 8 12 3 7 8"></polyline>
+          <line x1="12" y1="3" x2="12" y2="15"></line>
+        </svg>
+      </div>
+      <div>
+        <div class="card-title">选择视频文件</div>
+        <div class="card-subtitle">支持 MP4 / MKV / AVI / MOV / WebM</div>
+      </div>
+    </div>
+    <div class="upload-zone" id="uploadZone">
+      <div class="upload-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="17 8 12 3 7 8"></polyline>
+          <line x1="12" y1="3" x2="12" y2="15"></line>
+        </svg>
+      </div>
+      <div class="upload-title">拖放视频文件到此处</div>
+      <div class="upload-hint">或点击此处选择文件</div>
+      <input type="file" class="upload-input" id="fileInput" accept="video/*">
+      <button class="browse-btn" onclick="openBrowser()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+        浏览文件
+      </button>
+    </div>
+    <div class="video-selected" id="videoSelected">
+      <div style="width:80px;height:48px;border-radius:8px;background:var(--surface);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="1.5"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+      </div>
+      <div class="video-info">
+        <div class="video-name" id="videoName">—</div>
+        <div class="video-meta" id="videoMeta">—</div>
+      </div>
+      <button class="video-remove" onclick="clearVideo()" title="移除">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Step Progress -->
+  <div class="steps-bar full-width" style="margin-bottom:18px" id="stepsBar">
+    <div class="step-item" id="step1">
+      <div class="step-num">1</div>
+      <div>
+        <div class="step-label">字幕提取</div>
+        <div class="step-sublabel">Whisper + wav2vec2</div>
+      </div>
+    </div>
+    <div class="step-item" id="step2">
+      <div class="step-num">2</div>
+      <div>
+        <div class="step-label">翻译</div>
+        <div class="step-sublabel">DeepSeek + 术语替换</div>
+      </div>
+    </div>
+    <div class="step-item" id="step3">
+      <div class="step-num">3</div>
+      <div>
+        <div class="step-label">TTS 合成</div>
+        <div class="step-sublabel">Edge-TTS + 视频合并</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Grid -->
+  <div class="main-grid">
+    <!-- Step 1: Extract Settings -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon step-1">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/></svg>
+        </div>
+        <div>
+          <div class="card-title">步骤 1 — 字幕提取</div>
+          <div class="card-subtitle">Whisper 模型 + 对齐参数</div>
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">源语言</label>
+          <select class="form-select" id="paramLang">
+            <option value="">自动检测（无对齐）</option>
+            <option value="en">English（启用 wav2vec2 对齐）</option>
+            <option value="ja">日本語（启用 wav2vec2 对齐）</option>
+            <option value="zh">中文（启用 wav2vec2 对齐）</option>
+            <option value="ko">한국어</option>
+            <option value="fr">Français</option>
+            <option value="de">Deutsch</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Whisper 模型</label>
+          <select class="form-select" id="paramModel">
+            <option value="tiny">Tiny（最快，精度低）</option>
+            <option value="base">Base</option>
+            <option value="small" selected>Small（推荐）</option>
+            <option value="medium">Medium（更准确，需更多显存）</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">计算设备</label>
+          <select class="form-select" id="paramDevice">
+            <option value="cpu" selected>CPU</option>
+            <option value="cuda">CUDA (GPU)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">跳过字幕提取</label>
+          <div class="skip-row" style="padding:0;margin-top:4px">
+            <label class="skip-chip" id="skipExtractChip" onclick="toggleSkip('skipExtract')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              跳过
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2: Translate Settings -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon step-2">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/></svg>
+        </div>
+        <div>
+          <div class="card-title">步骤 2 — 翻译设置</div>
+          <div class="card-subtitle">DeepSeek API + 术语替换</div>
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">翻译模型</label>
+          <select class="form-select" id="paramTranslateModel">
+            <option value="deepseek-chat" selected>DeepSeek Chat</option>
+            <option value="deepseek-reasoner">DeepSeek Reasoner</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">源语言（翻译用）</label>
+          <select class="form-select" id="paramSourceLang">
+            <option value="auto" selected>自动检测</option>
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+            <option value="ko">한국어</option>
+          </select>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">术语词典</label>
+          <select class="form-select" id="paramTermsDict">
+            <option value="minecraft.json" selected>Minecraft 术语词典</option>
+            <option value="none">不使用</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">跳过翻译</label>
+          <div class="skip-row" style="padding:0;margin-top:4px">
+            <label class="skip-chip" id="skipTranslateChip" onclick="toggleSkip('skipTranslate')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              跳过
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3: TTS Settings -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon step-3">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+        </div>
+        <div>
+          <div class="card-title">步骤 3 — TTS 语音合成</div>
+          <div class="card-subtitle">Edge-TTS / ChatTTS + 视频合并</div>
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="form-group">
+          <label class="form-label">TTS 引擎</label>
+          <select class="form-select" id="paramEngine">
+            <option value="edge" selected>Edge-TTS（在线）</option>
+            <option value="chattts">ChatTTS（离线）</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">语音角色</label>
+          <select class="form-select" id="paramVoice">
+            <option value="zh-CN-XiaoxiaoNeural" selected>晓晓 — 女声 (推荐)</option>
+            <option value="zh-CN-YunxiNeural">云希 — 男声</option>
+            <option value="zh-CN-YunjianNeural">云剑 — 男声</option>
+            <option value="zh-CN-XiaoyiNeural">晓伊 — 女声</option>
+            <option value="zh-CN-YunyangNeural">云扬 — 男声 (新闻)</option>
+            <option value="zh-CN-XiaochenNeural">晓晨 — 女声</option>
+          </select>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">基础语速 <span style="font-weight:400;color:var(--foreground-dim)">(+<span id="speedVal">30</span>%)</span></label>
+          <div class="range-row">
+            <input type="range" min="0" max="100" value="30" id="paramBaseSpeed">
+            <span class="range-value" id="speedDisplay">+30%</span>
+          </div>
+        </div>
+        <div class="form-group full">
+          <label class="form-label">最大语速 <span style="font-weight:400;color:var(--foreground-dim)">(+<span id="maxSpeedVal">50</span>%)</span></label>
+          <div class="range-row">
+            <input type="range" min="10" max="100" value="50" id="paramMaxSpeed">
+            <span class="range-value" id="maxSpeedDisplay">+50%</span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">跳过 TTS</label>
+          <div class="skip-row" style="padding:0;margin-top:4px">
+            <label class="skip-chip" id="skipTtsChip" onclick="toggleSkip('skipTts')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              跳过
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Advanced Settings -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon settings">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </div>
+        <div>
+          <div class="card-title">高级设置</div>
+          <div class="card-subtitle">TTS 编码器与视频参数</div>
+        </div>
+      </div>
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">启用字幕叠加</div>
+          <div class="toggle-hint">在输出视频中嵌入中文字幕</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="paramCaption" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">断点续传</div>
+          <div class="toggle-hint">中断后可继续上次进度</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="paramResume" checked>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="toggle-row">
+        <div>
+          <div class="toggle-label">强制重新执行</div>
+          <div class="toggle-hint">忽略已有中间产物，全部重新生成</div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="paramForce">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="form-grid" style="margin-top:12px">
+        <div class="form-group">
+          <label class="form-label">视频编码器</label>
+          <select class="form-select" id="paramVideoCodec">
+            <option value="libx264" selected>H.264 (CPU)</option>
+            <option value="h264_nvenc">H.264 NVENC (NVIDIA)</option>
+            <option value="h264_amf">H.264 AMF (AMD)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">视频比特率</label>
+          <select class="form-select" id="paramVideoBitrate">
+            <option value="3M">3 Mbps (720p)</option>
+            <option value="5M" selected>5 Mbps (1080p)</option>
+            <option value="10M">10 Mbps (高画质)</option>
+            <option value="15M">15 Mbps (4K)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">音频编码器</label>
+          <select class="form-select" id="paramAudioCodec">
+            <option value="aac" selected>AAC（推荐）</option>
+            <option value="pcm_s32le">PCM (无损)</option>
+            <option value="mp3">MP3</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">音频比特率</label>
+          <select class="form-select" id="paramAudioBitrate">
+            <option value="128k">128 kbps</option>
+            <option value="192k" selected>192 kbps</option>
+            <option value="256k">256 kbps</option>
+            <option value="320k">320 kbps</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">视频变速范围</label>
+          <select class="form-select" id="paramSpeedTolerance">
+            <option value="0.10">±10%（严格）</option>
+            <option value="0.15" selected>±15%（推荐）</option>
+            <option value="0.25">±25%（宽松）</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">工作线程数</label>
+          <select class="form-select" id="paramThreads">
+            <option value="3">3 线程</option>
+            <option value="7" selected>7 线程（推荐）</option>
+            <option value="15">15 线程</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Log Console -->
+  <div class="card full-width" style="margin-top:18px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <span style="font-weight:600;font-size:0.9rem">运行日志</span>
+      <button class="btn btn-outline btn-sm" onclick="clearLog()">清空</button>
+    </div>
+    <div class="log-console" id="logConsole">
+      <div style="color:var(--foreground-dim);text-align:center;padding-top:100px">
+        等待开始处理...
+      </div>
+    </div>
+  </div>
+
+  <!-- Action Bar -->
+  <div class="action-bar">
+    <div class="spacer"></div>
+    <button class="btn btn-outline" onclick="resetAll()" id="btnReset">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+      重置
+    </button>
+    <button class="btn btn-primary" onclick="startPipeline()" id="btnStart">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      开始处理
+    </button>
+    <button class="btn btn-danger" onclick="cancelPipeline()" id="btnCancel" style="display:none">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+      取消
+    </button>
+  </div>
+
+  <!-- Output Preview -->
+  <div class="output-card full-width" id="outputCard">
+    <div class="output-preview">
+      <div class="output-preview-icon">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      </div>
+      <div>
+        <div style="font-weight:600;font-size:0.9rem">输出视频</div>
+        <div class="output-path" id="outputPath">—</div>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="openOutput()" style="margin-left:auto">打开文件</button>
+    </div>
+  </div>
+</div>
+
+<!-- File Browser Modal -->
+<div class="modal-overlay" id="browserModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">浏览视频文件</span>
+      <button class="modal-close" onclick="closeBrowser()">✕</button>
+    </div>
+    <div class="modal-body" id="browserBody">
+      <div style="text-align:center;padding:40px;color:var(--foreground-dim)">加载中...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast Container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+// ── State ────────────────────────────────────────────
+const state = {
+  videoPath: null,
+  videoName: null,
+  skipExtract: false,
+  skipTranslate: false,
+  skipTts: false,
+  running: false,
+};
+
+// ── Polling ─────────────────────────────────────────
+let pollTimer = null;
+let lastLogIndex = 0;
+let lastRunningState = false;
+
+async function pollState() {
+  try {
+    const resp = await fetch(`/api/state?since=${lastLogIndex}`);
+    const data = await resp.json();
+
+    // Process new log entries
+    if (data.new_logs && data.new_logs.length > 0) {
+      data.new_logs.forEach(entry => addLogEntry(entry));
+      lastLogIndex = data.log_index;
+    }
+
+    // Update step statuses
+    if (data.step_status) {
+      for (const [step, status] of Object.entries(data.step_status)) {
+        updateStepUI(step, status);
+      }
+    }
+
+    // Detect completion (was running, now not)
+    if (lastRunningState && !data.running) {
+      onPipelineComplete(data.error);
+    }
+    lastRunningState = data.running;
+
+    // If just started polling and pipeline is running, update UI
+    if (data.running && !state.running) {
+      setRunningUI(true);
+    }
+  } catch (e) {
+    // Silently ignore polling errors
+  }
+}
+
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(pollState, 500);
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+// Always poll (lightweight)
+startPolling();
+
+// ── File Upload ──────────────────────────────────────
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+const videoSelected = document.getElementById('videoSelected');
+
+uploadZone.addEventListener('click', () => fileInput.click());
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('drag-over'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('drag-over'));
+uploadZone.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) selectVideoFile(file);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) selectVideoFile(fileInput.files[0]);
+});
+
+function selectVideoFile(file) {
+  if (!file.type.startsWith('video/')) {
+    showToast('请选择视频文件', 'error');
+    return;
+  }
+  state.videoPath = file.path || file.name;
+  state.videoName = file.name;
+  document.getElementById('videoName').textContent = file.name;
+  document.getElementById('videoMeta').textContent =
+    `${(file.size / 1024 / 1024).toFixed(1)} MB · ${file.type}`;
+  videoSelected.classList.add('active');
+  uploadZone.style.display = 'none';
+}
+
+function clearVideo() {
+  state.videoPath = null;
+  state.videoName = null;
+  fileInput.value = '';
+  videoSelected.classList.remove('active');
+  uploadZone.style.display = '';
+  document.getElementById('outputCard').classList.remove('active');
+}
+
+// ── File Browser ─────────────────────────────────────
+async function openBrowser() {
+  document.getElementById('browserModal').classList.add('active');
+  try {
+    const resp = await fetch('/api/browse');
+    const data = await resp.json();
+    renderFileBrowser(data.videos);
+  } catch (e) {
+    document.getElementById('browserBody').innerHTML =
+      '<div style="text-align:center;padding:40px;color:var(--error)">加载失败</div>';
+  }
+}
+
+function closeBrowser() {
+  document.getElementById('browserModal').classList.remove('active');
+}
+
+function renderFileBrowser(videos) {
+  if (!videos.length) {
+    document.getElementById('browserBody').innerHTML =
+      '<div style="text-align:center;padding:40px;color:var(--foreground-dim)">未找到视频文件</div>';
+    return;
+  }
+  const grouped = {};
+  videos.forEach(v => {
+    if (!grouped[v.dir]) grouped[v.dir] = [];
+    grouped[v.dir].push(v);
+  });
+  let html = '';
+  for (const [dir, files] of Object.entries(grouped)) {
+    html += `<div style="font-size:0.72rem;color:var(--foreground-dim);padding:8px 14px;text-transform:uppercase;letter-spacing:0.05em">${dir}</div>`;
+    files.forEach(f => {
+      html += `<div class="file-item" onclick="selectBrowserFile('${f.path.replace(/'/g, "\\'")}', '${f.name.replace(/'/g, "\\'")}')">
+        <svg class="file-item-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+        <span class="file-item-name">${f.name}</span>
+        <span class="file-item-size">${f.size_mb} MB</span>
+      </div>`;
+    });
+  }
+  document.getElementById('browserBody').innerHTML = `<div class="file-list">${html}</div>`;
+}
+
+function selectBrowserFile(path, name) {
+  state.videoPath = path;
+  state.videoName = name;
+  document.getElementById('videoName').textContent = name;
+  document.getElementById('videoMeta').textContent = path;
+  videoSelected.classList.add('active');
+  uploadZone.style.display = 'none';
+  closeBrowser();
+}
+
+// ── Skip Toggles ─────────────────────────────────────
+function toggleSkip(key) {
+  state[key] = !state[key];
+  const chipMap = {
+    skipExtract: 'skipExtractChip',
+    skipTranslate: 'skipTranslateChip',
+    skipTts: 'skipTtsChip',
+  };
+  const chip = document.getElementById(chipMap[key]);
+  if (state[key]) {
+    chip.classList.add('checked');
+  } else {
+    chip.classList.remove('checked');
+  }
+}
+
+// ── Range Inputs ─────────────────────────────────────
+['paramBaseSpeed', 'paramMaxSpeed'].forEach(id => {
+  const el = document.getElementById(id);
+  el.addEventListener('input', () => {
+    if (id === 'paramBaseSpeed') {
+      document.getElementById('speedDisplay').textContent = `+${el.value}%`;
+      document.getElementById('speedVal').textContent = el.value;
+    } else {
+      document.getElementById('maxSpeedDisplay').textContent = `+${el.value}%`;
+      document.getElementById('maxSpeedVal').textContent = el.value;
+    }
+  });
+});
+
+// ── Pipeline ─────────────────────────────────────────
+async function startPipeline() {
+  if (!state.videoPath) {
+    showToast('请先选择视频文件', 'error');
+    return;
+  }
+
+  state.running = true;
+  setRunningUI(true);
+  resetStepsUI();
+  document.getElementById('logConsole').innerHTML = '';
+  document.getElementById('outputCard').classList.remove('active');
+  lastLogIndex = 0;
+  lastRunningState = true;
+
+  const params = {
+    video: state.videoPath,
+    lang: document.getElementById('paramLang').value || null,
+    model: document.getElementById('paramModel').value,
+    device: document.getElementById('paramDevice').value,
+    engine: document.getElementById('paramEngine').value,
+    skip_extract: state.skipExtract,
+    skip_translate: state.skipTranslate,
+    skip_tts: state.skipTts,
+    force: document.getElementById('paramForce').checked,
+  };
+
+  try {
+    const resp = await fetch('/api/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      showToast(data.error, 'error');
+      setRunningUI(false);
+    }
+  } catch (e) {
+    showToast('启动失败: ' + e.message, 'error');
+    setRunningUI(false);
+  }
+}
+
+async function cancelPipeline() {
+  try {
+    await fetch('/api/cancel', { method: 'POST' });
+    showToast('已取消', 'error');
+  } catch (e) {}
+  setRunningUI(false);
+}
+
+function onPipelineComplete(error) {
+  setRunningUI(false);
+  if (!error) {
+    showToast('处理完成!', 'success');
+    checkOutput();
+  }
+  // Update status
+  const dot = document.getElementById('statusDot');
+  const txt = document.getElementById('statusText');
+  dot.className = error ? 'status-dot error' : 'status-dot idle';
+  txt.textContent = error ? '失败' : '就绪';
+}
+
+async function checkOutput() {
+  if (!state.videoPath) return;
+  try {
+    const resp = await fetch(`/api/output/check?video=${encodeURIComponent(state.videoPath)}`);
+    const data = await resp.json();
+    if (data.tts_output) {
+      document.getElementById('outputPath').textContent = data.tts_output;
+      document.getElementById('outputCard').classList.add('active');
+    }
+  } catch (e) {}
+}
+
+// ── UI Updates ───────────────────────────────────────
+function addLogEntry(entry) {
+  const console = document.getElementById('logConsole');
+  if (console.querySelector('div[style]')) console.innerHTML = '';
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  let cls = '';
+  if (/\[OK\]|完成|成功/.test(entry.text)) cls = 'log-ok';
+  else if (/\[X\]|错误|失败|Error/.test(entry.text)) cls = 'log-err';
+  else if (/\[!\]|警告/.test(entry.text)) cls = 'log-warn';
+  div.innerHTML = `<span class="log-time">${entry.time}</span><span class="log-text ${cls}">${escapeHtml(entry.text)}</span>`;
+  console.appendChild(div);
+  console.scrollTop = console.scrollHeight;
+}
+
+function updateStepUI(step, status) {
+  const map = { extract: 'step1', translate: 'step2', tts: 'step3' };
+  const el = document.getElementById(map[step]);
+  if (!el) return;
+  el.classList.remove('done', 'running', 'error');
+  if (status === 'done') el.classList.add('done');
+  if (status === 'running') el.classList.add('running');
+  if (status === 'error') el.classList.add('error');
+}
+
+function resetStepsUI() {
+  ['step1', 'step2', 'step3'].forEach(id => {
+    document.getElementById(id).classList.remove('done', 'running', 'error');
+  });
+}
+
+function setRunningUI(running) {
+  state.running = running;
+  document.getElementById('btnStart').style.display = running ? 'none' : '';
+  document.getElementById('btnCancel').style.display = running ? '' : 'none';
+  document.getElementById('btnReset').disabled = running;
+
+  const dot = document.getElementById('statusDot');
+  const txt = document.getElementById('statusText');
+  if (running) {
+    dot.className = 'status-dot running';
+    txt.textContent = '处理中...';
+  } else {
+    dot.className = 'status-dot idle';
+    txt.textContent = '就绪';
+  }
+}
+
+function clearLog() {
+  document.getElementById('logConsole').innerHTML =
+    '<div style="color:var(--foreground-dim);text-align:center;padding-top:100px">日志已清空</div>';
+}
+
+function resetAll() {
+  clearVideo();
+  resetStepsUI();
+  clearLog();
+  document.getElementById('outputCard').classList.remove('active');
+  setRunningUI(false);
+  document.getElementById('paramLang').value = '';
+  document.getElementById('paramModel').value = 'small';
+  document.getElementById('paramDevice').value = 'cpu';
+  document.getElementById('paramEngine').value = 'edge';
+  document.getElementById('paramVoice').value = 'zh-CN-XiaoxiaoNeural';
+  document.getElementById('paramForce').checked = false;
+  document.getElementById('paramCaption').checked = true;
+  document.getElementById('paramResume').checked = true;
+  Object.keys(state).forEach(k => {
+    if (k.startsWith('skip')) { state[k] = false; updateSkipChips(); }
+  });
+}
+
+function updateSkipChips() {
+  ['skipExtract', 'skipTranslate', 'skipTts'].forEach(k => {
+    const chipMap = { skipExtract: 'skipExtractChip', skipTranslate: 'skipTranslateChip', skipTts: 'skipTtsChip' };
+    const chip = document.getElementById(chipMap[k]);
+    if (state[k]) chip.classList.add('checked');
+    else chip.classList.remove('checked');
+  });
+}
+
+// ── Toast ────────────────────────────────────────────
+function showToast(msg, type) {
+  const container = document.getElementById('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = msg;
+  container.appendChild(toast);
+  setTimeout(() => { toast.remove(); }, 4000);
+}
+
+// ── Helpers ──────────────────────────────────────────
+function escapeHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+function openOutput() {
+  const path = document.getElementById('outputPath').textContent;
+  if (path && path !== '—') {
+    window.open('/api/output?path=' + encodeURIComponent(path), '_blank');
+  }
+}
+
+// Close modal on overlay click
+document.getElementById('browserModal').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeBrowser();
+});
+
+// Keyboard shortcut
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key === 'o') {
+    e.preventDefault();
+    openBrowser();
+  }
+});
+</script>
+</body>
+</html>
