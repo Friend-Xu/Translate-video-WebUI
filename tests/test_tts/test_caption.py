@@ -19,7 +19,7 @@ import pytest
 from pipeline.tts_caption import CaptionRenderer
 
 
-FONT_PATH = os.path.join(PROJECT_ROOT, "Model", "font", "Minecraft_font",
+FONT_PATH = os.path.join(PROJECT_ROOT, "models", "font", "Minecraft_font",
                          "5_Minecraft_AE_zh_en.ttf")
 
 

@@ -25,6 +25,10 @@ source_file/
 
 # Logs
 *.log
+log/
+
+# Generated runtime files
+file/
 
 # Temporary and diagnostic files
 _*.py

@@ -65,7 +65,7 @@ class TTSAdapter:
             video_bitrate="10M",
         )
         # 字体路径
-        self._config.caption_font = "./Model/font/Minecraft_font/5_Minecraft_AE_zh_en.ttf"
+        self._config.caption_font = "./models/font/Minecraft_font/5_Minecraft_AE_zh_en.ttf"
 
         self._pipeline = TtsPipeline(self._config)
 

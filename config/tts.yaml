@@ -13,14 +13,14 @@ tts:
   voice_clone_sample: null
   openvoice_model_version: v2
   enable_caption: true
-  caption_font: ./Model/font/Minecraft_font/5_Minecraft_AE_zh_en.ttf
+  caption_font: ./models/font/Minecraft_font/5_Minecraft_AE_zh_en.ttf
   enable_resume: true
   resume_file: file/wav_path.txt
   output_dir: file/EdgeTTS_Audio_file
   video_output_dir: file/Video_file
   audio_codec: pcm_s32le
   audio_bitrate: 192k
-  video_codec: h264_nvenc
+  video_codec: libx264
   video_audio_codec: aac
   video_bitrate: 10M
   write_logger: null
@@ -28,5 +28,5 @@ tts:
   #   Windows: C:\Program Files\ImageMagick-<version>\magick.exe
   #   Linux/macOS: auto-detected from PATH (just "magick")
   imagemagick_binary: magick
-  openvoice_v1_dir: ./Model/openvoice_v1
-  openvoice_v2_dir: ./Model/openvoice_v2
+  openvoice_v1_dir: ./models/openvoice_v1
+  openvoice_v2_dir: ./models/openvoice_v2

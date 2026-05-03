@@ -1,18 +1,14 @@
-# Translate_video — 视频字幕提取 / 翻译 / TTS 合成流水线
+# Translate_video — 视频字幕提取 / 翻译 / TTS 语音合成流水线
 
-将视频自动转写为字幕、翻译目标语言、TTS 语音合成配音的端到端流水线。
-
-支持两条线路：
-- **字幕提取 + 翻译**（旧，成熟稳定）
-- **字幕提取 + 翻译 + TTS 语音合成**（新，建议使用）
+将视频自动转写字幕 → 翻译目标语言 → TTS 语音合成配音 → 最终合成视频的端到端流水线。
 
 ## 快速开始
 
 ### 环境要求
 
-- Python 3.11.9（已验证）
-- ffmpeg（需添加到 PATH）
-- 网络：中国大陆用户自动走 `hf-mirror.com`
+- Python 3.14（已验证，3.11+ 应该兼容）
+- ffmpeg（自动使用 `imageio_ffmpeg` 捆绑版，无需手动安装）
+- 网络：中国大陆用户自动走 `hf-mirror.com` 镜像下载模型
 
 ### 安装
 
@@ -23,131 +19,198 @@ python -m venv .venv
 
 # 安装依赖
 pip install -r requirements.txt
-
-# 模型自动下载（首次运行自动触发，存放在 models/ 目录）
 ```
 
-### 运行完整流水线（推荐 🆕）
+模型在首次运行时会自动下载到 `models/` 目录，无需手动操作。
 
-一行命令走完 4 步：字幕提取 → 翻译 → TTS 合成 → 拼接最终视频：
+### 运行流水线
+
+**推荐方式 — `main.py`（3 步：提取 → 翻译 → TTS）：**
 
 ```bash
-.venv\Scripts\python translate_video.py source_file/test.mp4 --lang en
+.venv\Scripts\python main.py source_file/test.mp4 --lang en
 ```
 
-可选参数：
-
-| 参数 | 说明 |
-|------|------|
-| `--lang en` | 指定源语言（自动检测可省略） |
-| `--model small` | whisper 模型大小 (tiny/base/small/medium/large-v3) |
-| `--tts-workers 2` | TTS 线程数 |
-| `--skip-extract` | 跳过字幕提取（复用已有 SRT） |
-| `--skip-translate` | 跳过翻译（复用已有翻译 SRT） |
-
-输出目录 `source_file/{video_name}_out/`，最终视频 `{name}-TTS.mp4`。
-
-### 运行旧流水线（仅字幕翻译）
+**备选方式 — `translate_video.py`（4 步：提取 → 翻译 → TTS → 合并）：**
 
 ```bash
-# 方式一：交互式（旧）
-.venv\Scripts\python multi_start_translate_video.py
-# 按提示输入视频路径
-
-# 方式二：一键提取
-.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --lang en
+.venv\Scripts\python translate_video.py source_file/test.mp4 --lang en --model small
 ```
 
-### 配置
+**仅字幕提取（不翻译、不 TTS）：**
 
-#### TTS 配置 (`config/tts.yaml`)
+```bash
+.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --lang en --model small
+```
+
+**仅翻译（已有 SRT 文件）：**
+
+```bash
+.venv\Scripts\python -m SRT.SRT_Translator path/to/file-collation.srt
+```
+
+### 命令行参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--lang` | 自动检测 | 源语言 (en/ja/zh)，指定后启用 wav2vec2 对齐 |
+| `--model` | small | whisper 模型 (tiny/base/small/medium) |
+| `--engine` | edge | TTS 引擎 (edge/chattts) |
+| `--skip-extract` | — | 跳过字幕提取（复用已有 SRT） |
+| `--skip-translate` | — | 跳过翻译 |
+| `--skip-tts` | — | 跳过 TTS 合成 |
+| `--force` | — | 强制重新执行所有步骤 |
+| `--caption-font` | — | 字幕字体路径 |
+| `--caption-font-size` | — | 字幕字号 |
+| `--backup-dir` | — | 每步自动备份到指定目录 |
+
+### WebUI 启动
+
+项目提供了 React + Python 的 Web 界面：
+
+```bash
+# 双击运行
+GUI\start.bat
+
+# 或手动分步启动：
+# 后端（端口 8000）
+.venv\Scripts\python -m uvicorn GUI.server:app --host 127.0.0.1 --port 8000
+
+# 前端（端口 5173，需先 cd GUI && npm install）
+cd GUI && npm run dev
+```
+
+启动后浏览器访问 `http://localhost:5173`。
+
+## 配置
+
+### 翻译配置 (`config/translate.yaml`)
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `api_key` | — | DeepSeek API Key（必填，也可设环境变量 `DEEPSEEK_API_KEY`） |
+| `model` | deepseek-chat | 翻译模型 |
+| `source_lang` | ja | 源语言 |
+| `semantic_check` | true | 启用语义相似度核对 |
+| `semantic_threshold` | 0.65 | 语义相似度阈值 |
+| `terms_dict.enabled` | true | 启用术语词典替换 |
+| `max_group_size` | 8 | 批翻译每组最大条数 |
+| `max_retries` | 2 | 翻译失败重试次数 |
+
+### TTS 配置 (`config/tts.yaml`)
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `voice` | zh-CN-XiaoxiaoNeural | Edge TTS 发音人 |
-| `base_speed` | +30% | TTS 基础语速 |
-| `max_speed` | +70% | TTS 最大语速（超过此值调视频速度） |
-| `speed_tolerance` | 0.15 | 容忍度：±15% 内调视频，超过则重调 TTS |
-| `enable_caption` | true | 是否渲染字幕 |
-| `enable_openvoice` | false | OpenVoice 音色克隆（暂为 Noop） |
+| `base_speed` | 30 | TTS 基础语速 (+30%) |
+| `max_speed` | 70 | TTS 最大语速 (+70%) |
+| `speed_tolerance` | 0.15 | 语速容忍度 |
+| `enable_caption` | true | 渲染字幕到视频 |
+| `enable_openvoice` | false | OpenVoice 音色克隆 |
 | `video_codec` | libx264 | 视频编码器 |
 | `video_bitrate` | 10M | 视频比特率 |
-
-#### 翻译配置 (`config/translate.yaml`)
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `api_key` | — | DeepSeek API Key（必填） |
-| `model` | deepseek-chat | 翻译模型 |
-| `source_lang` | ja | 源语言（ja/en/zh 等） |
-| `semantic_check` | true | 启用语义核对 |
-| `semantic_threshold` | 0.65 | 语义相似度阈值 |
-
-## 模块一览
-
-### TTS 语音合成模块（新 🆕）
-
-| 模块 | 文件 | 职责 |
-|------|------|------|
-| TTS 引擎接口 | `pipeline/tts_engine.py` | BaseTTSEngine Protocol + NoopTTSEngine |
-| Edge TTS | `pipeline/tts_edge.py` | edge-tts 实现（3 重试 + 错误日志） |
-| 时序对齐 | `pipeline/tts_timing.py` | TimingAdjuster — 语速调整至目标时长 |
-| 视频处理 | `pipeline/tts_video.py` | VideoSegmenter — 视频段裁剪/变速 |
-| 字幕渲染 | `pipeline/tts_caption.py` | CaptionRenderer — 字幕叠加 |
-| 音色克隆 | `pipeline/tts_openvoice.py` | OpenVoiceCloner（目前 Noop） |
-| 编排器 | `pipeline/tts_pipeline.py` | TtsPipeline — TTS 全流程编排 |
-| 断点恢复 | `pipeline/tts_resume.py` | ResumeManager — 进度保存/恢复 |
-| 兼容层 | `pipeline/tts_adapter.py` | TTSAdapter — 旧接口包装 |
-| 配置 | `pipeline/tts_config.py` | TTSConfig — 配置加载 + SRT 解析 |
-
-### 字幕提取模块（旧）
-
-| 模块 | 文件 | 职责 |
-|------|------|------|
-| 人声分离 | `SRT/VocalSeparator.py` | Demucs htdemucs 分离人声与背景 |
-| VAD 分段 | `SRT/VAD_Segmenter.py` | Silero VAD 检测语音段（阈值 0.25） |
-| 转写+对齐 | `SRT/SRT_Extract.py` | whisperX 转写 + wav2vec2 强制对齐（旧线） |
-| 字幕整理 | `SRT/Json_Convert_Srt.py` | JSON → SRT，日语启用 MeCab 分词 |
-| 翻译引擎 | `SRT/SRT_Translator.py` | DeepSeek API 翻译，三级降级 + 语义分组 |
-| 语义核对 | `SRT/TranslationVerifier.py` | 跨语言嵌入比较相似度 |
-| 定点识别 | `SRT/TargetedRecognizer.py` | 可疑字幕重新转录验证 |
-| 术语替换 | `SRT/TermReplacer.py` | 技术术语词典替换（Minecraft 299 条） |
-| 主线编排 | `extract_subtitles.py` | NODE 1→1.5→2→2.5→3→3.5→4（~200 行薄层） |
+| `threading_workers` | 7 | TTS 并行线程数 |
+| `imagemagick_binary` | magick | ImageMagick 路径（字幕渲染依赖） |
 
 ## 输出文件
 
-输入 `test.mp4` → 输出 `source_file/test_out/`：
+输入 `test.mp4` → 输出到 `source_file/test_out/`：
 
 ```
 test.srt                    # 原文 SRT
 test-en.srt                 # 英文字幕（源语言）
 test-zh.srt                 # 翻译后 SRT
-test-zh-replace.srt         # 最终 SRT（术语替换后）
-test_(Instrumental).wav     # 背景音乐（供 TTS 合成）
+test-zh-replace.srt         # 术语替换后最终 SRT
+test_(Instrumental).wav     # 背景音乐（Demucs 分离）
 video/                      # 逐段视频片段
 tts_audio/                  # TTS 合成音频
-audio/                      # 处理中间音频
-test-TTS.mp4                # 最终合成视频
+test-TTS.mp4                # 最终合成视频（目标语言配音 + 双语字幕）
+```
+
+## 模块结构
+
+```
+Translate_video/
+├── main.py                  # 推荐入口：3 步流水线
+├── translate_video.py       # 备选入口：4 步流水线
+├── extract_subtitles.py     # 字幕提取入口（独立运行）
+├── pipeline/                # 核心模块
+│   ├── audio.py             # 音频提取 + C2 缺陷修复
+│   ├── transcriber.py       # Silero VAD + faster-whisper + wav2vec2 对齐
+│   ├── video_info.py        # 视频元数据采集
+│   ├── gpu_detect.py        # GPU/编码器自动检测
+│   ├── speed_strategy.py    # 语速调整策略
+│   ├── demucs_instr.py      # Demucs 人声/背景分离
+│   ├── tts_engine.py        # TTS 引擎协议 (Protocol)
+│   ├── tts_edge.py          # Edge TTS 实现
+│   ├── tts_chattts.py       # ChatTTS 实现
+│   ├── tts_timing.py        # 时序对齐 (TimingAdjuster)
+│   ├── tts_video.py         # 视频分段/变速/合成
+│   ├── tts_caption.py       # 字幕渲染 (CaptionRenderer)
+│   ├── tts_pipeline.py      # TTS 全流程编排
+│   ├── tts_adapter.py       # 兼容层封装
+│   ├── tts_config.py        # 配置加载 + SRT 解析
+│   ├── tts_resume.py        # 断点续传
+│   └── utils.py             # 通用工具 (ffmpeg 路径等)
+├── SRT/                     # 字幕处理工具
+│   ├── SRT_Translator.py    # DeepSeek 翻译（3 级降级）
+│   ├── TranslationVerifier.py # 跨语言语义核对
+│   ├── TermReplacer.py      # 术语词典替换
+│   └── Wav2Vec2Aligner.py   # wav2vec2 强制对齐封装
+├── whisperx_local/          # 剪裁版 whisperX 对齐模块
+├── openvoice_cli/           # OpenVoice 音色克隆 CLI
+├── config/                  # YAML 配置文件
+│   ├── translate.yaml       # 翻译配置（gitignored，含 API Key）
+│   ├── translate.yaml.example # 翻译配置模板
+│   ├── tts.yaml             # TTS 配置
+│   └── terms/               # 术语词典
+├── GUI/                     # React WebUI
+│   ├── start.bat            # 一键启动前后端
+│   ├── server.py            # Python 后端 (FastAPI + uvicorn)
+│   └── ...
+├── tests/test_tts/          # TTS 测试套件 (181 tests)
+├── models/                  # 模型缓存（gitignored）
+└── source_file/             # 测试视频（gitignored）
+```
+
+## 模型存储
+
+所有模型自动下载到 `models/` 目录，项目可整体迁移：
+
+```
+models/
+├── whisper/       # faster-whisper (tiny/small/base)
+├── alignment/     # wav2vec2 对齐模型
+├── vad/           # Silero VAD v4.0
+├── hf_cache/      # HuggingFace 缓存
+├── TTS_model/     # ChatTTS 模型
+├── Demucs/        # 人声分离模型
+├── font/          # 字幕字体
+└── WavMark/       # 音频水印模型
+```
+
+## 运行测试
+
+```bash
+# 运行所有 TTS 测试
+.venv\Scripts\python -m pytest tests/test_tts/ -v
+
+# 运行单个测试文件
+.venv\Scripts\python -m pytest tests/test_tts/test_tts_edge.py -v
 ```
 
 ## 架构要点
 
 详见 `ARCHITECTURE.md`。
 
-- **TTS 引擎协议**：Protocol 模式，支持 Edge/ChatTTS/Cooqui/Azure 切换
-- **两档语速决策**：±15% 容忍度内调视频速度，超出则重新 TTS 合成
-- **背景音乐保留**：从原视频提取独立 Instrumental 音轨，保留背景乐
+- **TTS 引擎协议**：Protocol 模式，支持 Edge/ChatTTS 切换
+- **两档语速决策**：±15% 容忍度内调视频速度，超出重新 TTS 合成
+- **背景音乐保留**：Demucs 分离人声，保留背景乐到最终视频
 - **断点续传**：ResumeManager 支持进度保存，中断可恢复
-- **零侵入**：新模块全部独立文件，旧代码一刀不改
+- **C2 缺陷修复**：OBS 录制视频 AAC 填充间隙自动修复
+- **GPU 编码器自动检测**：自动选择最优 ffmpeg 编码器
+- **模型自包含**：所有模型存于项目目录，不依赖系统路径
 
-## 模型存储
+## 许可证
 
-所有模型自动下载到项目 `models/` 目录，不依赖系统缓存，项目可整体迁移。
-
-```
-models/
-├── whisper/       # faster-whisper-small (461MB)
-├── alignment/     # wav2vec2 对齐模型 (1.2GB)
-├── vad/           # Silero VAD v4.0 (3MB)
-└── hf_cache/      # sentence-transformers 等 (470MB)
-```
+MIT License — 详见 `LICENSE`

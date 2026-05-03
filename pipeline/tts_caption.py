@@ -18,7 +18,7 @@ class CaptionRenderer:
 
     用法:
         renderer = CaptionRenderer(
-            font_path="./Model/font/Minecraft_font/5_Minecraft_AE_zh_en.ttf",
+            font_path="./models/font/Minecraft_font/5_Minecraft_AE_zh_en.ttf",
         )
         composite_clip = renderer.render(video, duration, "中文", "English")
     """

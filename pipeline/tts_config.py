@@ -171,10 +171,10 @@ class TTSConfig:
     """ImageMagick 可执行文件路径（字幕渲染依赖）"""
 
     # ── 模型路径 ──────────────────────────────────────────
-    openvoice_v1_dir: str = "./Model/openvoice_v1"
+    openvoice_v1_dir: str = "./models/openvoice_v1"
     """OpenVoice V1 模型目录"""
 
-    openvoice_v2_dir: str = "./Model/openvoice_v2"
+    openvoice_v2_dir: str = "./models/openvoice_v2"
     """OpenVoice V2 模型目录"""
 
     def __post_init__(self) -> None:
