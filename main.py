@@ -1,0 +1,371 @@
+#!/usr/bin/env python3
+"""
+Translate Video — 一站式翻译管线
+
+基于项目现有成熟模块编排：
+  extract_subtitles.py  → 字幕提取 + 强制对齐（指定 --lang 时自动启用 wav2vec2）
+  SRT_Translator        → 翻译
+  TermReplacer          → 术语替换
+  TtsPipeline           → TTS 合成 + 视频合并（新管线）
+
+用法:
+    python main.py <视频路径> [--lang en] [--engine chattts] [--skip-tts]
+
+参数与 translate_video.py、extract_subtitles.py 保持一致。
+"""
+
+from __future__ import annotations
+
+import argparse
+import io
+import os
+import subprocess
+import sys
+import time
+
+# Windows GBK terminal fix
+if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
+
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+
+def backup_step(label: str, paths: list[str], backup_root: str) -> None:
+    """将关键中间产物备份到带标签和时间戳的目录。"""
+    import shutil
+    ts = time.strftime("%H%M%S")
+    dest = os.path.join(backup_root, f"{ts}_{label}")
+    os.makedirs(dest, exist_ok=True)
+    for p in paths:
+        if not p or not os.path.exists(p):
+            continue
+        base = os.path.basename(p)
+        if os.path.isdir(p):
+            shutil.copytree(p, os.path.join(dest, base), dirs_exist_ok=True)
+        else:
+            shutil.copy2(p, os.path.join(dest, base))
+    print(f"  [备份] {label} → {dest}")
+
+
+def setup_hf_env() -> None:
+    """配置 HuggingFace 环境（镜像站 + 本地缓存）。"""
+    if not os.environ.get("HF_ENDPOINT"):
+        os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+    if not os.environ.get("HF_HUB_DISABLE_SYMLINKS_WARNING"):
+        os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+    hf_home = os.path.join(PROJECT_ROOT, "models", "hf_cache")
+    os.environ.setdefault("HF_HOME", hf_home)
+    os.environ.setdefault("TRANSFORMERS_CACHE", hf_home)
+    os.makedirs(hf_home, exist_ok=True)
+
+    # 所有模型统一放到项目本地 models/ 下，不依赖 ~/.cache
+    models_root = os.path.join(PROJECT_ROOT, "models")
+    os.environ.setdefault("TORCH_HOME", models_root)
+    os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME",
+                          os.path.join(models_root, "hf_cache"))
+    os.makedirs(os.path.join(models_root, "hub", "checkpoints"), exist_ok=True)
+
+
+def guess_source_srt(video_path: str) -> str | None:
+    """从 extract_subtitles.py 输出目录推测原始 SRT。"""
+    candidate = os.path.splitext(video_path)[0] + "_out"
+    name = os.path.splitext(os.path.basename(video_path))[0]
+    srt = os.path.join(candidate, f"{name}.srt")
+    return srt if os.path.isfile(srt) else None
+
+
+def guess_translated_srt(video_path: str) -> str | None:
+    """从 translate_video.py 输出目录推测翻译后 SRT。"""
+    candidate = os.path.splitext(video_path)[0] + "_out"
+    name = os.path.splitext(os.path.basename(video_path))[0]
+
+    # translate_video.py 输出: {name}-zh-replace.srt
+    srt = os.path.join(candidate, f"{name}-zh-replace.srt")
+    if os.path.isfile(srt):
+        return srt
+
+    # main.py 旧格式: {name}-collation-ZH_CN-replace.srt
+    legacy = os.path.join(candidate, f"{name}-collation-ZH_CN-replace.srt")
+    return legacy if os.path.isfile(legacy) else None
+
+
+def step_extract(video: str, lang: str | None, model: str, device: str,
+                  backup_dir: str = "", skip_defect_check: bool = False) -> None:
+    """步骤 1: 委托 extract_subtitles.py 完成全流程。
+
+    含缺陷检测(N1.5)、音频提取(N2)、背景乐提取(N2.5)、
+    VAD+转录(N3)、wav2vec2 对齐(N3.5，指定 --lang 时启用)、
+    JSON→SRT(N4)。
+    """
+    print("\n[1/3] 字幕提取...")
+    script = os.path.join(PROJECT_ROOT, "extract_subtitles.py")
+    cmd = [
+        sys.executable, script,
+        video,
+        "--model", model,
+        "--device", device,
+    ]
+    if lang:
+        cmd.extend(["--lang", lang])
+    if skip_defect_check:
+        cmd.append("--skip-defect-check")
+
+    # 子进程 UTF-8 输出兼容（Windows GBK 终端）
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+
+    print(f"  运行: extract_subtitles.py")
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT, env=env)
+    if result.returncode != 0:
+        print(f"[X] 字幕提取失败 (code={result.returncode})")
+        sys.exit(result.returncode)
+    out_dir = os.path.splitext(video)[0] + "_out"
+    if backup_dir and os.path.isdir(out_dir):
+        backup_step("01_extract", [out_dir], backup_dir)
+    print("  [OK] 字幕提取完成")
+
+
+def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "") -> str:
+    """步骤 2: 翻译 + 术语替换。
+
+    复用 SRT_Translator + TermReplacer（translate_video.py 的 step_2 逻辑）。
+    输出路径与 translate_video.py 一致：{name}-zh-replace.srt
+    """
+    target = os.path.dirname(video)
+    name = os.path.splitext(os.path.basename(video))[0]
+    translated_srt = os.path.join(target, f"{name}-zh-replace.srt")
+
+    if os.path.isfile(translated_srt) and not force:
+        print(f"  [OK] 翻译文件已存在: {translated_srt}")
+        return translated_srt
+
+    print("\n[2/3] 字幕翻译 + 术语替换...")
+    sys.path.insert(0, PROJECT_ROOT)
+
+    from SRT.SRT_Translator import SRTTranslator
+    from SRT.TermReplacer import TermReplacer
+
+    translator = SRTTranslator()
+    auto_srt, pending = translator.translate(srt_path)
+
+    if pending:
+        print(f"\n[!] 有 {getattr(translator.log, 'manual_pending', '?')} 组需人工翻译")
+        print(f"  待翻文件: {pending}")
+        print("  请完成人工翻译后重新运行")
+        sys.exit(0)
+
+    # SRTTranslator 输出命名可能不同，标准化为 {name}-zh-replace.srt
+    if os.path.isfile(auto_srt) and auto_srt != translated_srt:
+        import shutil
+        shutil.move(auto_srt, translated_srt)
+
+    if os.path.isfile(translated_srt):
+        print("  术语词典替换...")
+        replacer = TermReplacer()
+        replacer.replace_file(translated_srt, translated_srt)
+    else:
+        print(f"  [OK] 翻译完成: {auto_srt}")
+        return auto_srt
+
+    print(f"  [OK] 翻译 + 术语替换完成: {translated_srt}")
+    out_dir = os.path.splitext(video)[0] + "_out"
+    if backup_dir and os.path.isdir(out_dir):
+        backup_step("02_translate", [translated_srt, out_dir], backup_dir)
+    return translated_srt
+
+
+def step_tts(
+    video: str,
+    srt_source: str,
+    srt_translated: str,
+    engine: str,
+    config_path: str | None,
+    force: bool,
+    backup_dir: str = "",
+    caption_font: str | None = None,
+    caption_font_size: int | None = None,
+    caption_stroke_width: float | None = None,
+) -> None:
+    """步骤 3: TTS 合成 + 视频合并（新管线 TtsPipeline）
+
+    支持 edge / chattts 引擎，GPU 编码自动检测，
+    自动合并视频段输出最终文件。
+    """
+    out_dir = os.path.splitext(video)[0] + "_out"
+    instrumental = os.path.join(out_dir, f"{os.path.splitext(os.path.basename(video))[0]}" + "_(Instrumental).wav")
+    final_output = os.path.join(out_dir, os.path.splitext(os.path.basename(video))[0] + "-TTS.mp4")
+
+    out_dir_bak = os.path.splitext(video)[0] + "_out"
+    if os.path.isfile(final_output) and not force:
+        print(f"\n[3/3] TTS 合成 [OK] 最终视频已存在: {final_output}")
+        if backup_dir and os.path.isdir(out_dir_bak):
+            backup_step("03_tts_done", [final_output, out_dir_bak], backup_dir)
+        return
+
+    if not os.path.isfile(instrumental):
+        print(f"\n[3/3] [X] 找不到背景音乐: {instrumental}")
+        print("   请先执行步骤 1（字幕提取会自动生成）")
+        sys.exit(1)
+
+    print(f"\n[3/3] TTS 语音合成 + 视频合并 ({engine})...")
+
+    from pipeline.tts_config import TTSConfig
+
+    cfg = TTSConfig.from_yaml(config_path) if config_path and os.path.isfile(config_path) else TTSConfig()
+
+    cfg.engine_type = engine
+    if caption_font:
+        cfg.caption_font = caption_font
+    if caption_font_size is not None:
+        cfg.caption_font_size = caption_font_size
+    if caption_stroke_width is not None:
+        cfg.caption_stroke_width = caption_stroke_width
+    cfg.enable_merge = True
+    cfg.final_output_path = final_output
+    cfg.output_dir = out_dir
+    cfg.video_output_dir = os.path.join(out_dir, "video")
+    cfg.resume_file = os.path.join(out_dir, "wav_path.txt")
+
+    # GPU 编码器自动检测（含 preset 调整）
+    from pipeline.gpu_detect import apply_best_encoder_to_config, _ENCODER_PRESETS
+    apply_best_encoder_to_config(cfg)
+    if cfg.video_codec in _ENCODER_PRESETS:
+        cfg.video_preset = _ENCODER_PRESETS[cfg.video_codec]  # 兼容硬件编码器 preset
+        print(f"  [GPU 检测] codec={cfg.video_codec} preset={cfg.video_preset}")
+
+    # 运行新管线
+    from pipeline.tts_pipeline import TtsPipeline
+
+    pipeline = TtsPipeline(cfg)
+    pipeline.run(
+        video_path=video,
+        instrumental_path=instrumental,
+        chinese_srt_path=srt_translated,
+        english_srt_path=srt_source,
+    )
+
+    if os.path.isfile(final_output):
+        sz = os.path.getsize(final_output)
+        print(f"  [OK] 最终视频: {final_output} ({sz/1024/1024:.1f}MB)")
+    else:
+        print(f"  [OK] TTS 合成完成（最终视频路径: {final_output}）")
+    out_dir_bak = os.path.splitext(video)[0] + "_out"
+    if backup_dir and os.path.isdir(out_dir_bak):
+        backup_step("03_tts_done", [final_output, out_dir_bak], backup_dir)
+
+
+def main():
+    setup_hf_env()
+
+    parser = argparse.ArgumentParser(
+        description="Translate Video — 一站式翻译管线",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  python main.py video.mp4
+  python main.py video.mp4 --lang ja                # 日语 + wav2vec2 对齐
+  python main.py video.mp4 --engine chattts          # 离线 TTS
+  python main.py video.mp4 --lang ja --engine chattts --skip-translate
+  python main.py video.mp4 --skip-tts                # 只做字幕提取+翻译
+        """,
+    )
+
+    parser.add_argument("video", help="源视频文件路径")
+    parser.add_argument("--lang", default=None,
+                        help="视频源语言代码，指定后自动启用 wav2vec2 对齐 (en/ja/zh)")
+    parser.add_argument("--model", default="small",
+                        help="whisper 模型大小 (tiny/base/small/medium)")
+    parser.add_argument("--device", default="cpu",
+                        help="计算设备 (cpu)")
+    parser.add_argument("--engine", default="edge", choices=["edge", "chattts"],
+                        help="TTS 引擎 (默认 edge)")
+    parser.add_argument("--config", help="TTS YAML 配置文件路径")
+    parser.add_argument("--skip-extract", action="store_true",
+                        help="跳过字幕提取")
+    parser.add_argument("--skip-defect-check", action="store_true",
+                        help="跳过音频缺陷检测 (NODE 1.5)")
+    parser.add_argument("--skip-translate", action="store_true",
+                        help="跳过翻译")
+    parser.add_argument("--skip-tts", action="store_true",
+                        help="跳过 TTS 合成")
+    parser.add_argument("--force", action="store_true",
+                        help="强制重新执行所有步骤")
+    parser.add_argument("--backup-dir", default="",
+                        help="步骤备份目录（如 debug_backups），每一步自动保存副本")
+    parser.add_argument("--caption-font", default=None,
+                        help="字幕字体文件路径")
+    parser.add_argument("--caption-font-size", type=int, default=None,
+                        help="字幕字号（像素）")
+    parser.add_argument("--caption-stroke-width", type=float, default=None,
+                        help="字幕描边宽度")
+
+    args = parser.parse_args()
+    video = os.path.abspath(args.video)
+
+    if not os.path.isfile(video):
+        print(f"错误: 视频不存在: {video}")
+        sys.exit(1)
+
+    t_start = time.time()
+    print(f"\n  视频: {video}")
+    print(f"  语言: {args.lang or '自动检测'}")
+    print(f"  TTS:  {args.engine}\n")
+
+    try:
+        # ── 步骤 1: 字幕提取 ──
+        # extract_subtitles.py 包含: 缺陷检测 → 音频提取 → VAD → 转录 → 对齐 → SRT
+        if not args.skip_extract:
+            step_extract(video, lang=args.lang, model=args.model, device=args.device,
+                         backup_dir=args.backup_dir, skip_defect_check=args.skip_defect_check)
+        else:
+            print("[1/3] 字幕提取 — 已跳过 (--skip-extract)")
+
+        # 确定原始 SRT 路径
+        srt_source = guess_source_srt(video)
+        if not srt_source:
+            print("[X] 找不到字幕文件。请先执行字幕提取或指定正确路径。")
+            sys.exit(1)
+
+        # ── 步骤 2: 翻译 ──
+        srt_translated = srt_source  # default: use source if skip-translate
+        if not args.skip_translate:
+            srt_translated = step_translate(video, srt_source, force=args.force, backup_dir=args.backup_dir)
+        else:
+            print("[2/3] 翻译 — 已跳过 (--skip-translate)")
+
+        # ── 步骤 3: TTS ──
+        if not args.skip_tts:
+            step_tts(
+                video,
+                srt_source=srt_source,
+                srt_translated=srt_translated,
+                engine=args.engine,
+                config_path=args.config,
+                force=args.force,
+                backup_dir=args.backup_dir,
+                caption_font=args.caption_font,
+                caption_font_size=args.caption_font_size,
+                caption_stroke_width=args.caption_stroke_width,
+            )
+        else:
+            print("[3/3] TTS 合成 — 已跳过 (--skip-tts)")
+
+        elapsed = time.time() - t_start
+        print(f"\n{'='*50}")
+        print(f"[OK] 全部完成! 耗时: {elapsed/60:.1f} 分钟")
+        print(f"{'='*50}")
+
+    except KeyboardInterrupt:
+        print("\n[!] 用户中断")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n[X] 流程失败: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
