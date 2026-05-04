@@ -70,7 +70,7 @@ pip install -r requirements.txt
 
 ```bash
 # 双击运行
-GUI\start.bat
+GUI\start_WebUI.bat
 
 # 或手动分步启动：
 # 后端（端口 8000）
@@ -112,6 +112,23 @@ cd GUI && npm run dev
 | `threading_workers` | 7 | TTS 并行线程数 |
 | `imagemagick_binary` | magick | ImageMagick 路径（字幕渲染依赖） |
 
+### 字幕样式配置 (`config/caption.yaml`)
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `font` | — | 字幕字体路径 |
+| `font_size` | 0 | 字号 (0=自动按视频尺寸计算) |
+| `font_size_factor` | 0.03 | 自动字号比例因子 |
+| `width_ratio` | 0.85 | 字幕最大宽度比例 |
+| `font_color` | #ffffff | 字体颜色 |
+| `stroke_width` | 1.5 | 描边宽度 |
+| `stroke_color` | — | 描边颜色 |
+| `bg_color` | — | 背景色 (rgba) |
+| `alignment` | center | 对齐方式 |
+| `position` | bottom | 字幕位置 |
+| `max_lines` | 2 | 最大行数 |
+| `enable_subtitle_optimization` | true | 启用字幕质量优化 |
+
 ## 输出文件
 
 输入 `test.mp4` → 输出到 `source_file/test_out/`：
@@ -151,24 +168,30 @@ Translate_video/
 │   ├── tts_adapter.py       # 兼容层封装
 │   ├── tts_config.py        # 配置加载 + SRT 解析
 │   ├── tts_resume.py        # 断点续传
+│   ├── caption_config.py    # 字幕样式配置
+│   ├── subtitle_optimizer.py # 字幕质量优化
 │   └── utils.py             # 通用工具 (ffmpeg 路径等)
 ├── SRT/                     # 字幕处理工具
 │   ├── SRT_Translator.py    # DeepSeek 翻译（3 级降级）
 │   ├── TranslationVerifier.py # 跨语言语义核对
 │   ├── TermReplacer.py      # 术语词典替换
-│   └── Wav2Vec2Aligner.py   # wav2vec2 强制对齐封装
+│   ├── Wav2Vec2Aligner.py   # wav2vec2 强制对齐封装
+│   ├── Json_Convert_Srt.py  # JSON → SRT 转换器
+│   └── Json_Convert_Srt_EN.py # JSON → SRT 转换器 (英文)
 ├── whisperx_local/          # 剪裁版 whisperX 对齐模块
 ├── openvoice_cli/           # OpenVoice 音色克隆 CLI
 ├── config/                  # YAML 配置文件
 │   ├── translate.yaml       # 翻译配置（gitignored，含 API Key）
 │   ├── translate.yaml.example # 翻译配置模板
 │   ├── tts.yaml             # TTS 配置
+│   ├── caption.yaml         # 字幕样式配置
 │   └── terms/               # 术语词典
 ├── GUI/                     # React WebUI
-│   ├── start.bat            # 一键启动前后端
+│   ├── start_WebUI.bat      # 一键启动前后端
+│   ├── launcher.py          # WebUI 启动器
 │   ├── server.py            # Python 后端 (FastAPI + uvicorn)
 │   └── ...
-├── tests/test_tts/          # TTS 测试套件 (181 tests)
+├── tests/test_tts/          # TTS 测试套件
 ├── models/                  # 模型缓存（gitignored）
 └── source_file/             # 测试视频（gitignored）
 ```
