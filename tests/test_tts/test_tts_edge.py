@@ -182,7 +182,6 @@ class TestEdgeTTSEngine:
 
         config = TTSConfig(
             voice="en-US-JennyNeural",
-            resume_file=os.path.join(temp_dir, "wav_path.txt"),
         )
         engine = EdgeTTSEngineFactory.from_config(config)
         assert engine.voice == "en-US-JennyNeural"

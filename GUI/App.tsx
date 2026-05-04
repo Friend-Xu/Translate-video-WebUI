@@ -71,12 +71,14 @@ export default function App() {
   }, [config, updateConfig, startPipeline, showMsg])
 
   const handleSaveConfig = useCallback(() => {
-    try {
-      localStorage.setItem('tv_config', JSON.stringify(config))
-      showMsg('配置已保存', 'success')
-    } catch {
-      showMsg('保存失败', 'error')
-    }
+    const { videoPath, outputPath, forceRetry, defaultVideoDir, ...toSave } = config
+    fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(toSave),
+    })
+      .then(r => { if (r.ok) showMsg('配置已保存', 'success'); else showMsg('保存失败', 'error') })
+      .catch(() => showMsg('保存失败', 'error'))
   }, [config, showMsg])
 
   return (

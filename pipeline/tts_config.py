@@ -116,15 +116,49 @@ class TTSConfig:
     caption_font_size: int = 0
     """字幕字号（像素），0 表示根据视频宽度自动计算"""
 
+    caption_font_color: str = "white"
+    """字幕字体颜色"""
+
     caption_stroke_width: float = 0.0
     """字幕描边宽度，0.0 表示使用默认值"""
 
-    # ── 断点续传 ──────────────────────────────────────────
-    enable_resume: bool = True
-    """是否启用断点续传"""
+    caption_stroke_color: str = "black"
+    """字幕描边颜色"""
 
-    resume_file: str = "file/wav_path.txt"
-    """断点续传进度记录文件"""
+    caption_bg_color: str = "rgba(0,0,0,128)"
+    """字幕背景色 RGBA 字符串"""
+
+    caption_alignment: str = "center"
+    """字幕对齐方式: center | left | right"""
+
+    caption_position: str = "bottom"
+    """字幕位置: bottom | top"""
+
+    caption_font_size_factor: float = 0.030
+    """自动计算字号时的缩放系数（相对于视频宽度，默认 3%）"""
+
+    caption_width_ratio: float = 0.85
+    """字幕文本框宽度占视频宽度的比例（默认 85%，左右各 7.5% 留白）"""
+
+    caption_max_lines: int = 2
+    """字幕最大行数。超出时先缩小字号，仍超出则由 SubtitleOptimizer 拆分"""
+
+    caption_max_font_size: int = 0
+    """字幕最大字号（像素）。0 表示自动根据视频高度计算"""
+
+    caption_max_font_size_ratio: float = 0.045
+    """当 caption_max_font_size=0 时，最大字号 = 视频高度 * 此比例（默认 4.5%）"""
+
+    caption_min_font_size: int = 12
+    """字幕最小字号（像素）。缩到此值仍超出 max_lines 时触发拆分"""
+
+    # ── 字幕渲染优化 ──────────────────────────────────────
+    enable_subtitle_optimization: bool = True
+    """是否启用字幕拆分优化（长字幕拆分为多段接力显示）"""
+
+    # ── 断点续传 ──────────────────────────────────────────
+    enable_resume: bool = False
+    """是否启用断点续传（跳过已存在的输出视频段，默认关闭以全新运行）"""
 
     # ── 输出路径 ──────────────────────────────────────────
     output_dir: str = "file/EdgeTTS_Audio_file"
@@ -195,6 +229,16 @@ class TTSConfig:
             raise ValueError(f"video_speed_min 应在 (0, 2] 范围内，当前: {self.video_speed_min}")
         if not 0 < self.video_speed_max <= 2.0:
             raise ValueError(f"video_speed_max 应在 (0, 2] 范围内，当前: {self.video_speed_max}")
+        if not 0.01 <= self.caption_font_size_factor <= 0.10:
+            raise ValueError(f"caption_font_size_factor 应在 [0.01, 0.10] 范围内，当前: {self.caption_font_size_factor}")
+        if not 0.50 <= self.caption_width_ratio <= 1.0:
+            raise ValueError(f"caption_width_ratio 应在 [0.50, 1.0] 范围内，当前: {self.caption_width_ratio}")
+        if not 1 <= self.caption_max_lines <= 10:
+            raise ValueError(f"caption_max_lines 应在 [1, 10] 范围内，当前: {self.caption_max_lines}")
+        if self.caption_max_font_size < 0:
+            raise ValueError(f"caption_max_font_size 不能为负数，当前: {self.caption_max_font_size}")
+        if self.caption_min_font_size < 4:
+            raise ValueError(f"caption_min_font_size 不能小于 4，当前: {self.caption_min_font_size}")
 
     @classmethod
     def from_yaml(cls, path: str) -> "TTSConfig":
@@ -264,6 +308,38 @@ class TTSConfig:
             "caption": self.enable_caption,
             "voice": self.voice_clone_sample,
         }
+
+    def apply_caption_overrides(self, caption_cfg) -> None:
+        """从 CaptionConfig 覆盖字幕渲染相关字段。
+
+        仅覆盖非默认值字段，支持分层覆盖：
+        TTSConfig 默认值 → CaptionConfig 文件 → 单独 CLI args。
+        """
+        if caption_cfg.font:
+            self.caption_font = caption_cfg.font
+        if caption_cfg.font_size > 0:
+            self.caption_font_size = caption_cfg.font_size
+        if caption_cfg.font_color and caption_cfg.font_color != "white":
+            self.caption_font_color = caption_cfg.font_color
+        if caption_cfg.stroke_width > 0:
+            self.caption_stroke_width = caption_cfg.stroke_width
+        if caption_cfg.stroke_color and caption_cfg.stroke_color != "black":
+            self.caption_stroke_color = caption_cfg.stroke_color
+        if caption_cfg.bg_color and caption_cfg.bg_color != "rgba(0,0,0,128)":
+            self.caption_bg_color = caption_cfg.bg_color
+        if caption_cfg.alignment and caption_cfg.alignment != "center":
+            self.caption_alignment = caption_cfg.alignment
+        if caption_cfg.position and caption_cfg.position != "bottom":
+            self.caption_position = caption_cfg.position
+        if caption_cfg.max_lines != 2:
+            self.caption_max_lines = caption_cfg.max_lines
+        if caption_cfg.max_font_size > 0:
+            self.caption_max_font_size = caption_cfg.max_font_size
+        if abs(caption_cfg.font_size_factor - 0.030) > 1e-6:
+            self.caption_font_size_factor = caption_cfg.font_size_factor
+        if abs(caption_cfg.width_ratio - 0.85) > 1e-6:
+            self.caption_width_ratio = caption_cfg.width_ratio
+        self.enable_subtitle_optimization = caption_cfg.enable_subtitle_optimization
 
 
 def _fix_corrupted_timestamps(subs: list) -> None:

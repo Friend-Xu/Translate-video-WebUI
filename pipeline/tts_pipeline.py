@@ -72,18 +72,15 @@ class TtsPipeline:
         self.caption = caption_renderer or self._default_caption()
         self.video_seg = video_segmenter or self._default_video()
 
-        # ── 断点续传 ──────────────────────────────────────
+        # ── 断点续传（基于输出文件存在性） ──────────────
+        video_out = os.path.join(config.output_dir, "video")
         if resume_manager is not None:
             self._resume_manager = resume_manager
-        elif config.enable_resume:
-            self._resume_manager = ResumeManager(state_path=config.resume_file)
         else:
-            self._resume_manager = ResumeManager(state_path=os.devnull)
-            # 禁用自动保存
-            self._resume_manager.save = lambda: None
-
-        # 从 ResumeManager 加载已处理的条目
-        self._processed_pairs: set = self._resume_manager.state.processed_pairs.copy()
+            self._resume_manager = ResumeManager(video_output_dir=video_out)
+            if not config.enable_resume:
+                # 默认全新运行：不跳过已有文件
+                self._resume_manager.is_processed = lambda start, end: False
 
         # 多线程同步锁
         self._lock1 = threading.Lock()
@@ -144,8 +141,19 @@ class TtsPipeline:
     def _default_caption(self) -> CaptionRenderer:
         return CaptionRenderer(
             font_path=self.config.caption_font,
-            font_size=self.config.caption_font_size or None,
-            stroke_width=self.config.caption_stroke_width or 0.5,
+            font_size=self.config.caption_font_size if self.config.caption_font_size > 0 else None,
+            font_color=self.config.caption_font_color or "white",
+            stroke_color=self.config.caption_stroke_color or "black",
+            stroke_width=self.config.caption_stroke_width if self.config.caption_stroke_width > 0 else 0.5,
+            bg_color=self.config.caption_bg_color or "rgba(0,0,0,128)",
+            font_size_factor=self.config.caption_font_size_factor,
+            caption_width_ratio=self.config.caption_width_ratio,
+            max_lines=self.config.caption_max_lines,
+            max_font_size=self.config.caption_max_font_size if self.config.caption_max_font_size > 0 else None,
+            max_font_size_ratio=self.config.caption_max_font_size_ratio,
+            min_font_size=self.config.caption_min_font_size,
+            alignment=self.config.caption_alignment or "center",
+            position=self.config.caption_position or "bottom",
         )
 
     def _default_openvoice(self):
@@ -188,6 +196,7 @@ class TtsPipeline:
         current_video,
         instrumental_audio,
         subs_next=None,
+        caption_groups: list = None,
     ) -> Optional[dict]:
         """处理单条字幕：TTS → 时序对齐 → 视频段。
 
@@ -204,10 +213,6 @@ class TtsPipeline:
             成功返回结果字典，跳过返回 None，失败返回含 error 字段的字典
         """
         key = (start, end)
-
-        # 断点续传：已处理的直接跳过
-        if key in self._processed_pairs:
-            return None
 
         output_audio_path = os.path.join(
             self.config.output_dir, "audio", f"audio_{start}_{end}.wav"
@@ -250,14 +255,10 @@ class TtsPipeline:
             self.video_seg.slow_down_video_to_file(
                 current_video, instrumental_audio, tts_audio,
                 load_path, start, text_zh, text_eng, end,
+                caption_groups=caption_groups,
             )
 
             tts_audio.close()
-
-            # 标记处理完成
-            self._processed_pairs.add(key)
-            self._resume_manager.mark_processed(start, end)
-            self._resume_manager.save()
 
             return {
                 "start": start,
@@ -297,7 +298,6 @@ class TtsPipeline:
         """记录单条字幕的处理错误。"""
         tqdm.write(f"[ERROR] 字幕 [{start}-{end}] 处理失败: {error}")
         self._resume_manager.add_error(start, end, text, error)
-        self._resume_manager.save()
 
     # ── 主入口 ────────────────────────────────────────
 
@@ -336,6 +336,15 @@ class TtsPipeline:
         self._resume_manager.state.total_subs = len(subs_cn)
 
         print(f"TTS Pipeline: {len(subs_cn)} 条字幕, 视频总长 {total_duration:.1f}s")
+
+        # ── 字幕渲染优化（可选） ───────────────────────
+        caption_groups = None
+        if self.config.enable_subtitle_optimization and self.config.enable_caption:
+            from pipeline.subtitle_optimizer import optimize
+            caption_groups = optimize(subs_cn, subs_en, self.caption, video.w)
+            total_sub_captions = sum(len(g) for g in caption_groups)
+            if total_sub_captions > len(subs_cn):
+                print(f"  字幕优化: {len(subs_cn)} → {total_sub_captions} 段 (拆分 {total_sub_captions - len(subs_cn)} 条)")
 
         # 背景音乐：提取各个视频段对应的独立 WAV 片段
         def _extract_instrumental_segment(seg_start_ms: int, seg_end_ms: int) -> str:
@@ -443,6 +452,7 @@ class TtsPipeline:
                         text_cn, text_en, start, end,
                         current_video, instrumental_segment,
                         subs_next=(subs_next[0], subs_next[1], subs_next[2]) if subs_next else None,
+                        caption_groups=caption_groups[i] if caption_groups else None,
                     )
 
                     if result and result.get("success"):
@@ -471,7 +481,8 @@ class TtsPipeline:
         print(f"  ⏭ 跳过（含断点续传）: {skipped}")
         if errors > 0:
             print(f"  ❌ 失败: {errors}")
-            print(f"  错误详情已保存到: {self._resume_manager.state_path}")
+            for err in self._resume_manager.state.error_subtitles:
+                print(f"    [{err['start']}-{err['end']}]: {err['error']}")
         print("=" * 50)
 
         # 合并视频段

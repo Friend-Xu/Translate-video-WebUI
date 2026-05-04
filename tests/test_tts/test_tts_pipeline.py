@@ -105,12 +105,13 @@ class TestTtsPipelineResumeIntegration:
         from pipeline.tts_pipeline import TtsPipeline
 
         cfg = TTSConfig()
-        cfg.resume_file = os.path.join(temp_dir, "resume.json")
+        cfg.output_dir = temp_dir
         cfg.enable_resume = True
 
         pipeline = TtsPipeline(config=cfg)
         assert pipeline._resume_manager is not None
-        assert pipeline._resume_manager.state_path == cfg.resume_file
+        expected_dir = os.path.join(temp_dir, "video")
+        assert pipeline._resume_manager.video_output_dir == expected_dir
 
     def test_pipeline_accepts_external_resume_manager(self, temp_dir):
         """TtsPipeline 接受外部传入的 ResumeManager"""
@@ -121,55 +122,44 @@ class TestTtsPipelineResumeIntegration:
         cfg = TTSConfig()
         cfg.enable_resume = False
 
-        mgr = ResumeManager(os.path.join(temp_dir, "custom_resume.json"))
+        mgr = ResumeManager(video_output_dir=os.path.join(temp_dir, "video"))
         pipeline = TtsPipeline(config=cfg, resume_manager=mgr)
         assert pipeline._resume_manager is mgr
 
     def test_resume_skips_processed(self, temp_dir):
-        """已处理的字幕在 run() 中被跳过"""
-        from pipeline.tts_config import TTSConfig, parse_srt
+        """已处理条目通过文件存在性检测被识别"""
+        from pipeline.tts_config import TTSConfig
         from pipeline.tts_pipeline import TtsPipeline
         from pipeline.tts_resume import ResumeManager
 
         cfg = TTSConfig()
         cfg.enable_caption = False
         cfg.enable_openvoice = False
+        cfg.output_dir = temp_dir
 
-        # 准备一个 SRT
-        srt_path = os.path.join(temp_dir, "test.srt")
-        with open(srt_path, "w", encoding="utf-8") as f:
-            f.write("""1
-00:00:01,000 --> 00:00:04,000
-第一条字幕
+        video_dir = os.path.join(temp_dir, "video")
+        os.makedirs(video_dir, exist_ok=True)
+        # 创建输出文件以标记"已处理"
+        done_file = os.path.join(video_dir, "TTS_5000_8000.mp4")
+        with open(done_file, "w") as f:
+            f.write("dummy")
 
-2
-00:00:05,000 --> 00:00:08,000
-第二条字幕
-""")
+        mgr = ResumeManager(video_output_dir=video_dir)
+        assert mgr.is_processed(5000, 8000) is True
+        assert mgr.is_processed(1000, 4000) is False
 
-        mgr = ResumeManager(os.path.join(temp_dir, "resume.json"))
-        mgr.mark_processed(5000, 8000)  # 标记第二条已处理
-        mgr.save()
-
-        pipeline = TtsPipeline(config=cfg, resume_manager=mgr)
-        assert pipeline._resume_manager.is_processed(5000, 8000) is True
-        assert pipeline._resume_manager.is_processed(1000, 4000) is False
-
-    def test_processed_pairs_loaded_from_resume(self, temp_dir):
-        """ResumeManager 的 processed_pairs 正确加载到 pipeline"""
-        from pipeline.tts_config import TTSConfig
-        from pipeline.tts_pipeline import TtsPipeline
+    def test_processed_pairs_checked_by_file_existence(self, temp_dir):
+        """ResumeManager.is_processed 通过文件存在性判断"""
         from pipeline.tts_resume import ResumeManager
 
-        cfg = TTSConfig()
-        mgr = ResumeManager(os.path.join(temp_dir, "resume.json"))
-        mgr.mark_processed(1000, 2000)
-        # 模拟旧的 save (save 方法会同时写入 state 的 processed_pairs)
-        mgr.save()
+        video_dir = os.path.join(temp_dir, "video")
+        os.makedirs(video_dir, exist_ok=True)
+        with open(os.path.join(video_dir, "TTS_1000_2000.mp4"), "w") as f:
+            f.write("dummy")
 
-        # 重新创建管理器加载旧状态
-        mgr2 = ResumeManager(os.path.join(temp_dir, "resume.json"))
-        assert mgr2.is_processed(1000, 2000) is True
+        mgr = ResumeManager(video_output_dir=video_dir)
+        assert mgr.is_processed(1000, 2000) is True
+        assert mgr.is_processed(3000, 4000) is False
 
 
 class TestTtsPipelineErrorHandling:
@@ -250,7 +240,6 @@ class TestTtsPipelineE2E:
         cfg.enable_openvoice = False
         cfg.enable_resume = False
         cfg.output_dir = temp_dir
-        cfg.resume_file = os.path.join(temp_dir, "resume.json")
 
         # 准备 SRT 文件
         cn_srt = os.path.join(temp_dir, "cn.srt")
@@ -274,7 +263,7 @@ class TestTtsPipelineE2E:
             "Subtitle two\n",
         ])
 
-        resume_mgr = ResumeManager(cfg.resume_file)
+        resume_mgr = ResumeManager(video_output_dir=os.path.join(temp_dir, "video"))
 
         pipeline = TtsPipeline(config=cfg, resume_manager=resume_mgr)
 
@@ -349,7 +338,7 @@ class TestTtsPipelineE2E:
             "Valid\n",
         ])
 
-        resume_mgr = ResumeManager(cfg.resume_file)
+        resume_mgr = ResumeManager(video_output_dir=os.path.join(temp_dir, "video"))
         pipeline = TtsPipeline(config=cfg, resume_manager=resume_mgr)
 
         with patch("moviepy.VideoFileClip") as mock_video_cls, \
@@ -390,7 +379,6 @@ class TestTtsPipelineE2E:
         cfg.enable_openvoice = False
         cfg.enable_resume = True
         cfg.output_dir = temp_dir
-        cfg.resume_file = os.path.join(temp_dir, "resume_e2e.json")
 
         cn_srt = os.path.join(temp_dir, "cn_resume.srt")
         en_srt = os.path.join(temp_dir, "en_resume.srt")
@@ -413,14 +401,14 @@ class TestTtsPipelineE2E:
             "Pending\n",
         ])
 
-        # 标记第一条已处理
-        resume_mgr = ResumeManager(cfg.resume_file)
-        resume_mgr.mark_processed(1000, 4000)
-        resume_mgr.save()
+        # 创建输出文件标记第一条已处理
+        video_dir = os.path.join(temp_dir, "video")
+        os.makedirs(video_dir, exist_ok=True)
+        with open(os.path.join(video_dir, "TTS_1000_4000.mp4"), "w") as f:
+            f.write("dummy")
 
-        # 用新加载的状态
-        resume_mgr2 = ResumeManager(cfg.resume_file)
-        pipeline = TtsPipeline(config=cfg, resume_manager=resume_mgr2)
+        resume_mgr = ResumeManager(video_output_dir=video_dir)
+        pipeline = TtsPipeline(config=cfg, resume_manager=resume_mgr)
 
         with patch("moviepy.VideoFileClip") as mock_video_cls, \
              patch("moviepy.AudioFileClip") as mock_audio_cls, \

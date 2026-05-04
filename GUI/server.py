@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import time
 import uuid
@@ -196,6 +197,37 @@ def save_settings(data: dict) -> None:
     )
 
 
+def _load_yaml(path: Path) -> dict:
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def _load_yaml_defaults() -> dict:
+    """Read config/tts.yaml and config/translate.yaml, map to frontend field names."""
+    tts = _load_yaml(PROJECT_ROOT / "config" / "tts.yaml").get("tts", {})
+    trans = _load_yaml(PROJECT_ROOT / "config" / "translate.yaml").get("translate", {})
+
+    return {
+        "engine": tts.get("engine_type", "edge"),
+        "voice": tts.get("voice", "zh-CN-XiaoxiaoNeural"),
+        "enableVoiceClone": tts.get("enable_openvoice", False),
+        "voiceCloneSample": tts.get("voice_clone_sample") or "",
+        "openvoiceVersion": tts.get("openvoice_model_version", "v2"),
+        "enableEmotionClone": tts.get("enable_emotion", False),
+        "defaultEmotion": tts.get("default_emotion", "neutral"),
+        "emotionRefAudio": tts.get("emotion_ref_audio") or "",
+        "concurrency": tts.get("threading_workers", 7),
+        "enableCheckpoint": tts.get("enable_resume", False),
+        "captionFont": tts.get("caption_font", ""),
+        "videoCodec": tts.get("video_codec", "libx264"),
+        "audioCodec": tts.get("video_audio_codec", "aac"),
+        "apiKey": trans.get("api_key", ""),
+        "apiType": trans.get("api_type", "deepseek"),
+        "enableSemanticValidation": trans.get("semantic_check", True),
+        "enableTermReplacement": trans.get("terms_dict", {}).get("enabled", True),
+    }
+
+
 def ensure_backup() -> None:
     if not CONFIG_BAK.exists() and CONFIG_YAML.exists():
         shutil.copy2(CONFIG_YAML, CONFIG_BAK)
@@ -255,7 +287,17 @@ class RunRequest(BaseModel):
     force: bool = False
     caption_font: str = ""
     caption_font_size: int = 0
+    caption_font_color: str = ""
     caption_stroke_width: float = 0.0
+    caption_stroke_color: str = ""
+    caption_bg_color: str = ""
+    caption_alignment: str = "center"
+    caption_position: str = "bottom"
+    caption_max_lines: int = 2
+    caption_max_font_size: int = 0
+    caption_font_size_factor: float = 0.030
+    caption_width_ratio: float = 0.85
+    caption_optimize: bool = True
 
 
 class RunResponse(BaseModel):
@@ -292,12 +334,36 @@ async def start_pipeline(req: RunRequest) -> RunResponse:
     # Apply user subtitle settings to Config.yaml before launching pipeline
     apply_subtitle_settings()
 
+    # Write caption rendering config to config/caption.yaml
+    caption_config_path = PROJECT_ROOT / "config" / "caption.yaml"
+    caption_config_path.parent.mkdir(exist_ok=True)
+    caption_data = {
+        "caption": {
+            "font": req.caption_font,
+            "font_size": req.caption_font_size,
+            "font_color": req.caption_font_color or "white",
+            "stroke_width": req.caption_stroke_width,
+            "stroke_color": req.caption_stroke_color or "black",
+            "bg_color": req.caption_bg_color or "rgba(0,0,0,128)",
+            "alignment": req.caption_alignment,
+            "position": req.caption_position,
+            "max_lines": req.caption_max_lines,
+            "max_font_size": req.caption_max_font_size,
+            "font_size_factor": req.caption_font_size_factor,
+            "width_ratio": req.caption_width_ratio,
+            "enable_subtitle_optimization": req.caption_optimize,
+        }
+    }
+    with open(caption_config_path, "w", encoding="utf-8") as f:
+        yaml.dump(caption_data, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
+
     # Build CLI args matching main.py's argparse
     args: list[str] = [
         str(VENV_PYTHON), str(MAIN_SCRIPT), str(video),
         "--model", req.model,
         "--device", req.device,
         "--engine", req.engine,
+        "--caption-config", str(caption_config_path),
     ]
     if req.lang and req.lang != "auto":
         args.extend(["--lang", req.lang])
@@ -311,12 +377,6 @@ async def start_pipeline(req: RunRequest) -> RunResponse:
         args.append("--skip-defect-check")
     if req.force:
         args.append("--force")
-    if req.caption_font:
-        args.extend(["--caption-font", req.caption_font])
-    if req.caption_font_size > 0:
-        args.extend(["--caption-font-size", str(req.caption_font_size)])
-    if req.caption_stroke_width > 0:
-        args.extend(["--caption-stroke-width", str(req.caption_stroke_width)])
 
     asyncio.create_task(_run_job(job, args))
     return RunResponse(job_id=job_id)
@@ -478,6 +538,34 @@ async def get_subtitle_presets() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Config — layered: YAML defaults → user overrides in settings.json
+# ---------------------------------------------------------------------------
+
+@app.get("/api/config")
+async def get_config() -> dict:
+    base = _load_yaml_defaults()
+    settings = load_settings()
+    overrides = settings.get("pipeline", {})
+    base.update(overrides)
+    return base
+
+
+@app.post("/api/config")
+async def post_config(payload: dict) -> dict:
+    base = _load_yaml_defaults()
+    overrides: dict = {}
+    for key, value in payload.items():
+        if key in base and value != base.get(key):
+            overrides[key] = value
+        elif key not in base:
+            overrides[key] = value
+    settings = load_settings()
+    settings["pipeline"] = overrides
+    save_settings(settings)
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
 # System info
 # ---------------------------------------------------------------------------
 
@@ -548,7 +636,6 @@ async def video_info(path: str) -> dict:
     if not ffmpeg:
         raise HTTPException(status_code=503, detail="ffmpeg 未安装或不在 PATH 中")
 
-    import subprocess
     try:
         result = subprocess.run(
             [ffmpeg, "-i", path],
@@ -587,7 +674,7 @@ async def video_info(path: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Font listing & subtitle preview (ImageMagick)
+# Font listing & subtitle preview (PIL + ImageMagick dual-engine)
 # ---------------------------------------------------------------------------
 
 FONT_EXTENSIONS = {".ttf", ".otf", ".ttc"}
@@ -607,8 +694,412 @@ def _detect_imagemagick() -> str | None:
         import glob as _glob
         found = _glob.glob(pattern)
         if found:
-            return sorted(found, reverse=True)[0]  # latest version
+            return sorted(found, reverse=True)[0]
     return None
+
+
+# Mapping from system font names to Windows font filenames.
+# PIL needs actual file paths; ImageMagick can use system names directly.
+_WIN_FONT_MAP: dict[str, str] = {
+    "simhei":                    "simhei.ttf",
+    "simsun":                    "simsun.ttc",
+    "kaiti":                     "simkai.ttf",
+    "fangsong":                  "simfang.ttf",
+    "microsoft yahei":           "msyh.ttc",
+    "microsoft-yahei-bold":      "msyhbd.ttc",
+    "microsoft yahei bold":      "msyhbd.ttc",
+    "microsoft jhenghei":        "msjh.ttc",
+    "microsoft jhenghei bold":   "msjhbd.ttc",
+    "mingliu":                   "mingliu.ttc",
+    "pmingliu":                  "pmingliu.ttc",
+    "dengxian":                  "deng.ttf",
+    "dengxian bold":             "dengb.ttf",
+    "youyuan":                   "simyou.ttf",
+    "stkaiti":                   "STKAITI.TTF",
+    "stfangsong":                "STFANGSO.TTF",
+    "stsong":                    "STSONG.TTF",
+    "stxihei":                   "STXIHEI.TTF",
+    "stzhongsong":               "STZHONGS.TTF",
+    "fzshuti":                   "STXINGKA.TTF",
+}
+_WIN_FONT_DIRS = [
+    r"C:\Windows\Fonts",
+    r"C:\WINNT\Fonts",
+]
+
+
+def _resolve_system_font_path(font_name: str) -> str | None:
+    """Try to find a system font file on disk from a font name.
+
+    Returns the absolute path if found, None otherwise.
+    """
+    # Direct lookup in the font map
+    key = font_name.lower().strip()
+    if key in _WIN_FONT_MAP:
+        for fonts_dir in _WIN_FONT_DIRS:
+            candidate = os.path.join(fonts_dir, _WIN_FONT_MAP[key])
+            if os.path.isfile(candidate):
+                return candidate
+    # Fallback: scan font directories for matching filename (case-insensitive)
+    for fonts_dir in _WIN_FONT_DIRS:
+        if not os.path.isdir(fonts_dir):
+            continue
+        for ext in (".ttf", ".otf", ".ttc"):
+            candidate = os.path.join(fonts_dir, font_name + ext)
+            if os.path.isfile(candidate):
+                return candidate
+        # Try listing the directory
+        try:
+            for entry in os.listdir(fonts_dir):
+                stem, ext = os.path.splitext(entry.lower())
+                if ext in (".ttf", ".otf", ".ttc") and stem == key:
+                    return os.path.join(fonts_dir, entry)
+        except PermissionError:
+            pass
+    return None
+
+
+def _resolve_font_path(font: str, engine: str = "pil") -> str:
+    """Resolve font to an absolute path usable by both PIL and ImageMagick.
+
+    Returns:
+      - empty → default project Minecraft font
+      - absolute path → verified or raise
+      - relative .ttf/.otf/.ttc → resolved against FONT_DIR
+      - system font name (e.g. "SimHei"):
+          * pil  engine → try to find actual file via _resolve_system_font_path
+          * imagemagick → returned as-is
+    """
+    if not font:
+        return str(PROJECT_ROOT / "models" / "font" / "Minecraft_font" / "5_Minecraft_AE_zh_en.ttf")
+    if Path(font).is_absolute():
+        if not Path(font).is_file():
+            raise HTTPException(status_code=400, detail=f"字体文件不存在: {font}")
+        return font
+    if font.endswith((".ttf", ".otf", ".ttc")) or "/" in font or "\\" in font:
+        resolved = str(FONT_DIR / font)
+        if not Path(resolved).is_file():
+            raise HTTPException(status_code=400, detail=f"字体文件不存在: {resolved}")
+        return resolved
+    # System font name
+    if engine == "pil":
+        sys_path = _resolve_system_font_path(font)
+        if sys_path:
+            return sys_path
+    return font
+
+
+def _parse_rgba(rgba_str: str) -> tuple[int, int, int, int]:
+    """Parse 'rgba(R,G,B,A)' or 'R,G,B,A' to (R, G, B, A) tuple."""
+    import re
+    m = re.match(r'rgba?\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)', rgba_str)
+    if m:
+        return (int(m[1]), int(m[2]), int(m[3]), int(m[4]))
+    parts = [p.strip() for p in rgba_str.replace('(', '').replace(')', '').split(',')]
+    if len(parts) >= 4:
+        return (int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]))
+    return (0, 0, 0, 128)
+
+
+def _draw_checkerboard(img, box, size: int = 8):
+    """Draw a checkerboard pattern inside *box* to reveal semi-transparent overlays."""
+    from PIL import ImageDraw as _ImageDraw
+    draw = _ImageDraw.Draw(img)
+    x0, y0, x1, y1 = [int(v) for v in box]
+    for cy in range(y0, y1, size):
+        for cx in range(x0, x1, size):
+            color = (204, 204, 204, 255) if ((cx // size) + (cy // size)) % 2 == 0 else (136, 136, 136, 255)
+            draw.rectangle([cx, cy, min(cx + size, x1), min(cy + size, y1)], fill=color)
+
+
+def _render_subtitle_pil(
+    font_path: str,
+    font_size: int,
+    font_color: str,
+    stroke_color: str,
+    stroke_width: float,
+    bg_color: str,
+    text_zh: str,
+    text_en: str,
+    alignment: str = "center",
+    position: str = "bottom",
+    canvas_w: int = 960,
+    canvas_h: int = 540,
+    max_lines: int = 2,
+    font_size_factor: float = 0.030,
+    max_font_size: int = 0,
+    caption_width_ratio: float = 0.85,
+) -> bytes:
+    """Render subtitle preview using PIL/Pillow (same engine as video output).
+
+    Uses ImageFont.truetype + ImageDraw.multiline_text with adaptive font sizing
+    matching CaptionRenderer behavior: shrink font to fit max_lines, cap at max_font_size.
+    A solid checkerboard under the subtitle background reveals alpha transparency.
+    """
+    import io
+    from PIL import Image, ImageDraw, ImageFont
+
+    text = f"{text_zh}\n{text_en}" if text_en else text_zh
+
+    # ── Load font ────────────────────────────────────────
+    try:
+        pil_font = ImageFont.truetype(font_path, font_size)
+    except Exception:
+        pil_font = ImageFont.load_default()
+
+    # ── Adaptive font sizing (mirrors CaptionRenderer) ──
+    max_width = int(canvas_w * caption_width_ratio)
+    max_fs = max_font_size if max_font_size > 0 else int(canvas_h * 0.045)
+    min_fs = 12
+    desired = font_size if font_size > 0 else int(canvas_w * font_size_factor)
+
+    def _count_lines(txt: str, fs: int) -> int:
+        """Count wrapped lines at given font size and max_width."""
+        try:
+            f = ImageFont.truetype(font_path, fs)
+        except Exception:
+            f = ImageFont.load_default()
+        total = 0
+        for para in txt.split("\n"):
+            if not para:
+                total += 1
+                continue
+            # Detect script and wrap accordingly
+            cjk = sum(1 for ch in para if '一' <= ch <= '鿿' or '぀' <= ch <= 'ヿ')
+            if cjk > len(para) * 0.3:
+                # CJK: character-by-character
+                line = ""
+                for ch in para:
+                    if f.getlength(line + ch) > max_width:
+                        if line:
+                            total += 1
+                        line = ch
+                    else:
+                        line += ch
+                if line:
+                    total += 1
+            else:
+                # Latin: word boundary
+                line = ""
+                for word in para.split():
+                    sep = " " if line else ""
+                    if f.getlength(line + sep + word) > max_width:
+                        if line:
+                            total += 1
+                            line = ""
+                        # If single word too long, char-break it
+                        if f.getlength(word) > max_width:
+                            partial = ""
+                            for ch in word:
+                                if f.getlength(partial + ch) > max_width:
+                                    if partial:
+                                        total += 1
+                                    partial = ch
+                                else:
+                                    partial += ch
+                            line = partial
+                        else:
+                            line = word
+                    else:
+                        line = line + sep + word
+                if line:
+                    total += 1
+        return total
+
+    # Binary search for largest fitting font
+    if _count_lines(text, min(desired, max_fs)) <= max_lines:
+        final_fs = min(desired, max_fs)
+    else:
+        best = min_fs
+        lo, hi = min_fs, min(desired, max_fs)
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if mid < min_fs:
+                break
+            if _count_lines(text, mid) <= max_lines:
+                best = mid
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        final_fs = best
+
+    # Re-load font at final size
+    try:
+        pil_font = ImageFont.truetype(font_path, final_fs)
+    except Exception:
+        pil_font = ImageFont.load_default()
+
+    # ── Measure at final size ────────────────────────────
+    img = Image.new("RGBA", (canvas_w, canvas_h), (30, 30, 30, 255))
+    draw = ImageDraw.Draw(img)
+
+    bbox = draw.multiline_textbbox(
+        (0, 0), text, font=pil_font, align=alignment, stroke_width=stroke_width,
+    )
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+
+    margin = 20
+    if alignment == "left":
+        x = margin
+    elif alignment == "right":
+        x = canvas_w - text_w - margin
+    else:
+        x = (canvas_w - text_w) // 2
+
+    if position == "top":
+        y = margin
+    else:
+        y = canvas_h - text_h - margin
+
+    rgba = _parse_rgba(bg_color)
+
+    bg_pad = 12
+    bg_box = [
+        max(0, x - bg_pad),
+        max(0, y - bg_pad),
+        min(canvas_w, x + text_w + bg_pad),
+        min(canvas_h, y + text_h + bg_pad),
+    ]
+
+    # ── Solid color underlay to reveal alpha transparency ──
+    # Draw a full-opacity dark bar spanning the canvas width behind the subtitle area,
+    # so the semi-transparent subtitle background (rgba) is visible against a known color
+    underlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    underlay_draw = ImageDraw.Draw(underlay)
+    underlay_box = [
+        0,
+        max(0, bg_box[1] - 6),
+        canvas_w,
+        min(canvas_h, bg_box[3] + 6),
+    ]
+    underlay_draw.rectangle(underlay_box, fill=(68, 68, 68, 255))
+    img = Image.alpha_composite(img, underlay)
+    draw = ImageDraw.Draw(img)
+
+    # Draw checkerboard in the subtitle background area
+    checker_box = [
+        max(0, bg_box[0] - 4),
+        max(0, bg_box[1] - 4),
+        min(canvas_w, bg_box[2] + 4),
+        min(canvas_h, bg_box[3] + 4),
+    ]
+    _draw_checkerboard(img, checker_box)
+
+    # Semi-transparent background
+    bg_overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    bg_draw = ImageDraw.Draw(bg_overlay)
+    bg_draw.rectangle(bg_box, fill=rgba)
+    img = Image.alpha_composite(img, bg_overlay)
+    draw = ImageDraw.Draw(img)
+
+    draw.multiline_text(
+        (x, y), text, font=pil_font, fill=font_color, align=alignment,
+        stroke_width=stroke_width, stroke_fill=stroke_color,
+    )
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _render_subtitle_imagemagick(
+    magick: str,
+    font: str,
+    font_size: int,
+    font_color: str,
+    stroke_color: str,
+    stroke_width: float,
+    bg_color: str,
+    text_zh: str,
+    text_en: str,
+    alignment: str = "center",
+    position: str = "bottom",
+    canvas_w: int = 960,
+    canvas_h: int = 540,
+    max_lines: int = 2,
+    font_size_factor: float = 0.030,
+    max_font_size: int = 0,
+    caption_width_ratio: float = 0.85,
+) -> bytes:
+    """Render subtitle preview using ImageMagick CLI."""
+    import subprocess, tempfile
+
+    combined = f"{text_zh}\n{text_en}" if text_en else text_zh
+    lines = [ln for ln in combined.split("\n") if ln]
+    if not lines:
+        lines = [" "]
+    rgba = _parse_rgba(bg_color)
+    bg_alpha_pct = int(rgba[3] / 255 * 100)
+
+    gravity_map = {
+        ("center", "bottom"): "south",
+        ("left", "bottom"): "southwest",
+        ("right", "bottom"): "southeast",
+        ("center", "top"): "north",
+        ("left", "top"): "northwest",
+        ("right", "top"): "northeast",
+    }
+    gravity = gravity_map.get((alignment, position), "south")
+
+    line_height = int(font_size * 1.6)
+    tmp_dir = tempfile.gettempdir()
+    out_path = os.path.join(tmp_dir, f"_subtitle_preview_{os.getpid()}.png")
+    tile_path = os.path.join(tmp_dir, f"_checker_{os.getpid()}.png")
+
+    # Generate a checkerboard tile to reveal semi-transparent background alpha
+    subprocess.run([
+        magick, "-size", "16x16",
+        "xc:rgb(204,204,204)",
+        "-fill", "rgb(136,136,136)",
+        "-draw", "rectangle 0,0 7,7",
+        "-draw", "rectangle 8,8 15,15",
+        tile_path,
+    ], capture_output=True, timeout=5)
+
+    args = [
+        magick,
+        "-size", f"{canvas_w}x{canvas_h}",
+        "xc:rgb(30,30,30)",
+        "-tile", tile_path,
+        "-draw", f"rectangle 0,{canvas_h - 108} {canvas_w},{canvas_h}",
+        "-fill", f"rgba({rgba[0]},{rgba[1]},{rgba[2]},{bg_alpha_pct}%)",
+        "-draw", f"rectangle 20,{canvas_h - 100} {canvas_w - 20},{canvas_h - 10}",
+        "-gravity", gravity,
+        "-encoding", "Unicode",
+        "-font", font,
+        "-pointsize", str(font_size),
+        "-fill", font_color,
+        "-stroke", stroke_color,
+        "-strokewidth", str(stroke_width),
+    ]
+    for i, line in enumerate(reversed(lines)):
+        y_offset = 20 + i * line_height
+        args += ["-annotate", f"+0+{y_offset}", line]
+    args.append(out_path)
+
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            logger.error("ImageMagick render failed: %s", result.stderr[:500])
+            raise HTTPException(status_code=500, detail=f"ImageMagick 渲染失败: {result.stderr[:500]}")
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="ImageMagick 未找到")
+    finally:
+        try:
+            os.remove(tile_path)
+        except OSError:
+            pass
+
+    if not Path(out_path).is_file():
+        raise HTTPException(status_code=500, detail="预览图生成失败")
+
+    img_bytes = Path(out_path).read_bytes()
+    try:
+        os.remove(out_path)
+    except OSError:
+        pass
+    return img_bytes
 
 
 @app.get("/api/fonts")
@@ -634,83 +1125,73 @@ async def subtitle_preview(
     font_color: str = "white",
     stroke_color: str = "black",
     stroke_width: float = 2,
-    bg_opacity: int = 128,
+    bg_color: str = "rgba(0,0,0,128)",
     text_zh: str = "Minecraft我的世界 村民交易",
     text_en: str = "Minecraft Villager Trade x64",
+    alignment: str = "center",
+    position: str = "bottom",
+    engine: str = "pil",
+    max_lines: int = 2,
+    font_size_factor: float = 0.030,
+    max_font_size: int = 0,
+    caption_width_ratio: float = 0.85,
 ) -> StreamingResponse:
-    """Render a subtitle preview image using ImageMagick."""
+    """Render a subtitle preview image.
+
+    Two rendering engines:
+      - pil (default):   PIL/Pillow — same FreeType engine as video output,
+                          correct CJK text measurement and centering.
+      - imagemagick:     ImageMagick CLI — legacy, requires ImageMagick.
+    """
     from fastapi.responses import Response as RawResponse
-    import subprocess, tempfile
 
-    magick = _detect_imagemagick()
-    if not magick:
-        raise HTTPException(
-            status_code=503,
-            detail="ImageMagick 未安装。请安装 ImageMagick 后重试。\n"
-                   "下载地址: https://imagemagick.org/script/download.php",
+    engine = engine.lower()
+    if engine not in ("pil", "imagemagick"):
+        raise HTTPException(status_code=400, detail=f"Unknown engine: {engine}. Use 'pil' or 'imagemagick'.")
+    if alignment not in ("center", "left", "right"):
+        raise HTTPException(status_code=400, detail=f"Unknown alignment: {alignment}")
+    if position not in ("bottom", "top"):
+        raise HTTPException(status_code=400, detail=f"Unknown position: {position}")
+
+    resolved = _resolve_font_path(font, engine=engine)
+
+    if engine == "imagemagick":
+        magick = _detect_imagemagick()
+        if not magick:
+            raise HTTPException(
+                status_code=503,
+                detail="ImageMagick 未安装。请安装 ImageMagick 后重试，或使用 engine=pil。\n"
+                       "下载地址: https://imagemagick.org/script/download.php",
+            )
+        img_bytes = _render_subtitle_imagemagick(
+            magick=magick, font=resolved, font_size=font_size,
+            font_color=font_color, stroke_color=stroke_color,
+            stroke_width=stroke_width, bg_color=bg_color,
+            text_zh=text_zh, text_en=text_en,
+            alignment=alignment, position=position,
+            max_lines=max_lines, font_size_factor=font_size_factor,
+            max_font_size=max_font_size, caption_width_ratio=caption_width_ratio,
         )
-
-    # Resolve font: empty=default, file path→verify exists, system name→use directly
-    if not font:
-        font = str(PROJECT_ROOT / "models" / "font" / "Minecraft_font" / "5_Minecraft_AE_zh_en.ttf")
-    elif Path(font).is_absolute():
-        if not Path(font).is_file():
-            raise HTTPException(status_code=400, detail=f"字体文件不存在: {font}")
-    elif font.endswith((".ttf", ".otf", ".ttc")) or "/" in font or "\\" in font:
-        # Relative file path — resolve against FONT_DIR
-        resolved = str(FONT_DIR / font)
+    else:
         if not Path(resolved).is_file():
-            raise HTTPException(status_code=400, detail=f"字体文件不存在: {resolved}")
-        font = resolved
-    # else: system font name like "SimHei" or "Microsoft-YaHei-Bold" — send directly to ImageMagick
-
-    # Build combined text with interline spacing via newline
-    combined = f"{text_zh}\n{text_en}" if text_en else text_zh
-    canvas_w, canvas_h = 800, 220
-    bg_alpha_pct = int(bg_opacity / 255 * 100)
-
-    tmp_dir = tempfile.gettempdir()
-    out_path = os.path.join(tmp_dir, f"_subtitle_preview_{os.getpid()}.png")
-
-    # Use inline text (not @file) to avoid Windows encoding issues with CJK
-    args = [
-        magick,
-        "-size", f"{canvas_w}x{canvas_h}",
-        "xc:rgb(30,30,30)",
-        "-fill", f"rgba(0,0,0,{bg_alpha_pct}%)",
-        "-draw", f"rectangle 20,{canvas_h - 100} {canvas_w - 20},{canvas_h - 10}",
-        "-gravity", "south",
-        "-encoding", "Unicode",
-        "-font", font,
-        "-pointsize", str(font_size),
-        "-fill", font_color,
-        "-stroke", stroke_color,
-        "-strokewidth", str(stroke_width),
-        "-annotate", "+0+20",
-        combined,
-        out_path,
-    ]
-
-    try:
-        result = subprocess.run(
-            args,
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode != 0:
-            logger.error("ImageMagick render failed: %s", result.stderr[:500])
-            raise HTTPException(status_code=500, detail=f"ImageMagick 渲染失败: {result.stderr[:500]}")
-    except FileNotFoundError:
-        logger.error("ImageMagick binary not found")
-        raise HTTPException(status_code=503, detail="ImageMagick 未找到")
-
-    if not Path(out_path).is_file():
-        raise HTTPException(status_code=500, detail="预览图生成失败")
-
-    img_bytes = Path(out_path).read_bytes()
-    try:
-        os.remove(out_path)
-    except OSError:
-        pass
+            raise HTTPException(
+                status_code=400,
+                detail=f"PIL 引擎需要字体文件路径，但字体不存在: {resolved}。"
+                       "系统字体名仅支持 ImageMagick 引擎，或请将字体文件放入 models/font/ 目录。",
+            )
+        try:
+            img_bytes = _render_subtitle_pil(
+                font_path=resolved, font_size=font_size,
+                font_color=font_color, stroke_color=stroke_color,
+                stroke_width=stroke_width, bg_color=bg_color,
+                text_zh=text_zh, text_en=text_en,
+                alignment=alignment, position=position,
+                max_lines=max_lines, font_size_factor=font_size_factor,
+                max_font_size=max_font_size, caption_width_ratio=caption_width_ratio,
+            )
+        except Exception as e:
+            logger.error("PIL render failed: %s", e)
+            raise HTTPException(status_code=500, detail=f"PIL 渲染失败: {e}")
 
     return RawResponse(content=img_bytes, media_type="image/png")
 
@@ -782,4 +1263,4 @@ Close this window to stop the server.
     logger.info("ImageMagick: %s", "available" if magick_available else "MISSING")
 
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)

@@ -1,5 +1,15 @@
-import { useState, useCallback, useEffect } from 'react'
-import { PipelineConfig, DEFAULT_CONFIG, type SystemInfo } from '../types'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { PipelineConfig, DEFAULT_CONFIG } from '../types'
+
+const TRANSIENT_KEYS = new Set(['videoPath', 'outputPath', 'forceRetry', 'defaultVideoDir'])
+
+function stripTransient(config: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(config)) {
+    if (!TRANSIENT_KEYS.has(k)) out[k] = v
+  }
+  return out
+}
 
 /** Derive output dir from video path: {dir}/{name}_out/ */
 function deriveOutputPath(videoPath: string): string {
@@ -14,21 +24,30 @@ function deriveOutputPath(videoPath: string): string {
 
 export function useConfig() {
   const [config, setConfig] = useState<PipelineConfig>(DEFAULT_CONFIG)
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Fetch system info once on mount to set intelligent defaults
+  // Load system info + saved config on mount
   useEffect(() => {
-    fetch('/api/system/info')
-      .then(r => r.ok ? r.json() : null)
-      .then((info: SystemInfo | null) => {
-        if (!info) return
-        setConfig(prev => ({
-          ...prev,
-          concurrency: info.recommendedConcurrency,
-          device: info.hasGpu ? 'gpu' : 'cpu',
-          defaultVideoDir: info.defaultVideoDir,
-        }))
+    Promise.all([
+      fetch('/api/system/info').then(r => r.ok ? r.json() : null),
+      fetch('/api/config').then(r => r.ok ? r.json() : null),
+    ]).then(([sysInfo, serverConfig]) => {
+      setConfig(prev => {
+        let next = { ...prev }
+        if (sysInfo) {
+          next.concurrency = sysInfo.recommendedConcurrency
+          next.device = sysInfo.hasGpu ? 'gpu' : 'cpu'
+          next.defaultVideoDir = sysInfo.defaultVideoDir
+        }
+        if (serverConfig) {
+          next = { ...next, ...serverConfig }
+        }
+        next.videoPath = prev.videoPath
+        next.outputPath = prev.outputPath
+        next.forceRetry = false
+        return next
       })
-      .catch(() => { /* server not ready, keep defaults */ })
+    }).catch(() => {})
   }, [])
 
   const updateConfig = useCallback(<K extends keyof PipelineConfig>(
@@ -37,10 +56,20 @@ export function useConfig() {
   ) => {
     setConfig(prev => {
       const next = { ...prev, [key]: value }
-      // Auto-derive output path when video changes
       if (key === 'videoPath' && typeof value === 'string') {
         next.outputPath = deriveOutputPath(value)
       }
+
+      // Debounced auto-save (skip transient fields)
+      if (saveTimer.current) clearTimeout(saveTimer.current)
+      saveTimer.current = setTimeout(() => {
+        fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(stripTransient(next as unknown as Record<string, unknown>)),
+        }).catch(() => {})
+      }, 2000)
+
       return next
     })
   }, [])

@@ -1,76 +1,50 @@
 """
 断点续传模块 — ResumeManager
 
-从原 `SrtTxtToAudio` 中保存/恢复进度的逻辑提取。
+基于输出文件存在性判断处理状态，消除独立的 JSON 状态文件。
+每次运行默认全新，不再有跨运行的状态残留。
 """
 
 from __future__ import annotations
 
-import json
 import os
-from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional, Set
+import glob
+from dataclasses import dataclass, field
+from typing import List, Dict, Any
 
 
 @dataclass
 class ResumeState:
-    """断点续传状态"""
-    processed_pairs: Set[tuple] = field(default_factory=set)
-    over_time_audio_list: List[str] = field(default_factory=list)
+    """运行时错误追踪（仅内存，不持久化）"""
     error_subtitles: List[Dict[str, Any]] = field(default_factory=list)
-    last_count: int = 0
     total_subs: int = 0
-
-    def to_dict(self) -> dict:
-        return {
-            "processed_pairs": list(self.processed_pairs),
-            "over_time_audio_list": self.over_time_audio_list,
-            "error_subtitles": self.error_subtitles,
-            "last_count": self.last_count,
-            "total_subs": self.total_subs,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "ResumeState":
-        state = cls()
-        state.processed_pairs = set(tuple(p) for p in data.get("processed_pairs", []))
-        state.over_time_audio_list = data.get("over_time_audio_list", [])
-        state.error_subtitles = data.get("error_subtitles", [])
-        state.last_count = data.get("last_count", 0)
-        state.total_subs = data.get("total_subs", 0)
-        return state
 
 
 class ResumeManager:
     """断点续传管理器。
 
-    提供保存和加载处理进度的功能，支持多条流水线共享。
+    通过检查输出视频段文件 (TTS_{start}_{end}.mp4) 是否存在来判断已处理状态。
+    enable_resume=True 时跳过已存在的输出文件，默认不跳过（全新运行）。
     """
 
-    def __init__(self, state_path: str = "file/resume_state.json"):
-        self.state_path = state_path
-        self.state = self._load()
-
-    def _load(self) -> ResumeState:
-        if os.path.isfile(self.state_path):
-            try:
-                with open(self.state_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                return ResumeState.from_dict(data)
-            except (json.JSONDecodeError, Exception) as e:
-                print(f"断点续传状态加载失败: {e}，从头开始")
-        return ResumeState()
-
-    def save(self):
-        os.makedirs(os.path.dirname(self.state_path), exist_ok=True)
-        with open(self.state_path, "w", encoding="utf-8") as f:
-            json.dump(self.state.to_dict(), f, ensure_ascii=False, indent=2)
-
-    def mark_processed(self, start: int, end: int):
-        self.state.processed_pairs.add((start, end))
+    def __init__(self, video_output_dir: str = ""):
+        self.video_output_dir = video_output_dir
+        self.state = ResumeState()
 
     def is_processed(self, start: int, end: int) -> bool:
-        return (start, end) in self.state.processed_pairs
+        """检查 TTS_{start}_{end}.mp4 是否已存在。"""
+        if not self.video_output_dir:
+            return False
+        output_path = os.path.join(self.video_output_dir, f"TTS_{start}_{end}.mp4")
+        return os.path.isfile(output_path)
+
+    def mark_processed(self, start: int, end: int):
+        """输出文件由 slow_down_video_to_file 写入，此处为 no-op。"""
+        pass
+
+    def save(self):
+        """不再需要持久化状态文件。"""
+        pass
 
     def add_error(self, start: int, end: int, text: str, error: str):
         self.state.error_subtitles.append({
@@ -82,5 +56,10 @@ class ResumeManager:
 
     def reset(self):
         self.state = ResumeState()
-        if os.path.isfile(self.state_path):
-            os.remove(self.state_path)
+
+    def clear_outputs(self):
+        """删除所有已生成的视频段文件（对应 --force）。"""
+        if not self.video_output_dir or not os.path.isdir(self.video_output_dir):
+            return
+        for f in glob.glob(os.path.join(self.video_output_dir, "TTS_*.mp4")):
+            os.remove(f)

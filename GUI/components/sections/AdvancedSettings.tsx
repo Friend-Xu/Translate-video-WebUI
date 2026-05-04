@@ -9,8 +9,6 @@ import RestoreIcon from '@mui/icons-material/RestoreRounded'
 import { SectionHeader } from '../SectionHeader'
 import type { PipelineConfig, SystemInfo, VideoInfo } from '../../types'
 
-const FONT_SIZE_FACTOR = 0.030
-
 interface SubtitleStylePreset {
   name: string
   description: string
@@ -84,6 +82,7 @@ export function AdvancedSettings({ config, onConfigChange, showTitle = true }: A
   const [overrides, setOverrides] = useState<Record<string, Record<string, unknown>>>({})
   const [fonts, setFonts] = useState<FontInfo[]>([])
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null)
   const previewTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -122,7 +121,7 @@ export function AdvancedSettings({ config, onConfigChange, showTitle = true }: A
   // Auto font size derived from video width (mirrors backend logic)
   const autoFontSize = useMemo(() => {
     if (!videoInfo?.width) return 36  // fallback default
-    return Math.round(videoInfo.width * FONT_SIZE_FACTOR)
+    return Math.round(videoInfo.width * (config.captionFontSizeFactor || 0.030))
   }, [videoInfo?.width])
 
   // Detect which preset matches current settings
@@ -151,34 +150,48 @@ export function AdvancedSettings({ config, onConfigChange, showTitle = true }: A
       const params = new URLSearchParams({
         font: config.captionFont || '',
         font_size: String(fontSize),
+        font_color: config.captionFontColor || 'white',
         stroke_width: String(config.captionStrokeWidth || 2.5),
-        font_color: 'white',
-        bg_opacity: '128',
+        stroke_color: config.captionStrokeColor || 'black',
+        bg_color: config.captionBgColor || 'rgba(0,0,0,128)',
         text_zh: 'Minecraft我的世界 村民交易',
         text_en: 'Minecraft Villager Trade x64',
+        alignment: config.captionAlignment || 'center',
+        position: config.captionPosition || 'bottom',
+        engine: config.subtitleEngine || 'pil',
+        max_lines: String(config.captionMaxLines || 2),
+        font_size_factor: String(config.captionFontSizeFactor || 0.030),
+        max_font_size: String(config.captionMaxFontSize || 0),
+        caption_width_ratio: String(config.captionWidthRatio || 0.85),
       })
       setPreviewLoading(true)
+      setPreviewError(null)
       fetch(`/api/subtitle/preview?${params}`)
-        .then(r => {
-          if (!r.ok) throw new Error('preview failed')
-          return r.blob()
-        })
-        .then(blob => {
+        .then(async r => {
+          if (!r.ok) {
+            let detail = `HTTP ${r.status}`
+            try {
+              const body = await r.json()
+              if (body?.detail) detail = body.detail
+            } catch { /* use status text */ }
+            throw new Error(detail)
+          }
           if (previewUrl) URL.revokeObjectURL(previewUrl)
-          setPreviewUrl(URL.createObjectURL(blob))
+          setPreviewUrl(URL.createObjectURL(await r.blob()))
         })
-        .catch(() => {
+        .catch(err => {
           if (previewUrl) URL.revokeObjectURL(previewUrl)
           setPreviewUrl(null)
+          setPreviewError(err?.message || '预览不可用')
         })
         .finally(() => setPreviewLoading(false))
     }, 400)
-  }, [config.captionFont, config.captionFontSize, config.captionStrokeWidth, autoFontSize])
+  }, [config.captionFont, config.captionFontSize, config.captionFontColor, config.captionStrokeWidth, config.captionStrokeColor, config.captionBgColor, config.captionAlignment, config.captionPosition, autoFontSize, config.subtitleEngine, config.captionMaxLines, config.captionFontSizeFactor, config.captionMaxFontSize, config.captionWidthRatio])
 
   useEffect(() => {
     if (fonts.length > 0) fetchPreview()
     return () => { if (previewTimer.current) clearTimeout(previewTimer.current) }
-  }, [fonts.length, config.captionFont, config.captionFontSize, config.captionStrokeWidth, autoFontSize])
+  }, [fonts.length, config.captionFont, config.captionFontSize, config.captionFontColor, config.captionStrokeWidth, config.captionStrokeColor, config.captionBgColor, config.captionAlignment, config.captionPosition, autoFontSize, config.subtitleEngine, config.captionMaxLines, config.captionFontSizeFactor, config.captionMaxFontSize, config.captionWidthRatio])
 
   const basePreset = presets[langKey] ?? presets['default'] ?? {}
   const currentParams: Record<string, unknown> = { ...basePreset, ...(overrides[langKey] ?? {}) }
@@ -345,6 +358,11 @@ export function AdvancedSettings({ config, onConfigChange, showTitle = true }: A
                   onChange={e => onConfigChange('captionFont', e.target.value)}
                   sx={{ mt: 0.25, bgcolor: 'background.paper' }}>
                   <MenuItem value="">默认 (Minecraft)</MenuItem>
+                  <MenuItem disabled divider>── 系统字体 (PIL+IM) ──</MenuItem>
+                  {Object.entries(FONT_SYSTEM).filter(([,v]) => v).map(([k, v]) => (
+                    <MenuItem key={k} value={v}>{k === 'yahei' ? '微软雅黑 Bold' : k === 'simhei' ? '黑体 SimHei' : k === 'kaiti' ? '楷体 KaiTi' : k === 'fangsong' ? '仿宋 FangSong' : v}</MenuItem>
+                  ))}
+                  <MenuItem disabled divider>── 项目字体 ──</MenuItem>
                   {fonts.map(f => (
                     <MenuItem key={f.path} value={f.path}>{f.name}</MenuItem>
                   ))}
@@ -352,12 +370,12 @@ export function AdvancedSettings({ config, onConfigChange, showTitle = true }: A
               </Box>
               <Box>
                 <Typography variant="caption" color="text.secondary">
-                  字号 {config.captionFontSize === 0 && videoInfo?.width ? `(自动 → ${autoFontSize}px)` : '(0=自动)'}
+                  字号 (自动 → {autoFontSize}px)
                 </Typography>
-                <TextField size="small" type="number" fullWidth value={config.captionFontSize || 0}
+                <TextField size="small" type="number" fullWidth value={autoFontSize}
+                  disabled
                   inputProps={{ min: 0, max: 120, step: 2 }}
-                  onChange={e => onConfigChange('captionFontSize', Number(e.target.value))}
-                  sx={{ mt: 0.25, bgcolor: 'background.paper' }} />
+                  sx={{ mt: 0.25, bgcolor: 'action.disabledBackground' }} />
               </Box>
               <Box>
                 <Typography variant="caption" color="text.secondary">描边宽度 (0=默认)</Typography>
@@ -368,8 +386,118 @@ export function AdvancedSettings({ config, onConfigChange, showTitle = true }: A
               </Box>
             </Box>
 
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 1.5, mb: 1.5 }}>
+              <Box>
+                <Typography variant="caption" color="text.secondary">字体颜色</Typography>
+                <TextField size="small" type="color" fullWidth value={config.captionFontColor || '#ffffff'}
+                  onChange={e => onConfigChange('captionFontColor', e.target.value)}
+                  sx={{ mt: 0.25, bgcolor: 'background.paper', '& input': { p: 0.5 } }} />
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">描边颜色</Typography>
+                <TextField size="small" type="color" fullWidth value={config.captionStrokeColor || '#000000'}
+                  onChange={e => onConfigChange('captionStrokeColor', e.target.value)}
+                  sx={{ mt: 0.25, bgcolor: 'background.paper', '& input': { p: 0.5 } }} />
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">对齐方式</Typography>
+                <Select size="small" fullWidth value={config.captionAlignment || 'center'}
+                  onChange={e => onConfigChange('captionAlignment', e.target.value as 'center' | 'left' | 'right')}
+                  sx={{ mt: 0.25, bgcolor: 'background.paper' }}>
+                  <MenuItem value="center">居中</MenuItem>
+                  <MenuItem value="left">左对齐</MenuItem>
+                  <MenuItem value="right">右对齐</MenuItem>
+                </Select>
+              </Box>
+            </Box>
+
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 1.5, mb: 1.5 }}>
+              <Box>
+                <Typography variant="caption" color="text.secondary">背景 RGBA</Typography>
+                <TextField size="small" fullWidth placeholder="rgba(0,0,0,128)"
+                  value={config.captionBgColor || ''}
+                  onChange={e => onConfigChange('captionBgColor', e.target.value)}
+                  sx={{ mt: 0.25, bgcolor: 'background.paper' }} />
+                <Box sx={{ display: 'flex', gap: 0.5, mt: 0.25 }}>
+                  {[{label: '黑底', v: 'rgba(0,0,0,128)'}, {label: '白底', v: 'rgba(255,255,255,100)'}, {label: '透明', v: 'rgba(0,0,0,0)'}].map(p => (
+                    <Chip key={p.label} label={p.label} size="small" variant="outlined"
+                      onClick={() => onConfigChange('captionBgColor', p.v)}
+                      color={config.captionBgColor === p.v ? 'primary' : 'default'}
+                      sx={{ cursor: 'pointer' }} />
+                  ))}
+                </Box>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">位置</Typography>
+                <Select size="small" fullWidth value={config.captionPosition || 'bottom'}
+                  onChange={e => onConfigChange('captionPosition', e.target.value as 'bottom' | 'top')}
+                  sx={{ mt: 0.25, bgcolor: 'background.paper' }}>
+                  <MenuItem value="bottom">底部</MenuItem>
+                  <MenuItem value="top">顶部</MenuItem>
+                </Select>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">渲染引擎</Typography>
+                <Select size="small" fullWidth value={config.subtitleEngine || 'pil'}
+                  onChange={e => onConfigChange('subtitleEngine', e.target.value as 'pil' | 'imagemagick')}
+                  sx={{ mt: 0.25, bgcolor: 'background.paper' }}>
+                  <MenuItem value="pil">PIL/Pillow (推荐)</MenuItem>
+                  <MenuItem value="imagemagick">ImageMagick (需安装)</MenuItem>
+                </Select>
+              </Box>
+            </Box>
+
+            {/* Subtitle optimization */}
+            <Divider sx={{ my: 1.5 }} />
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+              <Typography variant="subtitle2">字幕渲染优化</Typography>
+              <FormControlLabel
+                control={<Checkbox size="small" checked={config.enableSubtitleOptimization !== false}
+                  onChange={e => onConfigChange('enableSubtitleOptimization', e.target.checked)} />}
+                label={<Typography variant="caption">启用优化</Typography>}
+                sx={{ ml: 1 }} />
+            </Box>
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 1.5, mb: 1.5 }}>
+              <Box>
+                <Tooltip title="字幕最大显示行数，超出时缩小字号或拆分" arrow>
+                  <Typography variant="caption" color="text.secondary">最大行数</Typography>
+                </Tooltip>
+                <TextField size="small" type="number" fullWidth value={config.captionMaxLines || 2}
+                  inputProps={{ min: 1, max: 5, step: 1 }}
+                  onChange={e => onConfigChange('captionMaxLines', Number(e.target.value))}
+                  sx={{ mt: 0.25, bgcolor: 'background.paper' }} />
+              </Box>
+              <Box>
+                <Tooltip title="字号相对于视频宽度的缩放比例" arrow>
+                  <Typography variant="caption" color="text.secondary">字号因子</Typography>
+                </Tooltip>
+                <TextField size="small" type="number" fullWidth value={config.captionFontSizeFactor || 0.030}
+                  disabled
+                  inputProps={{ min: 0.010, max: 0.080, step: 0.005 }}
+                  sx={{ mt: 0.25, bgcolor: 'action.disabledBackground' }} />
+              </Box>
+              <Box>
+                <Tooltip title="字幕显示的最大字号（px），0=自动" arrow>
+                  <Typography variant="caption" color="text.secondary">最大字号</Typography>
+                </Tooltip>
+                <TextField size="small" type="number" fullWidth value={config.captionMaxFontSize || 0}
+                  disabled
+                  inputProps={{ min: 0, max: 200, step: 4 }}
+                  sx={{ mt: 0.25, bgcolor: 'action.disabledBackground' }} />
+              </Box>
+              <Box>
+                <Tooltip title="字幕文本框宽度占视频宽度的比例" arrow>
+                  <Typography variant="caption" color="text.secondary">宽度比例</Typography>
+                </Tooltip>
+                <TextField size="small" type="number" fullWidth value={config.captionWidthRatio || 0.85}
+                  disabled
+                  inputProps={{ min: 0.50, max: 1.0, step: 0.05 }}
+                  sx={{ mt: 0.25, bgcolor: 'action.disabledBackground' }} />
+              </Box>
+            </Box>
+
             {/* Preview */}
-            <Box sx={{ borderRadius: 1, overflow: 'hidden', bgcolor: '#1e1e1e', position: 'relative', minHeight: 120 }}>
+            <Box sx={{ borderRadius: 1, overflow: 'auto', bgcolor: '#1e1e1e', position: 'relative', minHeight: 120 }}>
               {previewLoading && (
                 <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>
                   <CircularProgress size={24} />
@@ -377,11 +505,11 @@ export function AdvancedSettings({ config, onConfigChange, showTitle = true }: A
               )}
               {previewUrl ? (
                 <img src={previewUrl} alt="字幕预览"
-                  style={{ width: '100%', display: 'block', opacity: previewLoading ? 0.4 : 1, transition: 'opacity 0.2s' }} />
+                  style={{ width: '600px', maxWidth: 'none', display: 'block', opacity: previewLoading ? 0.4 : 1, transition: 'opacity 0.2s' }} />
               ) : (
                 <Box sx={{ p: 3, textAlign: 'center' }}>
                   <Typography variant="caption" color="text.secondary">
-                    {fonts.length === 0 ? '加载中...' : '预览不可用（需安装 ImageMagick）'}
+                    {fonts.length === 0 ? '加载中...' : (previewError || '预览不可用')}
                   </Typography>
                 </Box>
               )}

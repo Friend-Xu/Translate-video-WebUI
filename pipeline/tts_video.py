@@ -163,6 +163,7 @@ class VideoSegmenter:
         text: str,
         text_eng: str,
         end: int,
+        caption_groups: list = None,
     ):
         """视频变速处理。
 
@@ -229,9 +230,25 @@ class VideoSegmenter:
             slow_down_clip = slow_down_clip.with_audio(mixed_audio)
 
         if self.caption and self.caption_renderer:
-            slow_down_clip = self.caption_renderer(
-                slow_down_clip, tts_audio.duration, text, text_eng
-            )
+            if caption_groups and len(caption_groups) > 0:
+                from moviepy import CompositeVideoClip
+                clips = [slow_down_clip]
+                for t0, t1, t_text, s_text in caption_groups:
+                    dur_sec = (t1 - t0) / 1000.0
+                    cap_composite = self.caption_renderer(
+                        slow_down_clip, dur_sec, t_text, s_text
+                    )
+                    # cap_composite = [video, bg, text]; strip video, keep overlays
+                    if hasattr(cap_composite, 'clips') and len(cap_composite.clips) > 1:
+                        for overlay in cap_composite.clips[1:]:
+                            clips.append(overlay.with_start(t0 / 1000.0))
+                    else:
+                        clips.append(cap_composite.with_start(t0 / 1000.0))
+                slow_down_clip = CompositeVideoClip(clips, size=slow_down_clip.size)
+            else:
+                slow_down_clip = self.caption_renderer(
+                    slow_down_clip, tts_audio.duration, text, text_eng
+                )
 
         os.makedirs(self.video_output_dir, exist_ok=True)
         output_path = os.path.join(self.video_output_dir, f"TTS_{start}_{end}.mp4")

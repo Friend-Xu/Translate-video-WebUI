@@ -182,11 +182,22 @@ def step_tts(
     srt_translated: str,
     engine: str,
     config_path: str | None,
+    caption_config_path: str | None,
     force: bool,
     backup_dir: str = "",
     caption_font: str | None = None,
     caption_font_size: int | None = None,
+    caption_font_color: str | None = None,
     caption_stroke_width: float | None = None,
+    caption_stroke_color: str | None = None,
+    caption_bg_color: str | None = None,
+    caption_alignment: str | None = None,
+    caption_position: str | None = None,
+    caption_max_lines: int | None = None,
+    caption_max_font_size: int | None = None,
+    caption_font_size_factor: float | None = None,
+    caption_width_ratio: float | None = None,
+    no_optimize_subtitles: bool = False,
 ) -> None:
     """步骤 3: TTS 合成 + 视频合并（新管线 TtsPipeline）
 
@@ -216,17 +227,43 @@ def step_tts(
     cfg = TTSConfig.from_yaml(config_path) if config_path and os.path.isfile(config_path) else TTSConfig()
 
     cfg.engine_type = engine
+
+    # ── 字幕配置: CaptionConfig 文件 > 单独 CLI args（后者覆盖） ──
+    if caption_config_path and os.path.isfile(caption_config_path):
+        from pipeline.caption_config import CaptionConfig
+        caption_cfg = CaptionConfig.from_yaml(caption_config_path)
+        cfg.apply_caption_overrides(caption_cfg)
+
     if caption_font:
         cfg.caption_font = caption_font
     if caption_font_size is not None:
         cfg.caption_font_size = caption_font_size
+    if caption_font_color:
+        cfg.caption_font_color = caption_font_color
     if caption_stroke_width is not None:
         cfg.caption_stroke_width = caption_stroke_width
+    if caption_stroke_color:
+        cfg.caption_stroke_color = caption_stroke_color
+    if caption_bg_color:
+        cfg.caption_bg_color = caption_bg_color
+    if caption_alignment:
+        cfg.caption_alignment = caption_alignment
+    if caption_position:
+        cfg.caption_position = caption_position
+    if caption_max_lines is not None:
+        cfg.caption_max_lines = caption_max_lines
+    if caption_max_font_size is not None:
+        cfg.caption_max_font_size = caption_max_font_size
+    if caption_font_size_factor is not None:
+        cfg.caption_font_size_factor = caption_font_size_factor
+    if caption_width_ratio is not None:
+        cfg.caption_width_ratio = caption_width_ratio
+    if no_optimize_subtitles:
+        cfg.enable_subtitle_optimization = False
     cfg.enable_merge = True
     cfg.final_output_path = final_output
     cfg.output_dir = out_dir
     cfg.video_output_dir = os.path.join(out_dir, "video")
-    cfg.resume_file = os.path.join(out_dir, "wav_path.txt")
 
     # GPU 编码器自动检测（含 preset 调整）
     from pipeline.gpu_detect import apply_best_encoder_to_config, _ENCODER_PRESETS
@@ -234,6 +271,18 @@ def step_tts(
     if cfg.video_codec in _ENCODER_PRESETS:
         cfg.video_preset = _ENCODER_PRESETS[cfg.video_codec]  # 兼容硬件编码器 preset
         print(f"  [GPU 检测] codec={cfg.video_codec} preset={cfg.video_preset}")
+
+    # force 模式下清除上次的输出视频段，确保全新生成
+    if force:
+        import glob
+        video_dir = cfg.video_output_dir
+        if os.path.isdir(video_dir):
+            removed = 0
+            for f in glob.glob(os.path.join(video_dir, "TTS_*.mp4")):
+                os.remove(f)
+                removed += 1
+            if removed:
+                print(f"  [force] 已清除 {removed} 个旧视频段")
 
     # 运行新管线
     from pipeline.tts_pipeline import TtsPipeline
@@ -282,6 +331,8 @@ def main():
     parser.add_argument("--engine", default="edge", choices=["edge", "chattts"],
                         help="TTS 引擎 (默认 edge)")
     parser.add_argument("--config", help="TTS YAML 配置文件路径")
+    parser.add_argument("--caption-config", default=None,
+                        help="字幕渲染配置文件路径 (YAML 格式)")
     parser.add_argument("--skip-extract", action="store_true",
                         help="跳过字幕提取")
     parser.add_argument("--skip-defect-check", action="store_true",
@@ -298,8 +349,28 @@ def main():
                         help="字幕字体文件路径")
     parser.add_argument("--caption-font-size", type=int, default=None,
                         help="字幕字号（像素）")
+    parser.add_argument("--caption-font-color", default=None,
+                        help="字幕字体颜色")
     parser.add_argument("--caption-stroke-width", type=float, default=None,
                         help="字幕描边宽度")
+    parser.add_argument("--caption-stroke-color", default=None,
+                        help="字幕描边颜色")
+    parser.add_argument("--caption-bg-color", default=None,
+                        help="字幕背景色 (rgba格式)")
+    parser.add_argument("--caption-alignment", default=None,
+                        help="字幕对齐方式 center/left/right")
+    parser.add_argument("--caption-position", default=None,
+                        help="字幕位置 bottom/top")
+    parser.add_argument("--caption-max-lines", type=int, default=None,
+                        help="字幕最大行数 (默认 2)")
+    parser.add_argument("--caption-max-font-size", type=int, default=None,
+                        help="字幕最大字号 px (0=自动)")
+    parser.add_argument("--caption-font-size-factor", type=float, default=None,
+                        help="字号缩放因子 (默认 0.030)")
+    parser.add_argument("--caption-width-ratio", type=float, default=None,
+                        help="字幕宽度比例 (默认 0.85)")
+    parser.add_argument("--no-optimize-subtitles", action="store_true",
+                        help="禁用字幕拆分优化")
 
     args = parser.parse_args()
     video = os.path.abspath(args.video)
@@ -329,11 +400,15 @@ def main():
             sys.exit(1)
 
         # ── 步骤 2: 翻译 ──
-        srt_translated = srt_source  # default: use source if skip-translate
+        srt_translated = srt_source
         if not args.skip_translate:
             srt_translated = step_translate(video, srt_source, force=args.force, backup_dir=args.backup_dir)
         else:
             print("[2/3] 翻译 — 已跳过 (--skip-translate)")
+            existing = guess_translated_srt(video)
+            if existing:
+                srt_translated = existing
+                print(f"  使用已有翻译: {os.path.basename(existing)}")
 
         # ── 步骤 3: TTS ──
         if not args.skip_tts:
@@ -343,11 +418,22 @@ def main():
                 srt_translated=srt_translated,
                 engine=args.engine,
                 config_path=args.config,
+                caption_config_path=args.caption_config,
                 force=args.force,
                 backup_dir=args.backup_dir,
                 caption_font=args.caption_font,
                 caption_font_size=args.caption_font_size,
+                caption_font_color=args.caption_font_color,
                 caption_stroke_width=args.caption_stroke_width,
+                caption_stroke_color=args.caption_stroke_color,
+                caption_bg_color=args.caption_bg_color,
+                caption_alignment=args.caption_alignment,
+                caption_position=args.caption_position,
+                caption_max_lines=args.caption_max_lines,
+                caption_max_font_size=args.caption_max_font_size,
+                caption_font_size_factor=args.caption_font_size_factor,
+                caption_width_ratio=args.caption_width_ratio,
+                no_optimize_subtitles=args.no_optimize_subtitles,
             )
         else:
             print("[3/3] TTS 合成 — 已跳过 (--skip-tts)")

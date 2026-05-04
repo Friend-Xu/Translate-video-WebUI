@@ -36,7 +36,18 @@ export interface PipelineConfig {
   defaultVideoDir: string
   captionFont: string
   captionFontSize: number
+  captionFontColor: string
   captionStrokeWidth: number
+  captionStrokeColor: string
+  captionBgColor: string
+  captionAlignment: 'center' | 'left' | 'right'
+  captionPosition: 'bottom' | 'top'
+  captionMaxLines: number
+  captionMaxFontSize: number
+  captionFontSizeFactor: number
+  captionWidthRatio: number
+  enableSubtitleOptimization: boolean
+  subtitleEngine: 'pil' | 'imagemagick'
 }
 
 export interface PipelineStatus {
@@ -90,7 +101,18 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   defaultVideoDir: '',
   captionFont: '',
   captionFontSize: 0,
+  captionFontColor: '#ffffff',
   captionStrokeWidth: 0,
+  captionStrokeColor: '#000000',
+  captionBgColor: 'rgba(0,0,0,128)',
+  captionAlignment: 'center',
+  captionPosition: 'bottom',
+  captionMaxLines: 2,
+  captionMaxFontSize: 0,
+  captionFontSizeFactor: 0.030,
+  captionWidthRatio: 0.85,
+  enableSubtitleOptimization: true,
+  subtitleEngine: 'pil',
 }
 
 export interface SystemInfo {

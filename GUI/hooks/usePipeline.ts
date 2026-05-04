@@ -61,9 +61,20 @@ export function usePipeline() {
           skip_tts: !config.enableTTS,
           skip_defect_check: !config.enableDefectCheck,
           force: config.forceRetry,
+          // Caption rendering params (all 13)
           caption_font: config.captionFont,
           caption_font_size: config.captionFontSize,
+          caption_font_color: config.captionFontColor,
           caption_stroke_width: config.captionStrokeWidth,
+          caption_stroke_color: config.captionStrokeColor,
+          caption_bg_color: config.captionBgColor,
+          caption_alignment: config.captionAlignment,
+          caption_position: config.captionPosition,
+          caption_max_lines: config.captionMaxLines,
+          caption_max_font_size: config.captionMaxFontSize,
+          caption_font_size_factor: config.captionFontSizeFactor,
+          caption_width_ratio: config.captionWidthRatio,
+          caption_optimize: config.enableSubtitleOptimization,
         }),
       })
 
