@@ -38,6 +38,7 @@ import json
 import time
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Tuple, Optional, Dict
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
@@ -157,22 +158,25 @@ class RateLimiter:
         self.lock = threading.Lock()
 
     def acquire(self):
+        # 锁内只做原子记账 (微秒级)，锁外 sleep 允许并发获取令牌
         with self.lock:
             now = time.time()
             # 补充 token
-            elapsed = now - self.last_request
+            elapsed = max(0.0, now - self.last_request)
             self.tokens = min(self.max_tokens, self.tokens + elapsed * (self.max_tokens / 60.0))
-            if self.tokens < 1:
-                sleep_time = (1 - self.tokens) * (60.0 / self.max_tokens)
-                time.sleep(sleep_time)
-                self.tokens = 0.0
-            else:
+            if self.tokens >= 1:
                 self.tokens -= 1.0
-            # 最小间隔
-            since_last = now - self.last_request
-            if since_last < self.min_interval:
-                time.sleep(self.min_interval - since_last)
-            self.last_request = time.time()
+                token_wait = 0.0
+            else:
+                token_wait = (1.0 - self.tokens) * (60.0 / self.max_tokens)
+                self.tokens = 0.0
+            # 最小间隔 (since_last 可能为负，当多线程同时抢占时)
+            since_last = max(0.0, now - self.last_request)
+            interval_wait = max(0.0, self.min_interval - since_last)
+            wait = max(token_wait, interval_wait)
+            self.last_request = now + wait
+        if wait > 0:
+            time.sleep(wait)
 
 
 # ── API 抽象 ──────────────────────────────────────
@@ -548,6 +552,12 @@ class SRTTranslator:
         self.semantic_check = self.config.get("semantic_check", False)
         self.semantic_threshold = self.config.get("semantic_threshold", 0.65)
         self._verifier = None
+        # 并发配置
+        conc_cfg = self.config.get("concurrency", {})
+        self.concurrent_enabled = conc_cfg.get("enabled", False)
+        self.max_workers = conc_cfg.get("max_workers", 3)
+        # 线程安全锁
+        self._log_lock = threading.Lock()
         # 术语替换配置
         term_cfg = self.config.get("terms_dict", {})
         self.term_enabled = term_cfg.get("enabled", False)
@@ -580,10 +590,27 @@ class SRTTranslator:
 
         pending_groups = []
 
-        for gi, group in enumerate(groups, 1):
-            success = self._translate_group_with_fallback(gi, group)
-            if not success:
-                pending_groups.append(group)
+        if self.concurrent_enabled:
+            logger.info(f"并发翻译模式: max_workers={self.max_workers}")
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                future_to_group = {
+                    executor.submit(self._translate_group_with_fallback, gi, group): (gi, group)
+                    for gi, group in enumerate(groups, 1)
+                }
+                for future in as_completed(future_to_group):
+                    gi, group = future_to_group[future]
+                    try:
+                        success = future.result()
+                    except Exception as e:
+                        logger.error(f"组 {gi} 并发执行异常: {e}")
+                        success = False
+                    if not success:
+                        pending_groups.append(group)
+        else:
+            for gi, group in enumerate(groups, 1):
+                success = self._translate_group_with_fallback(gi, group)
+                if not success:
+                    pending_groups.append(group)
 
         # 保存自动翻译结果
         base = os.path.splitext(srt_path)[0]
@@ -603,6 +630,9 @@ class SRTTranslator:
                 logger.info(f"术语替换完成: {replaced}")
             except Exception as e:
                 logger.warning(f"术语替换失败，已跳过: {e}")
+
+        # 按组号排序日志（并发模式完成顺序不确定）
+        self.log.details.sort(key=lambda d: d.get("group", 0))
 
         # 输出待人工翻译
         if pending_groups:
@@ -642,13 +672,14 @@ class SRTTranslator:
         t0 = time.time()
         success = self._try_batch_translate(group, retry=False)
         if success:
-            self.log.success += 1
-            self.log.details.append({
-                "group": group_index,
-                "status": "success",
-                "method": "batch",
-                "duration": round(time.time() - t0, 2),
-            })
+            with self._log_lock:
+                self.log.success += 1
+                self.log.details.append({
+                    "group": group_index,
+                    "status": "success",
+                    "method": "batch",
+                    "duration": round(time.time() - t0, 2),
+                })
             # 语义核对 + 自动重新翻译（目前仅日语生效）
             if self.semantic_check and self.source_lang == "ja":
                 for sub in group:
@@ -666,13 +697,14 @@ class SRTTranslator:
             t0 = time.time()
             success = self._try_batch_translate(group, retry=True)
             if success:
-                self.log.retry_success += 1
-                self.log.details.append({
-                    "group": group_index,
-                    "status": "retry_success",
-                    "method": "batch",
-                    "duration": round(time.time() - t0, 2),
-                })
+                with self._log_lock:
+                    self.log.retry_success += 1
+                    self.log.details.append({
+                        "group": group_index,
+                        "status": "retry_success",
+                        "method": "batch",
+                        "duration": round(time.time() - t0, 2),
+                    })
                 return True
 
         # 第3次：逐条降级
@@ -681,23 +713,25 @@ class SRTTranslator:
             t0 = time.time()
             success = self._try_single_translate(group)
             if success:
-                self.log.single_fallback += 1
-                self.log.details.append({
-                    "group": group_index,
-                    "status": "single_fallback",
-                    "method": "single",
-                    "duration": round(time.time() - t0, 2),
-                })
+                with self._log_lock:
+                    self.log.single_fallback += 1
+                    self.log.details.append({
+                        "group": group_index,
+                        "status": "single_fallback",
+                        "method": "single",
+                        "duration": round(time.time() - t0, 2),
+                    })
                 return True
 
         # 最终：人工兜底
         if self.manual_fallback:
             logger.warning(f"[{group_label}] 自动翻译全部失败，标记人工翻译")
-            self.log.details.append({
-                "group": group_index,
-                "status": "manual",
-                "reason": "format_mismatch_after_all_attempts",
-            })
+            with self._log_lock:
+                self.log.details.append({
+                    "group": group_index,
+                    "status": "manual",
+                    "reason": "format_mismatch_after_all_attempts",
+                })
             return False
 
         return False

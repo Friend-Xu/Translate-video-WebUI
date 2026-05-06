@@ -196,7 +196,10 @@ class VideoSegmenter:
             tempfile.gettempdir(), f"_tv_mixed_{start}_{end}.wav"
         )
 
-        if self.clone_color and self.openvoice_cloner:
+        if audio_instrumental is None:
+            # 无背景乐：直接使用 TTS 音频，跳过混音
+            slow_down_clip = slow_down_clip.with_audio(tts_audio.subclipped(0, tts_dur))
+        elif self.clone_color and self.openvoice_cloner:
             try:
                 openvoice_output_dir = "file/OpenVoice_file"
                 clone_color_file = self.openvoice_cloner(tts_audio_path, openvoice_output_dir)
@@ -294,17 +297,38 @@ class VideoSegmenter:
     ):
         """处理视频开头和结尾的无人声片段。"""
         from moviepy import AudioFileClip
+        import subprocess
+        from pipeline.utils import get_ffmpeg_exe
+        ffmpeg = get_ffmpeg_exe()
         count = 0
+
+        def _get_audio(seg_start_ms: int, seg_end_ms: int):
+            """获取段音频：优先 extract_fn → instrumental_path → 生成静音。"""
+            if extract_fn:
+                seg_path = extract_fn(seg_start_ms, seg_end_ms)
+                if seg_path:
+                    return AudioFileClip(seg_path)
+            if instrumental_path is not None:
+                return AudioFileClip(instrumental_path)
+            # 无背景乐：生成段长静音
+            import tempfile
+            dur_s = (seg_end_ms - seg_start_ms) / 1000.0
+            silence_path = os.path.join(
+                tempfile.gettempdir(), f"_tv_silence_{seg_start_ms}_{seg_end_ms}.wav"
+            )
+            subprocess.run([
+                ffmpeg, "-y", "-f", "lavfi",
+                "-i", f"anullsrc=r=44100:cl=mono",
+                "-t", f"{dur_s:.3f}",
+                "-acodec", "pcm_s16le", silence_path,
+            ], capture_output=True, check=True)
+            return AudioFileClip(silence_path)
 
         first_start, _, _ = subs[0]
         if first_start != 0:
             print("-------处理视频开头无人声片段--------")
             cm = video.subclipped(0, first_start / 1000)
-            if extract_fn:
-                seg_path = extract_fn(0, first_start)
-            else:
-                seg_path = instrumental_path
-            audio = AudioFileClip(seg_path)
+            audio = _get_audio(0, first_start)
             cm = cm.with_audio(None).with_audio(audio)
             os.makedirs(self.video_output_dir, exist_ok=True)
             cm.write_videofile(
@@ -322,11 +346,7 @@ class VideoSegmenter:
         if last_end != total_video_duration * 1000:
             print("-------处理视频结尾无人声片段--------")
             cm = video.subclipped(last_end / 1000, total_video_duration)
-            if extract_fn:
-                seg_path = extract_fn(last_end, int(total_video_duration * 1000))
-            else:
-                seg_path = instrumental_path
-            audio = AudioFileClip(seg_path)
+            audio = _get_audio(last_end, int(total_video_duration * 1000))
             cm = cm.with_audio(None).with_audio(audio)
             os.makedirs(self.video_output_dir, exist_ok=True)
             cm.write_videofile(

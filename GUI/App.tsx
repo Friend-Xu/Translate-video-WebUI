@@ -12,13 +12,22 @@ import { FilePickerDialog } from './components/FilePickerDialog'
 import { useConfig } from './hooks/useConfig'
 import { usePipeline } from './hooks/usePipeline'
 import { useSSE } from './hooks/useSSE'
+import { useBatch } from './hooks/useBatch'
+import type { PipelineMode } from './types'
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('主界面')
+  const [mode, setMode] = useState<PipelineMode>('single')
   const { config, updateConfig, resetConfig } = useConfig()
   const { status, logs, appendLog, handleDone, startPipeline, cancelPipeline } = usePipeline()
+  const {
+    batch, activeVideoJobId,
+    startBatch, cancelBatch, skipCurrent,
+    viewVideoLogs,
+  } = useBatch()
 
   const [filePickerOpen, setFilePickerOpen] = useState(false)
+  const [batchFiles, setBatchFiles] = useState<string[]>([])
   const [snackbar, setSnackbar] = useState<{ open: boolean; msg: string; severity: 'success' | 'error' | 'info' }>({
     open: false, msg: '', severity: 'info',
   })
@@ -35,10 +44,20 @@ export default function App() {
     return () => clearInterval(interval)
   }, [])
 
-  useSSE(status.jobId, appendLog, handleDone)
+  // SSE: batch mode uses active video's jobId, single mode uses status.jobId
+  const sseJobId = mode === 'batch' ? activeVideoJobId : status.jobId
+  useSSE(sseJobId, appendLog, handleDone, () => {})
 
   const showMsg = useCallback((msg: string, severity: 'success' | 'error' | 'info' = 'info') => {
     setSnackbar({ open: true, msg, severity })
+  }, [])
+
+  const handleReorderFiles = useCallback((reordered: string[]) => {
+    setBatchFiles(reordered)
+  }, [])
+
+  const handleRemoveFile = useCallback((path: string) => {
+    setBatchFiles(prev => prev.filter(p => p !== path))
   }, [])
 
   const handleSelectFile = useCallback(() => {
@@ -50,6 +69,20 @@ export default function App() {
     setFilePickerOpen(false)
     showMsg(`已选择: ${path}`, 'success')
   }, [updateConfig, showMsg])
+
+  const handleBatchFilesSelected = useCallback((paths: string[], replace?: boolean) => {
+    if (replace) {
+      setBatchFiles(paths)
+    } else {
+      setBatchFiles(prev => {
+        const existing = new Set(prev)
+        for (const p of paths) existing.add(p)
+        return Array.from(existing)
+      })
+    }
+    setFilePickerOpen(false)
+    showMsg(`已添加 ${paths.length} 个视频`, 'success')
+  }, [showMsg])
 
   const handleStart = useCallback(() => {
     if (!config.videoPath) {
@@ -70,6 +103,24 @@ export default function App() {
     setActiveTab('日志与反馈')
   }, [config, updateConfig, startPipeline, showMsg])
 
+  const handleStartBatch = useCallback(async () => {
+    if (batchFiles.length === 0) {
+      showMsg('请先添加视频文件', 'error')
+      return
+    }
+    try {
+      await startBatch(batchFiles, config)
+      setActiveTab('日志与反馈')
+    } catch (e: any) {
+      showMsg(e.message || '批次启动失败', 'error')
+    }
+  }, [batchFiles, config, startBatch, showMsg])
+
+  const handleModeChange = useCallback((newMode: PipelineMode) => {
+    if (status.state === 'running' || batch.status === 'running') return
+    setMode(newMode)
+  }, [status.state, batch.status])
+
   const handleSaveConfig = useCallback(() => {
     const { videoPath, outputPath, forceRetry, defaultVideoDir, ...toSave } = config
     fetch('/api/config', {
@@ -80,6 +131,10 @@ export default function App() {
       .then(r => { if (r.ok) showMsg('配置已保存', 'success'); else showMsg('保存失败', 'error') })
       .catch(() => showMsg('保存失败', 'error'))
   }, [config, showMsg])
+
+  const logHeaderLabel = mode === 'batch' && activeVideoJobId
+    ? `查看日志: ${(batch.videos.find(v => v.job_id === activeVideoJobId) || {} as any).video_name || activeVideoJobId}`
+    : undefined
 
   return (
     <ThemeProvider theme={theme}>
@@ -96,6 +151,18 @@ export default function App() {
               onCancel={cancelPipeline}
               onForceRetry={handleForceRetry}
               onSelectFile={handleSelectFile}
+              mode={mode}
+              onModeChange={handleModeChange}
+              batch={batch}
+              batchFiles={batchFiles}
+              onStartBatch={handleStartBatch}
+              onCancelBatch={cancelBatch}
+              onSkipCurrent={skipCurrent}
+              onViewLogs={viewVideoLogs}
+              activeVideoJobId={activeVideoJobId}
+              onAddFiles={() => setFilePickerOpen(true)}
+              onReorderFiles={handleReorderFiles}
+              onRemoveFile={handleRemoveFile}
             />
           )}
           {activeTab === '步骤配置' && <StepConfig config={config} onConfigChange={updateConfig} />}
@@ -111,7 +178,7 @@ export default function App() {
           )}
           {activeTab === '日志与反馈' && (
             <Box sx={{ maxWidth: 800 }}>
-              <LogPanel logs={logs} showTitle={false} />
+              <LogPanel logs={logs} showTitle={false} headerLabel={logHeaderLabel} />
             </Box>
           )}
           {activeTab === '工具栏' && (
@@ -131,6 +198,8 @@ export default function App() {
         onSelect={handleFileSelected}
         onClose={() => setFilePickerOpen(false)}
         initialPath={config.defaultVideoDir}
+        multiple={mode === 'batch'}
+        onSelectMultiple={handleBatchFilesSelected}
       />
 
       <Snackbar

@@ -237,6 +237,22 @@ const theme = createTheme({
         disableRipple: true,
       },
     },
+    MuiToggleButton: {
+      styleOverrides: {
+        root: {
+          fontWeight: 600,
+          fontSize: '0.8125rem',
+          padding: '4px 14px',
+          '&.Mui-selected': {
+            backgroundColor: 'rgba(99, 102, 241, 0.15)',
+            color: 'var(--mui-palette-primary-dark)',
+            '&:hover': {
+              backgroundColor: 'rgba(99, 102, 241, 0.22)',
+            },
+          },
+        },
+      },
+    },
     MuiChip: {
       defaultProps: {
         deleteIcon: undefined,

@@ -241,7 +241,6 @@ class VAD_Segmenter:
 
         # 短音频直接处理
         if duration_s <= 300:  # 5分钟内直接处理
-            import torch
             import soundfile as _sf
             _wav_np, sr_loaded = _sf.read(wav_path)
             _wav_t = torch.from_numpy(_wav_np).float()

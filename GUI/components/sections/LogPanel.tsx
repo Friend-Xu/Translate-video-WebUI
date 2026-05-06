@@ -6,6 +6,7 @@ import type { LogEntry } from '../../types'
 interface LogPanelProps {
   logs: LogEntry[]
   showTitle?: boolean
+  headerLabel?: string
 }
 
 const levelColor: Record<string, string> = {
@@ -14,7 +15,7 @@ const levelColor: Record<string, string> = {
   ERROR: '#dc2626',
 }
 
-export function LogPanel({ logs, showTitle = true }: LogPanelProps) {
+export function LogPanel({ logs, showTitle = true, headerLabel }: LogPanelProps) {
   const logEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -28,6 +29,11 @@ export function LogPanel({ logs, showTitle = true }: LogPanelProps) {
       {showTitle && <SectionHeader title="日志与反馈 (Log & Feedback)" />}
       <Card sx={{ height: '100%', mt: showTitle ? 2 : 0 }}>
         <CardContent>
+          {headerLabel && (
+            <Typography variant="caption" color="primary.main" fontWeight={500} sx={{ display: 'block', mb: 0.5 }}>
+              {headerLabel}
+            </Typography>
+          )}
           <Typography variant="body2" fontWeight={500} gutterBottom>日志输出</Typography>
           <Box sx={{
             p: 1.5, bgcolor: 'grey.100', borderRadius: 2, mb: 2,

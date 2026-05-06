@@ -13,6 +13,7 @@ export interface PipelineConfig {
   enableSemanticValidation: boolean
   enableTermReplacement: boolean
   enableAudioExtract: boolean
+  enableDemucs: boolean
   enableSubtitleOverlay: boolean
   enableVideoMerge: boolean
   outputPath: string
@@ -25,6 +26,7 @@ export interface PipelineConfig {
   voiceCloneSample: string
   openvoiceVersion: 'v1' | 'v2'
   concurrency: number
+  numWorkers: number
   enableCheckpoint: boolean
   enableDefectCheck: boolean
   enableExtract: boolean
@@ -78,6 +80,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   enableSemanticValidation: true,
   enableTermReplacement: true,
   enableAudioExtract: true,
+  enableDemucs: true,
   enableSubtitleOverlay: true,
   enableVideoMerge: true,
   outputPath: '',
@@ -90,6 +93,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   voiceCloneSample: '',
   openvoiceVersion: 'v2',
   concurrency: 3,
+  numWorkers: 1,
   enableCheckpoint: true,
   enableDefectCheck: true,
   enableExtract: true,
@@ -119,6 +123,7 @@ export interface SystemInfo {
   cpuCount: number
   hasGpu: boolean
   gpuName: string
+  gpuVramMb: number
   recommendedConcurrency: number
   defaultVideoDir: string
 }
@@ -128,4 +133,27 @@ export interface VideoInfo {
   height: number
   duration: number
   durationStr: string
+}
+
+export type PipelineMode = 'single' | 'batch'
+
+export interface BatchVideoItem {
+  video_path: string
+  video_name: string
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+  progress: number
+  current_step: string
+  job_id: string | null
+}
+
+export interface BatchStatus {
+  batch_id: string | null
+  status: 'idle' | 'running' | 'completed' | 'partial' | 'cancelled' | 'failed'
+  current_index: number
+  total_count: number
+  completed_count: number
+  failed_count: number
+  videos: BatchVideoItem[]
+  logs: string[]
+  created_at: string
 }

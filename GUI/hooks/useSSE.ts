@@ -5,6 +5,7 @@ export function useSSE(
   jobId: string | null,
   onLog: (entry: LogEntry) => void,
   onDone: (status: string) => void,
+  onClear?: () => void,
 ) {
   const sourceRef = useRef<EventSource | null>(null)
 
@@ -15,6 +16,8 @@ export function useSSE(
 
   useEffect(() => {
     if (!jobId) return
+
+    onClear?.()
 
     const es = new EventSource(`/api/pipeline/${jobId}/logs`)
     sourceRef.current = es

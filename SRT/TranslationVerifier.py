@@ -44,13 +44,22 @@ class CrossLingualScorer:
         """延迟加载模型"""
         if self.model is not None:
             return
-        # 在中国大陆访问 HuggingFace 需要镜像，默认设置
         if not os.environ.get("HF_ENDPOINT"):
             os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+        local_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "models", "sentence-transformers", "paraphrase-multilingual-MiniLM-L12-v2",
+        )
+        if os.path.isdir(local_path):
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+            model_path = local_path
+        else:
+            model_path = self.model_name
         t0 = time.time()
-        logger.info(f"加载跨语言语义模型: {self.model_name}")
+        logger.info(f"加载跨语言语义模型: {model_path}")
         from sentence_transformers import SentenceTransformer
-        self.model = SentenceTransformer(self.model_name)
+        self.model = SentenceTransformer(model_path)
         self._load_time = time.time() - t0
         logger.info(f"  加载完成，耗时: {self._load_time:.1f}s")
 

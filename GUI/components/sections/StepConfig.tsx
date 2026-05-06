@@ -1,17 +1,39 @@
+import { useState, useEffect } from 'react'
 import {
   Box, Typography, Card, CardContent, Select, MenuItem,
   FormControlLabel, Checkbox, TextField, Slider, Stack,
 } from '@mui/material'
 import Grid from '@mui/material/Grid'
 import { SectionHeader } from '../SectionHeader'
-import type { PipelineConfig } from '../../types'
+import type { PipelineConfig, SystemInfo } from '../../types'
 
 interface StepConfigProps {
   config: PipelineConfig
   onConfigChange: <K extends keyof PipelineConfig>(key: K, value: PipelineConfig[K]) => void
 }
 
+/** VRAM 需求估算 (MB per worker) */
+const VRAM_PER_WORKER: Record<string, number> = {
+  small: 1500,
+  medium: 3000,
+  large: 6000,
+}
+
 export function StepConfig({ config, onConfigChange }: StepConfigProps) {
+  const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
+
+  useEffect(() => {
+    fetch('/api/system/info')
+      .then(r => r.json())
+      .then(setSysInfo)
+      .catch(() => {})
+  }, [])
+
+  const gpuVramMb = sysInfo?.gpuVramMb ?? 0
+  const perWorker = VRAM_PER_WORKER[config.model] ?? 1500
+  const maxNumWorkers = gpuVramMb > 0
+    ? Math.max(1, Math.min(8, Math.floor(gpuVramMb / perWorker)))
+    : 1
   return (
     <>
       <SectionHeader title="步骤配置面板 (Step-by-Step 设置)" />
@@ -53,6 +75,10 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   control={<Checkbox checked={config.enableAudioExtract} onChange={e => onConfigChange('enableAudioExtract', e.target.checked)} />}
                   label={<Typography variant="body2">启用音频提取 (提取音频并修复采样率)</Typography>}
                 />
+                <FormControlLabel
+                  control={<Checkbox checked={config.enableDemucs} onChange={e => onConfigChange('enableDemucs', e.target.checked)} />}
+                  label={<Box><Typography variant="body2">启用 Demucs 人声/背景音分离</Typography><Typography variant="caption" display="block">关闭时使用完整音轨作为背景乐，跳过 AI 分离</Typography></Box>}
+                />
 
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
                   <FormControlLabel
@@ -71,6 +97,31 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                     </Select>
                     <Typography variant="caption">指定语言后启用 wav2vec2 精修词级时间戳（~20ms 精度）</Typography>
                   </Box>
+                </Box>
+
+                <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                  <Box display="flex" justifyContent="space-between">
+                    <Typography variant="body2" fontWeight={500}>whisper 并发数</Typography>
+                    <Typography variant="body2" fontWeight={600} color="primary">{config.numWorkers}</Typography>
+                  </Box>
+                  <Typography variant="caption" display="block" mb={1}>
+                    {sysInfo?.hasGpu
+                      ? `GPU: ${sysInfo?.gpuName ?? ''} (${(gpuVramMb / 1024).toFixed(1)}GB), 最大 ${maxNumWorkers} workers`
+                      : 'CPU 模式，仅支持串行'}
+                  </Typography>
+                  <Slider
+                    value={config.numWorkers}
+                    min={1}
+                    max={maxNumWorkers}
+                    step={1}
+                    disabled={maxNumWorkers <= 1}
+                    marks={
+                      maxNumWorkers <= 4
+                        ? Array.from({ length: maxNumWorkers }, (_, i) => ({ value: i + 1, label: String(i + 1) }))
+                        : [{ value: 1, label: '1' }, { value: Math.floor(maxNumWorkers / 2), label: String(Math.floor(maxNumWorkers / 2)) }, { value: maxNumWorkers, label: String(maxNumWorkers) }]
+                    }
+                    onChange={(_, v) => onConfigChange('numWorkers', v as number)}
+                  />
                 </Box>
               </Stack>
             </CardContent>
@@ -116,6 +167,14 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   control={<Checkbox checked={config.enableTermReplacement} onChange={e => onConfigChange('enableTermReplacement', e.target.checked)} />}
                   label={<Box><Typography variant="body2">启用术语替换</Typography><Typography variant="caption" display="block">启用术语替换（如Minecraft专有名词）</Typography></Box>}
                 />
+                <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                  <Box display="flex" justifyContent="space-between">
+                    <Typography variant="body2" fontWeight={500}>并发数</Typography>
+                    <Typography variant="body2" fontWeight={600} color="primary">{config.concurrency}</Typography>
+                  </Box>
+                  <Typography variant="caption" display="block" mb={1}>同时翻译的组数 (1=串行, 2~8=并行)</Typography>
+                  <Slider value={config.concurrency} min={1} max={8} step={1} marks={[{ value: 1, label: '1' }, { value: 3, label: '3' }, { value: 5, label: '5' }, { value: 8, label: '8' }]} onChange={(_, v) => onConfigChange('concurrency', v as number)} />
+                </Box>
               </Stack>
             </CardContent>
           </Card>

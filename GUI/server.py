@@ -7,6 +7,12 @@ Endpoints:
   GET  /api/pipeline/{id}/status  - Job status
   POST /api/pipeline/{id}/cancel  - Kill running job
   GET  /api/jobs                  - List all jobs (persisted)
+  POST /api/batch/run             - Start batch processing
+  GET  /api/batch/{id}            - Get batch status
+  POST /api/batch/{id}/cancel     - Cancel entire batch
+  POST /api/batch/{id}/skip       - Skip current video in batch
+  GET  /api/batch/active          - Get active batch
+  GET  /api/batch/list            - List all batches
   GET  /api/settings              - Read user settings
   POST /api/settings              - Write user settings
   POST /api/settings/reset        - Reset language to defaults
@@ -68,6 +74,7 @@ VENV_PYTHON = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
 MAIN_SCRIPT = PROJECT_ROOT / "main.py"
 DIST_DIR = Path(__file__).resolve().parent / "dist"
 JOBS_DIR = Path(__file__).resolve().parent / "jobs"
+BATCHES_DIR = Path(__file__).resolve().parent / "batches"
 SETTINGS_PATH = Path(__file__).resolve().parent / "settings.json"
 CONFIG_YAML = PROJECT_ROOT / "SRT" / "Config.yaml"
 CONFIG_BAK = PROJECT_ROOT / "SRT" / "Config.yaml.bak"
@@ -111,6 +118,7 @@ class Job:
     logs: list[str] = field(default_factory=list)
     video_path: str = ""
     created_at: str = ""
+    batch_id: str | None = None
     _log_event: asyncio.Event = field(default_factory=asyncio.Event)
 
     def append_log(self, line: str) -> None:
@@ -134,6 +142,68 @@ class Job:
         self._log_event.clear()
 
 
+@dataclass
+class BatchSession:
+    id: str
+    config_json: str
+    video_paths: list[str]
+    video_job_ids: dict[str, str] = field(default_factory=dict)
+    current_video_index: int = 0
+    status: str = "running"     # running | completed | cancelled | partial | failed
+    created_at: str = ""
+    logs: list[str] = field(default_factory=list)
+
+    def append_log(self, line: str) -> None:
+        self.logs.append(line)
+        self.logs = self.logs[-200:]
+        _save_batch(self)
+
+
+def _save_batch(batch: BatchSession) -> None:
+    BATCHES_DIR.mkdir(exist_ok=True)
+    (BATCHES_DIR / f"{batch.id}.json").write_text(
+        json.dumps({
+            "id": batch.id,
+            "config_json": batch.config_json,
+            "video_paths": batch.video_paths,
+            "video_job_ids": batch.video_job_ids,
+            "current_video_index": batch.current_video_index,
+            "status": batch.status,
+            "logs": batch.logs,
+            "created_at": batch.created_at,
+        }, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _load_batches() -> dict[str, BatchSession]:
+    BATCHES_DIR.mkdir(exist_ok=True)
+    batches: dict[str, BatchSession] = {}
+    for p in BATCHES_DIR.glob("*.json"):
+        try:
+            data = json.loads(p.read_text("utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        batch = BatchSession(
+            id=data.get("id", p.stem),
+            config_json=data.get("config_json", "{}"),
+            video_paths=data.get("video_paths", []),
+            video_job_ids=data.get("video_job_ids", {}),
+            current_video_index=data.get("current_video_index", 0),
+            status="failed" if data.get("status") == "running" else data.get("status", "failed"),
+            logs=data.get("logs", []),
+            created_at=data.get("created_at", ""),
+        )
+        if data.get("status") == "running":
+            batch.logs.append("[BATCH] 服务重启，批次中断")
+            _save_batch(batch)
+        batches[batch.id] = batch
+    return batches
+
+
+_batches: dict[str, BatchSession] = _load_batches()
+
+
 def _save_job(job: Job) -> None:
     JOBS_DIR.mkdir(exist_ok=True)
     (JOBS_DIR / f"{job.id}.json").write_text(
@@ -145,6 +215,7 @@ def _save_job(job: Job) -> None:
             "logs": job.logs[-200:],
             "video_path": job.video_path,
             "created_at": job.created_at,
+            "batch_id": job.batch_id,
         }, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
@@ -166,6 +237,7 @@ def _load_jobs() -> dict[str, Job]:
             logs=data.get("logs", []),
             video_path=data.get("video_path", ""),
             created_at=data.get("created_at", ""),
+            batch_id=data.get("batch_id"),
         )
         if job.status == "running":
             job.status = "failed"
@@ -216,7 +288,7 @@ def _load_yaml_defaults() -> dict:
         "enableEmotionClone": tts.get("enable_emotion", False),
         "defaultEmotion": tts.get("default_emotion", "neutral"),
         "emotionRefAudio": tts.get("emotion_ref_audio") or "",
-        "concurrency": tts.get("threading_workers", 7),
+        "concurrency": trans.get("concurrency", {}).get("max_workers", tts.get("threading_workers", 3)),
         "enableCheckpoint": tts.get("enable_resume", False),
         "captionFont": tts.get("caption_font", ""),
         "videoCodec": tts.get("video_codec", "libx264"),
@@ -270,6 +342,38 @@ def reset_language(language: str) -> dict:
     return presets.get(language, {})
 
 
+def _sync_translate_config() -> None:
+    """Write pipeline settings (concurrency, etc.) from settings.json → translate.yaml."""
+    translate_path = PROJECT_ROOT / "config" / "translate.yaml"
+    if not translate_path.exists():
+        return
+    settings = load_settings()
+    pipeline_cfg = settings.get("pipeline", {})
+    if not pipeline_cfg:
+        return
+
+    with open(translate_path, "r", encoding="utf-8") as f:
+        trans = yaml.safe_load(f) or {}
+
+    if "translate" not in trans:
+        trans["translate"] = {}
+
+    # Sync concurrency setting
+    if "concurrency" in pipeline_cfg:
+        conc = pipeline_cfg["concurrency"]
+        if "concurrency" not in trans["translate"]:
+            trans["translate"]["concurrency"] = {}
+        trans["translate"]["concurrency"]["enabled"] = conc > 1
+        trans["translate"]["concurrency"]["max_workers"] = conc
+
+    # Sync API key if provided
+    if pipeline_cfg.get("apiKey"):
+        trans["translate"]["api_key"] = pipeline_cfg["apiKey"]
+
+    with open(translate_path, "w", encoding="utf-8") as f:
+        yaml.dump(trans, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
+
+
 # ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
@@ -284,6 +388,7 @@ class RunRequest(BaseModel):
     skip_translate: bool = False
     skip_tts: bool = False
     skip_defect_check: bool = False
+    skip_demucs: bool = False
     force: bool = False
     caption_font: str = ""
     caption_font_size: int = 0
@@ -298,6 +403,7 @@ class RunRequest(BaseModel):
     caption_font_size_factor: float = 0.030
     caption_width_ratio: float = 0.85
     caption_optimize: bool = True
+    num_workers: int = 1
 
 
 class RunResponse(BaseModel):
@@ -311,30 +417,10 @@ class StatusResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Endpoints
+# Helper functions for pipeline launch
 # ---------------------------------------------------------------------------
 
-@app.post("/api/pipeline/run", response_model=RunResponse)
-async def start_pipeline(req: RunRequest) -> RunResponse:
-    video = Path(req.video_path)
-    if not video.is_file():
-        raise HTTPException(status_code=400, detail=f"视频文件不存在: {req.video_path}")
-
-    job_id = uuid.uuid4().hex[:8]
-    job = Job(
-        id=job_id,
-        status="running",
-        current_step="启动中...",
-        video_path=req.video_path,
-        created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    )
-    _jobs[job_id] = job
-    _save_job(job)
-
-    # Apply user subtitle settings to Config.yaml before launching pipeline
-    apply_subtitle_settings()
-
-    # Write caption rendering config to config/caption.yaml
+def _write_caption_config(req: RunRequest) -> str:
     caption_config_path = PROJECT_ROOT / "config" / "caption.yaml"
     caption_config_path.parent.mkdir(exist_ok=True)
     caption_data = {
@@ -356,14 +442,17 @@ async def start_pipeline(req: RunRequest) -> RunResponse:
     }
     with open(caption_config_path, "w", encoding="utf-8") as f:
         yaml.dump(caption_data, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
+    return str(caption_config_path)
 
-    # Build CLI args matching main.py's argparse
+
+def _build_cli_args(req: RunRequest) -> list[str]:
+    caption_config_path = _write_caption_config(req)
     args: list[str] = [
-        str(VENV_PYTHON), str(MAIN_SCRIPT), str(video),
+        str(VENV_PYTHON), str(MAIN_SCRIPT), str(req.video_path),
         "--model", req.model,
         "--device", req.device,
         "--engine", req.engine,
-        "--caption-config", str(caption_config_path),
+        "--caption-config", caption_config_path,
     ]
     if req.lang and req.lang != "auto":
         args.extend(["--lang", req.lang])
@@ -375,14 +464,17 @@ async def start_pipeline(req: RunRequest) -> RunResponse:
         args.append("--skip-tts")
     if req.skip_defect_check:
         args.append("--skip-defect-check")
+    if req.skip_demucs:
+        args.append("--skip-demucs")
     if req.force:
         args.append("--force")
+    if req.num_workers > 1:
+        args.extend(["--num-workers", str(req.num_workers)])
+    return args
 
-    asyncio.create_task(_run_job(job, args))
-    return RunResponse(job_id=job_id)
 
-
-async def _run_job(job: Job, args: list[str]) -> None:
+async def _run_job_sync(job: Job, args: list[str]) -> None:
+    """Run a single job and wait for completion (for batch processing)."""
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     try:
@@ -418,6 +510,112 @@ async def _run_job(job: Job, args: list[str]) -> None:
         job.current_step = "异常"
         job.append_log(f"[ERROR] {e}")
         _save_job(job)
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/pipeline/run", response_model=RunResponse)
+async def start_pipeline(req: RunRequest) -> RunResponse:
+    video = Path(req.video_path)
+    if not video.is_file():
+        raise HTTPException(status_code=400, detail=f"视频文件不存在: {req.video_path}")
+
+    job_id = uuid.uuid4().hex[:8]
+    job = Job(
+        id=job_id,
+        status="running",
+        current_step="启动中...",
+        video_path=req.video_path,
+        created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+    _jobs[job_id] = job
+    _save_job(job)
+
+    apply_subtitle_settings()
+    _sync_translate_config()
+    args = _build_cli_args(req)
+
+    asyncio.create_task(_run_job(job, args))
+    return RunResponse(job_id=job_id)
+
+
+async def _run_job(job: Job, args: list[str]) -> None:
+    """Run a job as a fire-and-forget background task."""
+    await _run_job_sync(job, args)
+
+
+async def _batch_processor(batch_id: str) -> None:
+    """Process all videos in a batch sequentially."""
+    batch = _batches.get(batch_id)
+    if not batch:
+        return
+
+    try:
+        for i, video_path in enumerate(batch.video_paths):
+            if batch.status == "cancelled":
+                batch.append_log("[BATCH] 批次已取消，停止处理")
+                return
+
+            batch.current_video_index = i
+            video_name = os.path.basename(video_path)
+            batch.append_log(f"[BATCH] ({i+1}/{len(batch.video_paths)}) 开始: {video_name}")
+            _save_batch(batch)
+
+            video = Path(video_path)
+            if not video.is_file():
+                batch.append_log(f"[ERROR] 视频文件不存在，跳过: {video_path}")
+                continue
+
+            config_data = json.loads(batch.config_json)
+            config_data["video_path"] = video_path
+            req = RunRequest(**config_data)
+
+            job_id = uuid.uuid4().hex[:8]
+            job = Job(
+                id=job_id,
+                status="running",
+                current_step="启动中...",
+                video_path=video_path,
+                batch_id=batch_id,
+                created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            )
+            _jobs[job_id] = job
+            batch.video_job_ids[video_path] = job_id
+            _save_job(job)
+
+            apply_subtitle_settings()
+            _sync_translate_config()
+            args = _build_cli_args(req)
+
+            await _run_job_sync(job, args)
+
+            if job.status == "completed":
+                batch.append_log(f"[BATCH] [OK] ({i+1}/{len(batch.video_paths)}) {video_name}")
+            elif job.status == "failed":
+                batch.append_log(f"[ERROR] 视频处理失败: {video_name}")
+            elif job.status == "cancelled":
+                batch.append_log(f"[BATCH] 视频已跳过: {video_name}")
+
+        all_jobs = [j for j in _jobs.values() if j.batch_id == batch_id]
+        if batch.status == "cancelled":
+            return
+        if all(j.status == "completed" for j in all_jobs):
+            batch.status = "completed"
+            batch.append_log("[BATCH] 批次全部完成")
+        elif any(j.status == "completed" for j in all_jobs):
+            batch.status = "partial"
+            batch.append_log("[BATCH] 批次部分完成")
+        else:
+            batch.status = "failed"
+            batch.append_log("[BATCH] 批次失败")
+
+    except Exception as e:
+        batch.status = "failed"
+        batch.append_log(f"[BATCH] [ERROR] 批次异常: {e}")
+    finally:
+        _save_batch(batch)
 
 
 @app.get("/api/pipeline/{job_id}/status", response_model=StatusResponse)
@@ -500,6 +698,162 @@ async def list_jobs() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Batch processing endpoints
+# ---------------------------------------------------------------------------
+
+class BatchRunRequest(BaseModel):
+    video_paths: list[str]
+    config: dict
+
+
+class BatchRunResponse(BaseModel):
+    batch_id: str
+    video_count: int
+
+
+@app.post("/api/batch/run", response_model=BatchRunResponse)
+async def start_batch(req: BatchRunRequest) -> BatchRunResponse:
+    for p in req.video_paths:
+        if not Path(p).is_file():
+            raise HTTPException(status_code=400, detail=f"视频文件不存在: {p}")
+
+    batch_id = "batch_" + uuid.uuid4().hex[:8]
+    batch = BatchSession(
+        id=batch_id,
+        config_json=json.dumps(req.config),
+        video_paths=req.video_paths,
+        status="running",
+        created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+    _batches[batch_id] = batch
+    _save_batch(batch)
+
+    asyncio.create_task(_batch_processor(batch_id))
+    return BatchRunResponse(batch_id=batch_id, video_count=len(req.video_paths))
+
+
+@app.post("/api/batch/{batch_id}/skip")
+async def skip_current_video(batch_id: str) -> dict:
+    batch = _batches.get(batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    if batch.status != "running":
+        raise HTTPException(status_code=400, detail="Batch is not running")
+
+    idx = batch.current_video_index
+    if idx < len(batch.video_paths):
+        current_path = batch.video_paths[idx]
+        job_id = batch.video_job_ids.get(current_path)
+        if job_id:
+            job = _jobs.get(job_id)
+            if job and job.process and job.process.returncode is None:
+                job.process.terminate()
+                try:
+                    await asyncio.wait_for(job.process.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    job.process.kill()
+                job.status = "cancelled"
+                job.current_step = "已跳过"
+                job.append_log("[WARN] 用户跳过此视频")
+                _save_job(job)
+
+        batch.append_log(f"[BATCH] 跳过: {os.path.basename(current_path)}")
+
+    _save_batch(batch)
+    return {"ok": True}
+
+
+def _build_batch_dict(batch: BatchSession) -> dict:
+    videos: list[dict] = []
+    for video_path in batch.video_paths:
+        job_id = batch.video_job_ids.get(video_path)
+        job = _jobs.get(job_id) if job_id else None
+        videos.append({
+            "video_path": video_path,
+            "video_name": os.path.basename(video_path),
+            "status": job.status if job else "queued",
+            "progress": job.progress if job else 0,
+            "current_step": job.current_step if job else "排队中",
+            "job_id": job_id,
+        })
+    return {
+        "batch_id": batch.id,
+        "status": batch.status,
+        "current_index": batch.current_video_index,
+        "total_count": len(batch.video_paths),
+        "completed_count": sum(1 for v in videos if v["status"] == "completed"),
+        "failed_count": sum(1 for v in videos if v["status"] == "failed"),
+        "videos": videos,
+        "logs": batch.logs,
+        "created_at": batch.created_at,
+    }
+
+
+@app.get("/api/batch/list")
+async def list_batches() -> list[dict]:
+    return [
+        {
+            "batch_id": b.id,
+            "status": b.status,
+            "video_count": len(b.video_paths),
+            "completed_count": sum(
+                1 for p in b.video_paths
+                if (jid := b.video_job_ids.get(p))
+                and (j := _jobs.get(jid))
+                and j.status == "completed"
+            ),
+            "created_at": b.created_at,
+        }
+        for b in sorted(_batches.values(), key=lambda x: x.created_at or "", reverse=True)
+    ]
+
+
+@app.get("/api/batch/active")
+async def get_active_batch() -> dict | None:
+    for batch in _batches.values():
+        if batch.status == "running":
+            return _build_batch_dict(batch)
+    return None
+
+
+@app.get("/api/batch/{batch_id}")
+async def get_batch_status(batch_id: str) -> dict:
+    batch = _batches.get(batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    return _build_batch_dict(batch)
+
+
+@app.post("/api/batch/{batch_id}/cancel")
+async def cancel_batch(batch_id: str) -> dict:
+    batch = _batches.get(batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    batch.status = "cancelled"
+    batch.append_log("[BATCH] 批次已取消")
+
+    if batch.current_video_index < len(batch.video_paths):
+        current_path = batch.video_paths[batch.current_video_index]
+        job_id = batch.video_job_ids.get(current_path)
+        if job_id:
+            job = _jobs.get(job_id)
+            if job and job.process and job.process.returncode is None:
+                job.process.terminate()
+                try:
+                    await asyncio.wait_for(job.process.wait(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    job.process.kill()
+                job.status = "cancelled"
+                job.current_step = "已取消"
+                job.append_log("[WARN] 批次取消，任务终止")
+                _save_job(job)
+
+    _save_batch(batch)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # Settings & Subtitle presets
 # ---------------------------------------------------------------------------
 
@@ -578,6 +932,7 @@ async def system_info() -> dict:
 
     has_gpu = False
     gpu_name = ""
+    gpu_vram_mb = 0
 
     # Try nvidia-smi (multiple Windows paths)
     nvidia_smi_paths = [
@@ -588,12 +943,17 @@ async def system_info() -> dict:
     for smi in nvidia_smi_paths:
         try:
             result = subprocess.run(
-                [smi, "--query-gpu=name", "--format=csv,noheader"],
+                [smi, "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
                 capture_output=True, text=True, timeout=5,
             )
             if result.returncode == 0 and result.stdout.strip():
                 has_gpu = True
-                gpu_name = result.stdout.strip().split("\n")[0]
+                parts = result.stdout.strip().split(",")
+                gpu_name = parts[0].strip()
+                try:
+                    gpu_vram_mb = int(float(parts[1].strip()))
+                except (ValueError, IndexError):
+                    pass
                 break
         except Exception:
             continue
@@ -605,9 +965,11 @@ async def system_info() -> dict:
             if torch.cuda.is_available():
                 has_gpu = True
                 gpu_name = torch.cuda.get_device_name(0)
+                gpu_vram_mb = int(torch.cuda.get_device_properties(0).total_memory / (1024 * 1024))
         except Exception:
             pass
 
+    # recommendedConcurrency: legacy translation concurrency
     if has_gpu:
         recommended = min(max(cpu_count // 2, 3), 8)
     else:
@@ -621,6 +983,7 @@ async def system_info() -> dict:
         "cpuCount": cpu_count,
         "hasGpu": has_gpu,
         "gpuName": gpu_name,
+        "gpuVramMb": gpu_vram_mb,
         "recommendedConcurrency": recommended,
         "defaultVideoDir": default_video_dir,
     }
@@ -1225,6 +1588,37 @@ async def browse_files(path: str = "") -> dict:
         "current": str(target),
         "parent": str(target.parent) if target.parent != target else None,
         "entries": entries,
+    }
+
+
+@app.get("/api/files/search-videos")
+async def search_videos_recursive(path: str = "") -> dict:
+    """Recursively find all video files under a directory."""
+    if not path:
+        path = str(PROJECT_ROOT)
+
+    target = Path(path)
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail=f"Not a directory: {path}")
+
+    VIDEO_EXTENSIONS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv"}
+    videos: list[dict] = []
+    try:
+        for item in sorted(target.rglob("*")):
+            if item.is_file() and item.suffix.lower() in VIDEO_EXTENSIONS:
+                videos.append({
+                    "name": item.name,
+                    "path": str(item),
+                    "is_dir": False,
+                })
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permission denied")
+
+    return {
+        "current": str(target),
+        "parent": str(target.parent) if target.parent != target else None,
+        "entries": [],
+        "videos": videos,
     }
 
 

@@ -60,7 +60,9 @@ export function usePipeline() {
           skip_translate: !config.enableTranslate,
           skip_tts: !config.enableTTS,
           skip_defect_check: !config.enableDefectCheck,
+          skip_demucs: !config.enableDemucs,
           force: config.forceRetry,
+          num_workers: config.numWorkers,
           // Caption rendering params (all 13)
           caption_font: config.captionFont,
           caption_font_size: config.captionFontSize,

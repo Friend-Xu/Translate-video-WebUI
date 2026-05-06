@@ -50,22 +50,22 @@ def backup_step(label: str, paths: list[str], backup_root: str) -> None:
 
 
 def setup_hf_env() -> None:
-    """配置 HuggingFace 环境（镜像站 + 本地缓存）。"""
-    if not os.environ.get("HF_ENDPOINT"):
-        os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-    if not os.environ.get("HF_HUB_DISABLE_SYMLINKS_WARNING"):
-        os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+    """配置 HuggingFace 环境（镜像站 + 本地缓存）。
+
+    强制覆盖所有模型缓存路径到项目本地 models/ 目录，避免
+    ~/.cache/huggingface 和项目目录之间分裂导致重复下载。
+    """
+    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+    os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+
     hf_home = os.path.join(PROJECT_ROOT, "models", "hf_cache")
-    os.environ.setdefault("HF_HOME", hf_home)
-    os.environ.setdefault("TRANSFORMERS_CACHE", hf_home)
+    os.environ["HF_HOME"] = hf_home
+    os.environ["TRANSFORMERS_CACHE"] = hf_home
+    os.environ["SENTENCE_TRANSFORMERS_HOME"] = hf_home
     os.makedirs(hf_home, exist_ok=True)
 
-    # 所有模型统一放到项目本地 models/ 下，不依赖 ~/.cache
-    models_root = os.path.join(PROJECT_ROOT, "models")
-    os.environ.setdefault("TORCH_HOME", models_root)
-    os.environ.setdefault("SENTENCE_TRANSFORMERS_HOME",
-                          os.path.join(models_root, "hf_cache"))
-    os.makedirs(os.path.join(models_root, "hub", "checkpoints"), exist_ok=True)
+    os.environ["TORCH_HOME"] = os.path.join(PROJECT_ROOT, "models")
+    os.makedirs(os.path.join(PROJECT_ROOT, "models", "hub", "checkpoints"), exist_ok=True)
 
 
 def guess_source_srt(video_path: str) -> str | None:
@@ -92,7 +92,8 @@ def guess_translated_srt(video_path: str) -> str | None:
 
 
 def step_extract(video: str, lang: str | None, model: str, device: str,
-                  backup_dir: str = "", skip_defect_check: bool = False) -> None:
+                  backup_dir: str = "", skip_defect_check: bool = False,
+                  skip_demucs: bool = False, num_workers: int = 1) -> None:
     """步骤 1: 委托 extract_subtitles.py 完成全流程。
 
     含缺陷检测(N1.5)、音频提取(N2)、背景乐提取(N2.5)、
@@ -111,6 +112,10 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
         cmd.extend(["--lang", lang])
     if skip_defect_check:
         cmd.append("--skip-defect-check")
+    if skip_demucs:
+        cmd.append("--skip-demucs")
+    if num_workers > 1:
+        cmd.extend(["--num-workers", str(num_workers)])
 
     # 子进程 UTF-8 输出兼容（Windows GBK 终端）
     env = os.environ.copy()
@@ -185,6 +190,7 @@ def step_tts(
     caption_config_path: str | None,
     force: bool,
     backup_dir: str = "",
+    skip_demucs: bool = False,
     caption_font: str | None = None,
     caption_font_size: int | None = None,
     caption_font_color: str | None = None,
@@ -216,9 +222,13 @@ def step_tts(
         return
 
     if not os.path.isfile(instrumental):
-        print(f"\n[3/3] [X] 找不到背景音乐: {instrumental}")
-        print("   请先执行步骤 1（字幕提取会自动生成）")
-        sys.exit(1)
+        if skip_demucs:
+            print(f"\n[3/3] [INFO] Demucs 已跳过，不使用背景音乐")
+            instrumental = None
+        else:
+            print(f"\n[3/3] [X] 找不到背景音乐: {instrumental}")
+            print("   请先执行步骤 1（字幕提取会自动生成）")
+            sys.exit(1)
 
     print(f"\n[3/3] TTS 语音合成 + 视频合并 ({engine})...")
 
@@ -337,6 +347,10 @@ def main():
                         help="跳过字幕提取")
     parser.add_argument("--skip-defect-check", action="store_true",
                         help="跳过音频缺陷检测 (NODE 1.5)")
+    parser.add_argument("--skip-demucs", action="store_true",
+                        help="跳过 Demucs 人声分离 (NODE 2.5)")
+    parser.add_argument("--num-workers", type=int, default=1,
+                        help="whisper 并发 worker 数 (1=串行, 2~4=并行)")
     parser.add_argument("--skip-translate", action="store_true",
                         help="跳过翻译")
     parser.add_argument("--skip-tts", action="store_true",
@@ -389,7 +403,8 @@ def main():
         # extract_subtitles.py 包含: 缺陷检测 → 音频提取 → VAD → 转录 → 对齐 → SRT
         if not args.skip_extract:
             step_extract(video, lang=args.lang, model=args.model, device=args.device,
-                         backup_dir=args.backup_dir, skip_defect_check=args.skip_defect_check)
+                         backup_dir=args.backup_dir, skip_defect_check=args.skip_defect_check,
+                         skip_demucs=args.skip_demucs, num_workers=args.num_workers)
         else:
             print("[1/3] 字幕提取 — 已跳过 (--skip-extract)")
 
@@ -421,6 +436,7 @@ def main():
                 caption_config_path=args.caption_config,
                 force=args.force,
                 backup_dir=args.backup_dir,
+                skip_demucs=args.skip_demucs,
                 caption_font=args.caption_font,
                 caption_font_size=args.caption_font_size,
                 caption_font_color=args.caption_font_color,

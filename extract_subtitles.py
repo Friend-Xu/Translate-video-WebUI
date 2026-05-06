@@ -30,9 +30,11 @@ from datetime import datetime
 # ─── 环境初始化 ───
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-os.environ.setdefault("TORCH_HOME", os.path.join(os.path.dirname(os.path.abspath(__file__)), "models"))
-
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+os.environ["HF_HOME"] = os.path.join(PROJECT_ROOT, "models", "hf_cache")
+os.environ["TRANSFORMERS_CACHE"] = os.path.join(PROJECT_ROOT, "models", "hf_cache")
+os.environ["TORCH_HOME"] = os.path.join(PROJECT_ROOT, "models")
+
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "SRT"))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "pipeline"))
@@ -59,6 +61,8 @@ def parse_args():
     parser.add_argument("--device", default="cpu", help="计算设备 (cpu)")
     parser.add_argument("--compute-type", default="int8", help="计算精度 (int8/float32)")
     parser.add_argument("--skip-defect-check", action="store_true", help="跳过音频缺陷检测 (NODE 1.5)")
+    parser.add_argument("--skip-demucs", action="store_true", help="跳过 Demucs 人声分离 (NODE 2.5)")
+    parser.add_argument("--num-workers", type=int, default=1, help="whisper 并发 worker 数 (1=串行, 2~4=并行)")
     return parser.parse_args()
 
 
@@ -172,38 +176,43 @@ def main():
     # ════════════════════════════════════════════════════════
     # NODE 2.5: Demucs 人声分离（提取纯背景乐 + 人声）
     # ════════════════════════════════════════════════════════
-    hr("NODE 2.5: Demucs 人声分离")
     t0 = time.time()
     vocal_path = os.path.join(out_dir, f"{video_name}_(Vocals).wav")
     instrumental_path = os.path.join(out_dir, f"{video_name}_(Instrumental).wav")
 
     if not os.path.isfile(instrumental_path):
-        try:
-            from pipeline.demucs_instr import extract_instrumental
-            instr_result = extract_instrumental(video, out_dir)
-            demucs_dir = os.path.dirname(instr_result)
-            demucs_vocal = os.path.join(demucs_dir, "vocals.wav")
+        if args.skip_demucs:
+            hr("NODE 2.5: 背景乐（已跳过 Demucs，不生成背景乐）")
+            print(f"  [INFO] Demucs 已跳过 (--skip-demucs)，不生成背景音乐")
+            log_node("2.5", "跳过 — 无背景乐")
+        else:
+            hr("NODE 2.5: Demucs 人声分离")
+            try:
+                from pipeline.demucs_instr import extract_instrumental
+                instr_result = extract_instrumental(video, out_dir)
+                demucs_dir = os.path.dirname(instr_result)
+                demucs_vocal = os.path.join(demucs_dir, "vocals.wav")
 
-            import shutil
-            shutil.copy2(instr_result, instrumental_path)
-            if os.path.isfile(demucs_vocal):
-                shutil.copy2(demucs_vocal, vocal_path)
-                vocal_size = os.path.getsize(vocal_path)
-                log_node("2.5", f"人声: {vocal_path} ({format_size(vocal_size)})")
+                import shutil
+                shutil.copy2(instr_result, instrumental_path)
+                if os.path.isfile(demucs_vocal):
+                    shutil.copy2(demucs_vocal, vocal_path)
+                    vocal_size = os.path.getsize(vocal_path)
+                    log_node("2.5", f"人声: {vocal_path} ({format_size(vocal_size)})")
 
-            instr_size = os.path.getsize(instrumental_path)
-            log_node("2.5", f"背景乐: {instrumental_path} ({format_size(instr_size)})")
-        except Exception as e:
-            # Demucs 失败时降级：直接用 ffmpeg 提取完整音轨
-            print(f"  [WARN] Demucs 失败 ({e})，降级为完整音轨提取")
-            subprocess.run(
-                [ffmpeg_exe, "-y", "-i", video,
-                 "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
-                 instrumental_path],
-                capture_output=True, text=True, check=True,
-            )
-            instr_size = os.path.getsize(instrumental_path)
-            log_node("2.5", f"背景乐(降级): {instrumental_path} ({format_size(instr_size)})")
+                instr_size = os.path.getsize(instrumental_path)
+                log_node("2.5", f"背景乐: {instrumental_path} ({format_size(instr_size)})")
+            except Exception as e:
+                # Demucs 失败时降级：直接用 ffmpeg 提取完整音轨
+                print(f"  [WARN] Demucs 失败 ({e})，降级为完整音轨提取")
+                subprocess.run(
+                    [ffmpeg_exe, "-y", "-i", video,
+                     "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+                     instrumental_path],
+                    capture_output=True, text=True, check=True,
+                )
+                instr_size = os.path.getsize(instrumental_path)
+                log_node("2.5", f"背景乐(降级): {instrumental_path} ({format_size(instr_size)})")
     else:
         instr_size = os.path.getsize(instrumental_path)
         log_node("2.5", f"已有背景乐 ({format_size(instr_size)})，跳过分离")
@@ -228,6 +237,7 @@ def main():
         device=args.device,
         compute_type=args.compute_type,
         download_root=model_root,
+        num_workers=args.num_workers,
     )
 
     # 3a: VAD

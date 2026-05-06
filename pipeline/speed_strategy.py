@@ -129,7 +129,7 @@ class PerSegmentStrategy:
         subs_en: List[Tuple[int, int, str]],
         synth_fn: Callable,
         video_clip,
-        instrumental_path: str,
+        instrumental_path: str | None,
         video_segmenter,
         resume_manager,
         progress_callback: Optional[Callable] = None,
@@ -147,8 +147,13 @@ class PerSegmentStrategy:
             search_method=self.ctx.search_method,
         )
 
-        def _extract_segment(seg_start_ms: int, seg_end_ms: int) -> str:
-            """提取一段独立的伴奏片段。"""
+        def _extract_segment(seg_start_ms: int, seg_end_ms: int) -> str | None:
+            """提取一段独立的伴奏片段。
+
+            instrumental_path 为 None 时返回 None。
+            """
+            if instrumental_path is None:
+                return None
             from pipeline.utils import get_ffmpeg_exe
             import subprocess
             seg_dir = os.path.join(self.ctx.trail_dir, "audio_segments")
@@ -202,7 +207,7 @@ class PerSegmentStrategy:
 
                 # 伴奏片段
                 instr_seg_path = _extract_segment(start, seg_end_ms)
-                instrumental_segment = AudioFileClip(instr_seg_path)
+                instrumental_segment = AudioFileClip(instr_seg_path) if instr_seg_path else None
 
                 # 1. 生成 base_speed TTS
                 output_audio_path = os.path.join(
@@ -244,7 +249,8 @@ class PerSegmentStrategy:
                     adj_type = "rate" if adj_result.adjustment_type in ("speed_up",) else "none"
 
                 tts_audio.close()
-                instrumental_segment.close()
+                if instrumental_segment is not None:
+                    instrumental_segment.close()
                 current_video.close()
 
                 # 标记完成
@@ -297,7 +303,7 @@ class GlobalStrategy:
         subs_en: List[Tuple[int, int, str]],
         synth_fn: Callable,
         video_clip,
-        instrumental_path: str,
+        instrumental_path: str | None,
         video_segmenter,
         resume_manager,
         progress_callback: Optional[Callable] = None,
@@ -365,7 +371,9 @@ class GlobalStrategy:
 
         print(f"[GlobalStrategy] 统一生成 TTS (rate={global_rate_str})...")
 
-        def _extract_segment(seg_start_ms: int, seg_end_ms: int) -> str:
+        def _extract_segment(seg_start_ms: int, seg_end_ms: int) -> str | None:
+            if instrumental_path is None:
+                return None
             seg_dir = os.path.join(self.ctx.trail_dir, "audio_segments")
             os.makedirs(seg_dir, exist_ok=True)
             seg_path = os.path.join(seg_dir, f"instr_{seg_start_ms}_{seg_end_ms}.wav")
@@ -408,7 +416,7 @@ class GlobalStrategy:
                 current_video = video_clip.subclipped(start / 1000, seg_end / 1000)
 
                 instr_path = _extract_segment(start, seg_end)
-                instrumental_segment = AudioFileClip(instr_path)
+                instrumental_segment = AudioFileClip(instr_path) if instr_path else None
                 tts_audio = AudioFileClip(output_path)
 
                 if needs_video_adjust and wav_time > ((seg_end - start) / 1000) * 1.1:
@@ -427,7 +435,8 @@ class GlobalStrategy:
                     adj_type = "global_rate"
 
                 tts_audio.close()
-                instrumental_segment.close()
+                if instrumental_segment is not None:
+                    instrumental_segment.close()
                 current_video.close()
 
                 resume_manager.mark_processed(start, end)

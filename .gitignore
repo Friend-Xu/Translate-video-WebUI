@@ -1,5 +1,7 @@
 # Dependencies
 .venv/
+.venv_3.14_bak/
+.python/
 node_modules/
 
 # Python cache
@@ -83,6 +85,22 @@ SwinIR/example
 *备份.*
 *副本.*
 
+# Python type checking
+.mypy_cache/
+
+# Python packaging
+*.egg-info/
+PIP-LAST/
+pip-wheel-metadata/
+
+# Coverage reports
+htmlcov/
+.coverage
+coverage.xml
+
 # Claude Code (personal config)
 .claude/
 __启动脚本.bat
+
+# Personal planning / dev notes
+计划开发/

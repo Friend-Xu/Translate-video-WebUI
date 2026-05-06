@@ -304,7 +304,7 @@ class TtsPipeline:
     def run(
         self,
         video_path: str,
-        instrumental_path: str,
+        instrumental_path: str | None,
         chinese_srt_path: str,
         english_srt_path: str,
     ):
@@ -316,7 +316,7 @@ class TtsPipeline:
 
         Args:
             video_path: 原视频路径
-            instrumental_path: 背景音乐 WAV 路径
+            instrumental_path: 背景音乐 WAV 路径（None 表示无背景乐，仅使用 TTS 音频）
             chinese_srt_path: 中文 SRT 字幕路径
             english_srt_path: 英文 SRT 字幕路径
         """
@@ -347,8 +347,13 @@ class TtsPipeline:
                 print(f"  字幕优化: {len(subs_cn)} → {total_sub_captions} 段 (拆分 {total_sub_captions - len(subs_cn)} 条)")
 
         # 背景音乐：提取各个视频段对应的独立 WAV 片段
-        def _extract_instrumental_segment(seg_start_ms: int, seg_end_ms: int) -> str:
-            """用 ffmpeg 提取一段独立的背景乐文件。"""
+        def _extract_instrumental_segment(seg_start_ms: int, seg_end_ms: int) -> str | None:
+            """用 ffmpeg 提取一段独立的背景乐文件。
+
+            instrumental_path 为 None 时返回 None，表示无背景乐可用。
+            """
+            if instrumental_path is None:
+                return None
             seg_dir = os.path.join(self.config.output_dir, "audio_segments")
             os.makedirs(seg_dir, exist_ok=True)
             seg_path = os.path.join(seg_dir, f"instr_{seg_start_ms}_{seg_end_ms}.wav")
@@ -446,7 +451,7 @@ class TtsPipeline:
 
                     # 背景乐段同步扩展
                     instr_seg_path = _extract_instrumental_segment(start, video_end)
-                    instrumental_segment = AudioFileClip(instr_seg_path)
+                    instrumental_segment = AudioFileClip(instr_seg_path) if instr_seg_path else None
 
                     result = self._process_single_subtitle(
                         text_cn, text_en, start, end,
@@ -463,7 +468,8 @@ class TtsPipeline:
                         skipped += 1
 
                     current_video.close()
-                    instrumental_segment.close()
+                    if instrumental_segment is not None:
+                        instrumental_segment.close()
 
                 finally:
                     pbar.update(1)
