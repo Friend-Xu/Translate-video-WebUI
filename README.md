@@ -6,9 +6,10 @@
 
 ### 环境要求
 
-- Python 3.14（已验证，3.11+ 应该兼容）
+- Python 3.12（已验证，3.11+ 应该兼容）
 - ffmpeg（自动使用 `imageio_ffmpeg` 捆绑版，无需手动安装）
 - 网络：中国大陆用户自动走 `hf-mirror.com` 镜像下载模型
+- GPU：推荐 NVIDIA GPU（CUDA），CPU 模式也支持但速度较慢
 
 ### 安装
 
@@ -28,19 +29,27 @@ pip install -r requirements.txt
 **推荐方式 — `main.py`（3 步：提取 → 翻译 → TTS）：**
 
 ```bash
-.venv\Scripts\python main.py source_file/test.mp4 --lang en
-```
+# GPU 默认（turbo 模型 + CUDA + float16）
+.venv\Scripts\python main.py source_file/test.mp4 --lang ja
 
-**备选方式 — `translate_video.py`（4 步：提取 → 翻译 → TTS → 合并）：**
+# 跳过 Demucs 人声分离（干净音频更快）
+.venv\Scripts\python main.py source_file/test.mp4 --lang en --skip-demucs
 
-```bash
-.venv\Scripts\python translate_video.py source_file/test.mp4 --lang en --model small
+# CPU 回退
+.venv\Scripts\python main.py source_file/test.mp4 --device cpu --compute-type int8
 ```
 
 **仅字幕提取（不翻译、不 TTS）：**
 
 ```bash
-.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --lang en --model small
+# GPU 默认
+.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --lang ja
+
+# 并发加速（VRAM 足够时）
+.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --lang ja --num-workers 2
+
+# CPU 回退
+.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --device cpu --compute-type int8
 ```
 
 **仅翻译（已有 SRT 文件）：**
@@ -49,38 +58,65 @@ pip install -r requirements.txt
 .venv\Scripts\python -m SRT.SRT_Translator path/to/file-collation.srt
 ```
 
+**VAD 性能基准测试：**
+
+```bash
+# 对比 ONNX vs JIT 推理速度
+.venv\Scripts\python tests/benchmark_vad.py source_file/video.mp4 --quick
+```
+
 ### 命令行参数
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--lang` | 自动检测 | 源语言 (en/ja/zh)，指定后启用 wav2vec2 对齐 |
-| `--model` | small | whisper 模型 (tiny/base/small/medium) |
+| `--model` | turbo | whisper 模型 (tiny/base/small/medium/turbo/large-v3) |
+| `--device` | cuda | 计算设备 (cuda/cpu) |
+| `--compute-type` | float16 | 计算精度 (float16/int8_float16/int8/float32) |
 | `--engine` | edge | TTS 引擎 (edge/chattts) |
+| `--num-workers` | 1 | whisper 并发 worker 数 (1=串行, 2~4=并行, VRAM 自动限制) |
 | `--skip-extract` | — | 跳过字幕提取（复用已有 SRT） |
 | `--skip-translate` | — | 跳过翻译 |
 | `--skip-tts` | — | 跳过 TTS 合成 |
+| `--skip-demucs` | — | 跳过 Demucs 人声/背景分离（使用完整音轨） |
+| `--skip-defect-check` | — | 跳过音频缺陷检测 (NODE 1.5) |
 | `--force` | — | 强制重新执行所有步骤 |
-| `--caption-font` | — | 字幕字体路径 |
-| `--caption-font-size` | — | 字幕字号 |
 | `--backup-dir` | — | 每步自动备份到指定目录 |
+| `--caption-font` | — | 字幕字体路径 |
+| `--caption-font-size` | — | 字幕字号 (0=自动) |
+| `--caption-font-color` | #ffffff | 字幕字体颜色 |
+| `--caption-stroke-width` | — | 字幕描边宽度 |
+| `--caption-stroke-color` | — | 字幕描边颜色 |
+| `--caption-bg-color` | — | 字幕背景色 (rgba) |
+| `--caption-alignment` | center | 字幕对齐 (center/left/right) |
+| `--caption-position` | bottom | 字幕位置 (bottom/top) |
+| `--caption-max-lines` | 2 | 最大行数 |
+| `--caption-font-size-factor` | 0.030 | 自动字号比例因子 |
+| `--caption-width-ratio` | 0.85 | 字幕最大宽度比例 |
+| `--no-optimize-subtitles` | — | 禁用字幕拆分优化 |
+| `--export-external-srt` | — | 输出外挂字幕优化版 |
+| `--ext-srt-mode` | — | 外挂字幕模式 (target_only/source_only/bilingual) |
 
 ### WebUI 启动
 
-项目提供了 React + Python 的 Web 界面：
+项目提供了 React + Python 的 Web 界面，支持单视频处理和批处理模式：
 
 ```bash
 # 双击运行
 GUI\start_WebUI.bat
 
-# 或手动分步启动：
-# 后端（端口 8000）
+# 或手动启动后端（端口 8000）
 .venv\Scripts\python -m uvicorn GUI.server:app --host 127.0.0.1 --port 8000
-
-# 前端（端口 5173，需先 cd GUI && npm install）
-cd GUI && npm run dev
 ```
 
-启动后浏览器访问 `http://localhost:5173`。
+启动后浏览器访问 `http://localhost:5173`（前端开发模式）或 `http://localhost:8000`（后端直连）。
+
+**WebUI 功能：**
+- **步骤配置面板**：三步可视化配置（字幕提取 / 翻译 / TTS），支持 GPU VRAM 自动检测和并发限制
+- **单视频模式**：选择视频 → 配置参数 → 一键处理，SSE 实时日志推送
+- **批处理模式**：添加多个视频 → 拖拽排序 → 顺序处理，支持跳过/取消当前视频
+- **字幕校准面板**：手动审核翻译、标记问题条目、保存修改
+- **外挂字幕优化器**：独立工具，优化字幕可读性（拆分长句、调整时长）
 
 ## 配置
 
@@ -176,6 +212,7 @@ Translate_video/
 │   ├── TranslationVerifier.py # 跨语言语义核对
 │   ├── TermReplacer.py      # 术语词典替换
 │   ├── Wav2Vec2Aligner.py   # wav2vec2 强制对齐封装
+│   ├── VAD_Segmenter.py     # Silero VAD (ONNX 加速, ~9x 提速)
 │   ├── Json_Convert_Srt.py  # JSON → SRT 转换器
 │   └── Json_Convert_Srt_EN.py # JSON → SRT 转换器 (英文)
 ├── whisperx_local/          # 剪裁版 whisperX 对齐模块
@@ -191,7 +228,9 @@ Translate_video/
 │   ├── launcher.py          # WebUI 启动器
 │   ├── server.py            # Python 后端 (FastAPI + uvicorn)
 │   └── ...
-├── tests/test_tts/          # TTS 测试套件
+├── tests/                   # 测试
+│   ├── test_tts/            # TTS 测试套件
+│   └── benchmark_vad.py     # VAD 性能基准测试 (ONNX vs JIT)
 ├── models/                  # 模型缓存（gitignored）
 └── source_file/             # 测试视频（gitignored）
 ```
@@ -202,9 +241,9 @@ Translate_video/
 
 ```
 models/
-├── whisper/       # faster-whisper (tiny/small/base)
+├── whisper/       # faster-whisper (small/medium/turbo/large-v3)
 ├── alignment/     # wav2vec2 对齐模型
-├── vad/           # Silero VAD v4.0
+├── vad/           # Silero VAD v4.0 (ONNX 主后端 + JIT fallback)
 ├── hf_cache/      # HuggingFace 缓存
 ├── TTS_model/     # ChatTTS 模型
 ├── Demucs/        # 人声分离模型
@@ -220,12 +259,18 @@ models/
 
 # 运行单个测试文件
 .venv\Scripts\python -m pytest tests/test_tts/test_tts_edge.py -v
+
+# VAD 性能基准测试（对比 ONNX vs JIT）
+.venv\Scripts\python tests/benchmark_vad.py source_file/video.mp4 --quick
 ```
 
 ## 架构要点
 
 详见 `ARCHITECTURE.md`。
 
+- **GPU 默认加速**：faster-whisper 默认使用 CUDA + float16 + turbo 模型，比旧 CPU/small/int8 默认快 15-50 倍
+- **ONNX VAD 推理**：Silero VAD 从 PyTorch JIT 切换至 ONNX Runtime，~9 倍提速，bit-exact 精度（JIT 自动 fallback）
+- **并发控制**：`--num-workers` 并行 whisper 转录，VRAM 自动限制防 OOM
 - **TTS 引擎协议**：Protocol 模式，支持 Edge/ChatTTS 切换
 - **两档语速决策**：±15% 容忍度内调视频速度，超出重新 TTS 合成
 - **背景音乐保留**：Demucs 分离人声，保留背景乐到最终视频
