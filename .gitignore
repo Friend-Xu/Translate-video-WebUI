@@ -70,6 +70,9 @@ OpenVoice/file/
 *.mp4
 *.mp3
 
+# Batch processing runtime files
+GUI/batches/
+
 # Generated outputs (keep scripts, exclude outputs)
 web_script/output_links.html
 web_script/output_links.txt
