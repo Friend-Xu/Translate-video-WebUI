@@ -59,14 +59,17 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   <Select size="small" fullWidth value={config.model} onChange={e => onConfigChange('model', e.target.value as PipelineConfig['model'])} sx={{ bgcolor: 'background.paper' }}>
                     <MenuItem value="small">小型 (Small)</MenuItem>
                     <MenuItem value="medium">中型 (Medium)</MenuItem>
-                    <MenuItem value="large">大型 (Large)</MenuItem>
+                    <MenuItem value="turbo">Turbo (推荐)</MenuItem>
+                    <MenuItem value="large-v3">大型 (Large-v3)</MenuItem>
                   </Select>
                   <Typography variant="caption">选择字幕提取模型</Typography>
                 </Box>
                 <Box>
                   <Typography variant="body2" fontWeight={500}>计算精度 (--compute-type)</Typography>
                   <Select size="small" fullWidth value={config.computeType} onChange={e => onConfigChange('computeType', e.target.value as PipelineConfig['computeType'])} sx={{ bgcolor: 'background.paper' }}>
-                    <MenuItem value="int8">int8</MenuItem>
+                    <MenuItem value="float16">float16 (GPU 推荐)</MenuItem>
+                    <MenuItem value="int8_float16">int8_float16</MenuItem>
+                    <MenuItem value="int8">int8 (CPU)</MenuItem>
                     <MenuItem value="float32">float32</MenuItem>
                   </Select>
                   <Typography variant="caption">选择计算精度</Typography>

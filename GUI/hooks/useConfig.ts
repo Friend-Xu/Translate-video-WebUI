@@ -36,7 +36,7 @@ export function useConfig() {
         let next = { ...prev }
         if (sysInfo) {
           next.concurrency = sysInfo.recommendedConcurrency
-          next.device = sysInfo.hasGpu ? 'gpu' : 'cpu'
+          next.device = sysInfo.hasGpu ? 'cuda' : 'cpu'
           next.defaultVideoDir = sysInfo.defaultVideoDir
         }
         if (serverConfig) {

@@ -92,6 +92,7 @@ def guess_translated_srt(video_path: str) -> str | None:
 
 
 def step_extract(video: str, lang: str | None, model: str, device: str,
+                  compute_type: str = "float16",
                   backup_dir: str = "", skip_defect_check: bool = False,
                   skip_demucs: bool = False, num_workers: int = 1) -> None:
     """步骤 1: 委托 extract_subtitles.py 完成全流程。
@@ -107,6 +108,7 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
         video,
         "--model", model,
         "--device", device,
+        "--compute-type", compute_type,
     ]
     if lang:
         cmd.extend(["--lang", lang])
@@ -375,10 +377,12 @@ def main():
     parser.add_argument("video", help="源视频文件路径")
     parser.add_argument("--lang", default=None,
                         help="视频源语言代码，指定后自动启用 wav2vec2 对齐 (en/ja/zh)")
-    parser.add_argument("--model", default="small",
-                        help="whisper 模型大小 (tiny/base/small/medium)")
-    parser.add_argument("--device", default="cpu",
-                        help="计算设备 (cpu)")
+    parser.add_argument("--model", default="turbo",
+                        help="whisper 模型大小 (tiny/base/small/medium/turbo/large-v3)")
+    parser.add_argument("--device", default="cuda",
+                        help="计算设备 (cuda/cpu)")
+    parser.add_argument("--compute-type", default="float16",
+                        help="计算精度 (float16/int8_float16/int8/float32)")
     parser.add_argument("--engine", default="edge", choices=["edge", "chattts"],
                         help="TTS 引擎 (默认 edge)")
     parser.add_argument("--config", help="TTS YAML 配置文件路径")
@@ -451,6 +455,7 @@ def main():
         # extract_subtitles.py 包含: 缺陷检测 → 音频提取 → VAD → 转录 → 对齐 → SRT
         if not args.skip_extract:
             step_extract(video, lang=args.lang, model=args.model, device=args.device,
+                         compute_type=args.compute_type,
                          backup_dir=args.backup_dir, skip_defect_check=args.skip_defect_check,
                          skip_demucs=args.skip_demucs, num_workers=args.num_workers)
         else:

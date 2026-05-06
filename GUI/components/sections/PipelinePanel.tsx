@@ -150,7 +150,8 @@ export function PipelinePanel({
             <Select size="small" fullWidth value={config.model} onChange={e => onConfigChange('model', e.target.value as PipelineConfig['model'])} sx={{ mt: 1 }}>
               <MenuItem value="small">小型 (Small)</MenuItem>
               <MenuItem value="medium">中型 (Medium)</MenuItem>
-              <MenuItem value="large">大型 (Large)</MenuItem>
+              <MenuItem value="turbo">Turbo (推荐)</MenuItem>
+              <MenuItem value="large-v3">大型 (Large-v3)</MenuItem>
             </Select>
           </ControlCard>
         </Grid>
@@ -159,7 +160,7 @@ export function PipelinePanel({
           <ControlCard icon={<DeveloperBoardIcon color="primary" />} title="计算设备" subtitle="CPU / GPU">
             <Select size="small" fullWidth value={config.device} onChange={e => onConfigChange('device', e.target.value as PipelineConfig['device'])} sx={{ mt: 1 }}>
               <MenuItem value="cpu">CPU</MenuItem>
-              <MenuItem value="gpu">GPU</MenuItem>
+              <MenuItem value="cuda">GPU</MenuItem>
             </Select>
           </ControlCard>
         </Grid>

@@ -213,9 +213,9 @@ class VADTranscriber:
 
         model = self._model_pool.get()
         try:
-            detect_dur = min(30.0, self._audio_len)
+            detect_dur = min(15.0, self._audio_len)
             audio_data, sr = sf.read(self.audio_path, start=0, frames=int(detect_dur * self.sample_rate))
-            seg_gen, detect_info = model.transcribe(audio_data, beam_size=5)
+            seg_gen, detect_info = model.transcribe(audio_data, beam_size=2)
             for _ in seg_gen:
                 pass
             language = detect_info.language if detect_info else "en"
@@ -344,7 +344,7 @@ class VADTranscriber:
             audio_seg,
             language=self._language,
             word_timestamps=True,
-            beam_size=5,
+            beam_size=2,
             vad_filter=False,
         )
         for seg in segments:
