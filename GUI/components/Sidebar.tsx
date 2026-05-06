@@ -5,6 +5,7 @@ import SaveIcon from '@mui/icons-material/SaveOutlined'
 import SettingsIcon from '@mui/icons-material/SettingsOutlined'
 import ArticleIcon from '@mui/icons-material/ArticleOutlined'
 import BuildIcon from '@mui/icons-material/BuildOutlined'
+import RateReviewIcon from '@mui/icons-material/RateReviewOutlined'
 
 interface SidebarProps {
   activeTab: string
@@ -18,6 +19,7 @@ const menuItems = [
   { icon: <SettingsIcon />, label: '高级设置' },
   { icon: <ArticleIcon />, label: '日志与反馈' },
   { icon: <BuildIcon />, label: '工具栏' },
+  { icon: <RateReviewIcon />, label: '字幕校准' },
 ]
 
 export function Sidebar({ activeTab, onTabChange }: SidebarProps) {

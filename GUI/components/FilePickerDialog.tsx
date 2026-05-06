@@ -29,9 +29,12 @@ interface FilePickerDialogProps {
   initialPath?: string
   multiple?: boolean
   onSelectMultiple?: (paths: string[], replace?: boolean) => void
+  acceptExtensions?: string[]
+  title?: string
 }
 
-export function FilePickerDialog({ open, onSelect, onClose, initialPath, multiple, onSelectMultiple }: FilePickerDialogProps) {
+export function FilePickerDialog({ open, onSelect, onClose, initialPath, multiple, onSelectMultiple, acceptExtensions, title }: FilePickerDialogProps) {
+  const exts = acceptExtensions || VIDEO_EXTENSIONS
   const [currentPath, setCurrentPath] = useState('')
   const [entries, setEntries] = useState<FileEntry[]>([])
   const [parentPath, setParentPath] = useState<string | null>(null)
@@ -47,14 +50,14 @@ export function FilePickerDialog({ open, onSelect, onClose, initialPath, multipl
       if (!res.ok) throw new Error('浏览失败')
       const data: BrowseResult = await res.json()
       setCurrentPath(data.current)
-      setEntries(data.entries.filter(e => e.is_dir || VIDEO_EXTENSIONS.some(ext => e.name.toLowerCase().endsWith(ext))))
+      setEntries(data.entries.filter(e => e.is_dir || exts.some(ext => e.name.toLowerCase().endsWith(ext))))
       setParentPath(data.parent)
     } catch {
       setEntries([])
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [exts])
 
   const searchRecursive = useCallback(async (path: string) => {
     setLoading(true)
@@ -97,7 +100,7 @@ export function FilePickerDialog({ open, onSelect, onClose, initialPath, multipl
 
   const handleSelectDirectory = () => {
     const videoFiles = entries
-      .filter(e => !e.is_dir && VIDEO_EXTENSIONS.some(ext => e.name.toLowerCase().endsWith(ext)))
+      .filter(e => !e.is_dir && exts.some(ext => e.name.toLowerCase().endsWith(ext)))
       .map(e => e.path)
     if (videoFiles.length > 0 && onSelectMultiple) {
       onSelectMultiple(videoFiles)
@@ -111,7 +114,7 @@ export function FilePickerDialog({ open, onSelect, onClose, initialPath, multipl
   }
 
   const handleSelectAll = () => {
-    const videoEntries = entries.filter(e => !e.is_dir && VIDEO_EXTENSIONS.some(ext => e.name.toLowerCase().endsWith(ext)))
+    const videoEntries = entries.filter(e => !e.is_dir && exts.some(ext => e.name.toLowerCase().endsWith(ext)))
     setSelected(new Set(videoEntries.map(e => e.path)))
   }
 
@@ -124,11 +127,11 @@ export function FilePickerDialog({ open, onSelect, onClose, initialPath, multipl
   }
 
   const pathParts = currentPath ? currentPath.replace(/\\/g, '/').split('/').filter(Boolean) : []
-  const videoCount = entries.filter(e => !e.is_dir && VIDEO_EXTENSIONS.some(ext => e.name.toLowerCase().endsWith(ext))).length
+  const videoCount = entries.filter(e => !e.is_dir && exts.some(ext => e.name.toLowerCase().endsWith(ext))).length
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth={multiple ? 'md' : 'sm'} fullWidth>
-      <DialogTitle>{multiple ? '选择视频文件（多选）' : '选择视频文件'}</DialogTitle>
+      <DialogTitle>{title || (multiple ? '选择视频文件（多选）' : '选择视频文件')}</DialogTitle>
       <DialogContent>
         <Box sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
           <Button size="small" startIcon={<ArrowUpwardIcon />} onClick={goUp} disabled={!parentPath}>
@@ -160,7 +163,7 @@ export function FilePickerDialog({ open, onSelect, onClose, initialPath, multipl
             <Typography sx={{ p: 2, color: 'text.secondary' }}>此目录无可用文件</Typography>
           ) : (
             entries.map(entry => {
-              const isVideo = !entry.is_dir && VIDEO_EXTENSIONS.some(ext => entry.name.toLowerCase().endsWith(ext))
+              const isVideo = !entry.is_dir && exts.some(ext => entry.name.toLowerCase().endsWith(ext))
               const isChecked = selected.has(entry.path)
               return (
                 <ListItemButton key={entry.path} onClick={() => handleClick(entry)} dense>

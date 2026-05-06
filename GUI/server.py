@@ -26,6 +26,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -381,8 +382,9 @@ def _sync_translate_config() -> None:
 class RunRequest(BaseModel):
     video_path: str
     lang: str = "auto"
-    model: str = "small"
-    device: str = "cpu"
+    model: str = "turbo"
+    device: str = "cuda"
+    compute_type: str = "float16"
     engine: str = "edge"
     skip_extract: bool = False
     skip_translate: bool = False
@@ -451,6 +453,7 @@ def _build_cli_args(req: RunRequest) -> list[str]:
         str(VENV_PYTHON), str(MAIN_SCRIPT), str(req.video_path),
         "--model", req.model,
         "--device", req.device,
+        "--compute-type", req.compute_type,
         "--engine", req.engine,
         "--caption-config", caption_config_path,
     ]
@@ -889,6 +892,303 @@ async def post_settings_reset(payload: ResetPayload) -> dict:
 async def get_subtitle_presets() -> dict:
     ensure_backup()
     return load_config_yaml()
+
+
+class SubtitleOptimizeRequest(BaseModel):
+    target_srt: str
+    source_srt: str | None = None
+    mode: str = "target_only"       # target_only | bilingual
+    lang: str = "zh"
+    min_duration: float | None = None
+    reading_speed: float | None = None
+    max_merge_gap: float = 0.3
+    inter_gap: float = 0.05
+    max_duration: float = 10.0
+
+
+@app.post("/api/subtitle/optimize")
+async def subtitle_optimize(req: SubtitleOptimizeRequest) -> dict:
+    from pipeline.external_subtitle_optimizer import (
+        optimize_srt, optimize_bilingual, load_ext_subtitle_config,
+    )
+
+    target = Path(req.target_srt)
+    if not target.is_file():
+        raise HTTPException(status_code=400, detail=f"目标字幕文件不存在: {req.target_srt}")
+
+    # Load defaults from config
+    cfg = load_ext_subtitle_config()
+    mode = req.mode or cfg.get("mode", "target_only")
+
+    if mode == "bilingual" and not req.source_srt:
+        raise HTTPException(status_code=400, detail="双语模式需要提供原文字幕文件")
+
+    if req.source_srt and not Path(req.source_srt).is_file():
+        raise HTTPException(status_code=400, detail=f"原文字幕文件不存在: {req.source_srt}")
+
+    # Output path: same dir, _optimized suffix
+    stem, ext = os.path.splitext(str(target))
+    output_path = f"{stem}_optimized{ext}"
+
+    kwargs = {
+        "lang": req.lang,
+        "min_duration": req.min_duration,
+        "reading_speed": req.reading_speed,
+        "max_merge_gap": req.max_merge_gap,
+        "inter_gap": req.inter_gap,
+        "max_duration": req.max_duration,
+    }
+
+    if mode == "bilingual" and req.source_srt:
+        stats = optimize_bilingual(req.target_srt, req.source_srt, output_path, **kwargs)
+    else:
+        stats = optimize_srt(req.target_srt, output_path, **kwargs)
+
+    return {"ok": True, "output_path": output_path, "stats": stats}
+
+
+@app.get("/api/subtitle/optimize-defaults")
+async def subtitle_optimize_defaults() -> dict:
+    from pipeline.external_subtitle_optimizer import load_ext_subtitle_config
+    cfg = load_ext_subtitle_config()
+    return {
+        "mode": cfg.get("mode", "target_only"),
+        "min_duration_cjk": cfg.get("min_duration_cjk", 1.5),
+        "reading_speed_cjk": cfg.get("reading_speed_cjk", 4.0),
+        "min_duration_latin": cfg.get("min_duration_latin", 1.2),
+        "reading_speed_latin": cfg.get("reading_speed_latin", 12.0),
+        "min_duration_arabic": cfg.get("min_duration_arabic", 1.3),
+        "reading_speed_arabic": cfg.get("reading_speed_arabic", 10.0),
+        "max_merge_gap": cfg.get("max_merge_gap", 0.3),
+        "inter_gap": cfg.get("inter_gap", 0.05),
+        "max_duration": cfg.get("max_duration", 10.0),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Subtitle review / calibration
+# ---------------------------------------------------------------------------
+
+class ReviewLoadRequest(BaseModel):
+    source_srt: str
+    translated_srt: str
+    translate_log: str | None = None
+
+
+def _srt_time_to_ms(srt_time) -> int:
+    return srt_time.ordinal
+
+
+def _detect_video_in_dir(srt_path: str) -> str:
+    srt_dir = os.path.dirname(srt_path)
+    VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv"}
+    for name in sorted(os.listdir(srt_dir)):
+        _, ext = os.path.splitext(name)
+        if ext.lower() in VIDEO_EXTS:
+            video_path = os.path.join(srt_dir, name)
+            if os.path.isfile(video_path):
+                return video_path
+    return ""
+
+
+def _run_qa_checks(entries: list[dict], lang: str = "zh") -> None:
+    for i, entry in enumerate(entries):
+        duration = (entry["endMs"] - entry["startMs"]) / 1000.0
+        text = entry.get("translatedText", "")
+        char_count = len(text.replace("\n", ""))
+        cps = char_count / duration if duration > 0 else 0
+        cps_limit = 12 if lang in ("zh", "ja", "ko") else 20
+
+        if cps > cps_limit:
+            entry.setdefault("issues", []).append({
+                "type": "cps_high", "message": f"CPS {cps:.1f} > {cps_limit}",
+                "severity": "warning",
+            })
+        if duration < 0.8:
+            entry.setdefault("issues", []).append({
+                "type": "duration_short", "message": f"时长 {duration:.2f}s < 0.8s",
+                "severity": "warning",
+            })
+        elif duration > 7.0:
+            entry.setdefault("issues", []).append({
+                "type": "duration_long", "message": f"时长 {duration:.2f}s > 7.0s",
+                "severity": "warning",
+            })
+        if not text.strip():
+            entry.setdefault("issues", []).append({
+                "type": "empty", "message": "译文为空",
+                "severity": "error",
+            })
+        if i > 0:
+            prev_end = entries[i - 1]["endMs"]
+            if entry["startMs"] < prev_end:
+                entry.setdefault("issues", []).append({
+                    "type": "overlap",
+                    "message": f"与上一条重叠 {prev_end - entry['startMs']}ms",
+                    "severity": "error",
+                })
+
+
+@app.post("/api/subtitle/review/load")
+async def review_load(req: ReviewLoadRequest) -> dict:
+    import pysrt
+
+    source = Path(req.source_srt)
+    translated = Path(req.translated_srt)
+    if not source.is_file():
+        raise HTTPException(status_code=400, detail=f"原文字幕不存在: {req.source_srt}")
+    if not translated.is_file():
+        raise HTTPException(status_code=400, detail=f"译文字幕不存在: {req.translated_srt}")
+
+    src_subs = pysrt.open(str(source))
+    tr_subs = pysrt.open(str(translated))
+
+    tr_map: dict[int, pysrt.SubRipItem] = {}
+    for sub in tr_subs:
+        tr_map[sub.index] = sub
+
+    # Read translate-log.json for semantic check scores
+    similarity_map: dict[int, float] = {}
+    if req.translate_log and os.path.isfile(req.translate_log):
+        try:
+            with open(req.translate_log, "r", encoding="utf-8") as f:
+                log_data = json.load(f)
+            for detail in log_data.get("details", []):
+                sim = detail.get("similarity")
+                for idx in detail.get("indices", []):
+                    if sim is not None:
+                        similarity_map[idx] = sim
+        except Exception:
+            pass
+
+    lang = "zh"
+    sample = " ".join(sub.text for sub in src_subs[:20])
+    ja_chars = len(re.findall(r"[぀-ゟ゠-ヿ一-鿿]", sample))
+    if ja_chars > 20:
+        lang = "ja"
+    elif len(re.findall(r"[a-zA-Z]", sample)) > len(sample) * 0.3:
+        lang = "en"
+
+    entries: list[dict] = []
+    low_similarity_count = 0
+
+    for src in src_subs:
+        tr = tr_map.get(src.index)
+        translated_text = tr.text if tr else ""
+        start_ms = _srt_time_to_ms(src.start)
+        end_ms = _srt_time_to_ms(src.end)
+
+        issues: list[dict] = []
+        sim = similarity_map.get(src.index)
+        if sim is not None and sim < 0.65:
+            issues.append({
+                "type": "low_similarity",
+                "message": f"语义相似度低 ({sim:.2f})",
+                "severity": "warning",
+            })
+            low_similarity_count += 1
+
+        entries.append({
+            "index": src.index,
+            "start": str(src.start),
+            "end": str(src.end),
+            "startMs": start_ms,
+            "endMs": end_ms,
+            "sourceText": src.text,
+            "translatedText": translated_text,
+            "reviewStatus": "pending",
+            "issues": issues,
+            "similarity": sim,
+        })
+
+    _run_qa_checks(entries, lang)
+
+    video_path = _detect_video_in_dir(req.source_srt)
+
+    return {
+        "videoPath": video_path,
+        "sourceSrtPath": req.source_srt,
+        "translatedSrtPath": req.translated_srt,
+        "entries": entries,
+        "stats": {"total": len(entries), "lowSimilarity": low_similarity_count},
+    }
+
+
+class ReviewSaveRequest(BaseModel):
+    translated_srt: str
+    entries: list[dict]
+
+
+@app.post("/api/subtitle/review/save")
+async def review_save(req: ReviewSaveRequest) -> dict:
+    import pysrt
+
+    translated = Path(req.translated_srt)
+    if not translated.is_file():
+        raise HTTPException(status_code=400, detail=f"字幕文件不存在: {req.translated_srt}")
+
+    subs = pysrt.open(str(translated))
+    updated = 0
+
+    changes: dict[int, str] = {}
+    for e in req.entries:
+        if e.get("reviewStatus") == "modified":
+            changes[e["index"]] = e["translatedText"]
+
+    for sub in subs:
+        if sub.index in changes:
+            sub.text = changes[sub.index]
+            updated += 1
+
+    stem, ext = os.path.splitext(str(translated))
+    if stem.endswith("-auto"):
+        stem = stem[:-5]
+    output_path = f"{stem}-reviewed{ext}"
+
+    subs.save(output_path, encoding="utf-8")
+    logger.info(f"Review saved: {updated} entries updated → {output_path}")
+
+    return {"ok": True, "output_path": output_path, "updated": updated}
+
+
+@app.get("/api/subtitle/review/qa-check")
+async def review_qa_check(srt_path: str, lang: str = "zh") -> dict:
+    import pysrt
+
+    path = Path(srt_path)
+    if not path.is_file():
+        raise HTTPException(status_code=400, detail=f"字幕文件不存在: {srt_path}")
+
+    subs = pysrt.open(str(path))
+    entries: list[dict] = []
+    for sub in subs:
+        entries.append({
+            "index": sub.index,
+            "start": str(sub.start),
+            "end": str(sub.end),
+            "startMs": _srt_time_to_ms(sub.start),
+            "endMs": _srt_time_to_ms(sub.end),
+            "sourceText": "",
+            "translatedText": sub.text,
+            "issues": [],
+        })
+
+    _run_qa_checks(entries, lang)
+
+    all_issues: list[dict] = []
+    for e in entries:
+        for issue in e["issues"]:
+            all_issues.append({"index": e["index"], **issue})
+
+    error_count = sum(1 for i in all_issues if i["severity"] == "error")
+    warning_count = sum(1 for i in all_issues if i["severity"] == "warning")
+
+    return {
+        "total": len(entries),
+        "errorCount": error_count,
+        "warningCount": warning_count,
+        "issues": all_issues,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1620,6 +1920,45 @@ async def search_videos_recursive(path: str = "") -> dict:
         "entries": [],
         "videos": videos,
     }
+
+
+@app.get("/api/files/stream")
+async def stream_file(path: str, request: Request):
+    """Stream a file with HTTP Range support (for video seeking)."""
+    file_path = Path(path)
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f"文件不存在: {path}")
+
+    file_size = file_path.stat().st_size
+    range_header = request.headers.get("range")
+
+    if range_header:
+        range_match = re.match(r"bytes=(\d+)-(\d*)", range_header)
+        if range_match:
+            start = int(range_match.group(1))
+            end_str = range_match.group(2)
+            end = int(end_str) if end_str else file_size - 1
+            chunk_size = end - start + 1
+
+            from fastapi.responses import Response
+
+            with open(file_path, "rb") as f:
+                f.seek(start)
+                data = f.read(chunk_size)
+
+            return Response(
+                content=data,
+                status_code=206,
+                media_type="video/mp4",
+                headers={
+                    "Content-Range": f"bytes {start}-{end}/{file_size}",
+                    "Accept-Ranges": "bytes",
+                    "Content-Length": str(chunk_size),
+                },
+            )
+
+    from fastapi.responses import FileResponse
+    return FileResponse(path, media_type="video/mp4")
 
 
 # ---------------------------------------------------------------------------

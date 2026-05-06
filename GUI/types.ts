@@ -1,9 +1,9 @@
 export interface PipelineConfig {
   videoPath: string
   lang: 'auto' | 'en' | 'zh' | 'ja'
-  model: 'small' | 'medium' | 'large'
-  device: 'cpu' | 'gpu'
-  computeType: 'int8' | 'float32'
+  model: 'tiny' | 'base' | 'small' | 'medium' | 'turbo' | 'large-v3'
+  device: 'cpu' | 'cuda'
+  computeType: 'int8' | 'float32' | 'float16' | 'int8_float16'
   engine: 'edge' | 'chattts' | 'coqui' | 'azure'
   voice: string
   speechRate: number
@@ -68,9 +68,9 @@ export interface LogEntry {
 export const DEFAULT_CONFIG: PipelineConfig = {
   videoPath: '',
   lang: 'auto',
-  model: 'small',
-  device: 'cpu',
-  computeType: 'int8',
+  model: 'turbo',
+  device: 'cuda',
+  computeType: 'float16',
   engine: 'edge',
   voice: 'zh-CN-XiaoxiaoNeural',
   speechRate: 40,
@@ -117,6 +117,33 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   captionWidthRatio: 0.85,
   enableSubtitleOptimization: true,
   subtitleEngine: 'pil',
+}
+
+export interface SubtitleIssue {
+  type: 'low_similarity' | 'cps_high' | 'duration_short' | 'duration_long' | 'overlap' | 'empty'
+  message: string
+  severity: 'warning' | 'error'
+}
+
+export interface SubtitleEntry {
+  index: number
+  start: string
+  end: string
+  startMs: number
+  endMs: number
+  sourceText: string
+  translatedText: string
+  reviewStatus: 'pending' | 'approved' | 'modified'
+  issues: SubtitleIssue[]
+  similarity?: number
+}
+
+export interface ReviewSession {
+  videoPath: string
+  sourceSrtPath: string
+  translatedSrtPath: string
+  entries: SubtitleEntry[]
+  filterMode: 'all' | 'pending' | 'flagged'
 }
 
 export interface SystemInfo {

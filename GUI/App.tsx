@@ -9,6 +9,8 @@ import { AdvancedSettings } from './components/sections/AdvancedSettings'
 import { LogPanel } from './components/sections/LogPanel'
 import { Toolbar } from './components/sections/Toolbar'
 import { FilePickerDialog } from './components/FilePickerDialog'
+import { SubtitleOptimizerDialog } from './components/SubtitleOptimizerDialog'
+import { SubtitleReview } from './components/sections/SubtitleReview'
 import { useConfig } from './hooks/useConfig'
 import { usePipeline } from './hooks/usePipeline'
 import { useSSE } from './hooks/useSSE'
@@ -27,6 +29,7 @@ export default function App() {
   } = useBatch()
 
   const [filePickerOpen, setFilePickerOpen] = useState(false)
+  const [subtitleOptimizerOpen, setSubtitleOptimizerOpen] = useState(false)
   const [batchFiles, setBatchFiles] = useState<string[]>([])
   const [snackbar, setSnackbar] = useState<{ open: boolean; msg: string; severity: 'success' | 'error' | 'info' }>({
     open: false, msg: '', severity: 'info',
@@ -184,11 +187,15 @@ export default function App() {
           {activeTab === '工具栏' && (
             <Toolbar
               onImportVideo={handleSelectFile}
-              onImportSubtitles={() => showMsg('字幕导入功能开发中', 'info')}
+              onOptimizeSubtitles={() => setSubtitleOptimizerOpen(true)}
+              onReviewSubtitles={() => setActiveTab('字幕校准')}
               onExportVideo={() => showMsg('导出功能开发中', 'info')}
               onQuickConfig={resetConfig}
               onSaveConfig={handleSaveConfig}
             />
+          )}
+          {activeTab === '字幕校准' && (
+            <SubtitleReview videoPath={config.videoPath} onSuccess={(msg) => showMsg(msg, 'success')} />
           )}
         </Box>
       </Box>
@@ -200,6 +207,12 @@ export default function App() {
         initialPath={config.defaultVideoDir}
         multiple={mode === 'batch'}
         onSelectMultiple={handleBatchFilesSelected}
+      />
+
+      <SubtitleOptimizerDialog
+        open={subtitleOptimizerOpen}
+        onClose={() => setSubtitleOptimizerOpen(false)}
+        onSuccess={(msg) => showMsg(msg, 'success')}
       />
 
       <Snackbar
