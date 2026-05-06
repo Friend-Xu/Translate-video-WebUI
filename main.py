@@ -315,6 +315,47 @@ def step_tts(
         backup_step("03_tts_done", [final_output, out_dir_bak], backup_dir)
 
 
+def export_external_srt(video: str, srt_source: str, srt_translated: str,
+                         mode: str | None, config_path: str | None) -> None:
+    """导出外挂字幕优化版。"""
+    from pipeline.external_subtitle_optimizer import (
+        optimize_srt, optimize_bilingual, load_ext_subtitle_config,
+    )
+
+    cfg = load_ext_subtitle_config(config_path)
+    mode = mode or cfg.get("mode", "bilingual")
+    out_dir = os.path.splitext(video)[0] + "_out"
+    name = os.path.splitext(os.path.basename(video))[0]
+
+    print(f"\n[+] 外挂字幕优化 ({mode})...")
+
+    if mode == "target_only":
+        out_path = os.path.join(out_dir, f"{name}.optimized.srt")
+        stats = optimize_srt(srt_translated, out_path, lang=_detect_srt_lang(srt_translated))
+        print(f"  译文版: {out_path}")
+    elif mode == "source_only":
+        out_path = os.path.join(out_dir, f"{name}.optimized.source.srt")
+        stats = optimize_srt(srt_source, out_path, lang=_detect_srt_lang(srt_source))
+        print(f"  原文版: {out_path}")
+    else:  # bilingual
+        out_path = os.path.join(out_dir, f"{name}.optimized.bilingual.srt")
+        lang = _detect_srt_lang(srt_translated)
+        stats = optimize_bilingual(srt_translated, srt_source, out_path, lang=lang)
+        print(f"  双语版: {out_path}")
+
+    print(f"  总{stats['total']}条 调整{stats['adjusted']}条 合并{stats['merged']}条")
+
+
+def _detect_srt_lang(srt_path: str) -> str:
+    """从 SRT 文件内容推测语言代码。"""
+    from pipeline.external_subtitle_optimizer import parse_srt, detect_script
+    entries = parse_srt(srt_path)
+    if not entries:
+        return "zh"
+    script = detect_script(entries[0]["text"])
+    return {"cjk": "zh", "latin": "en", "arabic": "ar"}.get(script, "zh")
+
+
 def main():
     setup_hf_env()
 
@@ -385,6 +426,13 @@ def main():
                         help="字幕宽度比例 (默认 0.85)")
     parser.add_argument("--no-optimize-subtitles", action="store_true",
                         help="禁用字幕拆分优化")
+    parser.add_argument("--export-external-srt", action="store_true",
+                        help="流水线完成后输出外挂字幕优化版")
+    parser.add_argument("--ext-srt-mode", default=None,
+                        choices=["target_only", "source_only", "bilingual"],
+                        help="外挂字幕输出模式（覆盖配置文件）")
+    parser.add_argument("--ext-srt-config", default=None,
+                        help="外挂字幕配置文件路径")
 
     args = parser.parse_args()
     video = os.path.abspath(args.video)
@@ -453,6 +501,13 @@ def main():
             )
         else:
             print("[3/3] TTS 合成 — 已跳过 (--skip-tts)")
+
+        # ── 外挂字幕优化导出 ──
+        if args.export_external_srt:
+            export_external_srt(
+                video, srt_source, srt_translated,
+                mode=args.ext_srt_mode, config_path=args.ext_srt_config,
+            )
 
         elapsed = time.time() - t_start
         print(f"\n{'='*50}")
