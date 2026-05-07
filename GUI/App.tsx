@@ -10,6 +10,7 @@ import { Toolbar } from './components/sections/Toolbar'
 import { FilePickerDialog } from './components/FilePickerDialog'
 import { SubtitleOptimizerDialog } from './components/SubtitleOptimizerDialog'
 import { SubtitleReview } from './components/sections/SubtitleReview'
+import { KeepAliveSection } from './components/KeepAliveSection'
 import { useConfig } from './hooks/useConfig'
 import { usePipeline } from './hooks/usePipeline'
 import { useSSE } from './hooks/useSSE'
@@ -137,7 +138,7 @@ export default function App() {
       <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
         <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
         <Box sx={{ flexGrow: 1, overflow: 'auto', p: 4, pt: 3, display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {activeTab === '主界面' && (
+          <KeepAliveSection active={activeTab === '主界面'}>
             <PipelinePanel
               config={config}
               onConfigChange={updateConfig}
@@ -160,19 +161,21 @@ export default function App() {
               onRemoveFile={handleRemoveFile}
               logs={logs}
             />
-          )}
-          {activeTab === '步骤配置' && <StepConfig config={config} onConfigChange={updateConfig} />}
-          {activeTab === '输出设置' && (
+          </KeepAliveSection>
+          <KeepAliveSection active={activeTab === '步骤配置'}>
+            <StepConfig config={config} onConfigChange={updateConfig} />
+          </KeepAliveSection>
+          <KeepAliveSection active={activeTab === '输出设置'}>
             <Box sx={{ maxWidth: 600 }}>
               <OutputSettings config={config} onConfigChange={updateConfig} showTitle={false} />
             </Box>
-          )}
-          {activeTab === '高级设置' && (
+          </KeepAliveSection>
+          <KeepAliveSection active={activeTab === '高级设置'}>
             <Box>
               <AdvancedSettings config={config} onConfigChange={updateConfig} showTitle={false} />
             </Box>
-          )}
-          {activeTab === '工具栏' && (
+          </KeepAliveSection>
+          <KeepAliveSection active={activeTab === '工具栏'}>
             <Toolbar
               onImportVideo={handleSelectFile}
               onOptimizeSubtitles={() => setSubtitleOptimizerOpen(true)}
@@ -181,10 +184,10 @@ export default function App() {
               onQuickConfig={resetConfig}
               onSaveConfig={handleSaveConfig}
             />
-          )}
-          {activeTab === '字幕校准' && (
-            <SubtitleReview videoPath={config.videoPath} onSuccess={(msg) => showMsg(msg, 'success')} />
-          )}
+          </KeepAliveSection>
+          <KeepAliveSection active={activeTab === '字幕校准'}>
+            <SubtitleReview videoPath={config.videoPath} onSuccess={(msg) => showMsg(msg, 'success')} isActive={activeTab === '字幕校准'} />
+          </KeepAliveSection>
         </Box>
       </Box>
 

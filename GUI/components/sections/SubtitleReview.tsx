@@ -101,6 +101,7 @@ function useUndoableState(initial: SubtitleEntry[]) {
 interface SubtitleReviewProps {
   videoPath: string
   onSuccess: (msg: string) => void
+  isActive: boolean
 }
 
 // ── Memoized row (prevents O(n) re-renders on single-entry changes) ──
@@ -233,7 +234,7 @@ const SubtitleRowMemo = React.memo(function SubtitleRow({
 
 // ── Component ──
 
-export function SubtitleReview({ videoPath, onSuccess }: SubtitleReviewProps) {
+export function SubtitleReview({ videoPath, onSuccess, isActive }: SubtitleReviewProps) {
   // Session meta
   const [sessionMeta, setSessionMeta] = useState<{
     videoPath: string; sourceSrtPath: string; translatedSrtPath: string
@@ -262,6 +263,8 @@ export function SubtitleReview({ videoPath, onSuccess }: SubtitleReviewProps) {
   const { entries, push, undo, redo, reset, canUndo, canRedo } = useUndoableState([])
   const entriesRef = useRef(entries)
   entriesRef.current = entries
+  const isActiveRef = useRef(isActive)
+  isActiveRef.current = isActive
 
   // Video
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -298,6 +301,7 @@ export function SubtitleReview({ videoPath, onSuccess }: SubtitleReviewProps) {
   const totalCount = entries.length
 
   const showToast = useCallback((msg: string) => {
+    if (!isActiveRef.current) return
     setToast(msg)
     setTimeout(() => setToast(''), 2500)
   }, [])
@@ -405,10 +409,10 @@ export function SubtitleReview({ videoPath, onSuccess }: SubtitleReviewProps) {
 
   // Auto-save timer
   useEffect(() => {
-    if (!autoSaveDirty || !sessionMeta) return
+    if (!isActive || !autoSaveDirty || !sessionMeta) return
     const timer = setTimeout(() => { doSave(true) }, AUTO_SAVE_INTERVAL)
     return () => clearTimeout(timer)
-  }, [autoSaveDirty, sessionMeta, doSave, entries])
+  }, [isActive, autoSaveDirty, sessionMeta, doSave, entries])
 
   // Mark dirty on entry changes
   const prevEntriesRef = useRef(entries)
@@ -510,6 +514,7 @@ export function SubtitleReview({ videoPath, onSuccess }: SubtitleReviewProps) {
 
   const lastEntryIdxRef = useRef(-1)
   const handleVideoTimeUpdate = useCallback(() => {
+    if (!isActiveRef.current) return
     const video = videoRef.current
     if (!video) return
     const t = video.currentTime * 1000
