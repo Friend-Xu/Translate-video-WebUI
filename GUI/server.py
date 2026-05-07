@@ -45,6 +45,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+import pysrt
 
 # ---------------------------------------------------------------------------
 # Logging setup: file + console
@@ -1031,7 +1032,6 @@ def _run_qa_checks(entries: list[dict], lang: str = "zh") -> None:
 
 @app.post("/api/subtitle/review/load")
 async def review_load(req: ReviewLoadRequest) -> dict:
-    import pysrt
 
     source = Path(req.source_srt)
     translated = Path(req.translated_srt)
@@ -1121,7 +1121,6 @@ class ReviewSaveRequest(BaseModel):
 
 @app.post("/api/subtitle/review/save")
 async def review_save(req: ReviewSaveRequest) -> dict:
-    import pysrt
 
     translated = Path(req.translated_srt)
     if not translated.is_file():
@@ -1153,7 +1152,6 @@ async def review_save(req: ReviewSaveRequest) -> dict:
 
 @app.get("/api/subtitle/review/qa-check")
 async def review_qa_check(srt_path: str, lang: str = "zh") -> dict:
-    import pysrt
 
     path = Path(srt_path)
     if not path.is_file():

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import {
   Box, Typography, Button, TextField, Card, Table, TableBody,
   TableCell, TableContainer, TableHead, TableRow, Chip, IconButton,
@@ -57,31 +57,35 @@ function useUndoableState(initial: SubtitleEntry[]) {
   const [past, setPast] = useState<UndoFrame[]>([])
   const [present, setPresent] = useState<SubtitleEntry[]>(initial)
   const [future, setFuture] = useState<UndoFrame[]>([])
+  const presentRef = useRef(present)
+  presentRef.current = present
 
   const push = useCallback((entries: SubtitleEntry[], description: string) => {
     setPast(prev => {
-      const next = [...prev, { entries: present, description }]
+      const next = [...prev, { entries: presentRef.current, description }]
       return next.length > MAX_UNDO_STEPS ? next.slice(-MAX_UNDO_STEPS) : next
     })
     setPresent(entries)
     setFuture([])
-  }, [present])
+  }, [])
 
   const undo = useCallback(() => {
-    if (past.length === 0) return
-    const prev = past[past.length - 1]
-    setPast(p => p.slice(0, -1))
-    setFuture(f => [...f, { entries: present, description: 'redo' }])
-    setPresent(prev.entries)
-  }, [past, present])
+    setPast(p => {
+      if (p.length === 0) return p
+      setFuture(f => [...f, { entries: presentRef.current, description: 'redo' }])
+      setPresent(p[p.length - 1].entries)
+      return p.slice(0, -1)
+    })
+  }, [])
 
   const redo = useCallback(() => {
-    if (future.length === 0) return
-    const next = future[future.length - 1]
-    setFuture(f => f.slice(0, -1))
-    setPast(p => [...p, { entries: present, description: 'undo' }])
-    setPresent(next.entries)
-  }, [future, present])
+    setFuture(f => {
+      if (f.length === 0) return f
+      setPast(p => [...p, { entries: presentRef.current, description: 'undo' }])
+      setPresent(f[f.length - 1].entries)
+      return f.slice(0, -1)
+    })
+  }, [])
 
   const reset = useCallback((entries: SubtitleEntry[]) => {
     setPast([])
@@ -98,6 +102,134 @@ interface SubtitleReviewProps {
   videoPath: string
   onSuccess: (msg: string) => void
 }
+
+// ── Memoized row (prevents O(n) re-renders on single-entry changes) ──
+
+const SubtitleRowMemo = React.memo(function SubtitleRow({
+  entry, isCurrent, isEditing, isSelected, editText,
+  onSeek, onToggleSelect, onStartEdit, onEditTextChange, onCommitEdit, onCancelEdit, onToggleStatus,
+}: {
+  entry: SubtitleEntry
+  isCurrent: boolean
+  isEditing: boolean
+  isSelected: boolean
+  editText: string
+  onSeek: (e: SubtitleEntry) => void
+  onToggleSelect: (idx: number) => void
+  onStartEdit: (e: SubtitleEntry) => void
+  onEditTextChange: (t: string) => void
+  onCommitEdit: () => void
+  onCancelEdit: () => void
+  onToggleStatus: (e: SubtitleEntry) => void
+}) {
+  const hasIssues = entry.issues.length > 0
+  const dur = getDuration(entry)
+  const durWarning = dur < 0.8 || dur > 7.0
+  const cps = getCPS(entry)
+  const limit = getCPSLimit('zh')
+  const ratio = Math.min(cps / limit, 1.5)
+  const color = cps > limit ? 'error.main' : cps > limit * 0.85 ? 'warning.main' : 'success.main'
+
+  return (
+    <TableRow hover selected={isCurrent}
+      sx={{
+        cursor: 'default',
+        bgcolor: hasIssues ? 'rgba(237,108,2,0.06)' : undefined,
+        '&.Mui-selected': { bgcolor: 'primary.light' },
+      }}>
+      <TableCell padding="checkbox" onClick={e => e.stopPropagation()}>
+        <Checkbox size="small" checked={isSelected} onChange={() => onToggleSelect(entry.index)} />
+      </TableCell>
+      <TableCell onClick={() => onSeek(entry)}
+        sx={{ cursor: 'pointer', fontFamily: 'monospace', fontSize: '0.8rem' }}>
+        {entry.index}
+      </TableCell>
+      <TableCell onClick={() => onSeek(entry)} sx={{ cursor: 'pointer', p: 0.5 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+          <Typography variant="caption" sx={{
+            fontFamily: 'monospace', fontSize: '0.7rem',
+            color: durWarning ? 'warning.main' : 'text.secondary',
+          }}>
+            {entry.start} → {entry.end}
+          </Typography>
+          <Typography variant="caption" sx={{
+            fontSize: '0.65rem',
+            color: durWarning ? 'warning.main' : 'text.disabled',
+          }}>
+            {dur.toFixed(1)}s
+          </Typography>
+        </Box>
+      </TableCell>
+      <TableCell sx={{ p: 0.5 }}>
+        <Tooltip title={`${cps.toFixed(1)} 字符/秒 (上限 ${limit})`}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <LinearProgress
+              variant="determinate"
+              value={Math.min(ratio * 100, 100)}
+              sx={{
+                width: 40, height: 4, borderRadius: 2,
+                bgcolor: 'action.hover',
+                '& .MuiLinearProgress-bar': { bgcolor: color, borderRadius: 2 },
+              }}
+            />
+            <Typography variant="caption" sx={{ fontSize: '0.65rem', color, minWidth: 28 }}>
+              {cps.toFixed(1)}
+            </Typography>
+          </Box>
+        </Tooltip>
+      </TableCell>
+      <TableCell onClick={() => onSeek(entry)}
+        sx={{ cursor: 'pointer', whiteSpace: 'pre-wrap', maxWidth: 250, fontSize: '0.85rem' }}>
+        {entry.sourceText}
+      </TableCell>
+      <TableCell sx={{ maxWidth: 250 }}
+        onDoubleClick={e => { e.stopPropagation(); onStartEdit(entry) }}>
+        {isEditing ? (
+          <TextField size="small" fullWidth multiline autoFocus
+            value={editText}
+            onChange={e => onEditTextChange(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onCommitEdit() }
+              if (e.key === 'Escape') onCancelEdit()
+            }}
+            onBlur={onCommitEdit}
+            sx={{ '& .MuiInputBase-root': { fontSize: '0.85rem' } }} />
+        ) : (
+          <Typography variant="body2" sx={{
+            whiteSpace: 'pre-wrap', fontSize: '0.85rem',
+            color: entry.reviewStatus === 'modified' ? 'info.main' : 'text.primary',
+            cursor: 'text', '&:hover': { bgcolor: 'action.hover' },
+            p: 0.5, borderRadius: 1, minHeight: 24,
+          }}
+          onClick={e => { e.stopPropagation(); onStartEdit(entry) }}>
+            {entry.translatedText || (
+              <Typography component="span" color="text.secondary" fontStyle="italic">(空)</Typography>
+            )}
+          </Typography>
+        )}
+      </TableCell>
+      <TableCell align="center"
+        onClick={e => { e.stopPropagation(); onToggleStatus(entry) }}
+        sx={{ cursor: 'pointer' }}>
+        {entry.issues.some(i => i.severity === 'error') ? (
+          <Tooltip title={entry.issues.map(i => i.message).join('\n')}>
+            <ErrorIcon color="error" fontSize="small" />
+          </Tooltip>
+        ) : entry.issues.length > 0 ? (
+          <Tooltip title={entry.issues.map(i => i.message).join('\n')}>
+            <WarningAmberIcon sx={{ color: 'warning.main' }} fontSize="small" />
+          </Tooltip>
+        ) : entry.reviewStatus === 'approved' ? (
+          <CheckCircleIcon color="success" fontSize="small" />
+        ) : entry.reviewStatus === 'modified' ? (
+          <EditIcon color="info" fontSize="small" />
+        ) : (
+          <Chip label="待审" size="small" variant="outlined" sx={{ height: 22, fontSize: '0.7rem' }} />
+        )}
+      </TableCell>
+    </TableRow>
+  )
+})
 
 // ── Component ──
 
@@ -128,6 +260,8 @@ export function SubtitleReview({ videoPath, onSuccess }: SubtitleReviewProps) {
 
   // Undoable entries
   const { entries, push, undo, redo, reset, canUndo, canRedo } = useUndoableState([])
+  const entriesRef = useRef(entries)
+  entriesRef.current = entries
 
   // Video
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -254,7 +388,7 @@ export function SubtitleReview({ videoPath, onSuccess }: SubtitleReviewProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           translated_srt: sessionMeta.translatedSrtPath,
-          entries,
+          entries: entriesRef.current,
         }),
       })
       if (!res.ok) { const d = await res.json(); throw new Error(d.detail || '保存失败') }
@@ -267,7 +401,7 @@ export function SubtitleReview({ videoPath, onSuccess }: SubtitleReviewProps) {
     } finally {
       setSaving(false)
     }
-  }, [sessionMeta, entries, onSuccess])
+  }, [sessionMeta, onSuccess])
 
   // Auto-save timer
   useEffect(() => {
@@ -289,17 +423,17 @@ export function SubtitleReview({ videoPath, onSuccess }: SubtitleReviewProps) {
 
   const mutateEntry = useCallback((index: number, update: Partial<SubtitleEntry>, desc: string) => {
     push(
-      entries.map(e => e.index === index ? { ...e, ...update } : e),
+      entriesRef.current.map(e => e.index === index ? { ...e, ...update } : e),
       desc,
     )
-  }, [entries, push])
+  }, [push])
 
   const mutateEntries = useCallback((indices: Set<number>, update: Partial<SubtitleEntry>, desc: string) => {
     push(
-      entries.map(e => indices.has(e.index) ? { ...e, ...update } : e),
+      entriesRef.current.map(e => indices.has(e.index) ? { ...e, ...update } : e),
       desc,
     )
-  }, [entries, push])
+  }, [push])
 
   // ── Edit ──
 
@@ -310,12 +444,12 @@ export function SubtitleReview({ videoPath, onSuccess }: SubtitleReviewProps) {
 
   const handleCommitEdit = useCallback(() => {
     if (editingIndex === null) return
-    const old = entries.find(e => e.index === editingIndex)
+    const old = entriesRef.current.find(e => e.index === editingIndex)
     if (old && old.translatedText !== editText) {
       mutateEntry(editingIndex, { translatedText: editText, reviewStatus: 'modified' }, '编辑译文')
     }
     setEditingIndex(null)
-  }, [editingIndex, editText, entries, mutateEntry])
+  }, [editingIndex, editText, mutateEntry])
 
   const handleCancelEdit = useCallback(() => {
     setEditingIndex(null)
@@ -329,13 +463,13 @@ export function SubtitleReview({ videoPath, onSuccess }: SubtitleReviewProps) {
   }, [mutateEntry])
 
   const handleApproveAll = useCallback(() => {
-    if (entries.length === 0) return
+    if (entriesRef.current.length === 0) return
     push(
-      entries.map(e => ({ ...e, reviewStatus: 'approved' as const })),
+      entriesRef.current.map(e => ({ ...e, reviewStatus: 'approved' as const })),
       '全部批准',
     )
     showToast('已全部批准')
-  }, [entries, push, showToast])
+  }, [push, showToast])
 
   const handleApproveSelected = useCallback(() => {
     if (selectedIndices.size === 0) return
@@ -374,13 +508,15 @@ export function SubtitleReview({ videoPath, onSuccess }: SubtitleReviewProps) {
     video.play().catch(() => {})
   }, [preRollEnabled])
 
+  const lastEntryIdxRef = useRef(-1)
   const handleVideoTimeUpdate = useCallback(() => {
     const video = videoRef.current
     if (!video) return
     const t = video.currentTime * 1000
+    const list = entriesRef.current
 
     if (loopCurrent && currentEntryIndex !== null) {
-      const entry = entries.find(e => e.index === currentEntryIndex)
+      const entry = list.find(e => e.index === currentEntryIndex)
       if (entry && t > entry.endMs) {
         video.currentTime = entry.startMs / 1000
         video.play().catch(() => {})
@@ -388,11 +524,32 @@ export function SubtitleReview({ videoPath, onSuccess }: SubtitleReviewProps) {
       }
     }
 
-    const current = entries.find(e => t >= e.startMs && t <= e.endMs)
+    // Index-based tracking (entries are time-sorted) — avoids O(n) scan at 30fps
+    let current: SubtitleEntry | undefined
+    let idx = lastEntryIdxRef.current
+    if (idx >= 0 && idx < list.length) {
+      const at = list[idx]
+      if (t >= at.startMs && t <= at.endMs) {
+        current = at
+      } else if (t > at.endMs && idx + 1 < list.length && t <= list[idx + 1].startMs) {
+        // Between entries — don't reassign
+      } else if (t > at.endMs && idx + 1 < list.length && t >= list[idx + 1].startMs && t <= list[idx + 1].endMs) {
+        current = list[idx + 1]; idx++
+      } else if (t < at.startMs && idx - 1 >= 0 && t >= list[idx - 1].startMs && t <= list[idx - 1].endMs) {
+        current = list[idx - 1]; idx--
+      }
+    }
+    if (!current) {
+      // Fall back to linear scan
+      for (let i = 0; i < list.length; i++) {
+        if (t >= list[i].startMs && t <= list[i].endMs) { current = list[i]; idx = i; break }
+      }
+    }
+    lastEntryIdxRef.current = idx
     if (current && current.index !== currentEntryIndex) {
       setCurrentEntryIndex(current.index)
     }
-  }, [entries, currentEntryIndex, loopCurrent])
+  }, [currentEntryIndex, loopCurrent])
 
   const handleVideoPlay = useCallback(() => setIsPlaying(true), [])
   const handleVideoPause = useCallback(() => setIsPlaying(false), [])
@@ -412,14 +569,15 @@ export function SubtitleReview({ videoPath, onSuccess }: SubtitleReviewProps) {
 
   const goToEntry = useCallback((offset: number) => {
     if (currentEntryIndex === null) return
-    const idx = entries.findIndex(e => e.index === currentEntryIndex)
-    const next = entries[idx + offset]
+    const list = entriesRef.current
+    const idx = list.findIndex(e => e.index === currentEntryIndex)
+    const next = list[idx + offset]
     if (next) seekToEntry(next)
-  }, [entries, currentEntryIndex, seekToEntry])
+  }, [currentEntryIndex, seekToEntry])
 
   const playCurrentSegment = useCallback(() => {
     if (currentEntryIndex === null) return
-    const entry = entries.find(e => e.index === currentEntryIndex)
+    const entry = entriesRef.current.find(e => e.index === currentEntryIndex)
     if (!entry) return
     const video = videoRef.current
     if (!video) return
@@ -432,68 +590,82 @@ export function SubtitleReview({ videoPath, onSuccess }: SubtitleReviewProps) {
       }
     }
     video.addEventListener('timeupdate', checkEnd)
-  }, [entries, currentEntryIndex])
+  }, [currentEntryIndex])
 
   const goToNextFlagged = useCallback(() => {
-    const flagged = entries.filter(e => e.issues.length > 0)
+    const flagged = entriesRef.current.filter(e => e.issues.length > 0)
     if (flagged.length === 0) return
     const currentIdx = flagged.findIndex(e => e.index === currentEntryIndex)
     const next = flagged[(currentIdx + 1) % flagged.length]
     seekToEntry(next)
-  }, [entries, currentEntryIndex, seekToEntry])
+  }, [currentEntryIndex, seekToEntry])
 
   const goToPrevFlagged = useCallback(() => {
-    const flagged = entries.filter(e => e.issues.length > 0)
+    const flagged = entriesRef.current.filter(e => e.issues.length > 0)
     if (flagged.length === 0) return
     const currentIdx = flagged.findIndex(e => e.index === currentEntryIndex)
     const prev = flagged[(currentIdx - 1 + flagged.length) % flagged.length]
     seekToEntry(prev)
-  }, [entries, currentEntryIndex, seekToEntry])
+  }, [currentEntryIndex, seekToEntry])
 
-  // ── Keyboard shortcuts ──
+  // ── Keyboard shortcuts (registered once via ref) ──
+
+  const kbRef = useRef({
+    handleCancelEdit, handleCommitEdit, doSave, togglePlay, seekRelative,
+    goToEntry, goToPrevFlagged, goToNextFlagged, handleStartEdit,
+    playCurrentSegment, undo, redo, selectAllFiltered, showToast,
+    currentEntryIndex, editingIndex,
+  })
+  kbRef.current = {
+    handleCancelEdit, handleCommitEdit, doSave, togglePlay, seekRelative,
+    goToEntry, goToPrevFlagged, goToNextFlagged, handleStartEdit,
+    playCurrentSegment, undo, redo, selectAllFiltered, showToast,
+    currentEntryIndex, editingIndex,
+  }
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
+      const r = kbRef.current
       const inTextField = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement
       if (inTextField) {
-        if (e.key === 'Escape') handleCancelEdit()
+        if (e.key === 'Escape') r.handleCancelEdit()
         if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
           e.preventDefault()
-          handleCommitEdit()
+          r.handleCommitEdit()
         }
         if ((e.ctrlKey || e.metaKey) && e.key === 's') {
           e.preventDefault()
-          doSave(false)
+          r.doSave(false)
         }
         return
       }
 
       const ctrl = e.ctrlKey || e.metaKey
 
-      if (e.key === ' ') { e.preventDefault(); togglePlay(); return }
-      if (e.key === 'j' || e.key === 'J') { e.preventDefault(); seekRelative(-2); return }
+      if (e.key === ' ') { e.preventDefault(); r.togglePlay(); return }
+      if (e.key === 'j' || e.key === 'J') { e.preventDefault(); r.seekRelative(-2); return }
       if (e.key === 'k' || e.key === 'K') { e.preventDefault(); videoRef.current?.pause(); return }
-      if (e.key === 'l' || e.key === 'L') { e.preventDefault(); seekRelative(2); return }
-      if (e.key === 'ArrowUp') { e.preventDefault(); goToEntry(-1); return }
-      if (e.key === 'ArrowDown') { e.preventDefault(); goToEntry(1); return }
-      if (e.key === '[') { e.preventDefault(); goToPrevFlagged(); return }
-      if (e.key === ']') { e.preventDefault(); goToNextFlagged(); return }
+      if (e.key === 'l' || e.key === 'L') { e.preventDefault(); r.seekRelative(2); return }
+      if (e.key === 'ArrowUp') { e.preventDefault(); r.goToEntry(-1); return }
+      if (e.key === 'ArrowDown') { e.preventDefault(); r.goToEntry(1); return }
+      if (e.key === '[') { e.preventDefault(); r.goToPrevFlagged(); return }
+      if (e.key === ']') { e.preventDefault(); r.goToNextFlagged(); return }
 
       if (e.key === 'Enter' && !ctrl) {
         e.preventDefault()
-        if (currentEntryIndex !== null) {
-          const entry = entries.find(en => en.index === currentEntryIndex)
-          if (entry) handleStartEdit(entry)
+        if (r.currentEntryIndex !== null) {
+          const entry = entriesRef.current.find(en => en.index === r.currentEntryIndex)
+          if (entry) r.handleStartEdit(entry)
         }
         return
       }
 
-      if (e.key === 'Tab') { e.preventDefault(); playCurrentSegment(); return }
+      if (e.key === 'Tab') { e.preventDefault(); r.playCurrentSegment(); return }
 
-      if (ctrl && e.key === 'z') { e.preventDefault(); undo(); showToast('撤销'); return }
-      if (ctrl && (e.key === 'y' || (e.key === 'Z' && e.shiftKey))) { e.preventDefault(); redo(); showToast('重做'); return }
-      if (ctrl && e.key === 's') { e.preventDefault(); doSave(false); return }
-      if (ctrl && e.key === 'a') { e.preventDefault(); selectAllFiltered(); return }
+      if (ctrl && e.key === 'z') { e.preventDefault(); r.undo(); r.showToast('撤销'); return }
+      if (ctrl && (e.key === 'y' || (e.key === 'Z' && e.shiftKey))) { e.preventDefault(); r.redo(); r.showToast('重做'); return }
+      if (ctrl && e.key === 's') { e.preventDefault(); r.doSave(false); return }
+      if (ctrl && e.key === 'a') { e.preventDefault(); r.selectAllFiltered(); return }
       if (ctrl && e.key === 'f') {
         e.preventDefault()
         document.getElementById('subtitle-search-input')?.focus()
@@ -506,69 +678,18 @@ export function SubtitleReview({ videoPath, onSuccess }: SubtitleReviewProps) {
 
       if (e.key === 'Escape') {
         setSelectedIndices(new Set())
-        if (editingIndex !== null) handleCancelEdit()
+        if (r.editingIndex !== null) r.handleCancelEdit()
       }
     }
 
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
-  }, [togglePlay, seekRelative, goToEntry, goToNextFlagged, goToPrevFlagged, playCurrentSegment,
-      undo, redo, doSave, selectAllFiltered, currentEntryIndex, entries, handleStartEdit,
-      editingIndex, handleCancelEdit, handleCommitEdit, showToast])
+  }, [])
 
-  // ── Status chip ──
-
-  const statusChip = (entry: SubtitleEntry) => {
-    if (entry.issues.some(i => i.severity === 'error')) {
-      return (
-        <Tooltip title={entry.issues.map(i => i.message).join('\n')}>
-          <ErrorIcon color="error" fontSize="small" />
-        </Tooltip>
-      )
-    }
-    if (entry.issues.length > 0) {
-      return (
-        <Tooltip title={entry.issues.map(i => i.message).join('\n')}>
-          <WarningAmberIcon sx={{ color: 'warning.main' }} fontSize="small" />
-        </Tooltip>
-      )
-    }
-    switch (entry.reviewStatus) {
-      case 'approved':
-        return <CheckCircleIcon color="success" fontSize="small" />
-      case 'modified':
-        return <EditIcon color="info" fontSize="small" />
-      default:
-        return <Chip label="待审" size="small" variant="outlined" sx={{ height: 22, fontSize: '0.7rem' }} />
-    }
-  }
-
-  // ── CPS indicator ──
-
-  const cpsIndicator = (entry: SubtitleEntry) => {
-    const cps = getCPS(entry)
-    const limit = getCPSLimit('zh')
-    const ratio = Math.min(cps / limit, 1.5)
-    const color = cps > limit ? 'error.main' : cps > limit * 0.85 ? 'warning.main' : 'success.main'
-    return (
-      <Tooltip title={`${cps.toFixed(1)} 字符/秒 (上限 ${limit})`}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          <LinearProgress
-            variant="determinate"
-            value={Math.min(ratio * 100, 100)}
-            sx={{
-              width: 40, height: 4, borderRadius: 2,
-              bgcolor: 'action.hover',
-              '& .MuiLinearProgress-bar': { bgcolor: color, borderRadius: 2 },
-            }}
-          />
-          <Typography variant="caption" sx={{ fontSize: '0.65rem', color, minWidth: 28 }}>
-            {cps.toFixed(1)}
-          </Typography>
-        </Box>
-      </Tooltip>
-    )
-  }
+  // Stable wrapper for handleCommitEdit (depends on editText which changes per-keystroke)
+  const handleCommitEditRef = useRef(handleCommitEdit)
+  handleCommitEditRef.current = handleCommitEdit
+  const commitEditStable = useCallback(() => handleCommitEditRef.current(), [])
 
   // ── File label ──
 
@@ -771,85 +892,22 @@ export function SubtitleReview({ videoPath, onSuccess }: SubtitleReviewProps) {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {filteredEntries.map(entry => {
-                    const isCurrent = entry.index === currentEntryIndex
-                    const isEditing = entry.index === editingIndex
-                    const hasIssues = entry.issues.length > 0
-                    const isSelected = selectedIndices.has(entry.index)
-                    const dur = getDuration(entry)
-                    const durWarning = dur < 0.8 || dur > 7.0
-
-                    return (
-                      <TableRow key={entry.index}
-                        hover
-                        selected={isCurrent}
-                        sx={{
-                          cursor: 'default',
-                          bgcolor: hasIssues ? 'rgba(237,108,2,0.06)' : undefined,
-                          '&.Mui-selected': { bgcolor: 'primary.light' },
-                        }}>
-                        <TableCell padding="checkbox" onClick={e => e.stopPropagation()}>
-                          <Checkbox size="small" checked={isSelected} onChange={() => toggleSelect(entry.index)} />
-                        </TableCell>
-                        <TableCell onClick={() => seekToEntry(entry)}
-                          sx={{ cursor: 'pointer', fontFamily: 'monospace', fontSize: '0.8rem' }}>
-                          {entry.index}
-                        </TableCell>
-                        <TableCell onClick={() => seekToEntry(entry)} sx={{ cursor: 'pointer', p: 0.5 }}>
-                          <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-                            <Typography variant="caption" sx={{
-                              fontFamily: 'monospace', fontSize: '0.7rem',
-                              color: durWarning ? 'warning.main' : 'text.secondary',
-                            }}>
-                              {entry.start} → {entry.end}
-                            </Typography>
-                            <Typography variant="caption" sx={{
-                              fontSize: '0.65rem',
-                              color: durWarning ? 'warning.main' : 'text.disabled',
-                            }}>
-                              {dur.toFixed(1)}s
-                            </Typography>
-                          </Box>
-                        </TableCell>
-                        <TableCell sx={{ p: 0.5 }}>{cpsIndicator(entry)}</TableCell>
-                        <TableCell onClick={() => seekToEntry(entry)}
-                          sx={{ cursor: 'pointer', whiteSpace: 'pre-wrap', maxWidth: 250, fontSize: '0.85rem' }}>
-                          {entry.sourceText}
-                        </TableCell>
-                        <TableCell sx={{ maxWidth: 250 }}
-                          onDoubleClick={e => { e.stopPropagation(); handleStartEdit(entry) }}>
-                          {isEditing ? (
-                            <TextField size="small" fullWidth multiline autoFocus
-                              value={editText}
-                              onChange={e => setEditText(e.target.value)}
-                              onKeyDown={e => {
-                                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleCommitEdit() }
-                                if (e.key === 'Escape') handleCancelEdit()
-                              }}
-                              onBlur={handleCommitEdit}
-                              sx={{ '& .MuiInputBase-root': { fontSize: '0.85rem' } }} />
-                          ) : (
-                            <Typography variant="body2" sx={{
-                              whiteSpace: 'pre-wrap', fontSize: '0.85rem',
-                              color: entry.reviewStatus === 'modified' ? 'info.main' : 'text.primary',
-                              cursor: 'text', '&:hover': { bgcolor: 'action.hover' },
-                              p: 0.5, borderRadius: 1, minHeight: 24,
-                            }}
-                            onClick={e => { e.stopPropagation(); handleStartEdit(entry) }}>
-                              {entry.translatedText || (
-                                <Typography component="span" color="text.secondary" fontStyle="italic">(空)</Typography>
-                              )}
-                            </Typography>
-                          )}
-                        </TableCell>
-                        <TableCell align="center"
-                          onClick={e => { e.stopPropagation(); handleToggleStatus(entry) }}
-                          sx={{ cursor: 'pointer' }}>
-                          {statusChip(entry)}
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
+                  {filteredEntries.map(entry => (
+                    <SubtitleRowMemo key={entry.index}
+                      entry={entry}
+                      isCurrent={entry.index === currentEntryIndex}
+                      isEditing={entry.index === editingIndex}
+                      isSelected={selectedIndices.has(entry.index)}
+                      editText={editText}
+                      onSeek={seekToEntry}
+                      onToggleSelect={toggleSelect}
+                      onStartEdit={handleStartEdit}
+                      onEditTextChange={setEditText}
+                      onCommitEdit={commitEditStable}
+                      onCancelEdit={handleCancelEdit}
+                      onToggleStatus={handleToggleStatus}
+                    />
+                  ))}
                 </TableBody>
               </Table>
             </TableContainer>
