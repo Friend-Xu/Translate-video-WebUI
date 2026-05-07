@@ -88,18 +88,9 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                     control={<Checkbox checked={config.enableAlignment} onChange={e => onConfigChange('enableAlignment', e.target.checked)} />}
                     label={<Typography variant="body2" fontWeight={500}>启用 wav2vec2 强制对齐</Typography>}
                   />
-                  <Box sx={{ ml: 4, mt: 1, opacity: config.enableAlignment ? 1 : 0.5, pointerEvents: config.enableAlignment ? 'auto' : 'none' }}>
-                    <Typography variant="body2" fontWeight={500}>对齐语言</Typography>
-                    <Select size="small" fullWidth value={config.alignmentLanguage} onChange={e => onConfigChange('alignmentLanguage', e.target.value)} sx={{ bgcolor: 'background.paper', mt: 0.5 }}>
-                      <MenuItem value="ja">日语 (ja)</MenuItem>
-                      <MenuItem value="en">英语 (en)</MenuItem>
-                      <MenuItem value="zh">中文 (zh)</MenuItem>
-                      <MenuItem value="fr">法语 (fr)</MenuItem>
-                      <MenuItem value="de">德语 (de)</MenuItem>
-                      <MenuItem value="ko">韩语 (ko)</MenuItem>
-                    </Select>
-                    <Typography variant="caption">指定语言后启用 wav2vec2 精修词级时间戳（~20ms 精度）</Typography>
-                  </Box>
+                  <Typography variant="caption" sx={{ ml: 4, display: 'block', color: 'text.secondary' }}>
+                    对齐语言跟随源语言（{config.lang === 'ja' ? '日语' : config.lang === 'en' ? '英语' : config.lang === 'zh' ? '中文' : config.lang === 'auto' ? '自动检测' : config.lang}）
+                  </Typography>
                 </Box>
 
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>

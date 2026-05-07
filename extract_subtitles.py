@@ -62,6 +62,8 @@ def parse_args():
     parser.add_argument("--compute-type", default="float16", help="计算精度 (float16/int8_float16/int8/float32)")
     parser.add_argument("--skip-defect-check", action="store_true", help="跳过音频缺陷检测 (NODE 1.5)")
     parser.add_argument("--skip-demucs", action="store_true", help="跳过 Demucs 人声分离 (NODE 2.5)")
+    parser.add_argument("--skip-align", action="store_true", help="跳过 wav2vec2 强制对齐 (即使指定了 --lang)")
+    parser.add_argument("--align-lang", default=None, help="wav2vec2 对齐语言（默认跟随 --lang）")
     parser.add_argument("--num-workers", type=int, default=1, help="whisper 并发 worker 数 (1=串行, 2~4=并行)")
     return parser.parse_args()
 
@@ -254,9 +256,10 @@ def main():
     # 3c: 转录 + 词级分组 + wav2vec2 对齐
     #   指定语言时同时启用 wav2vec2 对齐；自动检测时不启用（需手动确认语言）
     merged_batches = transcriber.merge_segments(vad_segments)
-    aligned = args.lang is not None  # 指定语言时才启用 wav2vec2 对齐
+    aligned = args.lang is not None and not args.skip_align
+    align_lang = None if args.skip_align else (args.align_lang or args.lang)
     log_node(3, f"开始转录 ({vad_stats['vad_count']} 段 → 合并后 {len(merged_batches)} 批)...")
-    result = transcriber.transcribe_all(language=args.lang, align_language=args.lang)
+    result = transcriber.transcribe_all(language=args.lang, align_language=align_lang)
     st = result["stats"]
 
     log_node(3, f"语言: {result['language']} (置信度: {st['lang_probability']:.3f}), 耗时: {st['detect_time']:.1f}s")

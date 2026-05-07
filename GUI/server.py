@@ -407,6 +407,8 @@ class RunRequest(BaseModel):
     caption_width_ratio: float = 0.85
     caption_optimize: bool = True
     num_workers: int = 1
+    skip_align: bool = False
+    align_lang: str = ""
 
 
 class RunResponse(BaseModel):
@@ -474,6 +476,10 @@ def _build_cli_args(req: RunRequest) -> list[str]:
         args.append("--force")
     if req.num_workers > 1:
         args.extend(["--num-workers", str(req.num_workers)])
+    if req.skip_align:
+        args.append("--skip-align")
+    if req.align_lang:
+        args.extend(["--align-lang", req.align_lang])
     return args
 
 

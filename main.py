@@ -94,7 +94,8 @@ def guess_translated_srt(video_path: str) -> str | None:
 def step_extract(video: str, lang: str | None, model: str, device: str,
                   compute_type: str = "float16",
                   backup_dir: str = "", skip_defect_check: bool = False,
-                  skip_demucs: bool = False, num_workers: int = 1) -> None:
+                  skip_demucs: bool = False, skip_align: bool = False,
+                  align_lang: str | None = None, num_workers: int = 1) -> None:
     """步骤 1: 委托 extract_subtitles.py 完成全流程。
 
     含缺陷检测(N1.5)、音频提取(N2)、背景乐提取(N2.5)、
@@ -116,6 +117,10 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
         cmd.append("--skip-defect-check")
     if skip_demucs:
         cmd.append("--skip-demucs")
+    if skip_align:
+        cmd.append("--skip-align")
+    if align_lang:
+        cmd.extend(["--align-lang", align_lang])
     if num_workers > 1:
         cmd.extend(["--num-workers", str(num_workers)])
 
@@ -394,6 +399,10 @@ def main():
                         help="跳过音频缺陷检测 (NODE 1.5)")
     parser.add_argument("--skip-demucs", action="store_true",
                         help="跳过 Demucs 人声分离 (NODE 2.5)")
+    parser.add_argument("--skip-align", action="store_true",
+                        help="跳过 wav2vec2 强制对齐 (即使指定了 --lang)")
+    parser.add_argument("--align-lang", default=None,
+                        help="wav2vec2 对齐语言（默认跟随 --lang）")
     parser.add_argument("--num-workers", type=int, default=1,
                         help="whisper 并发 worker 数 (1=串行, 2~4=并行)")
     parser.add_argument("--skip-translate", action="store_true",
@@ -457,7 +466,8 @@ def main():
             step_extract(video, lang=args.lang, model=args.model, device=args.device,
                          compute_type=args.compute_type,
                          backup_dir=args.backup_dir, skip_defect_check=args.skip_defect_check,
-                         skip_demucs=args.skip_demucs, num_workers=args.num_workers)
+                         skip_demucs=args.skip_demucs, skip_align=args.skip_align,
+                         align_lang=args.align_lang, num_workers=args.num_workers)
         else:
             print("[1/3] 字幕提取 — 已跳过 (--skip-extract)")
 
