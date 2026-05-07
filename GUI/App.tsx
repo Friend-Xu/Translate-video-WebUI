@@ -6,7 +6,6 @@ import { PipelinePanel } from './components/sections/PipelinePanel'
 import { StepConfig } from './components/sections/StepConfig'
 import { OutputSettings } from './components/sections/OutputSettings'
 import { AdvancedSettings } from './components/sections/AdvancedSettings'
-import { LogPanel } from './components/sections/LogPanel'
 import { Toolbar } from './components/sections/Toolbar'
 import { FilePickerDialog } from './components/FilePickerDialog'
 import { SubtitleOptimizerDialog } from './components/SubtitleOptimizerDialog'
@@ -93,7 +92,6 @@ export default function App() {
       return
     }
     startPipeline(config)
-    setActiveTab('日志与反馈')
   }, [config, startPipeline, showMsg])
 
   const handleForceRetry = useCallback(() => {
@@ -103,7 +101,6 @@ export default function App() {
     }
     updateConfig('forceRetry', true)
     startPipeline(config)
-    setActiveTab('日志与反馈')
   }, [config, updateConfig, startPipeline, showMsg])
 
   const handleStartBatch = useCallback(async () => {
@@ -113,7 +110,6 @@ export default function App() {
     }
     try {
       await startBatch(batchFiles, config)
-      setActiveTab('日志与反馈')
     } catch (e: any) {
       showMsg(e.message || '批次启动失败', 'error')
     }
@@ -134,10 +130,6 @@ export default function App() {
       .then(r => { if (r.ok) showMsg('配置已保存', 'success'); else showMsg('保存失败', 'error') })
       .catch(() => showMsg('保存失败', 'error'))
   }, [config, showMsg])
-
-  const logHeaderLabel = mode === 'batch' && activeVideoJobId
-    ? `查看日志: ${(batch.videos.find(v => v.job_id === activeVideoJobId) || {} as any).video_name || activeVideoJobId}`
-    : undefined
 
   return (
     <ThemeProvider theme={theme}>
@@ -166,6 +158,7 @@ export default function App() {
               onAddFiles={() => setFilePickerOpen(true)}
               onReorderFiles={handleReorderFiles}
               onRemoveFile={handleRemoveFile}
+              logs={logs}
             />
           )}
           {activeTab === '步骤配置' && <StepConfig config={config} onConfigChange={updateConfig} />}
@@ -177,11 +170,6 @@ export default function App() {
           {activeTab === '高级设置' && (
             <Box>
               <AdvancedSettings config={config} onConfigChange={updateConfig} showTitle={false} />
-            </Box>
-          )}
-          {activeTab === '日志与反馈' && (
-            <Box sx={{ maxWidth: 800 }}>
-              <LogPanel logs={logs} showTitle={false} headerLabel={logHeaderLabel} />
             </Box>
           )}
           {activeTab === '工具栏' && (

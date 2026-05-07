@@ -3,7 +3,6 @@ import HomeIcon from '@mui/icons-material/HomeOutlined'
 import TuneIcon from '@mui/icons-material/TuneOutlined'
 import SaveIcon from '@mui/icons-material/SaveOutlined'
 import SettingsIcon from '@mui/icons-material/SettingsOutlined'
-import ArticleIcon from '@mui/icons-material/ArticleOutlined'
 import BuildIcon from '@mui/icons-material/BuildOutlined'
 import RateReviewIcon from '@mui/icons-material/RateReviewOutlined'
 
@@ -17,7 +16,6 @@ const menuItems = [
   { icon: <TuneIcon />, label: '步骤配置' },
   { icon: <SaveIcon />, label: '输出设置' },
   { icon: <SettingsIcon />, label: '高级设置' },
-  { icon: <ArticleIcon />, label: '日志与反馈' },
   { icon: <BuildIcon />, label: '工具栏' },
   { icon: <RateReviewIcon />, label: '字幕校准' },
 ]

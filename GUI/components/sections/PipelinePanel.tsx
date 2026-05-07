@@ -19,7 +19,8 @@ import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrate
 import { SectionHeader } from '../SectionHeader'
 import { ControlCard } from '../ControlCard'
 import { SortableVideoItem } from '../SortableVideoItem'
-import type { PipelineConfig, PipelineStatus, PipelineMode, BatchStatus } from '../../types'
+import { LogPanel } from './LogPanel'
+import type { PipelineConfig, PipelineStatus, PipelineMode, BatchStatus, LogEntry } from '../../types'
 
 interface PipelinePanelProps {
   config: PipelineConfig
@@ -41,6 +42,7 @@ interface PipelinePanelProps {
   onAddFiles: () => void
   onReorderFiles: (reordered: string[]) => void
   onRemoveFile: (path: string) => void
+  logs: LogEntry[]
 }
 
 const statusChipColor: Record<string, 'default' | 'primary' | 'success' | 'error' | 'warning'> = {
@@ -67,6 +69,7 @@ export function PipelinePanel({
   onStartBatch, onCancelBatch, onSkipCurrent,
   onViewLogs, activeVideoJobId,
   onAddFiles, onReorderFiles, onRemoveFile,
+  logs,
 }: PipelinePanelProps) {
 
   const isRunning = status.state === 'running' || batch.status === 'running'
@@ -85,6 +88,102 @@ export function PipelinePanel({
       onReorderFiles(reordered)
     }
   }, [batchFiles, onReorderFiles])
+
+  const logHeaderLabel = mode === 'batch' && activeVideoJobId
+    ? `查看日志: ${(batch.videos.find(v => v.job_id === activeVideoJobId) || {} as any).video_name || activeVideoJobId}`
+    : undefined
+
+  const controlsCard = (
+    <Card>
+      <CardContent>
+        <Typography variant="subtitle2" gutterBottom>步骤控制</Typography>
+
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+          <FormControlLabel
+            control={<Checkbox size="small" checked={config.enableDefectCheck} onChange={e => onConfigChange('enableDefectCheck', e.target.checked)} disabled={isRunning} />}
+            label={<Typography variant="body2">启用音频缺陷检测</Typography>}
+          />
+          <FormControlLabel
+            control={<Checkbox size="small" checked={config.enableExtract} onChange={e => onConfigChange('enableExtract', e.target.checked)} disabled={isRunning} />}
+            label={<Typography variant="body2">启用字幕提取</Typography>}
+          />
+          <FormControlLabel
+            control={<Checkbox size="small" checked={config.enableTranslate} onChange={e => onConfigChange('enableTranslate', e.target.checked)} disabled={isRunning} />}
+            label={<Typography variant="body2">启用翻译</Typography>}
+          />
+          <FormControlLabel
+            control={<Checkbox size="small" checked={config.enableTTS} onChange={e => onConfigChange('enableTTS', e.target.checked)} disabled={isRunning} />}
+            label={<Typography variant="body2">启用TTS合成</Typography>}
+          />
+        </Box>
+
+        <Divider sx={{ mb: 2 }} />
+
+        <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
+          {mode === 'single' ? (
+            <>
+              {status.state === 'running' ? (
+                <Button variant="contained" color="error" startIcon={<StopIcon />} onClick={onCancel}>
+                  取消处理
+                </Button>
+              ) : (
+                <Button variant="contained" startIcon={<PlayArrowIcon />} onClick={onStart} disabled={!config.videoPath}>
+                  开始处理
+                </Button>
+              )}
+              <Button variant="outlined" color="error" startIcon={<RefreshIcon />} onClick={onForceRetry}
+                disabled={status.state === 'running'}>
+                强制重新执行
+              </Button>
+            </>
+          ) : (
+            <>
+              {batch.status === 'running' ? (
+                <>
+                  <Button variant="contained" color="error" startIcon={<StopIcon />} onClick={onCancelBatch}>
+                    取消批次
+                  </Button>
+                  <Button variant="outlined" startIcon={<SkipNextIcon />} onClick={onSkipCurrent}>
+                    跳过当前
+                  </Button>
+                </>
+              ) : (
+                <Button variant="contained" startIcon={<PlayArrowIcon />} onClick={onStartBatch} disabled={batchFiles.length === 0}>
+                  开始批处理
+                </Button>
+              )}
+            </>
+          )}
+        </Stack>
+
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+          <Typography variant="subtitle2">
+            {mode === 'single'
+              ? (status.state === 'idle' ? '就绪' : status.currentStep)
+              : (batch.status === 'idle' ? '就绪' : batch.status === 'running'
+                ? `处理中 (${batch.completed_count + 1}/${batch.total_count})`
+                : batch.status === 'completed' ? '全部完成' : batch.status === 'partial' ? '部分完成' : batch.status
+              )
+            }
+          </Typography>
+          <Typography variant="body2" fontWeight={600} color="primary">
+            {mode === 'single'
+              ? `${status.progress}%`
+              : `${batch.total_count > 0 ? Math.round(batch.completed_count / batch.total_count * 100) : 0}%`
+            }
+          </Typography>
+        </Box>
+        <LinearProgress
+          variant="determinate"
+          value={
+            mode === 'single'
+              ? status.progress
+              : batch.total_count > 0 ? (batch.completed_count / batch.total_count) * 100 : 0
+          }
+        />
+      </CardContent>
+    </Card>
+  )
 
   return (
     <>
@@ -166,165 +265,94 @@ export function PipelinePanel({
         </Grid>
       </Grid>
 
-      {mode === 'batch' && batchFiles.length > 0 && (
-        <Card>
-          <CardContent>
-            <Typography variant="subtitle2" gutterBottom>
-              批次文件列表
-              {batch.total_count > 0 && (
-                <Typography component="span" variant="body2" color="text.secondary" sx={{ ml: 1 }}>
-                  （完成 {batch.completed_count}/{batch.total_count}{batch.failed_count > 0 ? `，失败 ${batch.failed_count}` : ''}）
-                </Typography>
-              )}
-            </Typography>
-            {batch.status === 'idle' ? (
-              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={batchFiles} strategy={verticalListSortingStrategy}>
-                  <List dense sx={{ maxHeight: 300, overflow: 'auto', bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
-                    {batchFiles.map((videoPath) => {
-                      const videoName = videoPath.split(/[/\\]/).pop() || videoPath
-                      return (
-                        <SortableVideoItem
-                          key={videoPath}
-                          id={videoPath}
-                          videoName={videoName}
-                          disabled={false}
-                          selected={false}
-                          progress={0}
-                          statusLabel="排队中"
-                          statusColor="default"
-                          statusVariant="outlined"
-                          onClick={() => {}}
-                          onRemove={() => onRemoveFile(videoPath)}
-                        />
-                      )
-                    })}
-                  </List>
-                </SortableContext>
-              </DndContext>
-            ) : (
-              <List dense sx={{ maxHeight: 300, overflow: 'auto', bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
-                {batch.videos.map((v) => (
-                  <ListItemButton
-                    key={v.video_path}
-                    selected={activeVideoJobId === v.job_id}
-                    onClick={() => onViewLogs(v.job_id)}
-                    dense
-                  >
-                    <ListItemText
-                      primary={v.video_name}
-                      primaryTypographyProps={{ noWrap: true, fontSize: '0.875rem' }}
-                      secondary={v.current_step}
-                      secondaryTypographyProps={{ variant: 'caption' }}
-                    />
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 200 }}>
-                      <Box sx={{ flex: 1, maxWidth: 100 }}>
-                        <LinearProgress variant="determinate" value={v.progress} sx={{ height: 4, borderRadius: 2 }} />
-                      </Box>
-                      <Chip
-                        label={statusLabel[v.status] || v.status}
-                        color={statusChipColor[v.status] || 'default'}
-                        size="small"
-                        variant={v.status === 'running' ? 'filled' : 'outlined'}
-                      />
-                    </Box>
-                  </ListItemButton>
-                ))}
-              </List>
+      {mode === 'single' ? (
+        <Grid container spacing={3} sx={{ mt: 0, alignItems: 'stretch' }}>
+          <Grid size={{ xs: 12, md: 5 }}>
+            {controlsCard}
+          </Grid>
+          <Grid size={{ xs: 12, md: 7 }}>
+            <LogPanel logs={logs} showTitle={false} />
+          </Grid>
+        </Grid>
+      ) : (
+        <Grid container spacing={3} sx={{ mt: 0, alignItems: 'stretch' }}>
+          <Grid size={{ xs: 12, md: 5 }}>
+            {batchFiles.length > 0 && (
+              <Card sx={{ mb: 3 }}>
+                <CardContent>
+                  <Typography variant="subtitle2" gutterBottom>
+                    批次文件列表
+                    {batch.total_count > 0 && (
+                      <Typography component="span" variant="body2" color="text.secondary" sx={{ ml: 1 }}>
+                        （完成 {batch.completed_count}/{batch.total_count}{batch.failed_count > 0 ? `，失败 ${batch.failed_count}` : ''}）
+                      </Typography>
+                    )}
+                  </Typography>
+                  {batch.status === 'idle' ? (
+                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                      <SortableContext items={batchFiles} strategy={verticalListSortingStrategy}>
+                        <List dense sx={{ maxHeight: 200, overflow: 'auto', bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+                          {batchFiles.map((videoPath) => {
+                            const videoName = videoPath.split(/[/\\]/).pop() || videoPath
+                            return (
+                              <SortableVideoItem
+                                key={videoPath}
+                                id={videoPath}
+                                videoName={videoName}
+                                disabled={false}
+                                selected={false}
+                                progress={0}
+                                statusLabel="排队中"
+                                statusColor="default"
+                                statusVariant="outlined"
+                                onClick={() => {}}
+                                onRemove={() => onRemoveFile(videoPath)}
+                              />
+                            )
+                          })}
+                        </List>
+                      </SortableContext>
+                    </DndContext>
+                  ) : (
+                    <List dense sx={{ maxHeight: 200, overflow: 'auto', bgcolor: 'background.paper', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+                      {batch.videos.map((v) => (
+                        <ListItemButton
+                          key={v.video_path}
+                          selected={activeVideoJobId === v.job_id}
+                          onClick={() => onViewLogs(v.job_id)}
+                          dense
+                        >
+                          <ListItemText
+                            primary={v.video_name}
+                            primaryTypographyProps={{ noWrap: true, fontSize: '0.875rem' }}
+                            secondary={v.current_step}
+                            secondaryTypographyProps={{ variant: 'caption' }}
+                          />
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 200 }}>
+                            <Box sx={{ flex: 1, maxWidth: 100 }}>
+                              <LinearProgress variant="determinate" value={v.progress} sx={{ height: 4, borderRadius: 2 }} />
+                            </Box>
+                            <Chip
+                              label={statusLabel[v.status] || v.status}
+                              color={statusChipColor[v.status] || 'default'}
+                              size="small"
+                              variant={v.status === 'running' ? 'filled' : 'outlined'}
+                            />
+                          </Box>
+                        </ListItemButton>
+                      ))}
+                    </List>
+                  )}
+                </CardContent>
+              </Card>
             )}
-          </CardContent>
-        </Card>
+            {controlsCard}
+          </Grid>
+          <Grid size={{ xs: 12, md: 7 }}>
+            <LogPanel logs={logs} showTitle={false} headerLabel={logHeaderLabel} />
+          </Grid>
+        </Grid>
       )}
-
-      <Card>
-        <CardContent>
-          <Typography variant="subtitle2" gutterBottom>步骤控制</Typography>
-
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
-            <FormControlLabel
-              control={<Checkbox size="small" checked={config.enableDefectCheck} onChange={e => onConfigChange('enableDefectCheck', e.target.checked)} disabled={isRunning} />}
-              label={<Typography variant="body2">启用音频缺陷检测</Typography>}
-            />
-            <FormControlLabel
-              control={<Checkbox size="small" checked={config.enableExtract} onChange={e => onConfigChange('enableExtract', e.target.checked)} disabled={isRunning} />}
-              label={<Typography variant="body2">启用字幕提取</Typography>}
-            />
-            <FormControlLabel
-              control={<Checkbox size="small" checked={config.enableTranslate} onChange={e => onConfigChange('enableTranslate', e.target.checked)} disabled={isRunning} />}
-              label={<Typography variant="body2">启用翻译</Typography>}
-            />
-            <FormControlLabel
-              control={<Checkbox size="small" checked={config.enableTTS} onChange={e => onConfigChange('enableTTS', e.target.checked)} disabled={isRunning} />}
-              label={<Typography variant="body2">启用TTS合成</Typography>}
-            />
-          </Box>
-
-          <Divider sx={{ mb: 2 }} />
-
-          <Stack direction="row" spacing={2} sx={{ mb: 3 }}>
-            {mode === 'single' ? (
-              <>
-                {status.state === 'running' ? (
-                  <Button variant="contained" color="error" startIcon={<StopIcon />} onClick={onCancel}>
-                    取消处理
-                  </Button>
-                ) : (
-                  <Button variant="contained" startIcon={<PlayArrowIcon />} onClick={onStart} disabled={!config.videoPath}>
-                    开始处理
-                  </Button>
-                )}
-                <Button variant="outlined" color="error" startIcon={<RefreshIcon />} onClick={onForceRetry}
-                  disabled={status.state === 'running'}>
-                  强制重新执行
-                </Button>
-              </>
-            ) : (
-              <>
-                {batch.status === 'running' ? (
-                  <>
-                    <Button variant="contained" color="error" startIcon={<StopIcon />} onClick={onCancelBatch}>
-                      取消批次
-                    </Button>
-                    <Button variant="outlined" startIcon={<SkipNextIcon />} onClick={onSkipCurrent}>
-                      跳过当前
-                    </Button>
-                  </>
-                ) : (
-                  <Button variant="contained" startIcon={<PlayArrowIcon />} onClick={onStartBatch} disabled={batchFiles.length === 0}>
-                    开始批处理
-                  </Button>
-                )}
-              </>
-            )}
-          </Stack>
-
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-            <Typography variant="subtitle2">
-              {mode === 'single'
-                ? (status.state === 'idle' ? '就绪' : status.currentStep)
-                : (batch.status === 'idle' ? '就绪' : batch.status === 'running'
-                  ? `处理中 (${batch.completed_count + 1}/${batch.total_count})`
-                  : batch.status === 'completed' ? '全部完成' : batch.status === 'partial' ? '部分完成' : batch.status
-                )
-              }
-            </Typography>
-            <Typography variant="body2" fontWeight={600} color="primary">
-              {mode === 'single'
-                ? `${status.progress}%`
-                : `${batch.total_count > 0 ? Math.round(batch.completed_count / batch.total_count * 100) : 0}%`
-              }
-            </Typography>
-          </Box>
-          <LinearProgress
-            variant="determinate"
-            value={
-              mode === 'single'
-                ? status.progress
-                : batch.total_count > 0 ? (batch.completed_count / batch.total_count) * 100 : 0
-            }
-          />
-        </CardContent>
-      </Card>
     </>
   )
 }
