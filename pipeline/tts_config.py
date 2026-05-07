@@ -98,13 +98,26 @@ class TTSConfig:
 
     # ── 声音克隆（OpenVoice） ──────────────────────────────
     enable_openvoice: bool = False
-    """是否启用 OpenVoice 声音克隆"""
+    """是否启用 OpenVoice 声音克隆（已废弃，请使用 voice_clone_engine）"""
 
     voice_clone_sample: Optional[str] = None
     """声音克隆参考音频路径。为 None 时自动从视频目录查找 Vocals.wav"""
 
     openvoice_model_version: str = "v2"
-    """OpenVoice 模型版本: v1 或 v2"""
+    """OpenVoice 模型版本: v1 或 v2（已废弃）"""
+
+    # ── 音色克隆引擎（新版统一配置） ──────────────────────
+    voice_clone_engine: str = "openvoice"
+    """音色克隆引擎: openvoice | cosyvoice | none。none=禁用"""
+
+    voice_clone_device: str = "auto"
+    """克隆设备: auto | cuda:0 | cpu"""
+
+    voice_clone_concurrency: int = 1
+    """克隆并发数。1=串行，>1=并行（需足够显存）"""
+
+    voice_clone_vram_limit_mb: int = 0
+    """克隆显存上限(MB)。0=自动检测"""
 
     # ── 字幕 ──────────────────────────────────────────────
     enable_caption: bool = True
@@ -213,8 +226,20 @@ class TTSConfig:
 
     def __post_init__(self) -> None:
         """校验参数合法性"""
+        # 向后兼容：enable_openvoice=True 自动映射到 voice_clone_engine
+        if self.enable_openvoice and self.voice_clone_engine == "openvoice":
+            pass  # 保持默认
+        elif self.enable_openvoice and self.voice_clone_engine == "none":
+            self.enable_openvoice = False  # 显式禁用优先
+
         if self.engine_type not in ("edge", "chattts", "coqui", "azure"):
             raise ValueError(f"不支持的 TTS 引擎类型: {self.engine_type}")
+        if self.voice_clone_engine not in ("openvoice", "cosyvoice", "none"):
+            raise ValueError(f"不支持的音色克隆引擎: {self.voice_clone_engine}")
+        if self.voice_clone_device not in ("auto", "cuda:0", "cpu"):
+            raise ValueError(f"不支持的克隆设备: {self.voice_clone_device}")
+        if self.voice_clone_concurrency < 1:
+            raise ValueError(f"voice_clone_concurrency 不能小于 1: {self.voice_clone_concurrency}")
         if self.speed_mode not in ("per_segment", "global"):
             raise ValueError(f"不支持的 speed_mode: {self.speed_mode}，仅支持 per_segment/global")
         if self.search_method not in ("linear", "binary"):
