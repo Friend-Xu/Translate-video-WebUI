@@ -24,7 +24,7 @@ from pipeline.tts_edge import EdgeTTSEngine
 from pipeline.tts_timing import TimingAdjuster, AdjustResult
 from pipeline.tts_video import VideoSegmenter
 from pipeline.tts_caption import CaptionRenderer
-from pipeline.tts_openvoice import ExtraVocalCloner, OpenVoiceConfig, NoopOpenVoiceCloner
+from pipeline.vc_base import VoiceCloneConfig, NoopVoiceCloner
 from pipeline.tts_resume import ResumeManager, ResumeState
 
 from pipeline.tts_engine import BaseTTSEngine
@@ -44,7 +44,7 @@ class TtsPipeline:
         timing_adjuster: Optional[TimingAdjuster] = None,
         video_segmenter: Optional[VideoSegmenter] = None,
         caption_renderer: Optional[CaptionRenderer] = None,
-        openvoice_cloner=None,
+        voice_cloner=None,
         resume_manager: Optional[ResumeManager] = None,
     ):
         """
@@ -68,7 +68,7 @@ class TtsPipeline:
 
         self.engine = tts_engine or self._default_engine()
         self.timing = timing_adjuster or self._default_timing()
-        self.openvoice = openvoice_cloner or self._default_openvoice()
+        self.voice_cloner = voice_cloner or self._default_voice_cloner()
         self.caption = caption_renderer or self._default_caption()
         self.video_seg = video_segmenter or self._default_video()
 
@@ -125,12 +125,13 @@ class TtsPipeline:
         )
 
     def _default_video(self) -> VideoSegmenter:
+        voice_clone_enabled = self.config.voice_clone_engine != "none"
         return VideoSegmenter(
             video_output_dir=os.path.join(self.config.output_dir, "video"),
-            clone_color=self.config.enable_openvoice,
+            clone_color=voice_clone_enabled,
             caption=self.config.enable_caption,
             speed_tolerance=self.config.speed_tolerance,
-            openvoice_cloner=self.openvoice.clone if hasattr(self.openvoice, 'clone') else None,
+            openvoice_cloner=self.voice_cloner.clone if hasattr(self.voice_cloner, 'clone') else None,
             caption_renderer=self._render_caption,
             video_bitrate=self.config.video_bitrate,
             video_codec=self.config.video_codec,
@@ -156,15 +157,34 @@ class TtsPipeline:
             position=self.config.caption_position or "bottom",
         )
 
-    def _default_openvoice(self):
-        if self.config.enable_openvoice:
-            ov_config = OpenVoiceConfig(
-                enabled=True,
-                model_version=self.config.openvoice_model_version,
-                color_audio_path="./speakers/Color_audio.WAV",
-            )
-            return ExtraVocalCloner(ov_config)
-        return NoopOpenVoiceCloner()
+    def _default_voice_cloner(self):
+        """根据 config.voice_clone_engine 创建 VoiceCloner。
+
+        向后兼容：enable_openvoice=False 时，即使 voice_clone_engine 默认为 "openvoice" 也禁用。
+        """
+        engine = self.config.voice_clone_engine
+
+        if engine == "none":
+            return NoopVoiceCloner()
+
+        # 向后兼容：旧 enable_openvoice 标志
+        if engine == "openvoice" and not self.config.enable_openvoice:
+            return NoopVoiceCloner()
+
+        vc_config = VoiceCloneConfig(
+            engine=engine,
+            device=self.config.voice_clone_device,
+            concurrent_workers=self.config.voice_clone_concurrency,
+            vram_limit_mb=self.config.voice_clone_vram_limit_mb,
+            color_audio_path="./speakers/Color_audio.WAV",
+        )
+
+        if engine == "cosyvoice":
+            from pipeline.vc_cosyvoice import CosyVoiceCloner
+            return CosyVoiceCloner(vc_config)
+        else:
+            from pipeline.vc_openvoice import OpenVoiceCloner
+            return OpenVoiceCloner(vc_config)
 
     def _render_caption(self, video, duration: float, text_zh: str, text_eng: str):
         """字幕渲染回调（给 VideoSegmenter 使用）"""

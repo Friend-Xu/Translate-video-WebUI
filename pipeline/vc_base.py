@@ -51,6 +51,25 @@ class VoiceCloneConfig:
     se_cache_dir: str = "./models/.se_cache"
     """Speaker embedding 缓存目录"""
 
+    # 模型版本（CosyVoice 用）
+    model_version: str = "v2"
+    """CosyVoice 模型版本: v2 | v3"""
+
+    cosyvoice_fp16: bool = True
+    """CosyVoice 本地模式是否启用 fp16"""
+
+    cosyvoice_load_jit: bool = False
+    """CosyVoice 是否启用 JIT"""
+
+    cosyvoice_load_trt: bool = False
+    """CosyVoice 是否启用 TensorRT"""
+
+    cosyvoice_docker_timeout: int = 300
+    """CosyVoice Docker 请求超时(秒)"""
+
+    sample_rate: int = 24000
+    """输出采样率（CosyVoice 默认 24000）"""
+
     def __post_init__(self):
         if self.engine not in ("openvoice", "cosyvoice", "none"):
             raise ValueError(f"不支持的克隆引擎: {self.engine}")

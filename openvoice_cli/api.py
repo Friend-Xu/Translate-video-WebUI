@@ -38,9 +38,10 @@ class OpenVoiceBaseClass(object):
 
 class ToneColorConverter(OpenVoiceBaseClass):
     def __init__(self, *args, **kwargs):
+        enable_watermark = kwargs.pop('enable_watermark', True)
         super().__init__(*args, **kwargs)
 
-        if kwargs.get('enable_watermark', True):
+        if enable_watermark:
             import wavmark
 
             self.watermark_model = wavmark.load_model(f"{os.path.dirname(os.path.dirname(os.path.realpath(__file__)))}\Model\WavMark\step59000_snr39.99_pesq4.35_BERP_none0.30_mean1.81_std1.81.model.pkl").to(self.device)

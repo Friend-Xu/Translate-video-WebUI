@@ -1,0 +1,71 @@
+# CosyVoice 2.0/3.0 Voice Conversion 部署配置
+# ==============================================
+#
+# CosyVoice 提供两种推理模式:
+#   inference_vc        — 纯音频→音频音色转换（无需文本，绕过 LLM，仅用 Flow 模型）
+#   inference_zero_shot — 文本+参考音频→合成语音（LLM + Flow，质量更高但需文本）
+#
+# 本项目音色克隆管线使用 inference_vc（纯 VC 模式），
+# 输入 TTS 音频，输出目标说话人音色的音频。
+
+cosyvoice:
+  # ---- 模型路径 ----
+  # CosyVoice 2.0 (推荐): ModelScope iic/CosyVoice2-0.5B
+  # CosyVoice 3.0:         ModelScope FunAudioLLM/Fun-CosyVoice3-0.5B-2512
+  # 也支持 HuggingFace:    FunAudioLLM/CosyVoice2-0.5B
+  model_path: ./models/CosyVoice2-0.5B
+
+  # 模型版本: v2 | v3
+  # v2 = CosyVoice 2.0 (CosyVoice2Model, CausalMaskedDiffWithXvec, ~0.5B params)
+  # v3 = CosyVoice 3.0 (CosyVoice3Model, CausalMaskedDiffWithDiT, ~0.5B params)
+  model_version: v2
+
+  # ---- 设备 ----
+  # auto | cuda:0 | cpu
+  # auto = 自动检测 GPU 显存，>=4GB 用 cuda:0，否则 cpu
+  device: auto
+
+  # 采样率 (Hz)
+  # CosyVoice 默认 24000 (CosyVoice2) 或 24000 (CosyVoice3)
+  # inference_vc 内部使用 16000Hz 输入
+  sample_rate: 24000
+
+  # ---- 运行模式 ----
+  # local  = 本地加载模型推理（需要 Python 3.10 环境，见下方说明）
+  # docker = 通过 HTTP API 调用 Docker 服务（推荐，Python 版本无关）
+  #
+  # Python 3.12 兼容性说明:
+  #   CosyVoice 官方仅支持 Python 3.10（ttsfrd 仅有 cp310 wheel）。
+  #   Python 3.12 用户请使用 mode: docker，或创建 conda 3.10 环境。
+  mode: docker
+
+  # ---- Docker 模式配置 ----
+  # 推荐 Docker 方案:
+  #   1. FunSpeech (zaigie/FunSpeech): docker-compose 一键部署，支持 CosyVoice2/3
+  #      curl -sSL https://cnb.cool/nexa/FunSpeech/-/git/raw/main/docker-compose.yml
+  #   2. neosun100/cosyvoice-docker: 预构建 Docker Hub 镜像，带 WebUI
+  #   3. jianchang512/cosyvoice-api: 轻量 Flask API 包装
+  docker_url: http://127.0.0.1:5000
+  docker_timeout: 300
+
+  # ---- 本地模式配置 ----
+  # FP16 推理 (推荐开启，显存减半，质量损失极小)
+  fp16: true
+
+  # JIT 编译加速 (实验性，可能不稳定)
+  load_jit: false
+
+  # TensorRT 加速 (需要额外配置)
+  load_trt: false
+
+  # ---- Speaker Embedding 缓存 ----
+  se_cache_dir: ./models/.se_cache
+
+  # ---- 并发 ----
+  # Docker 模式: 并发 HTTP 请求数
+  # 本地模式:   ThreadPoolExecutor worker 数（受 GPU 显存限制）
+  # RTX 3060 Ti 8GB 建议 1-2
+  concurrent_workers: 1
+
+  # ---- 日志 ----
+  error_log_path: ./file/cosyvoice_error_log.txt

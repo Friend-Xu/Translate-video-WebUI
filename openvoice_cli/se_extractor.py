@@ -20,11 +20,13 @@ os.makedirs(_WHISPER_ROOT, exist_ok=True)
 model_size = "medium"
 # Run on GPU with FP16
 model = None
-def split_audio_whisper(audio_path, audio_name, target_dir='processed'):
+def split_audio_whisper(audio_path, audio_name, target_dir='processed',
+                        device="cuda", compute_type="float16"):
     print("whisper")
     global model
     if model is None:
-        model = WhisperModel(model_size, device="cuda", compute_type="float16",
+        model = WhisperModel(model_size, device=device,
+                             compute_type=compute_type,
                              download_root=_WHISPER_ROOT)
     audio = AudioSegment.from_file(audio_path)
     max_len = len(audio)
@@ -145,21 +147,23 @@ def hash_numpy_array(audio_path):
     base64_value = base64.b64encode(hash_value)
     return base64_value.decode('utf-8')[:16].replace('/', '_^')
 
-def get_se(audio_path, vc_model, target_dir='processed', vad=True):
-    device = vc_model.device
+def get_se(audio_path, vc_model, target_dir='processed', vad=True,
+          whisper_device="cuda", compute_type="float16"):
+    vc_device = vc_model.device
 
     audio_name = f"{os.path.basename(audio_path).rsplit('.', 1)[0]}_{hash_numpy_array(audio_path)}"
     se_path = os.path.join(target_dir, audio_name, 'se.pth')
 
     if os.path.isfile(se_path):
-        se = torch.load(se_path).to(device)
+        se = torch.load(se_path).to(vc_device)
         return se, audio_name
     if os.path.isdir(audio_path):
         wavs_folder = audio_path
     elif vad:
         wavs_folder = split_audio_vad(audio_path, target_dir=target_dir, audio_name=audio_name)
     else:
-        wavs_folder = split_audio_whisper(audio_path, target_dir=target_dir, audio_name=audio_name)
+        wavs_folder = split_audio_whisper(audio_path, target_dir=target_dir, audio_name=audio_name,
+                                            device=whisper_device, compute_type=compute_type)
     
     audio_segs = glob(f'{wavs_folder}/*.wav')
     if len(audio_segs) == 0:

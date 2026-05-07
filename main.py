@@ -211,6 +211,10 @@ def step_tts(
     caption_font_size_factor: float | None = None,
     caption_width_ratio: float | None = None,
     no_optimize_subtitles: bool = False,
+    voice_clone_engine: str | None = None,
+    voice_clone_device: str | None = None,
+    vram_limit: int | None = None,
+    clone_concurrency: int | None = None,
 ) -> None:
     """步骤 3: TTS 合成 + 视频合并（新管线 TtsPipeline）
 
@@ -244,6 +248,18 @@ def step_tts(
     cfg = TTSConfig.from_yaml(config_path) if config_path and os.path.isfile(config_path) else TTSConfig()
 
     cfg.engine_type = engine
+
+    # ── 音色克隆 CLI 覆盖 ──
+    if voice_clone_engine is not None:
+        cfg.voice_clone_engine = voice_clone_engine
+        if voice_clone_engine != "none":
+            cfg.enable_openvoice = True  # 向后兼容旧标志
+    if voice_clone_device is not None:
+        cfg.voice_clone_device = voice_clone_device
+    if vram_limit is not None:
+        cfg.voice_clone_vram_limit_mb = vram_limit
+    if clone_concurrency is not None:
+        cfg.voice_clone_concurrency = clone_concurrency
 
     # ── 字幕配置: CaptionConfig 文件 > 单独 CLI args（后者覆盖） ──
     if caption_config_path and os.path.isfile(caption_config_path):
@@ -393,6 +409,16 @@ def main():
     parser.add_argument("--config", help="TTS YAML 配置文件路径")
     parser.add_argument("--caption-config", default=None,
                         help="字幕渲染配置文件路径 (YAML 格式)")
+    parser.add_argument("--voice-clone-engine", default=None,
+                        choices=["openvoice", "cosyvoice", "none"],
+                        help="音色克隆引擎 (openvoice/cosyvoice/none, 覆盖配置文件)")
+    parser.add_argument("--voice-clone-device", default=None,
+                        choices=["auto", "cuda:0", "cpu"],
+                        help="克隆推理设备")
+    parser.add_argument("--vram-limit", type=int, default=None,
+                        help="显存上限(MB), 0=自动检测")
+    parser.add_argument("--clone-concurrency", type=int, default=None,
+                        help="音色克隆并发数")
     parser.add_argument("--skip-extract", action="store_true",
                         help="跳过字幕提取")
     parser.add_argument("--skip-defect-check", action="store_true",
@@ -513,6 +539,10 @@ def main():
                 caption_font_size_factor=args.caption_font_size_factor,
                 caption_width_ratio=args.caption_width_ratio,
                 no_optimize_subtitles=args.no_optimize_subtitles,
+                voice_clone_engine=args.voice_clone_engine,
+                voice_clone_device=args.voice_clone_device,
+                vram_limit=args.vram_limit,
+                clone_concurrency=args.clone_concurrency,
             )
         else:
             print("[3/3] TTS 合成 — 已跳过 (--skip-tts)")
