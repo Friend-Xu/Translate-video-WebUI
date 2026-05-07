@@ -109,7 +109,8 @@ export function PipelinePanel({
       <CardContent>
         <Typography variant="subtitle2" gutterBottom>步骤控制</Typography>
 
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(4, auto)', columnGap: 1, mb: 2, alignItems: 'start' }}>
+          {/* Row 1: 4 main toggles */}
           <FormControlLabel
             control={<Checkbox size="small" checked={config.enableDefectCheck} onChange={e => onConfigChange('enableDefectCheck', e.target.checked)} disabled={isRunning} />}
             label={<Typography variant="body2">启用音频缺陷检测</Typography>}
@@ -118,17 +119,29 @@ export function PipelinePanel({
             control={<Checkbox size="small" checked={config.enableExtract} onChange={e => onConfigChange('enableExtract', e.target.checked)} disabled={isRunning} />}
             label={<Typography variant="body2">启用字幕提取</Typography>}
           />
-          <FormControlLabel
-            control={<Checkbox size="small" checked={config.enableTranslate} onChange={e => onConfigChange('enableTranslate', e.target.checked)} disabled={isRunning} />}
-            label={<Typography variant="body2">启用翻译</Typography>}
-          />
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+            <FormControlLabel
+              control={<Checkbox size="small" checked={config.enableTranslate} onChange={e => onConfigChange('enableTranslate', e.target.checked)} disabled={isRunning} />}
+              label={<Typography variant="body2">启用翻译</Typography>}
+            />
+            {/* Row 2: tree connector + sub-option */}
+            <Box sx={{ display: 'flex', alignItems: 'center', position: 'relative', height: 32 }}>
+              {/* L-shaped connector: vertical line from parent down, horizontal line to the right */}
+              <Box sx={{ position: 'relative', width: 22, height: 32, flexShrink: 0 }}>
+                {/* vertical line — extends upward to connect to parent checkbox */}
+                <Box sx={{ position: 'absolute', left: 11, top: -4, height: 20, width: 2, bgcolor: 'primary.main' }} />
+                {/* horizontal line — connects from vertical to the right */}
+                <Box sx={{ position: 'absolute', left: 11, top: 14, width: 10, height: 2, bgcolor: 'primary.main' }} />
+              </Box>
+              <FormControlLabel
+                control={<Checkbox size="small" checked={!config.enableTTS} onChange={e => onConfigChange('enableTTS', !e.target.checked)} disabled={isRunning || !config.enableTranslate} />}
+                label={<Typography variant="body2" sx={{ color: !config.enableTranslate ? 'text.disabled' : undefined }}>翻译完成后先校验</Typography>}
+              />
+            </Box>
+          </Box>
           <FormControlLabel
             control={<Checkbox size="small" checked={config.enableTTS} onChange={e => onConfigChange('enableTTS', e.target.checked)} disabled={isRunning} />}
             label={<Typography variant="body2">启用TTS合成</Typography>}
-          />
-          <FormControlLabel
-            control={<Checkbox size="small" checked={!config.enableTTS} onChange={e => onConfigChange('enableTTS', !e.target.checked)} disabled={isRunning} />}
-            label={<Typography variant="body2">翻译完成后先校验</Typography>}
           />
         </Box>
 
