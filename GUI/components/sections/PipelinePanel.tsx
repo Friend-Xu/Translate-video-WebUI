@@ -266,7 +266,7 @@ export function PipelinePanel({
       </Grid>
 
       {mode === 'single' ? (
-        <Grid container spacing={3} sx={{ mt: 0, alignItems: 'stretch' }}>
+        <Grid container spacing={3} sx={{ mt: 0, alignItems: 'flex-start' }}>
           <Grid size={{ xs: 12, md: 5 }}>
             {controlsCard}
           </Grid>
@@ -275,7 +275,7 @@ export function PipelinePanel({
           </Grid>
         </Grid>
       ) : (
-        <Grid container spacing={3} sx={{ mt: 0, alignItems: 'stretch' }}>
+        <Grid container spacing={3} sx={{ mt: 0, alignItems: 'flex-start' }}>
           <Grid size={{ xs: 12, md: 5 }}>
             {batchFiles.length > 0 && (
               <Card sx={{ mb: 3 }}>

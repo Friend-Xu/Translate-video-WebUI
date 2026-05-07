@@ -54,7 +54,7 @@ export function LogPanel({ logs, showTitle = true, headerLabel }: LogPanelProps)
   return (
     <>
       {showTitle && <SectionHeader title="日志与反馈 (Log & Feedback)" />}
-      <Card sx={{ height: '100%', mt: showTitle ? 2 : 0, display: 'flex', flexDirection: 'column' }}>
+      <Card sx={{ height: 'clamp(250px, 55vh, 650px)', mt: showTitle ? 2 : 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <CardContent sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, pb: '8px !important' }}>
           {headerLabel && (
             <Typography variant="caption" color="primary.main" fontWeight={500} sx={{ display: 'block', mb: 0.5, flexShrink: 0 }}>
