@@ -43,6 +43,9 @@ interface PipelinePanelProps {
   onReorderFiles: (reordered: string[]) => void
   onRemoveFile: (path: string) => void
   logs: LogEntry[]
+  onStartReview?: () => void
+  reviewSaved?: boolean
+  onContinueTTS?: () => void
 }
 
 const statusChipColor: Record<string, 'default' | 'primary' | 'success' | 'error' | 'warning'> = {
@@ -70,9 +73,17 @@ export function PipelinePanel({
   onViewLogs, activeVideoJobId,
   onAddFiles, onReorderFiles, onRemoveFile,
   logs,
+  onStartReview,
+  reviewSaved = false,
+  onContinueTTS,
 }: PipelinePanelProps) {
 
   const isRunning = status.state === 'running' || batch.status === 'running'
+
+  // Translation is complete when pipeline has moved past the translate step into TTS, or finished entirely
+  const translationComplete =
+    status.state === 'completed' ||
+    status.currentStep.includes('TTS')
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -115,6 +126,10 @@ export function PipelinePanel({
             control={<Checkbox size="small" checked={config.enableTTS} onChange={e => onConfigChange('enableTTS', e.target.checked)} disabled={isRunning} />}
             label={<Typography variant="body2">启用TTS合成</Typography>}
           />
+          <FormControlLabel
+            control={<Checkbox size="small" checked={!config.enableTTS} onChange={e => onConfigChange('enableTTS', !e.target.checked)} disabled={isRunning} />}
+            label={<Typography variant="body2">翻译完成后先校验</Typography>}
+          />
         </Box>
 
         <Divider sx={{ mb: 2 }} />
@@ -125,6 +140,10 @@ export function PipelinePanel({
               {status.state === 'running' ? (
                 <Button variant="contained" color="error" startIcon={<StopIcon />} onClick={onCancel}>
                   取消处理
+                </Button>
+              ) : translationComplete && reviewSaved && onContinueTTS ? (
+                <Button variant="contained" color="success" startIcon={<PlayArrowIcon />} onClick={onContinueTTS}>
+                  继续TTS合成
                 </Button>
               ) : (
                 <Button variant="contained" startIcon={<PlayArrowIcon />} onClick={onStart} disabled={!config.videoPath}>
@@ -271,7 +290,7 @@ export function PipelinePanel({
             {controlsCard}
           </Grid>
           <Grid size={{ xs: 12, md: 7 }}>
-            <LogPanel logs={logs} showTitle={false} />
+            <LogPanel logs={logs} showTitle={false} reviewEnabled={translationComplete} onStartReview={onStartReview} />
           </Grid>
         </Grid>
       ) : (
@@ -349,7 +368,7 @@ export function PipelinePanel({
             {controlsCard}
           </Grid>
           <Grid size={{ xs: 12, md: 7 }}>
-            <LogPanel logs={logs} showTitle={false} headerLabel={logHeaderLabel} />
+            <LogPanel logs={logs} showTitle={false} headerLabel={logHeaderLabel} reviewEnabled={translationComplete} onStartReview={onStartReview} />
           </Grid>
         </Grid>
       )}

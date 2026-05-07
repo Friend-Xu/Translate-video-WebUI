@@ -34,6 +34,8 @@ export default function App() {
   const [snackbar, setSnackbar] = useState<{ open: boolean; msg: string; severity: 'success' | 'error' | 'info' }>({
     open: false, msg: '', severity: 'info',
   })
+  const [reviewSaved, setReviewSaved] = useState(false)
+  const [prefillSrt, setPrefillSrt] = useState<{ source: string; translated: string; log: string } | null>(null)
   const [backendOnline, setBackendOnline] = useState(true)
 
   useEffect(() => {
@@ -132,6 +134,30 @@ export default function App() {
       .catch(() => showMsg('保存失败', 'error'))
   }, [config, showMsg])
 
+  const handleStartReview = useCallback(() => {
+    if (!config.videoPath) return
+    const path = config.videoPath.replace(/\\/g, '/')
+    const dir = path.substring(0, path.lastIndexOf('/'))
+    const dot = path.lastIndexOf('.')
+    const stem = dot > path.lastIndexOf('/') ? path.substring(path.lastIndexOf('/') + 1, dot) : path.substring(path.lastIndexOf('/') + 1)
+    const sourceSrt = `${dir}/${stem}/${stem}_subtitles.srt`
+    const translatedSrt = `${dir}/${stem}/${stem}_subtitles_auto.srt`
+    const translateLog = `${dir}/${stem}/${stem}_subtitles_translate-log.json`
+    setPrefillSrt({ source: sourceSrt, translated: translatedSrt, log: translateLog })
+    setActiveTab('字幕校准')
+    setReviewSaved(false)
+  }, [config.videoPath])
+
+  const handleContinueTTS = useCallback(() => {
+    if (!config.videoPath) return
+    startPipeline({ ...config, enableExtract: false, enableTranslate: false, enableTTS: true })
+    setReviewSaved(false)
+  }, [config, startPipeline])
+
+  const handleReviewSaved = useCallback(() => {
+    setReviewSaved(true)
+  }, [])
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -160,6 +186,9 @@ export default function App() {
               onReorderFiles={handleReorderFiles}
               onRemoveFile={handleRemoveFile}
               logs={logs}
+              onStartReview={handleStartReview}
+              reviewSaved={reviewSaved}
+              onContinueTTS={handleContinueTTS}
             />
           </KeepAliveSection>
           <KeepAliveSection active={activeTab === '步骤配置'}>
@@ -186,7 +215,14 @@ export default function App() {
             />
           </KeepAliveSection>
           <KeepAliveSection active={activeTab === '字幕校准'}>
-            <SubtitleReview videoPath={config.videoPath} onSuccess={(msg) => showMsg(msg, 'success')} isActive={activeTab === '字幕校准'} />
+            <SubtitleReview
+              videoPath={config.videoPath}
+              onSuccess={(msg) => { showMsg(msg, 'success'); handleReviewSaved() }}
+              isActive={activeTab === '字幕校准'}
+              prefillSourceSrt={prefillSrt?.source}
+              prefillTranslatedSrt={prefillSrt?.translated}
+              prefillTranslateLog={prefillSrt?.log}
+            />
           </KeepAliveSection>
         </Box>
       </Box>

@@ -102,6 +102,9 @@ interface SubtitleReviewProps {
   videoPath: string
   onSuccess: (msg: string) => void
   isActive: boolean
+  prefillSourceSrt?: string
+  prefillTranslatedSrt?: string
+  prefillTranslateLog?: string
 }
 
 // ── Memoized row (prevents O(n) re-renders on single-entry changes) ──
@@ -234,7 +237,7 @@ const SubtitleRowMemo = React.memo(function SubtitleRow({
 
 // ── Component ──
 
-export function SubtitleReview({ videoPath, onSuccess, isActive }: SubtitleReviewProps) {
+export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSrt, prefillTranslatedSrt, prefillTranslateLog }: SubtitleReviewProps) {
   // Session meta
   const [sessionMeta, setSessionMeta] = useState<{
     videoPath: string; sourceSrtPath: string; translatedSrtPath: string
@@ -380,6 +383,54 @@ export function SubtitleReview({ videoPath, onSuccess, isActive }: SubtitleRevie
       setLoading(false)
     }
   }, [sourceSrt, translatedSrt, translateLog, onSuccess, reset])
+
+  // Auto-load when prefill props are provided (from "开始字幕校验" button)
+  const prefillKeyRef = useRef('')
+  useEffect(() => {
+    if (!prefillSourceSrt || !prefillTranslatedSrt) return
+    const key = `${prefillSourceSrt}|${prefillTranslatedSrt}`
+    if (prefillKeyRef.current === key) return
+    prefillKeyRef.current = key
+
+    setSourceSrt(prefillSourceSrt)
+    setTranslatedSrt(prefillTranslatedSrt)
+    setTranslateLog(prefillTranslateLog || '')
+
+    const loadData = async () => {
+      setLoading(true)
+      setError('')
+      try {
+        const res = await fetch('/api/subtitle/review/load', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source_srt: prefillSourceSrt,
+            translated_srt: prefillTranslatedSrt,
+            translate_log: prefillTranslateLog || null,
+          }),
+        })
+        if (!res.ok) { const d = await res.json(); throw new Error(d.detail || '加载失败') }
+        const data = await res.json()
+        setSessionMeta({
+          videoPath: data.videoPath,
+          sourceSrtPath: data.sourceSrtPath,
+          translatedSrtPath: data.translatedSrtPath,
+        })
+        reset(data.entries)
+        setCurrentEntryIndex(null)
+        setSelectedIndices(new Set())
+        setSearchQuery('')
+        setLastSaved(null)
+        setAutoSaveDirty(false)
+        onSuccess(`已加载 ${data.stats.total} 条字幕 (${data.stats.lowSimilarity} 条低质)`)
+      } catch (e: any) {
+        setError(e.message)
+      } finally {
+        setLoading(false)
+      }
+    }
+    loadData()
+  }, [prefillSourceSrt, prefillTranslatedSrt, prefillTranslateLog, onSuccess, reset])
 
   // ── Save ──
 

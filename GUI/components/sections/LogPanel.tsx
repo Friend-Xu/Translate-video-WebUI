@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { Box, Typography, Card, CardContent, IconButton, Tooltip } from '@mui/material'
+import { Box, Typography, Card, CardContent, IconButton, Tooltip, Button } from '@mui/material'
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDownRounded'
+import RateReviewIcon from '@mui/icons-material/RateReviewRounded'
 import { SectionHeader } from '../SectionHeader'
 import type { LogEntry } from '../../types'
 
@@ -8,6 +9,8 @@ interface LogPanelProps {
   logs: LogEntry[]
   showTitle?: boolean
   headerLabel?: string
+  reviewEnabled?: boolean
+  onStartReview?: () => void
 }
 
 const levelColor: Record<string, string> = {
@@ -16,7 +19,7 @@ const levelColor: Record<string, string> = {
   ERROR: '#dc2626',
 }
 
-export function LogPanel({ logs, showTitle = true, headerLabel }: LogPanelProps) {
+export function LogPanel({ logs, showTitle = true, headerLabel, reviewEnabled = false, onStartReview }: LogPanelProps) {
   const logContainerRef = useRef<HTMLDivElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
 
@@ -98,14 +101,29 @@ export function LogPanel({ logs, showTitle = true, headerLabel }: LogPanelProps)
           </Box>
 
           <Box sx={{ flexShrink: 0 }}>
-            <Typography variant="body2" fontWeight={500} gutterBottom>
-              警告与错误
-              {warnings.length > 0 && (
-                <Typography component="span" variant="caption" color="error.main" sx={{ ml: 1 }}>
-                  ({warnings.length})
-                </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+              <Typography variant="body2" fontWeight={500}>
+                警告与错误
+                {warnings.length > 0 && (
+                  <Typography component="span" variant="caption" color="error.main" sx={{ ml: 1 }}>
+                    ({warnings.length})
+                  </Typography>
+                )}
+              </Typography>
+              {onStartReview && (
+                <Button
+                  size="small"
+                  variant={reviewEnabled ? 'contained' : 'outlined'}
+                  color={reviewEnabled ? 'primary' : 'inherit'}
+                  startIcon={<RateReviewIcon />}
+                  disabled={!reviewEnabled}
+                  onClick={onStartReview}
+                  sx={{ whiteSpace: 'nowrap', minWidth: 'auto' }}
+                >
+                  开始字幕校验
+                </Button>
               )}
-            </Typography>
+            </Box>
             <Box sx={{
               p: 1.5, bgcolor: 'error.light', borderRadius: 2,
               maxHeight: 120, overflow: 'auto',
