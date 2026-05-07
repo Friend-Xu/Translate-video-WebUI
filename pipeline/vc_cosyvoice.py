@@ -328,16 +328,18 @@ class CosyVoiceCloner:
         if self._model is not None:
             return
 
-        # Python version gate -- CosyVoice only supports 3.10
+        # Python version gate -- CosyVoice requires <= 3.10
         if sys.version_info >= (3, 11):
             msg = (
-                f"CosyVoice local mode requires Python 3.10, "
+                f"CosyVoice local mode requires Python <= 3.10, "
                 f"but running on Python {sys.version_info.major}."
                 f"{sys.version_info.minor}. "
                 f"Switch to mode: docker or use a Python 3.10 environment."
             )
             self._log_error(msg)
             raise RuntimeError(msg)
+        # Python 3.10 — local mode supported
+        print(f"[CosyVoice] local mode ready (Python {sys.version_info.major}.{sys.version_info.minor})")
 
         model_path = self.config.model_dir
         model_version = self.config.model_version

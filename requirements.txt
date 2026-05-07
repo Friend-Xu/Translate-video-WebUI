@@ -4,7 +4,7 @@ edge-tts==7.2.8
 demucs==4.0.1
 soundfile==0.13.1
 pysrt==1.1.2
-numpy==2.4.4
+numpy==2.2.6
 pillow==11.3.0
 moviepy==2.2.1
 PyYAML==6.0.3
@@ -15,10 +15,10 @@ transformers==5.8.0
 mecab-python3==1.0.12
 fugashi==1.5.2
 unidic-lite==1.0.8
-scikit-learn==1.8.0
-pandas==3.0.2
+scikit-learn==1.7.2
+pandas==2.2.3
 nltk==3.9.4
-scipy==1.17.1
+scipy==1.14.1
 
 # HTTP / async
 fastapi==0.136.1
@@ -28,7 +28,7 @@ httpx==0.28.1
 tqdm==4.67.3
 aiohttp==3.13.5
 
-# CUDA (Windows, Python 3.12)
-# Install with: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+# CUDA (Windows, Python 3.12 → 3.10)
+# Manual install: download whl from https://download.pytorch.org/whl/cu124/
 torch==2.6.0+cu124
 torchaudio==2.6.0+cu124
