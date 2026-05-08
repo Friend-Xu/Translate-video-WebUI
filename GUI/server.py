@@ -1076,6 +1076,7 @@ def _srt_time_to_ms(srt_time) -> int:
     return srt_time.ordinal
 
 
+
 def _detect_video_in_dir(srt_path: str) -> str:
     srt_dir = os.path.dirname(srt_path)
     srt_stem = os.path.splitext(os.path.basename(srt_path))[0]
@@ -1155,9 +1156,9 @@ async def review_load(req: ReviewLoadRequest) -> dict:
     source = Path(req.source_srt)
     translated = Path(req.translated_srt)
     if not source.is_file():
-        raise HTTPException(status_code=400, detail=f"原文字幕不存在: {req.source_srt}")
+        raise HTTPException(status_code=400, detail=f"原文字幕不存在: {source}")
     if not translated.is_file():
-        raise HTTPException(status_code=400, detail=f"译文字幕不存在: {req.translated_srt}")
+        raise HTTPException(status_code=400, detail=f"译文字幕不存在: {translated}")
 
     src_subs = pysrt.open(str(source))
     tr_subs = pysrt.open(str(translated))
@@ -1258,10 +1259,10 @@ async def review_save(req: ReviewSaveRequest) -> dict:
             sub.text = changes[sub.index]
             updated += 1
 
-    stem, ext = os.path.splitext(str(translated))
-    if stem.endswith("-auto"):
-        stem = stem[:-5]
-    output_path = f"{stem}-reviewed{ext}"
+    # 输出到工作目录 02_translate/reviewed.srt
+    ws_reviewed = os.path.join(os.path.dirname(str(translated)), "..", "reviewed.srt")
+    output_path = os.path.normpath(ws_reviewed)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     subs.save(output_path, encoding="utf-8")
     logger.info(f"Review saved: {updated} entries updated → {output_path}")

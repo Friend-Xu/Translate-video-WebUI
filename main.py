@@ -68,27 +68,92 @@ def setup_hf_env() -> None:
     os.makedirs(os.path.join(PROJECT_ROOT, "models", "hub", "checkpoints"), exist_ok=True)
 
 
-def guess_source_srt(video_path: str) -> str | None:
-    """从 extract_subtitles.py 输出目录推测原始 SRT。"""
-    candidate = os.path.splitext(video_path)[0] + "_out"
+def workspace_paths(video_path: str) -> dict | None:
+    """返回视频翻译工作目录的各路径（标准化结构）。
+
+    工作目录布局::
+
+        {video_dir}/{stem}_project/
+        ├── 01_extract/    ← 提取阶段
+        ├── 02_translate/  ← 翻译阶段
+        ├── 03_tts/        ← TTS 片段
+        └── 04_output/     ← 最终输出
+
+    如果工作目录不存在则返回 None。
+    """
+    target = os.path.dirname(video_path)
     name = os.path.splitext(os.path.basename(video_path))[0]
-    srt = os.path.join(candidate, f"{name}.srt")
-    return srt if os.path.isfile(srt) else None
+    ws = os.path.join(target, f"{name}_project")
+    if not os.path.isdir(ws):
+        return None
+
+    return {
+        "workspace": ws,
+        "extract_dir": os.path.join(ws, "01_extract"),
+        "translate_dir": os.path.join(ws, "02_translate"),
+        "tts_dir": os.path.join(ws, "03_tts"),
+        "output_dir": os.path.join(ws, "04_output"),
+        # 标准文件名
+        "source_srt": os.path.join(ws, "01_extract", "source.srt"),
+        "transcript_json": os.path.join(ws, "01_extract", "transcript.json"),
+        "audio_wav": os.path.join(ws, "01_extract", "audio.wav"),
+        "vocals_wav": os.path.join(ws, "01_extract", "vocals.wav"),
+        "instrumental_wav": os.path.join(ws, "01_extract", "instrumental.wav"),
+        "vad_segments": os.path.join(ws, "01_extract", "vad_segments.json"),
+        "machine_srt": os.path.join(ws, "02_translate", "machine.srt"),
+        "reviewed_srt": os.path.join(ws, "02_translate", "reviewed.srt"),
+        "translate_log": os.path.join(ws, "02_translate", "translate-log.json"),
+        "dubbed_mp4": os.path.join(ws, "04_output", "dubbed.mp4"),
+    }
+
+
+def guess_source_srt(video_path: str) -> str | None:
+    """从工作目录获取源语言 SRT 路径。"""
+    ws = workspace_paths(video_path)
+    if ws and os.path.isfile(ws["source_srt"]):
+        return ws["source_srt"]
+    return None
 
 
 def guess_translated_srt(video_path: str) -> str | None:
-    """从 translate_video.py 输出目录推测翻译后 SRT。"""
-    candidate = os.path.splitext(video_path)[0] + "_out"
-    name = os.path.splitext(os.path.basename(video_path))[0]
+    """从工作目录获取翻译后 SRT 路径。reviewed > machine。"""
+    ws = workspace_paths(video_path)
+    if ws:
+        if os.path.isfile(ws["reviewed_srt"]):
+            return ws["reviewed_srt"]
+        if os.path.isfile(ws["machine_srt"]):
+            return ws["machine_srt"]
+    return None
 
-    # translate_video.py 输出: {name}-zh-replace.srt
-    srt = os.path.join(candidate, f"{name}-zh-replace.srt")
-    if os.path.isfile(srt):
-        return srt
 
-    # main.py 旧格式: {name}-collation-ZH_CN-replace.srt
-    legacy = os.path.join(candidate, f"{name}-collation-ZH_CN-replace.srt")
-    return legacy if os.path.isfile(legacy) else None
+
+
+def _ensure_workspace(video: str) -> None:
+    """创建工作目录（所有 4 个子目录）。"""
+    target = os.path.dirname(video)
+    name = os.path.splitext(os.path.basename(video))[0]
+    ws = os.path.join(target, f"{name}_project")
+    for sub in ("01_extract", "02_translate", "03_tts", "04_output"):
+        os.makedirs(os.path.join(ws, sub), exist_ok=True)
+
+
+def _rename_extract_files(extract_dir: str, video_name: str) -> None:
+    """将 extract_subtitles 产出的文件重命名为工作目录标准名。"""
+    import shutil
+    file_map = {
+        f"{video_name}.srt": "source.srt",
+        f"{video_name}.json": "transcript.json",
+        f"{video_name}.wav": "audio.wav",
+        f"{video_name}_(Vocals).wav": "vocals.wav",
+        f"{video_name}_(Instrumental).wav": "instrumental.wav",
+        f"{video_name}_vad_segments.json": "vad_segments.json",
+    }
+    for old_name, new_name in file_map.items():
+        src = os.path.join(extract_dir, old_name)
+        if os.path.isfile(src):
+            dst = os.path.join(extract_dir, new_name)
+            if src != dst:
+                shutil.move(src, dst)
 
 
 def step_extract(video: str, lang: str | None, model: str, device: str,
@@ -103,10 +168,13 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
     JSON→SRT(N4)。
     """
     print("\n[1/3] 字幕提取...")
+    name = os.path.splitext(os.path.basename(video))[0]
+    extract_dir = os.path.join(os.path.dirname(video), f"{name}_project", "01_extract")
     script = os.path.join(PROJECT_ROOT, "extract_subtitles.py")
     cmd = [
         sys.executable, script,
         video,
+        "--out-dir", extract_dir,
         "--model", model,
         "--device", device,
         "--compute-type", compute_type,
@@ -133,25 +201,26 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
     if result.returncode != 0:
         print(f"[X] 字幕提取失败 (code={result.returncode})")
         sys.exit(result.returncode)
-    out_dir = os.path.splitext(video)[0] + "_out"
-    if backup_dir and os.path.isdir(out_dir):
-        backup_step("01_extract", [out_dir], backup_dir)
+    # 标准化文件名
+    _rename_extract_files(extract_dir, name)
+    if backup_dir:
+        backup_step("01_extract", [extract_dir], backup_dir)
     print("  [OK] 字幕提取完成")
 
 
 def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "") -> str:
     """步骤 2: 翻译 + 术语替换。
 
-    复用 SRT_Translator + TermReplacer（translate_video.py 的 step_2 逻辑）。
-    输出路径与 translate_video.py 一致：{name}-zh-replace.srt
+    输出到工作目录 02_translate/machine.srt。
     """
     target = os.path.dirname(video)
     name = os.path.splitext(os.path.basename(video))[0]
-    translated_srt = os.path.join(target, f"{name}-zh-replace.srt")
+    ws = workspace_paths(video)
+    output = ws["machine_srt"] if ws else os.path.join(target, f"{name}_project", "02_translate", "machine.srt")
 
-    if os.path.isfile(translated_srt) and not force:
-        print(f"  [OK] 翻译文件已存在: {translated_srt}")
-        return translated_srt
+    if os.path.isfile(output) and not force:
+        print(f"  [OK] 翻译文件已存在: {output}")
+        return output
 
     print("\n[2/3] 字幕翻译 + 术语替换...")
     sys.path.insert(0, PROJECT_ROOT)
@@ -168,24 +237,24 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "")
         print("  请完成人工翻译后重新运行")
         sys.exit(0)
 
-    # SRTTranslator 输出命名可能不同，标准化为 {name}-zh-replace.srt
-    if os.path.isfile(auto_srt) and auto_srt != translated_srt:
+    # 将翻译结果移到工作目录
+    if os.path.isfile(auto_srt) and auto_srt != output:
         import shutil
-        shutil.move(auto_srt, translated_srt)
+        os.makedirs(os.path.dirname(output), exist_ok=True)
+        shutil.move(auto_srt, output)
 
-    if os.path.isfile(translated_srt):
+    if os.path.isfile(output):
         print("  术语词典替换...")
         replacer = TermReplacer()
-        replacer.replace_file(translated_srt, translated_srt)
+        replacer.replace_file(output, output)
     else:
         print(f"  [OK] 翻译完成: {auto_srt}")
         return auto_srt
 
-    print(f"  [OK] 翻译 + 术语替换完成: {translated_srt}")
-    out_dir = os.path.splitext(video)[0] + "_out"
-    if backup_dir and os.path.isdir(out_dir):
-        backup_step("02_translate", [translated_srt, out_dir], backup_dir)
-    return translated_srt
+    print(f"  [OK] 翻译 + 术语替换完成: {output}")
+    if backup_dir:
+        backup_step("02_translate", [output], backup_dir)
+    return output
 
 
 def step_tts(
@@ -222,23 +291,23 @@ def step_tts(
     支持 edge / chattts 引擎，GPU 编码自动检测，
     自动合并视频段输出最终文件。
     """
-    out_dir = os.path.splitext(video)[0] + "_out"
-    instrumental = os.path.join(out_dir, f"{os.path.splitext(os.path.basename(video))[0]}" + "_(Instrumental).wav")
-    final_output = os.path.join(out_dir, os.path.splitext(os.path.basename(video))[0] + "-TTS.mp4")
+    ws = workspace_paths(video)
+    if not ws:
+        print("[X] 工作目录不存在，请先执行字幕提取")
+        sys.exit(1)
 
-    out_dir_bak = os.path.splitext(video)[0] + "_out"
+    instrumental = ws["instrumental_wav"] if os.path.isfile(ws["instrumental_wav"]) else None
+    final_output = ws["dubbed_mp4"]
+
     if os.path.isfile(final_output) and not force:
         print(f"\n[3/3] TTS 合成 [OK] 最终视频已存在: {final_output}")
-        if backup_dir and os.path.isdir(out_dir_bak):
-            backup_step("03_tts_done", [final_output, out_dir_bak], backup_dir)
         return
 
-    if not os.path.isfile(instrumental):
+    if not instrumental:
         if skip_demucs:
             print(f"\n[3/3] [INFO] Demucs 已跳过，不使用背景音乐")
-            instrumental = None
         else:
-            print(f"\n[3/3] [X] 找不到背景音乐: {instrumental}")
+            print(f"\n[3/3] [X] 找不到伴奏文件: {ws['instrumental_wav']}")
             print("   请先执行步骤 1（字幕提取会自动生成）")
             sys.exit(1)
 
@@ -298,8 +367,8 @@ def step_tts(
         cfg.enable_subtitle_optimization = False
     cfg.enable_merge = True
     cfg.final_output_path = final_output
-    cfg.output_dir = out_dir
-    cfg.video_output_dir = os.path.join(out_dir, "video")
+    cfg.output_dir = ws["tts_dir"]
+    cfg.video_output_dir = os.path.join(ws["tts_dir"], "video")
 
     # GPU 编码器自动检测（含 preset 调整）
     from pipeline.gpu_detect import apply_best_encoder_to_config, _ENCODER_PRESETS
@@ -336,9 +405,8 @@ def step_tts(
         print(f"  [OK] 最终视频: {final_output} ({sz/1024/1024:.1f}MB)")
     else:
         print(f"  [OK] TTS 合成完成（最终视频路径: {final_output}）")
-    out_dir_bak = os.path.splitext(video)[0] + "_out"
-    if backup_dir and os.path.isdir(out_dir_bak):
-        backup_step("03_tts_done", [final_output, out_dir_bak], backup_dir)
+    if backup_dir:
+        backup_step("03_tts_done", [final_output], backup_dir)
 
 
 def export_external_srt(video: str, srt_source: str, srt_translated: str,
@@ -350,21 +418,22 @@ def export_external_srt(video: str, srt_source: str, srt_translated: str,
 
     cfg = load_ext_subtitle_config(config_path)
     mode = mode or cfg.get("mode", "bilingual")
-    out_dir = os.path.splitext(video)[0] + "_out"
-    name = os.path.splitext(os.path.basename(video))[0]
+    out_dir = os.path.join(os.path.dirname(video),
+                           f"{os.path.splitext(os.path.basename(video))[0]}_project",
+                           "04_output")
 
     print(f"\n[+] 外挂字幕优化 ({mode})...")
 
     if mode == "target_only":
-        out_path = os.path.join(out_dir, f"{name}.optimized.srt")
+        out_path = os.path.join(out_dir, "optimized.srt")
         stats = optimize_srt(srt_translated, out_path, lang=_detect_srt_lang(srt_translated))
         print(f"  译文版: {out_path}")
     elif mode == "source_only":
-        out_path = os.path.join(out_dir, f"{name}.optimized.source.srt")
+        out_path = os.path.join(out_dir, "optimized.source.srt")
         stats = optimize_srt(srt_source, out_path, lang=_detect_srt_lang(srt_source))
         print(f"  原文版: {out_path}")
     else:  # bilingual
-        out_path = os.path.join(out_dir, f"{name}.optimized.bilingual.srt")
+        out_path = os.path.join(out_dir, "optimized.bilingual.srt")
         lang = _detect_srt_lang(srt_translated)
         stats = optimize_bilingual(srt_translated, srt_source, out_path, lang=lang)
         print(f"  双语版: {out_path}")
@@ -490,6 +559,9 @@ def main():
     print(f"\n  视频: {video}")
     print(f"  语言: {args.lang or '自动检测'}")
     print(f"  TTS:  {args.engine}\n")
+
+    # ── 创建工作目录 ──
+    _ensure_workspace(video)
 
     try:
         # ── 步骤 1: 字幕提取 ──

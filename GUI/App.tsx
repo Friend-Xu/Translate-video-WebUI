@@ -189,9 +189,9 @@ export default function App() {
     const dir = path.substring(0, path.lastIndexOf('/'))
     const dot = path.lastIndexOf('.')
     const stem = dot > path.lastIndexOf('/') ? path.substring(path.lastIndexOf('/') + 1, dot) : path.substring(path.lastIndexOf('/') + 1)
-    const sourceSrt = `${dir}/${stem}_out/${stem}.srt`
-    const translatedSrt = `${dir}/${stem}-zh-replace.srt`
-    const translateLog = `${dir}/${stem}_out/${stem}-translate-log.json`
+    const sourceSrt = `${dir}/${stem}_project/01_extract/source.srt`
+    const translatedSrt = `${dir}/${stem}_project/02_translate/machine.srt`
+    const translateLog = `${dir}/${stem}_project/02_translate/translate-log.json`
     setPrefillSrt({ source: sourceSrt, translated: translatedSrt, log: translateLog })
     setActiveTab('字幕校准')
     setReviewSaved(false)
