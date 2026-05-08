@@ -317,7 +317,7 @@ def extract_instrumental(video_path: str, output_dir: str,
             )
         else:
             shutil.copy2(non_vocal_paths[0], instr_path)
-        print(f"  [Demucs] → {instr_path}")
+        logger.info(f"→ {instr_path}")
 
     os.remove(tmp_wav)
     return instr_path

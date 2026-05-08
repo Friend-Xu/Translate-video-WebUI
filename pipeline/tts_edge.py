@@ -132,10 +132,8 @@ class EdgeTTSEngine(BaseTTSEngine):
             except Exception as e:
                 attempts += 1
                 last_exception = e
-                print(
-                    "\033[33m",
-                    f"EdgeTTS 错误: {e}. 重试... (尝试 {attempts}/{self._max_retries})",
-                    "\033[0m",
+                logger.warning(
+                    f"EdgeTTS 重试 (尝试 {attempts}/{self._max_retries}): {e}"
                 )
                 if attempts < self._max_retries:
                     import asyncio
