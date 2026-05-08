@@ -10,6 +10,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+
+from pipeline.logger import get_logger
+
+logger = get_logger(__name__)
 from typing import Optional, Protocol
 
 
@@ -85,18 +89,18 @@ class ExtraVocalCloner:
 
         color_path = self.config.color_audio_path
         if os.path.isfile(color_path):
-            print("存在音色")
+            logger.info("存在音色")
             self._prepared = True
             self._embedding = None
             return True
 
         if voice_path is None or not os.path.isfile(voice_path):
-            print("未提供有效的人声路径，跳过声音克隆准备")
+            logger.warning("未提供有效的人声路径，跳过声音克隆准备")
             return False
 
         try:
             from speakers import Extra_Vocal
-            print(f"提取音色参考：{voice_path} -> {color_path}")
+            logger.info(f"提取音色参考：{voice_path} -> {color_path}")
             Extra_Vocal.extra_vocal(
                 voice_path, color_path, vad_duration=self.config.vad_duration
             )

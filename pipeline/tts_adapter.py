@@ -18,6 +18,10 @@ import os
 from typing import Any, Dict, List, Optional, Tuple
 
 from pipeline.tts_config import TTSConfig
+
+from pipeline.logger import get_logger
+
+logger = get_logger(__name__)
 from pipeline.tts_pipeline import TtsPipeline
 from pipeline.tts_resume import ResumeManager
 
@@ -95,7 +99,7 @@ class TTSAdapter:
             chinese_srt_path=self.chinese_srt_path,
             english_srt_path=self.english_srt_path,
         )
-        print(f"[TTSAdapter] TTS 处理完成: {self.TTS_audio_output_path}")
+        logger.info(f"TTS 处理完成: {self.TTS_audio_output_path}")
 
 
 # ── 便捷工厂函数 ──────────────────────────────────────

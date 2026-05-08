@@ -14,6 +14,10 @@ ChatTTS 是专为对话场景设计的轻量中文 TTS 引擎。
 
 from __future__ import annotations
 
+from pipeline.logger import get_logger
+
+logger = get_logger(__name__)
+
 import os
 import warnings
 from typing import List, Optional
@@ -82,7 +86,7 @@ class ChatTTSEngine:
         chat.load(**load_kwargs)
         self._chat = chat
         self._loaded = True
-        print("[ChatTTS] 模型加载完成")
+        logger.info("模型加载完成")
 
     def synthesize(
         self,

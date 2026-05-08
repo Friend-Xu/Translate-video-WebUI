@@ -37,6 +37,10 @@ import json
 from typing import List, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from pipeline.logger import get_logger
+
+logger = get_logger(__name__)
+
 import soundfile as sf
 import numpy as np
 
@@ -53,7 +57,7 @@ def _normalize_device(device: str) -> str:
         import torch
         if torch.cuda.is_available():
             return "cuda"
-        print("[警告] CUDA 不可用，回退到 CPU")
+        logger.warning("CUDA 不可用，回退到 CPU")
     except ImportError:
         pass
     return "cpu"

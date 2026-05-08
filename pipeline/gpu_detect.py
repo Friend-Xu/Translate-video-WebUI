@@ -10,6 +10,10 @@ import os
 import subprocess
 from typing import Dict, List, Optional
 
+from pipeline.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 # 编码器优先级（质量/速度综合排序）
 #
@@ -131,7 +135,7 @@ def apply_best_encoder_to_config(config) -> None:
 
     best = detect_best_encoder(get_ffmpeg_exe())
     if best != config.video_codec:
-        print(f"[GPU 检测] 编码器 {config.video_codec} → {best}")
+        logger.info(f"编码器 {config.video_codec} → {best}")
         config.video_codec = best
 
         # 同步调整 preset

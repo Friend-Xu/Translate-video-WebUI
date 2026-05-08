@@ -49,6 +49,10 @@ Architecture::
 
 from __future__ import annotations
 
+from pipeline.logger import get_logger
+
+logger = get_logger(__name__)
+
 import gc
 import hashlib
 import io
@@ -339,7 +343,7 @@ class CosyVoiceCloner:
             self._log_error(msg)
             raise RuntimeError(msg)
         # Python 3.10 — local mode supported
-        print(f"[CosyVoice] local mode ready (Python {sys.version_info.major}.{sys.version_info.minor})")
+        logger.info(f"local mode ready (Python {sys.version_info.major}.{sys.version_info.minor})")
 
         model_path = self.config.model_dir
         model_version = self.config.model_version
