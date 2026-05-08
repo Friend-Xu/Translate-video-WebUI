@@ -36,7 +36,7 @@ export default function App() {
     open: false, msg: '', severity: 'info',
   })
   const [reviewSaved, setReviewSaved] = useState(false)
-  const [prefillSrt, setPrefillSrt] = useState<{ source: string; translated: string; log: string } | null>(null)
+  const [prefillSrt, setPrefillSrt] = useState<{ source: string; translated: string; log: string; workspace: string } | null>(null)
   const [backendOnline, setBackendOnline] = useState(true)
 
   useEffect(() => {
@@ -189,10 +189,11 @@ export default function App() {
     const dir = path.substring(0, path.lastIndexOf('/'))
     const dot = path.lastIndexOf('.')
     const stem = dot > path.lastIndexOf('/') ? path.substring(path.lastIndexOf('/') + 1, dot) : path.substring(path.lastIndexOf('/') + 1)
-    const sourceSrt = `${dir}/${stem}_project/01_extract/source.srt`
-    const translatedSrt = `${dir}/${stem}_project/02_translate/machine.srt`
-    const translateLog = `${dir}/${stem}_project/02_translate/translate-log.json`
-    setPrefillSrt({ source: sourceSrt, translated: translatedSrt, log: translateLog })
+    const workspace = `${dir}/${stem}_project`
+    const sourceSrt = `${workspace}/01_extract/source.srt`
+    const translatedSrt = `${workspace}/02_translate/machine.srt`
+    const translateLog = `${workspace}/02_translate/translate-log.json`
+    setPrefillSrt({ source: sourceSrt, translated: translatedSrt, log: translateLog, workspace })
     setActiveTab('字幕校准')
     setReviewSaved(false)
   }, [config.videoPath])
@@ -273,6 +274,7 @@ export default function App() {
               prefillSourceSrt={prefillSrt?.source}
               prefillTranslatedSrt={prefillSrt?.translated}
               prefillTranslateLog={prefillSrt?.log}
+              prefillWorkspace={prefillSrt?.workspace}
             />
           </KeepAliveSection>
         </Box>

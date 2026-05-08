@@ -1067,9 +1067,20 @@ async def subtitle_optimize_defaults() -> dict:
 # ---------------------------------------------------------------------------
 
 class ReviewLoadRequest(BaseModel):
-    source_srt: str
-    translated_srt: str
+    source_srt: str | None = None
+    translated_srt: str | None = None
     translate_log: str | None = None
+    workspace: str | None = None
+
+
+@app.get("/api/project/manifest")
+async def project_manifest(workspace: str) -> dict:
+    """返回工作目录的 project.json。"""
+    manifest_path = os.path.join(workspace, "project.json")
+    if not os.path.isfile(manifest_path):
+        raise HTTPException(status_code=404, detail="project.json 不存在")
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def _srt_time_to_ms(srt_time) -> int:
@@ -1153,8 +1164,25 @@ def _run_qa_checks(entries: list[dict], lang: str = "zh") -> None:
 @app.post("/api/subtitle/review/load")
 async def review_load(req: ReviewLoadRequest) -> dict:
 
-    source = Path(req.source_srt)
-    translated = Path(req.translated_srt)
+    # 从工作目录 manifest 加载
+    if req.workspace:
+        manifest_path = os.path.join(req.workspace, "project.json")
+        if not os.path.isfile(manifest_path):
+            raise HTTPException(status_code=400, detail=f"project.json 不存在: {req.workspace}")
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+        ws = req.workspace
+        src = manifest.get("files", {}).get("source_srt", "01_extract/source.srt")
+        tr = manifest.get("files", {}).get("reviewed_srt") or manifest.get("files", {}).get("machine_srt", "02_translate/machine.srt")
+        log = manifest.get("files", {}).get("translate_log", "02_translate/translate-log.json")
+        source = Path(os.path.join(ws, src))
+        translated = Path(os.path.join(ws, tr))
+        translate_log = os.path.join(ws, log)
+    else:
+        source = Path(req.source_srt)
+        translated = Path(req.translated_srt)
+        translate_log = req.translate_log
+
     if not source.is_file():
         raise HTTPException(status_code=400, detail=f"原文字幕不存在: {source}")
     if not translated.is_file():
@@ -1169,9 +1197,9 @@ async def review_load(req: ReviewLoadRequest) -> dict:
 
     # Read translate-log.json for semantic check scores
     similarity_map: dict[int, float] = {}
-    if req.translate_log and os.path.isfile(req.translate_log):
+    if translate_log and os.path.isfile(translate_log):
         try:
-            with open(req.translate_log, "r", encoding="utf-8") as f:
+            with open(translate_log, "r", encoding="utf-8") as f:
                 log_data = json.load(f)
             for detail in log_data.get("details", []):
                 sim = detail.get("similarity")
@@ -1223,12 +1251,20 @@ async def review_load(req: ReviewLoadRequest) -> dict:
 
     _run_qa_checks(entries, lang)
 
-    video_path = _detect_video_in_dir(req.source_srt)
+    # Video detection: manifest first, then directory scan
+    video_path = ""
+    if req.workspace:
+        manifest_path = os.path.join(req.workspace, "project.json")
+        if os.path.isfile(manifest_path):
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                video_path = json.load(f).get("video_path", "")
+    if not video_path:
+        video_path = _detect_video_in_dir(str(source))
 
     return {
         "videoPath": video_path,
-        "sourceSrtPath": req.source_srt,
-        "translatedSrtPath": req.translated_srt,
+        "sourceSrtPath": str(source),
+        "translatedSrtPath": str(translated),
         "entries": entries,
         "stats": {"total": len(entries), "lowSimilarity": low_similarity_count},
     }

@@ -17,7 +17,9 @@ Translate Video — 一站式翻译管线
 from __future__ import annotations
 
 import argparse
+import datetime
 import io
+import json
 import os
 import subprocess
 import sys
@@ -128,13 +130,77 @@ def guess_translated_srt(video_path: str) -> str | None:
 
 
 
-def _ensure_workspace(video: str) -> None:
-    """创建工作目录（所有 4 个子目录）。"""
+def _workspace_dir(video: str) -> str:
+    """返回视频对应的工作目录路径。"""
     target = os.path.dirname(video)
     name = os.path.splitext(os.path.basename(video))[0]
-    ws = os.path.join(target, f"{name}_project")
+    return os.path.join(target, f"{name}_project")
+
+
+def load_manifest(workspace_dir: str) -> dict | None:
+    """读取工作目录的 project.json。"""
+    path = os.path.join(workspace_dir, "project.json")
+    if not os.path.isfile(path):
+        return None
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _save_manifest(video: str, data: dict) -> None:
+    """写入 project.json。"""
+    ws = _workspace_dir(video)
+    path = os.path.join(ws, "project.json")
+    data["updated_at"] = datetime.datetime.now().isoformat()
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+def _create_manifest(video: str) -> dict:
+    """创建初始 project.json。"""
+    now = datetime.datetime.now().isoformat()
+    data = {
+        "version": 1,
+        "video_path": video.replace("\\", "/"),
+        "created_at": now,
+        "updated_at": now,
+        "pipeline": {"extract": "pending", "translate": "pending", "tts": "pending"},
+        "files": {},
+    }
+    _save_manifest(video, data)
+    return data
+
+
+def _manifest_set_step(video: str, step: str, status: str) -> None:
+    """更新管线步骤状态。"""
+    ws = _workspace_dir(video)
+    path = os.path.join(ws, "project.json")
+    if not os.path.isfile(path):
+        return
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    data["pipeline"][step] = status
+    _save_manifest(video, data)
+
+
+def _manifest_set_files(video: str, file_map: dict) -> None:
+    """批量更新 file 清单（相对路径）。"""
+    ws = _workspace_dir(video)
+    path = os.path.join(ws, "project.json")
+    if not os.path.isfile(path):
+        return
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    data["files"].update(file_map)
+    _save_manifest(video, data)
+
+
+def _ensure_workspace(video: str) -> None:
+    """创建工作目录（所有 4 个子目录 + project.json）。"""
+    ws = _workspace_dir(video)
     for sub in ("01_extract", "02_translate", "03_tts", "04_output"):
         os.makedirs(os.path.join(ws, sub), exist_ok=True)
+    if not os.path.isfile(os.path.join(ws, "project.json")):
+        _create_manifest(video)
 
 
 def _rename_extract_files(extract_dir: str, video_name: str) -> None:
@@ -205,6 +271,15 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
     _rename_extract_files(extract_dir, name)
     if backup_dir:
         backup_step("01_extract", [extract_dir], backup_dir)
+    _manifest_set_step(video, "extract", "completed")
+    _manifest_set_files(video, {
+        "source_srt": "01_extract/source.srt",
+        "transcript": "01_extract/transcript.json",
+        "audio": "01_extract/audio.wav",
+        "vocals": "01_extract/vocals.wav",
+        "instrumental": "01_extract/instrumental.wav",
+        "vad_segments": "01_extract/vad_segments.json",
+    })
     print("  [OK] 字幕提取完成")
 
 
@@ -220,6 +295,8 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "")
 
     if os.path.isfile(output) and not force:
         print(f"  [OK] 翻译文件已存在: {output}")
+        _manifest_set_step(video, "translate", "completed")
+        _manifest_set_files(video, {"machine_srt": "02_translate/machine.srt"})
         return output
 
     print("\n[2/3] 字幕翻译 + 术语替换...")
@@ -252,6 +329,11 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "")
         return auto_srt
 
     print(f"  [OK] 翻译 + 术语替换完成: {output}")
+    _manifest_set_step(video, "translate", "completed")
+    _manifest_set_files(video, {
+        "machine_srt": "02_translate/machine.srt",
+        "translate_log": "02_translate/translate-log.json",
+    })
     if backup_dir:
         backup_step("02_translate", [output], backup_dir)
     return output
@@ -301,6 +383,7 @@ def step_tts(
 
     if os.path.isfile(final_output) and not force:
         print(f"\n[3/3] TTS 合成 [OK] 最终视频已存在: {final_output}")
+        _manifest_set_step(video, "tts", "completed")
         return
 
     if not instrumental:
@@ -405,6 +488,8 @@ def step_tts(
         print(f"  [OK] 最终视频: {final_output} ({sz/1024/1024:.1f}MB)")
     else:
         print(f"  [OK] TTS 合成完成（最终视频路径: {final_output}）")
+    _manifest_set_step(video, "tts", "completed")
+    _manifest_set_files(video, {"dubbed": "04_output/dubbed.mp4"})
     if backup_dir:
         backup_step("03_tts_done", [final_output], backup_dir)
 

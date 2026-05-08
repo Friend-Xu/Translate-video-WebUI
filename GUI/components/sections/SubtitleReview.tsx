@@ -106,6 +106,7 @@ interface SubtitleReviewProps {
   prefillSourceSrt?: string
   prefillTranslatedSrt?: string
   prefillTranslateLog?: string
+  prefillWorkspace?: string
 }
 
 // ── Memoized row (prevents O(n) re-renders on single-entry changes) ──
@@ -238,7 +239,7 @@ const SubtitleRowMemo = React.memo(function SubtitleRow({
 
 // ── Component ──
 
-export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSrt, prefillTranslatedSrt, prefillTranslateLog }: SubtitleReviewProps) {
+export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSrt, prefillTranslatedSrt, prefillTranslateLog, prefillWorkspace }: SubtitleReviewProps) {
   // Session meta
   const [sessionMeta, setSessionMeta] = useState<{
     videoPath: string; sourceSrtPath: string; translatedSrtPath: string
@@ -390,6 +391,46 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
   // Auto-load when prefill props are provided (from "开始字幕校验" button)
   const prefillKeyRef = useRef('')
   useEffect(() => {
+    if (prefillWorkspace) {
+      const key = prefillWorkspace
+      if (prefillKeyRef.current === key) return
+      prefillKeyRef.current = key
+
+      const loadData = async () => {
+        setLoading(true)
+        setError('')
+        try {
+          const res = await fetch('/api/subtitle/review/load', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ workspace: prefillWorkspace }),
+          })
+          if (!res.ok) { const d = await res.json(); throw new Error(d.detail || '加载失败') }
+          const data = await res.json()
+          setSourceSrt(data.sourceSrtPath)
+          setTranslatedSrt(data.translatedSrtPath)
+          setSessionMeta({
+            videoPath: data.videoPath,
+            sourceSrtPath: data.sourceSrtPath,
+            translatedSrtPath: data.translatedSrtPath,
+          })
+          reset(data.entries)
+          setCurrentEntryIndex(null)
+          setSelectedIndices(new Set())
+          setSearchQuery('')
+          setLastSaved(null)
+          setAutoSaveDirty(false)
+          onSuccess(`已加载 ${data.stats.total} 条字幕 (${data.stats.lowSimilarity} 条低质)`)
+        } catch (e: any) {
+          setError(e.message)
+        } finally {
+          setLoading(false)
+        }
+      }
+      loadData()
+      return
+    }
+
     if (!prefillSourceSrt || !prefillTranslatedSrt) return
     const key = `${prefillSourceSrt}|${prefillTranslatedSrt}`
     if (prefillKeyRef.current === key) return
@@ -433,7 +474,7 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
       }
     }
     loadData()
-  }, [prefillSourceSrt, prefillTranslatedSrt, prefillTranslateLog, onSuccess, reset])
+  }, [prefillSourceSrt, prefillTranslatedSrt, prefillTranslateLog, prefillWorkspace, onSuccess, reset])
 
   // ── Save ──
 
