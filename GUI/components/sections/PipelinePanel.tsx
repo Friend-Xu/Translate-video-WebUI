@@ -6,6 +6,8 @@ import {
 } from '@mui/material'
 import Grid from '@mui/material/Grid'
 import FolderOpenIcon from '@mui/icons-material/FolderOpenRounded'
+import SmartDisplayIcon from '@mui/icons-material/SmartDisplayRounded'
+import ViewModuleIcon from '@mui/icons-material/ViewModuleRounded'
 import PlayArrowIcon from '@mui/icons-material/PlayArrowRounded'
 import StopIcon from '@mui/icons-material/StopRounded'
 import RefreshIcon from '@mui/icons-material/RefreshRounded'
@@ -226,9 +228,24 @@ export function PipelinePanel({
           exclusive
           onChange={(_, v) => v && onModeChange(v)}
           size="small"
+          sx={{
+            '& .MuiToggleButton-root': {
+              '&.Mui-selected': {
+                bgcolor: 'primary.main',
+                color: 'primary.contrastText',
+                '&:hover': { bgcolor: 'primary.dark' },
+              },
+            },
+          }}
         >
-          <ToggleButton value="single">单视频</ToggleButton>
-          <ToggleButton value="batch">批处理</ToggleButton>
+          <ToggleButton value="single">
+            <SmartDisplayIcon fontSize="small" sx={{ mr: 0.5 }} />
+            单视频
+          </ToggleButton>
+          <ToggleButton value="batch">
+            <ViewModuleIcon fontSize="small" sx={{ mr: 0.5 }} />
+            批处理
+          </ToggleButton>
         </ToggleButtonGroup>
       </Box>
 
