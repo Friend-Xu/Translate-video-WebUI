@@ -71,6 +71,30 @@ _console_handler.setLevel(logging.INFO)
 logging.basicConfig(level=logging.DEBUG, handlers=[_file_handler, _console_handler])
 logger = logging.getLogger("server")
 
+
+class SSELogHandler(logging.Handler):
+    """将 Python logging 记录路由到 Job 的 SSE 日志流。
+
+    每个 Job 运行期间创建并挂到 root logger，结束后移除。
+    日志格式 ``[LEVEL] module: message`` 与前端 useSSE.ts 解析器兼容。
+    """
+
+    def __init__(self, append_log_fn):
+        super().__init__()
+        self._append = append_log_fn
+        self.setLevel(logging.DEBUG)
+        self.setFormatter(logging.Formatter(
+            "[%(levelname)-5s] %(name)s: %(message)s"
+        ))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = self.format(record)
+            self._append(msg)
+        except Exception:
+            self.handleError(record)
+
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
 MAIN_SCRIPT = PROJECT_ROOT / "main.py"
@@ -526,7 +550,13 @@ async def _run_job_sync(job: Job, args: list[str]) -> None:
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
+
+    # 将服务器端 logging 路由到该 Job 的 SSE 流
+    sse_handler = SSELogHandler(job.append_log)
+    root_logger = logging.getLogger()
+    root_logger.addHandler(sse_handler)
     try:
+        logger.info("启动流水线: %s", " ".join(args))
         job.process = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
@@ -549,16 +579,21 @@ async def _run_job_sync(job: Job, args: list[str]) -> None:
             job.progress = 100
             job.current_step = "处理完成"
             job.append_log("[INFO] 处理完成")
+            logger.info("流水线完成 (job=%s)", job.id)
         else:
             job.status = "failed"
             job.current_step = f"失败 (code={job.process.returncode})"
             job.append_log(f"[ERROR] 流水线失败，退出码: {job.process.returncode}")
+            logger.error("流水线失败 (job=%s, rc=%d)", job.id, job.process.returncode)
         _save_job(job)
     except Exception as e:
         job.status = "failed"
         job.current_step = "异常"
         job.append_log(f"[ERROR] {e}")
+        logger.exception("流水线异常 (job=%s)", job.id)
         _save_job(job)
+    finally:
+        root_logger.removeHandler(sse_handler)
 
 
 # ---------------------------------------------------------------------------
