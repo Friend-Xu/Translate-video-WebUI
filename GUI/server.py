@@ -1083,6 +1083,52 @@ async def project_manifest(workspace: str) -> dict:
         return json.load(f)
 
 
+@app.get("/api/project/manifest/resolve")
+async def project_manifest_resolve(workspace: str) -> dict:
+    """读取 project.json 并返回解析后的绝对文件路径，供前端直接使用。"""
+    manifest_path = os.path.join(workspace, "project.json")
+    if not os.path.isfile(manifest_path):
+        raise HTTPException(status_code=404, detail="project.json 不存在")
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    files = manifest.get("files", {})
+    workspace_dir = os.path.abspath(workspace)
+
+    def _resolve(key: str, fallback: str = "") -> str:
+        rel = files.get(key, "")
+        if rel:
+            abs_path = os.path.join(workspace_dir, rel)
+            if os.path.isfile(abs_path):
+                return os.path.normpath(abs_path)
+        if fallback:
+            abs_path = os.path.join(workspace_dir, fallback)
+            if os.path.isfile(abs_path):
+                return os.path.normpath(abs_path)
+        return ""
+
+    source_srt = _resolve("source_srt", "01_extract/source.srt")
+    machine_srt = _resolve("machine_srt", "02_translate/machine.srt")
+    reviewed_srt = _resolve("reviewed_srt", "")
+    translate_log = _resolve("translate_log", "02_translate/translate-log.json")
+
+    # 优先 reviewed_srt，否则 machine_srt
+    translated_srt = reviewed_srt or machine_srt
+
+    return {
+        "manifest": manifest,
+        "video_path": manifest.get("video_path", ""),
+        "workspace": os.path.normpath(workspace_dir),
+        "paths": {
+            "source_srt": source_srt,
+            "translated_srt": translated_srt,
+            "machine_srt": machine_srt,
+            "reviewed_srt": reviewed_srt,
+            "translate_log": translate_log,
+        },
+    }
+
+
 def _srt_time_to_ms(srt_time) -> int:
     return srt_time.ordinal
 

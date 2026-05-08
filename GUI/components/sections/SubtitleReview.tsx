@@ -258,11 +258,14 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
 
   // File picker
   const [filePickerOpen, setFilePickerOpen] = useState(false)
-  const [filePickerMode, setFilePickerMode] = useState<'source' | 'translated' | 'log'>('source')
+  const [filePickerMode, setFilePickerMode] = useState<'source' | 'translated' | 'log' | 'project'>('source')
   const [filePickerInitialPath, setFilePickerInitialPath] = useState('')
+  const [filePickerAccept, setFilePickerAccept] = useState<string[]>(SRT_EXTS)
   const [sourceSrt, setSourceSrt] = useState('')
   const [translatedSrt, setTranslatedSrt] = useState('')
   const [translateLog, setTranslateLog] = useState('')
+  const [workspacePath, setWorkspacePath] = useState('')
+  const [showManualFiles, setShowManualFiles] = useState(false)
 
   // Undoable entries
   const { entries, push, undo, redo, reset, canUndo, canRedo } = useUndoableState([])
@@ -313,22 +316,57 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
 
   // ── File picker ──
 
-  const handleOpenFilePicker = useCallback((mode: 'source' | 'translated' | 'log') => {
+  const handleOpenFilePicker = useCallback((mode: 'source' | 'translated' | 'log' | 'project') => {
     setFilePickerMode(mode)
-    if (mode === 'source') {
+    if (mode === 'project') {
+      setFilePickerAccept(['project.json'])
+      if (workspacePath) {
+        setFilePickerInitialPath(workspacePath)
+      } else {
+        setFilePickerInitialPath(DEFAULT_SOURCE_DIR)
+      }
+    } else if (mode === 'source') {
+      setFilePickerAccept(SRT_EXTS)
       setFilePickerInitialPath(DEFAULT_SOURCE_DIR)
     } else if (mode === 'log' && translatedSrt) {
+      setFilePickerAccept(['.json'])
       const d = translatedSrt.replace(/\\/g, '/')
       setFilePickerInitialPath(d.substring(0, d.lastIndexOf('/')))
     } else if (defaultDir) {
+      setFilePickerAccept(SRT_EXTS)
       setFilePickerInitialPath(defaultDir)
     } else {
+      setFilePickerAccept(SRT_EXTS)
       setFilePickerInitialPath('')
     }
     setFilePickerOpen(true)
-  }, [defaultDir, translatedSrt])
+  }, [defaultDir, translatedSrt, workspacePath])
 
   const handleFileSelected = useCallback((path: string) => {
+    if (filePickerMode === 'project') {
+      const p = path.replace(/\\/g, '/')
+      const dir = p.substring(0, p.lastIndexOf('/'))
+      setWorkspacePath(dir)
+      setFilePickerInitialPath(dir)
+      // Fetch manifest and auto-populate
+      fetch(`/api/project/manifest/resolve?workspace=${encodeURIComponent(dir)}`)
+        .then(r => {
+          if (!r.ok) throw new Error('无法读取 project.json')
+          return r.json()
+        })
+        .then(data => {
+          setSourceSrt(data.paths.source_srt || '')
+          setTranslatedSrt(data.paths.translated_srt || '')
+          setTranslateLog(data.paths.translate_log || '')
+          showToast(`已加载项目: ${data.manifest.pipeline?.step || '未知状态'}`)
+        })
+        .catch(e => {
+          setError(e.message)
+          setWorkspacePath('')
+        })
+      setFilePickerOpen(false)
+      return
+    }
     if (filePickerMode === 'source') {
       setSourceSrt(path)
       const d = path.replace(/\\/g, '/')
@@ -349,7 +387,7 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
       setTranslateLog(path)
     }
     setFilePickerOpen(false)
-  }, [filePickerMode, translateLog])
+  }, [filePickerMode, translateLog, showToast])
 
   // ── Load ──
 
@@ -406,10 +444,11 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
             body: JSON.stringify({ workspace: prefillWorkspace }),
           })
           if (!res.ok) { const d = await res.json(); throw new Error(d.detail || '加载失败') }
-          const data = await res.json()
-          setSourceSrt(data.sourceSrtPath)
-          setTranslatedSrt(data.translatedSrtPath)
-          setSessionMeta({
+	          const data = await res.json()
+	          setWorkspacePath(prefillWorkspace)
+	          setSourceSrt(data.sourceSrtPath)
+	          setTranslatedSrt(data.translatedSrtPath)
+	          setSessionMeta({
             videoPath: data.videoPath,
             sourceSrtPath: data.sourceSrtPath,
             translatedSrtPath: data.translatedSrtPath,
@@ -1081,30 +1120,63 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
               <Card sx={{ p: 2 }}>
                 <Typography variant="subtitle2" mb={1.5}>加载字幕文件</Typography>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                  {/* ── 打开项目（主入口）── */}
                   <Box sx={{ display: 'flex', gap: 1 }}>
-                    <TextField size="small" fullWidth value={fileLabel(sourceSrt)}
-                      placeholder="原文字幕 (*.srt)" InputProps={{ readOnly: true }}
-                      onClick={() => handleOpenFilePicker('source')}
+                    <TextField size="small" fullWidth
+                      value={workspacePath ? workspacePath.split(/[/\\]/).pop() : fileLabel(sourceSrt) || ''}
+                      placeholder="选择 project.json 自动加载"
+                      InputProps={{
+                        readOnly: true,
+                        startAdornment: workspacePath ? (
+                          <InputAdornment position="start">
+                            <Chip label="项目" size="small" color="primary" sx={{ mr: 0.5, height: 20, fontSize: '0.65rem' }} />
+                          </InputAdornment>
+                        ) : undefined,
+                      }}
+                      onClick={() => handleOpenFilePicker('project')}
                       sx={{ cursor: 'pointer', '& .MuiInputBase-root': { cursor: 'pointer', fontSize: '0.8rem' } }} />
-                    <IconButton size="small" onClick={() => handleOpenFilePicker('source')}
-                      sx={{ flexShrink: 0 }}><FolderOpenIcon fontSize="small" /></IconButton>
+                    <Tooltip title="选择工作目录中的 project.json">
+                      <IconButton size="small" onClick={() => handleOpenFilePicker('project')}
+                        sx={{ flexShrink: 0 }} color={workspacePath ? 'primary' : 'default'}>
+                        <FolderOpenIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
                   </Box>
-                  <Box sx={{ display: 'flex', gap: 1 }}>
-                    <TextField size="small" fullWidth value={fileLabel(translatedSrt)}
-                      placeholder="机翻字幕 (*.srt)" InputProps={{ readOnly: true }}
-                      onClick={() => handleOpenFilePicker('translated')}
-                      sx={{ cursor: 'pointer', '& .MuiInputBase-root': { cursor: 'pointer', fontSize: '0.8rem' } }} />
-                    <IconButton size="small" onClick={() => handleOpenFilePicker('translated')}
-                      sx={{ flexShrink: 0 }}><FolderOpenIcon fontSize="small" /></IconButton>
-                  </Box>
-                  <Box sx={{ display: 'flex', gap: 1 }}>
-                    <TextField size="small" fullWidth value={fileLabel(translateLog)}
-                      placeholder="翻译日志 (.json, 可选)" InputProps={{ readOnly: true }}
-                      onClick={() => handleOpenFilePicker('log')}
-                      sx={{ cursor: 'pointer', '& .MuiInputBase-root': { cursor: 'pointer', fontSize: '0.8rem' } }} />
-                    <IconButton size="small" onClick={() => handleOpenFilePicker('log')}
-                      sx={{ flexShrink: 0 }}><FolderOpenIcon fontSize="small" /></IconButton>
-                  </Box>
+
+                  {/* ── 手动选择（可折叠）── */}
+                  <Button size="small" variant="text"
+                    onClick={() => setShowManualFiles(v => !v)}
+                    sx={{ fontSize: '0.7rem', alignSelf: 'flex-start', color: 'text.secondary', border: '1px dashed', borderColor: 'divider', borderRadius: 1, px: 1.5 }}>
+                    {showManualFiles ? '收起手动选择 ▴' : '手动选择文件 ▾'}
+                  </Button>
+                  {showManualFiles && (
+                    <>
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        <TextField size="small" fullWidth value={fileLabel(sourceSrt)}
+                          placeholder="原文字幕 (*.srt)" InputProps={{ readOnly: true }}
+                          onClick={() => handleOpenFilePicker('source')}
+                          sx={{ cursor: 'pointer', '& .MuiInputBase-root': { cursor: 'pointer', fontSize: '0.8rem' } }} />
+                        <IconButton size="small" onClick={() => handleOpenFilePicker('source')}
+                          sx={{ flexShrink: 0 }}><FolderOpenIcon fontSize="small" /></IconButton>
+                      </Box>
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        <TextField size="small" fullWidth value={fileLabel(translatedSrt)}
+                          placeholder="机翻字幕 (*.srt)" InputProps={{ readOnly: true }}
+                          onClick={() => handleOpenFilePicker('translated')}
+                          sx={{ cursor: 'pointer', '& .MuiInputBase-root': { cursor: 'pointer', fontSize: '0.8rem' } }} />
+                        <IconButton size="small" onClick={() => handleOpenFilePicker('translated')}
+                          sx={{ flexShrink: 0 }}><FolderOpenIcon fontSize="small" /></IconButton>
+                      </Box>
+                      <Box sx={{ display: 'flex', gap: 1 }}>
+                        <TextField size="small" fullWidth value={fileLabel(translateLog)}
+                          placeholder="翻译日志 (.json, 可选)" InputProps={{ readOnly: true }}
+                          onClick={() => handleOpenFilePicker('log')}
+                          sx={{ cursor: 'pointer', '& .MuiInputBase-root': { cursor: 'pointer', fontSize: '0.8rem' } }} />
+                        <IconButton size="small" onClick={() => handleOpenFilePicker('log')}
+                          sx={{ flexShrink: 0 }}><FolderOpenIcon fontSize="small" /></IconButton>
+                      </Box>
+                    </>
+                  )}
                   <Button variant="contained" size="small" onClick={handleLoad}
                     disabled={!sourceSrt || !translatedSrt || loading} fullWidth
                     startIcon={loading ? <CircularProgress size={16} /> : undefined}>
@@ -1122,11 +1194,12 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
         onClose={() => setFilePickerOpen(false)}
         initialPath={filePickerInitialPath}
         title={
+          filePickerMode === 'project' ? '选择工作目录中的 project.json' :
           filePickerMode === 'source' ? '选择原文字幕文件' :
           filePickerMode === 'translated' ? '选择译文字幕文件' :
           '选择翻译日志文件'
         }
-        acceptExtensions={filePickerMode === 'log' ? ['.json'] : SRT_EXTS}
+        acceptExtensions={filePickerAccept}
       />
     </>
   )
