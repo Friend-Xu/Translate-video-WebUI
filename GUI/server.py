@@ -1078,13 +1078,36 @@ def _srt_time_to_ms(srt_time) -> int:
 
 def _detect_video_in_dir(srt_path: str) -> str:
     srt_dir = os.path.dirname(srt_path)
+    srt_stem = os.path.splitext(os.path.basename(srt_path))[0]
     VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".flv", ".wmv"}
-    for name in sorted(os.listdir(srt_dir)):
-        _, ext = os.path.splitext(name)
-        if ext.lower() in VIDEO_EXTS:
-            video_path = os.path.join(srt_dir, name)
-            if os.path.isfile(video_path):
+
+    # Search directories: SRT dir first, then parent dir (pipeline uses {name}_out/)
+    search_dirs = [srt_dir]
+    parent_dir = os.path.dirname(srt_dir)
+    if parent_dir and parent_dir != srt_dir:
+        search_dirs.append(parent_dir)
+
+    for search_dir in search_dirs:
+        if not os.path.isdir(search_dir):
+            continue
+        # Prefer exact stem match, then any video file
+        for name in sorted(os.listdir(search_dir)):
+            _, ext = os.path.splitext(name)
+            if ext.lower() not in VIDEO_EXTS:
+                continue
+            video_path = os.path.join(search_dir, name)
+            if not os.path.isfile(video_path):
+                continue
+            stem, _ = os.path.splitext(name)
+            if stem == srt_stem:
                 return video_path
+        # Fallback: any video in the directory
+        for name in sorted(os.listdir(search_dir)):
+            _, ext = os.path.splitext(name)
+            if ext.lower() in VIDEO_EXTS:
+                video_path = os.path.join(search_dir, name)
+                if os.path.isfile(video_path):
+                    return video_path
     return ""
 
 

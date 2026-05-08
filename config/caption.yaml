@@ -1,10 +1,10 @@
 caption:
   font: ''
-  font_size_mode: fixed
-  font_size: 36
+  font_size_mode: adaptive
+  font_size: 0
   font_color: '#ffffff'
-  stroke_width: 1.5
-  stroke_color: '#f70202'
+  stroke_width: 0.0
+  stroke_color: '#000000'
   bg_color: rgba(0,0,0,128)
   alignment: center
   position: bottom
