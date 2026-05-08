@@ -62,6 +62,56 @@ class EnglishProcessor:
             self._punct_pipe = None
 
     @staticmethod
+    def _interpolate_word_timestamps(words: list, seg_start: float, seg_end: float):
+        """Fill missing start/end timestamps by interpolating between neighbors.
+
+        When whisper/wav2vec2 skips tokens like numbers, the resulting gaps
+        cause downstream time allocation to fall back to segment boundaries,
+        starving adjacent sub-segments of their fair time share.
+        """
+        if not words:
+            return
+
+        n = len(words)
+        i = 0
+        while i < n:
+            w = words[i]
+            if w.get("start") is not None and w.get("end") is not None:
+                i += 1
+                continue
+
+            run_start = i
+            prev_end = words[run_start - 1].get("end") if run_start > 0 else None
+
+            run_end = run_start
+            while run_end < n:
+                w2 = words[run_end]
+                if w2.get("start") is not None and w2.get("end") is not None:
+                    break
+                run_end += 1
+
+            next_start = words[run_end].get("start") if run_end < n else None
+
+            gap_start = seg_start if prev_end is None else prev_end
+            gap_end = seg_end if next_start is None else next_start
+            gap_duration = max(gap_end - gap_start, 0.0)
+
+            run_words = words[run_start:run_end]
+            total_chars = sum(len(w.get("word", "")) for w in run_words)
+            if total_chars == 0:
+                total_chars = len(run_words)
+
+            elapsed = gap_start
+            for w in run_words:
+                char_ratio = len(w.get("word", "")) / total_chars
+                w_dur = gap_duration * char_ratio
+                w["start"] = round(elapsed, 3)
+                w["end"] = round(elapsed + w_dur, 3)
+                elapsed += w_dur
+
+            i = run_end
+
+    @staticmethod
     def _fix_decimal_spaces(text):
         """修复 whisperX 数字 artifacts: "1 .19" → "1.19" """
         text = re.sub(r'(\d)\s+\.(\d)', r'\1.\2', text)
@@ -269,6 +319,7 @@ class EnglishProcessor:
                 words = full_text.split()
                 accumulated_count = word_count  # 已累积单词数
                 seg_words_list = seg.get("words", [])  # 本段单词级时间戳
+                self._interpolate_word_timestamps(seg_words_list, start, end)
 
                 consumed = 0
                 # 迭代切分：除最后一块外全部提交

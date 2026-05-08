@@ -288,7 +288,24 @@ class VADTranscriber:
         del audio
         gc.collect()
 
-        return aligned.get("segments", segments)
+        result = aligned.get("segments", segments)
+
+        # 检测对齐是否截断了尾部覆盖
+        # wav2vec2 无法对齐数字/符号字符，导致包含这些词的段尾部收缩
+        if segments and result:
+            input_end = max(s["end"] for s in segments)
+            aligned_end = max(s["end"] for s in result)
+            truncation = input_end - aligned_end
+            if truncation > 2.0:
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    "对齐截断了 %.1fs 的覆盖（输入 %.1fs → 输出 %.1fs），"
+                    "回退到原始 whisper 时间戳",
+                    truncation, input_end, aligned_end,
+                )
+                return segments
+
+        return result
 
     # ── 段合并 ──────────────────────────────────────────────────
 
@@ -403,6 +420,46 @@ class VADTranscriber:
             })
 
         return segments
+
+    @staticmethod
+    def _split_large_segments(segments: list, max_duration: float = 15.0) -> list:
+        """Split segments longer than max_duration into smaller chunks.
+
+        wav2vec2 DTW alignment drifts on long sequences. Splitting ensures
+        each chunk is short enough for reliable alignment.
+
+        Splits at even word-count intervals since natural gaps are absent
+        in continuous speech.
+        """
+        result = []
+        for seg in segments:
+            duration = seg["end"] - seg["start"]
+            if duration <= max_duration:
+                result.append(seg)
+                continue
+
+            words = seg.get("words", [])
+            if len(words) < 2:
+                mid = seg["start"] + duration / 2
+                result.append({**seg, "end": mid})
+                result.append({**seg, "start": mid, "words": []})
+                continue
+
+            words_per_chunk = max(1, len(words) // max(2, int(duration / max_duration) + 1))
+            for i in range(0, len(words), words_per_chunk):
+                chunk_words = words[i:i + words_per_chunk]
+                if not chunk_words:
+                    continue
+                chunk_text = " ".join(w["word"] for w in chunk_words)
+                c_start = chunk_words[0]["start"]
+                c_end = chunk_words[-1]["end"]
+                result.append({
+                    "text": chunk_text,
+                    "start": c_start,
+                    "end": c_end,
+                    "words": chunk_words,
+                })
+        return result
 
     # ── 全流程 ──────────────────────────────────────────────────
 
@@ -551,8 +608,10 @@ class VADTranscriber:
         # wav2vec2 强制对齐（可选，不参与并行，确保对齐精度）
         align_time = 0
         if align_language is not None:
+            # 拆分长段：wav2vec2 DTW 对齐在 >15s 段上容易漂移
+            segments = self._split_large_segments(segments, max_duration=15.0)
             logger = logging.getLogger(__name__)
-            logger.info(f"开始 wav2vec2 对齐 (lang={align_language})...")
+            logger.info(f"开始 wav2vec2 对齐 (lang={align_language}, {len(segments)} 段)...")
             t0 = time.time()
             segments = self.align_all(segments, language=align_language)
             align_time = time.time() - t0

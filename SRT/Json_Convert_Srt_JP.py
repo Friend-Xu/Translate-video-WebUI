@@ -31,6 +31,56 @@ class JapaneseProcessor:
         # MeCab 分词器（延迟初始化）
         self._tagger = None
 
+    @staticmethod
+    def _interpolate_word_timestamps(words: list, seg_start: float, seg_end: float):
+        """Fill missing start/end timestamps by interpolating between neighbors.
+
+        When whisper/wav2vec2 skips tokens like numbers, the resulting gaps
+        cause _split_by_word_gaps to misidentify split points because every
+        untimestamped character inherits the full segment boundaries.
+        """
+        if not words:
+            return
+
+        n = len(words)
+        i = 0
+        while i < n:
+            w = words[i]
+            if w.get("start") is not None and w.get("end") is not None:
+                i += 1
+                continue
+
+            run_start = i
+            prev_end = words[run_start - 1].get("end") if run_start > 0 else None
+
+            run_end = run_start
+            while run_end < n:
+                w2 = words[run_end]
+                if w2.get("start") is not None and w2.get("end") is not None:
+                    break
+                run_end += 1
+
+            next_start = words[run_end].get("start") if run_end < n else None
+
+            gap_start = seg_start if prev_end is None else prev_end
+            gap_end = seg_end if next_start is None else next_start
+            gap_duration = max(gap_end - gap_start, 0.0)
+
+            run_words = words[run_start:run_end]
+            total_chars = sum(len(w.get("word", "")) for w in run_words)
+            if total_chars == 0:
+                total_chars = len(run_words)
+
+            elapsed = gap_start
+            for w in run_words:
+                char_ratio = len(w.get("word", "")) / total_chars
+                w_dur = gap_duration * char_ratio
+                w["start"] = round(elapsed, 3)
+                w["end"] = round(elapsed + w_dur, 3)
+                elapsed += w_dur
+
+            i = run_end
+
     def _get_tagger(self):
         """延迟初始化 MeCab 分词器，失败返回 None"""
         if self._tagger is not None:
@@ -325,6 +375,7 @@ class JapaneseProcessor:
             if len(parts) == 1 and not parts[0][1]:
                 # 无标点句：优先按 word 间隙切分，fallback 到线性切分
                 words = segment.get("words", [])
+                self._interpolate_word_timestamps(words, seg_start, seg_end)
                 sub_parts = self._split_by_word_gaps(parts[0][0], words, seg_start, seg_end)
                 if sub_parts is None:
                     sub_parts = self._linear_split(parts[0][0], seg_start, seg_end)
@@ -339,6 +390,7 @@ class JapaneseProcessor:
             elif len(parts) == 1 and len(parts[0][0]) > self.max_chars:
                 # 单句有标点但超长：仍需按长度切分
                 words = segment.get("words", [])
+                self._interpolate_word_timestamps(words, seg_start, seg_end)
                 sub_parts = self._split_by_word_gaps(parts[0][0], words, seg_start, seg_end)
                 if sub_parts is None:
                     sub_parts = self._linear_split(parts[0][0], seg_start, seg_end)

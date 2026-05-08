@@ -169,7 +169,14 @@ def align(
             if any([c in model_dictionary.keys() for c in wrd]):
                 clean_wdx.append(wdx)
 
-                
+        # PR #1019: ensure leading/trailing word boundary symbols exist.
+        # Without them, edge silence is absorbed into the first/last word,
+        # causing segment boundary shrinkage and tail coverage loss.
+        if clean_char and clean_char[0] != "|":
+            clean_char.insert(0, "|")
+        if clean_char and clean_char[-1] != "|":
+            clean_char.append("|")
+
         punkt_param = PunktParameters()
         punkt_param.abbrev_types = set(PUNKT_ABBREVIATIONS)
         sentence_splitter = PunktSentenceTokenizer(punkt_param)
