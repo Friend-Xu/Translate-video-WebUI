@@ -1,5 +1,6 @@
 caption:
   font: ''
+  font_size_mode: fixed
   font_size: 36
   font_color: '#ffffff'
   stroke_width: 1.5

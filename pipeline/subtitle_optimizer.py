@@ -170,6 +170,13 @@ def optimize(
     max_lines = capturer.max_lines
     max_depth = 3
 
+    # 固定模式下用实际字号检测行数，否则用最小字号（adaptive 模式会自动缩小）
+    if capturer.font_size_mode == "fixed":
+        desired_fs = capturer._get_font_size(video_width)
+        measure_fs = desired_fs if desired_fs > 0 else min_fs
+    else:
+        measure_fs = min_fs
+
     result: list[list[tuple[int, int, str, str]]] = []
 
     for i, (start, end, target_text) in enumerate(subs_target):
@@ -180,16 +187,16 @@ def optimize(
             result.append([(0, duration_ms, target_text, source_text)])
             continue
 
-        lines_at_min = capturer._measure_lines(combined, min_fs, max_width)
+        lines_at_measure = capturer._measure_lines(combined, measure_fs, max_width)
 
-        if lines_at_min <= max_lines:
+        if lines_at_measure <= max_lines:
             result.append([(0, duration_ms, target_text, source_text)])
         else:
             target_script = _detect_script(target_text)
             source_script = _detect_script(source_text) if source_text else target_script
             segments = _split_recursive(
                 target_text, source_text, target_script, source_script,
-                capturer, min_fs, max_width, max_lines, max_depth,
+                capturer, measure_fs, max_width, max_lines, max_depth,
             )
             total_chars = sum(len(t) for t, _ in segments)
             if total_chars == 0:
@@ -212,7 +219,7 @@ def optimize(
 def _split_recursive(
     target: str, source: str,
     target_script: str, source_script: str,
-    capturer, min_fs: int, max_width: int, max_lines: int,
+    capturer, measure_fs: int, max_width: int, max_lines: int,
     depth: int,
     _history: Optional[set] = None,
 ) -> list[tuple[str, str]]:
@@ -223,7 +230,7 @@ def _split_recursive(
         return [(target, source)]
 
     combined = f"{target}\n{source}" if source else target
-    if capturer._measure_lines(combined, min_fs, max_width) <= max_lines:
+    if capturer._measure_lines(combined, measure_fs, max_width) <= max_lines:
         return [(target, source)]
 
     # 防止无限递归
@@ -238,6 +245,6 @@ def _split_recursive(
     for tp, sp in zip(target_parts, source_parts):
         result.extend(_split_recursive(
             tp, sp, target_script, source_script,
-            capturer, min_fs, max_width, max_lines, depth - 1, _history,
+            capturer, measure_fs, max_width, max_lines, depth - 1, _history,
         ))
     return result
