@@ -199,6 +199,7 @@ def step_tts(
     backup_dir: str = "",
     skip_demucs: bool = False,
     caption_font: str | None = None,
+    caption_font_size_mode: str | None = None,
     caption_font_size: int | None = None,
     caption_font_color: str | None = None,
     caption_stroke_width: float | None = None,
@@ -269,6 +270,8 @@ def step_tts(
 
     if caption_font:
         cfg.caption_font = caption_font
+    if caption_font_size_mode:
+        cfg.caption_font_size_mode = caption_font_size_mode
     if caption_font_size is not None:
         cfg.caption_font_size = caption_font_size
     if caption_font_color:
@@ -441,6 +444,9 @@ def main():
                         help="步骤备份目录（如 debug_backups），每一步自动保存副本")
     parser.add_argument("--caption-font", default=None,
                         help="字幕字体文件路径")
+    parser.add_argument("--caption-font-size-mode", default=None,
+                        choices=["adaptive", "fixed"],
+                        help="字号模式 adaptive（自适应）| fixed（固定）")
     parser.add_argument("--caption-font-size", type=int, default=None,
                         help="字幕字号（像素）")
     parser.add_argument("--caption-font-color", default=None,
@@ -527,6 +533,7 @@ def main():
                 backup_dir=args.backup_dir,
                 skip_demucs=args.skip_demucs,
                 caption_font=args.caption_font,
+                caption_font_size_mode=args.caption_font_size_mode,
                 caption_font_size=args.caption_font_size,
                 caption_font_color=args.caption_font_color,
                 caption_stroke_width=args.caption_stroke_width,

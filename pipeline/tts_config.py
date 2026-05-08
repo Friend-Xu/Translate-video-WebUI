@@ -126,6 +126,9 @@ class TTSConfig:
     caption_font: str = "./models/font/Minecraft_font/5_Minecraft_AE_zh_en.ttf"
     """字幕字体文件路径"""
 
+    caption_font_size_mode: str = "adaptive"
+    """字号模式: adaptive（自适应）| fixed（固定）"""
+
     caption_font_size: int = 0
     """字幕字号（像素），0 表示根据视频宽度自动计算"""
 
@@ -265,6 +268,19 @@ class TTSConfig:
         if self.caption_min_font_size < 4:
             raise ValueError(f"caption_min_font_size 不能小于 4，当前: {self.caption_min_font_size}")
 
+    @property
+    def voice_clone_active(self) -> bool:
+        """声音克隆是否激活。
+
+        同时考虑新旧配置标志。向后兼容：enable_openvoice=False
+        且 voice_clone_engine="openvoice" 时视为禁用。
+        """
+        if self.voice_clone_engine == "none":
+            return False
+        if self.voice_clone_engine == "openvoice" and not self.enable_openvoice:
+            return False
+        return True
+
     @classmethod
     def from_yaml(cls, path: str) -> "TTSConfig":
         """从 YAML 文件加载配置。
@@ -342,6 +358,8 @@ class TTSConfig:
         """
         if caption_cfg.font:
             self.caption_font = caption_cfg.font
+        if caption_cfg.font_size_mode != "adaptive":
+            self.caption_font_size_mode = caption_cfg.font_size_mode
         if caption_cfg.font_size > 0:
             self.caption_font_size = caption_cfg.font_size
         if caption_cfg.font_color and caption_cfg.font_color != "white":

@@ -44,6 +44,7 @@ class CaptionRenderer:
         stroke_width: float = 0.5,
         bg_color: tuple = (0, 0, 0, 128),
         font_size_factor: float = 0.030,
+        font_size_mode: str = "adaptive",
         bottom_margin_ratio: float = 0.03,
         caption_width_ratio: float = 0.85,
         max_lines: int = 2,
@@ -56,12 +57,13 @@ class CaptionRenderer:
         """
         Args:
             font_path: 字体文件路径
-            font_size: 字体大小。为 None 时根据视频宽度自动计算
+            font_size: 字体大小。为 None/0 时根据视频宽度自动计算
             font_color: 字体颜色
             stroke_color: 描边颜色
             stroke_width: 描边宽度
             bg_color: 半透明背景色 (R, G, B, Alpha)
             font_size_factor: 自动计算字号时的缩放系数（默认 3%）
+            font_size_mode: 字号模式 adaptive（自适应缩小）| fixed（固定不变）
             bottom_margin_ratio: 字幕底部边距占视频高度的比例（默认 3%）
             caption_width_ratio: 字幕文本框宽度占视频宽度的比例（默认 85%）
             max_lines: 字幕最大行数。超出时先缩小字号，仍超出返回 min 字号由上层决策
@@ -78,6 +80,7 @@ class CaptionRenderer:
         self.stroke_width = stroke_width
         self.bg_color = _parse_rgba(bg_color) if isinstance(bg_color, str) else bg_color
         self.font_size_factor = font_size_factor
+        self.font_size_mode = font_size_mode
         self.bottom_margin_ratio = bottom_margin_ratio
         self.caption_width_ratio = caption_width_ratio
         self.max_lines = max_lines
@@ -259,9 +262,13 @@ class CaptionRenderer:
         max_width = int(width * self.caption_width_ratio)
         margin = int(height * self.bottom_margin_ratio)
         desired_size = self._get_font_size(width)
-        font_size, display_text = self._adaptive_font_size(
-            text_zh, text_eng, desired_size, max_width, height
-        )
+        if self.font_size_mode == "fixed" and self.font_size and self.font_size > 0:
+            font_size = desired_size
+            display_text = f"{text_zh}\n{text_eng}" if text_eng else text_zh
+        else:
+            font_size, display_text = self._adaptive_font_size(
+                text_zh, text_eng, desired_size, max_width, height
+            )
 
         subtitles = TextClip(
             text=display_text,

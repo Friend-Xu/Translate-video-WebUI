@@ -68,6 +68,7 @@ export function usePipeline() {
           align_lang: config.lang !== 'auto' ? config.lang : '',
           // Caption rendering params (all 13)
           caption_font: config.captionFont,
+          caption_font_size_mode: config.captionFontSizeMode,
           caption_font_size: config.captionFontSize,
           caption_font_color: config.captionFontColor,
           caption_stroke_width: config.captionStrokeWidth,

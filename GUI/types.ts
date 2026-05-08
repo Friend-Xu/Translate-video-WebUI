@@ -41,6 +41,7 @@ export interface PipelineConfig {
   alignmentLanguage: string
   defaultVideoDir: string
   captionFont: string
+  captionFontSizeMode: 'adaptive' | 'fixed'
   captionFontSize: number
   captionFontColor: string
   captionStrokeWidth: number
@@ -112,6 +113,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   alignmentLanguage: 'ja',
   defaultVideoDir: '',
   captionFont: '',
+  captionFontSizeMode: 'adaptive',
   captionFontSize: 0,
   captionFontColor: '#ffffff',
   captionStrokeWidth: 0,

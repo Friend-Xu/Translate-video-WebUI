@@ -428,6 +428,7 @@ class RunRequest(BaseModel):
     skip_demucs: bool = False
     force: bool = False
     caption_font: str = ""
+    caption_font_size_mode: str = "adaptive"
     caption_font_size: int = 0
     caption_font_color: str = ""
     caption_stroke_width: float = 0.0
@@ -466,6 +467,7 @@ def _write_caption_config(req: RunRequest) -> str:
     caption_data = {
         "caption": {
             "font": req.caption_font,
+            "font_size_mode": req.caption_font_size_mode,
             "font_size": req.caption_font_size,
             "font_color": req.caption_font_color or "white",
             "stroke_width": req.caption_stroke_width,
@@ -1570,6 +1572,7 @@ def _render_subtitle_pil(
     font_size_factor: float = 0.030,
     max_font_size: int = 0,
     caption_width_ratio: float = 0.85,
+    font_size_mode: str = "adaptive",
 ) -> bytes:
     """Render subtitle preview using PIL/Pillow (same engine as video output).
 
@@ -1588,81 +1591,84 @@ def _render_subtitle_pil(
     except Exception:
         pil_font = ImageFont.load_default()
 
-    # ── Adaptive font sizing (mirrors CaptionRenderer) ──
+    # ── Font sizing (mirrors CaptionRenderer) ──
     max_width = int(canvas_w * caption_width_ratio)
     max_fs = max_font_size if max_font_size > 0 else int(canvas_h * 0.045)
     min_fs = 12
     desired = font_size if font_size > 0 else int(canvas_w * font_size_factor)
 
-    def _count_lines(txt: str, fs: int) -> int:
-        """Count wrapped lines at given font size and max_width."""
-        try:
-            f = ImageFont.truetype(font_path, fs)
-        except Exception:
-            f = ImageFont.load_default()
-        total = 0
-        for para in txt.split("\n"):
-            if not para:
-                total += 1
-                continue
-            # Detect script and wrap accordingly
-            cjk = sum(1 for ch in para if '一' <= ch <= '鿿' or '぀' <= ch <= 'ヿ')
-            if cjk > len(para) * 0.3:
-                # CJK: character-by-character
-                line = ""
-                for ch in para:
-                    if f.getlength(line + ch) > max_width:
-                        if line:
-                            total += 1
-                        line = ch
-                    else:
-                        line += ch
-                if line:
-                    total += 1
-            else:
-                # Latin: word boundary
-                line = ""
-                for word in para.split():
-                    sep = " " if line else ""
-                    if f.getlength(line + sep + word) > max_width:
-                        if line:
-                            total += 1
-                            line = ""
-                        # If single word too long, char-break it
-                        if f.getlength(word) > max_width:
-                            partial = ""
-                            for ch in word:
-                                if f.getlength(partial + ch) > max_width:
-                                    if partial:
-                                        total += 1
-                                    partial = ch
-                                else:
-                                    partial += ch
-                            line = partial
-                        else:
-                            line = word
-                    else:
-                        line = line + sep + word
-                if line:
-                    total += 1
-        return total
-
-    # Binary search for largest fitting font
-    if _count_lines(text, min(desired, max_fs)) <= max_lines:
-        final_fs = min(desired, max_fs)
+    if font_size_mode == "fixed" and font_size > 0:
+        final_fs = desired
     else:
-        best = min_fs
-        lo, hi = min_fs, min(desired, max_fs)
-        while lo <= hi:
-            mid = (lo + hi) // 2
-            if mid < min_fs:
-                break
-            if _count_lines(text, mid) <= max_lines:
-                best = mid
-                lo = mid + 1
-            else:
-                hi = mid - 1
-        final_fs = best
+        def _count_lines(txt: str, fs: int) -> int:
+            """Count wrapped lines at given font size and max_width."""
+            try:
+                f = ImageFont.truetype(font_path, fs)
+            except Exception:
+                f = ImageFont.load_default()
+            total = 0
+            for para in txt.split("\n"):
+                if not para:
+                    total += 1
+                    continue
+                # Detect script and wrap accordingly
+                cjk = sum(1 for ch in para if '一' <= ch <= '鿿' or '぀' <= ch <= 'ヿ')
+                if cjk > len(para) * 0.3:
+                    # CJK: character-by-character
+                    line = ""
+                    for ch in para:
+                        if f.getlength(line + ch) > max_width:
+                            if line:
+                                total += 1
+                            line = ch
+                        else:
+                            line += ch
+                    if line:
+                        total += 1
+                else:
+                    # Latin: word boundary
+                    line = ""
+                    for word in para.split():
+                        sep = " " if line else ""
+                        if f.getlength(line + sep + word) > max_width:
+                            if line:
+                                total += 1
+                                line = ""
+                            # If single word too long, char-break it
+                            if f.getlength(word) > max_width:
+                                partial = ""
+                                for ch in word:
+                                    if f.getlength(partial + ch) > max_width:
+                                        if partial:
+                                            total += 1
+                                        partial = ch
+                                    else:
+                                        partial += ch
+                                line = partial
+                            else:
+                                line = word
+                        else:
+                            line = line + sep + word
+                    if line:
+                        total += 1
+            return total
+
+        # Binary search for largest fitting font
+        if _count_lines(text, min(desired, max_fs)) <= max_lines:
+            final_fs = min(desired, max_fs)
+        else:
+            best = min_fs
+            lo, hi = min_fs, min(desired, max_fs)
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                if mid < min_fs:
+                    break
+                if _count_lines(text, mid) <= max_lines:
+                    best = mid
+                    lo = mid + 1
+                else:
+                    hi = mid - 1
+            final_fs = best
 
     # Re-load font at final size
     try:
@@ -1876,6 +1882,7 @@ async def subtitle_preview(
     font_size_factor: float = 0.030,
     max_font_size: int = 0,
     caption_width_ratio: float = 0.85,
+    font_size_mode: str = "adaptive",
 ) -> StreamingResponse:
     """Render a subtitle preview image.
 
@@ -1929,6 +1936,7 @@ async def subtitle_preview(
                 alignment=alignment, position=position,
                 max_lines=max_lines, font_size_factor=font_size_factor,
                 max_font_size=max_font_size, caption_width_ratio=caption_width_ratio,
+                font_size_mode=font_size_mode,
             )
         except Exception as e:
             logger.error("PIL render failed: %s", e)

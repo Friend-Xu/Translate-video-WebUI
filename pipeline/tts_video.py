@@ -231,8 +231,14 @@ class VideoSegmenter:
                 logger.warning("OpenVoice clone 失败: %s", e)
                 with open(r".\file\openvoice_error_log.txt", "a", encoding="utf-8") as f:
                     f.write(f"发生错误: {str(e)}\n")
-                # fallback: 只放 TTS（不混背景乐）
-                slow_down_clip = slow_down_clip.with_audio(tts_audio.subclipped(0, tts_dur))
+                # fallback: 背景乐 + TTS 混合（跳过音色克隆）
+                instr_path = self._export_audio_to_wav(audio_instrumental)
+                self._ffmpeg_mix_audio(
+                    [instr_path, tts_audio_path],
+                    mixed_wav,
+                    speed_factors=[speed_factor, 1.0],
+                    output_duration=tts_dur,
+                )
         else:
             # ★ 核心修复: ffmpeg amix 替代 CompositeAudioClip
             #   背景乐变速 + TTS 混合，一步到位

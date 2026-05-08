@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import {
   Box, Typography, Card, CardContent, FormControlLabel, Checkbox,
   TextField, Stack, Chip, Select, MenuItem, Button, Divider,
-  CircularProgress, Tooltip,
+  CircularProgress, Tooltip, ToggleButton, ToggleButtonGroup,
 } from '@mui/material'
 import Grid from '@mui/material/Grid'
 import RestoreIcon from '@mui/icons-material/RestoreRounded'
@@ -163,6 +163,7 @@ export function AdvancedSettings({ config, onConfigChange, showTitle = true }: A
         font_size_factor: String(config.captionFontSizeFactor || 0.030),
         max_font_size: String(config.captionMaxFontSize || 0),
         caption_width_ratio: String(config.captionWidthRatio || 0.85),
+        font_size_mode: config.captionFontSizeMode || 'adaptive',
       })
       setPreviewLoading(true)
       setPreviewError(null)
@@ -370,12 +371,38 @@ export function AdvancedSettings({ config, onConfigChange, showTitle = true }: A
               </Box>
               <Box>
                 <Typography variant="caption" color="text.secondary">
-                  字号 (自动 → {autoFontSize}px)
+                  字号模式
                 </Typography>
-                <TextField size="small" type="number" fullWidth value={autoFontSize}
-                  disabled
-                  inputProps={{ min: 0, max: 120, step: 2 }}
-                  sx={{ mt: 0.25, bgcolor: 'action.disabledBackground' }} />
+                <ToggleButtonGroup size="small" fullWidth exclusive
+                  value={config.captionFontSizeMode || 'adaptive'}
+                  onChange={(_, v) => {
+                    if (!v) return
+                    onConfigChange('captionFontSizeMode', v)
+                    if (v === 'fixed' && !(config.captionFontSize > 0)) {
+                      onConfigChange('captionFontSize', autoFontSize)
+                    }
+                  }}
+                  sx={{ mt: 0.25, '& .MuiToggleButton-root': { flex: 1, py: 0.5 } }}>
+                  <ToggleButton value="adaptive">自适应</ToggleButton>
+                  <ToggleButton value="fixed">固定</ToggleButton>
+                </ToggleButtonGroup>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">
+                  {config.captionFontSizeMode === 'fixed'
+                    ? `字号 (固定) px`
+                    : `字号 (自适应 → ${autoFontSize}px)`}
+                </Typography>
+                <TextField size="small" type="number" fullWidth
+                  value={config.captionFontSizeMode === 'fixed'
+                    ? (config.captionFontSize || autoFontSize)
+                    : autoFontSize}
+                  disabled={config.captionFontSizeMode !== 'fixed'}
+                  onChange={e => onConfigChange('captionFontSize', Number(e.target.value))}
+                  inputProps={{ min: 8, max: 200, step: 2 }}
+                  sx={{ mt: 0.25, bgcolor: config.captionFontSizeMode === 'fixed'
+                    ? 'background.paper'
+                    : 'action.disabledBackground' }} />
               </Box>
               <Box>
                 <Typography variant="caption" color="text.secondary">描边宽度 (0=默认)</Typography>

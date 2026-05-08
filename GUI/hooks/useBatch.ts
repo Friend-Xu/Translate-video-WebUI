@@ -47,6 +47,7 @@ export function useBatch() {
       force: config.forceRetry,
       num_workers: config.numWorkers,
       caption_font: config.captionFont,
+      caption_font_size_mode: config.captionFontSizeMode,
       caption_font_size: config.captionFontSize,
       caption_font_color: config.captionFontColor,
       caption_stroke_width: config.captionStrokeWidth,

@@ -19,6 +19,9 @@ class CaptionConfig:
     font: str = ""
     """字体路径或系统字体名（空 = 默认 Minecraft 字体）"""
 
+    font_size_mode: str = "adaptive"
+    """字号模式: adaptive（自适应）| fixed（固定）"""
+
     font_size: int = 0
     """字号 px（0 = 自动根据视频宽度计算）"""
 
@@ -56,6 +59,8 @@ class CaptionConfig:
     """是否启用字幕拆分优化"""
 
     def __post_init__(self) -> None:
+        if self.font_size_mode not in ("adaptive", "fixed"):
+            raise ValueError(f"font_size_mode 仅支持 adaptive/fixed，当前: {self.font_size_mode}")
         if self.alignment not in ("center", "left", "right"):
             raise ValueError(f"alignment 仅支持 center/left/right，当前: {self.alignment}")
         if self.position not in ("bottom", "top"):
@@ -120,6 +125,8 @@ class CaptionConfig:
             overrides["caption_max_lines"] = self.max_lines
         if self.max_font_size > 0:
             overrides["caption_max_font_size"] = self.max_font_size
+        if self.font_size_mode != "adaptive":
+            overrides["caption_font_size_mode"] = self.font_size_mode
         if abs(self.font_size_factor - 0.030) > 1e-6:
             overrides["caption_font_size_factor"] = self.font_size_factor
         if abs(self.width_ratio - 0.85) > 1e-6:

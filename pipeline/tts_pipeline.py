@@ -129,7 +129,7 @@ class TtsPipeline:
         )
 
     def _default_video(self) -> VideoSegmenter:
-        voice_clone_enabled = self.config.voice_clone_engine != "none"
+        voice_clone_enabled = self.config.voice_clone_active
         return VideoSegmenter(
             video_output_dir=os.path.join(self.config.output_dir, "video"),
             clone_color=voice_clone_enabled,
@@ -154,6 +154,7 @@ class TtsPipeline:
             stroke_width=self.config.caption_stroke_width if self.config.caption_stroke_width > 0 else 0.5,
             bg_color=self.config.caption_bg_color or "rgba(0,0,0,128)",
             font_size_factor=self.config.caption_font_size_factor,
+            font_size_mode=self.config.caption_font_size_mode,
             caption_width_ratio=self.config.caption_width_ratio,
             max_lines=self.config.caption_max_lines,
             max_font_size=self.config.caption_max_font_size if self.config.caption_max_font_size > 0 else None,
@@ -170,11 +171,7 @@ class TtsPipeline:
         """
         engine = self.config.voice_clone_engine
 
-        if engine == "none":
-            return NoopVoiceCloner()
-
-        # 向后兼容：旧 enable_openvoice 标志
-        if engine == "openvoice" and not self.config.enable_openvoice:
+        if not self.config.voice_clone_active:
             return NoopVoiceCloner()
 
         vc_config = VoiceCloneConfig(
