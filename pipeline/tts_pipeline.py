@@ -28,6 +28,9 @@ from pipeline.vc_base import VoiceCloneConfig, NoopVoiceCloner
 from pipeline.tts_resume import ResumeManager, ResumeState
 
 from pipeline.tts_engine import BaseTTSEngine
+from pipeline.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class TtsPipeline:
@@ -359,7 +362,7 @@ class TtsPipeline:
         # 设置 ResumeManager 总字幕数
         self._resume_manager.state.total_subs = len(subs_cn)
 
-        print(f"TTS Pipeline: {len(subs_cn)} 条字幕, 视频总长 {total_duration:.1f}s")
+        logger.info(f"TTS Pipeline: {len(subs_cn)} 条字幕, 视频总长 {total_duration:.1f}s")
 
         # ── 字幕渲染优化（可选） ───────────────────────
         caption_groups = None
@@ -368,7 +371,7 @@ class TtsPipeline:
             caption_groups = optimize(subs_cn, subs_en, self.caption, video.w)
             total_sub_captions = sum(len(g) for g in caption_groups)
             if total_sub_captions > len(subs_cn):
-                print(f"  字幕优化: {len(subs_cn)} → {total_sub_captions} 段 (拆分 {total_sub_captions - len(subs_cn)} 条)")
+                logger.info(f"字幕优化: {len(subs_cn)} → {total_sub_captions} 段 (拆分 {total_sub_captions - len(subs_cn)} 条)")
 
         # 背景音乐：提取各个视频段对应的独立 WAV 片段
         def _extract_instrumental_segment(seg_start_ms: int, seg_end_ms: int) -> str | None:
@@ -539,17 +542,15 @@ class TtsPipeline:
         video.close()
 
         # 最终报告
-        print()
-        print("=" * 50)
-        print("TTS Pipeline 完成")
-        print(f"  总计: {total} 条字幕")
-        print(f"  ✅ 成功: {processed}")
-        print(f"  ⏭ 跳过（含断点续传）: {skipped}")
+        summary = (
+            f"TTS Pipeline 完成 | 总计:{total} 成功:{processed} 跳过:{skipped}"
+        )
         if errors > 0:
-            print(f"  ❌ 失败: {errors}")
+            logger.warning(summary + f" 失败:{errors}")
             for err in self._resume_manager.state.error_subtitles:
-                print(f"    [{err['start']}-{err['end']}]: {err['error']}")
-        print("=" * 50)
+                logger.error(f"[{err['start']}-{err['end']}]: {err['error']}")
+        else:
+            logger.info(summary)
 
         # 合并视频段
         if self.config.enable_merge:
@@ -570,6 +571,6 @@ class TtsPipeline:
         result = merger.merge(segment_dir, self.config.final_output_path)
 
         if result:
-            print(f"✅ 最终视频已保存: {result}")
+            logger.info(f"最终视频已保存: {result}")
         else:
-            print(f"⚠️ 视频段合并失败，各段仍保留在 {segment_dir}")
+            logger.warning(f"视频段合并失败，各段仍保留在 {segment_dir}")

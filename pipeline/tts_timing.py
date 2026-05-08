@@ -16,6 +16,10 @@ import subprocess
 from dataclasses import dataclass
 from typing import Callable, Optional, Tuple
 
+from pipeline.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 @dataclass
 class Segment:
@@ -319,13 +323,13 @@ class TimingAdjuster:
                             )
 
                             if not reached_limit:
-                                print(f"{start}_{end}_语速调整完成")
+                                logger.info(f"{start}_{end}_语速调整完成")
                                 self._ffmpeg_copy_wav(write_audio_path, output_audio_path)
                                 return None, AdjustResult(
                                     "speed_up", final_duration=wav_time, rate_used=rate
                                 )
                             else:
-                                print("\033[0;31;40m", "语速达到极限", "\033[0m")
+                                logger.warning("语速达到极限")
                                 over_timr_audio_path = os.path.join(
                                     os.path.dirname(output_audio_path),
                                     f"temp_audio_{start}_{end}_overtime.wav",
@@ -341,12 +345,12 @@ class TimingAdjuster:
                                 )
 
                     else:
-                        print("本条字幕start到下条字幕start的间隔时长等于合成的语音时长")
+                        logger.info("本条字幕间隔时长等于合成语音时长")
                         return None, AdjustResult("target_reached", final_duration=wav_time)
 
                 # ── 分支 B：最后一条字幕 ────────────────────
                 else:
-                    print("---------开始合成最后一条TTS音频---------")
+                    logger.info("开始合成最后一条TTS音频")
                     sub_time = (end - start) / 1000
                     write_audio_path = os.path.join(
                         self.trail_dir, f"temp_audio_{start}_{end}.wav"
@@ -359,7 +363,7 @@ class TimingAdjuster:
                         )
 
                         if not reached_limit:
-                            print("语速调整完成")
+                            logger.info("语速调整完成")
                             self._ffmpeg_copy_wav(write_audio_path, output_audio_path)
                             return None, AdjustResult(
                                 "speed_up", final_duration=wav_time, rate_used=rate

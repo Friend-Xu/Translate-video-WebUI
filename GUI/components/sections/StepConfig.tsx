@@ -231,6 +231,21 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   <Typography variant="caption" display="block" mb={1}>TTS 音频过短时，视频最多加速到此倍数 (&gt;1.0 = 加速，预留，当前策略不使用)</Typography>
                   <Slider value={config.videoSpeedMax} min={1.05} max={2.00} step={0.05} marks={[{ value: 1.05, label: '1.05x' }, { value: 1.25, label: '1.25x' }, { value: 2.00, label: '2.00x' }]} onChange={(_, v) => onConfigChange('videoSpeedMax', v as number)} />
                 </Box>
+                <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                  <Box display="flex" justifyContent="space-between">
+                    <Typography variant="body2" fontWeight={500}>TTS 线程数</Typography>
+                    <Typography variant="body2" fontWeight={600} color="primary">{config.ttsWorkers}</Typography>
+                  </Box>
+                  <Typography variant="caption" display="block" mb={1}>EdgeTTS 并行合成线程数 (1=串行, 2~16=并行)</Typography>
+                  <Slider
+                    value={config.ttsWorkers}
+                    min={1}
+                    max={16}
+                    step={1}
+                    marks={[{ value: 1, label: '1' }, { value: 4, label: '4' }, { value: 7, label: '7' }, { value: 12, label: '12' }, { value: 16, label: '16' }]}
+                    onChange={(_, v) => onConfigChange('ttsWorkers', v as number)}
+                  />
+                </Box>
                 <FormControlLabel
                   control={<Checkbox checked={config.enableSubtitleOverlay} onChange={e => onConfigChange('enableSubtitleOverlay', e.target.checked)} />}
                   label={<Box><Typography variant="body2">启用字幕叠加</Typography><Typography variant="caption" display="block">选择是否在视频中显示字幕</Typography></Box>}

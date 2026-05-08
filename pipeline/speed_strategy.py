@@ -17,6 +17,10 @@ import os
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Tuple, Protocol, Dict, Any
 
+from pipeline.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 # ── 数据模型 ─────────────────────────────────────────
 
@@ -320,7 +324,7 @@ class GlobalStrategy:
         total_wav = 0.0
         total_avail_ms = 0
 
-        print("[GlobalStrategy] 预扫: 测量各段 TTS 时长...")
+        logger.info("预扫: 测量各段 TTS 时长...")
         for i, (start, end, text_cn) in enumerate(subs_cn):
             text_en = subs_en[i][2] if i < len(subs_en) else ""
             subs_next = subs_cn[i + 1] if i + 1 < len(subs_cn) else None
@@ -355,21 +359,21 @@ class GlobalStrategy:
         # 检查是否需要视频调速
         needs_video_adjust = target_rate >= self.ctx.speed_max and global_ratio > (self.ctx.speed_max / 100 + 1)
 
-        print(f"[GlobalStrategy] ΣTTS={total_wav:.1f}s, Σavail={total_avail_s:.1f}s")
-        print(f"[GlobalStrategy] 全局 ratio={global_ratio:.3f}, rate={global_rate_str}")
+        logger.info(f"ΣTTS={total_wav:.1f}s, Σavail={total_avail_s:.1f}s")
+        logger.info(f"全局 ratio={global_ratio:.3f}, rate={global_rate_str}")
         if needs_video_adjust:
             # rate 打满还不够 → 需要视频调速
             remain_factor = total_wav / (total_avail_s * (self.ctx.speed_max / 100 + 1))
             remain_factor = max(self.ctx.video_speed_min,
                                 min(remain_factor, self.ctx.video_speed_max))
-            print(f"[GlobalStrategy] rate 打满, 视频调速因子={remain_factor:.3f}")
+            logger.warning(f"rate 打满, 视频调速因子={remain_factor:.3f}")
 
         # ── 第三步：统一生成 TTS ───────────────────────
         processed = 0
         skipped = 0
         errors = 0
 
-        print(f"[GlobalStrategy] 统一生成 TTS (rate={global_rate_str})...")
+        logger.info(f"统一生成 TTS (rate={global_rate_str})...")
 
         def _extract_segment(seg_start_ms: int, seg_end_ms: int) -> str | None:
             if instrumental_path is None:

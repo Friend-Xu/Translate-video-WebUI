@@ -13,6 +13,10 @@ import subprocess
 from dataclasses import dataclass
 from typing import List, Optional
 
+from pipeline.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 @dataclass
 class MergerConfig:
@@ -85,7 +89,7 @@ class VideoMerger:
         """
         segments = self._collect_segments(segment_dir)
         if not segments:
-            print("[VideoMerger] 没有找到 TTS_*.mp4 视频段文件")
+            logger.warning("没有找到 TTS_*.mp4 视频段文件")
             return None
 
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -94,10 +98,10 @@ class VideoMerger:
             # 只有一个段，直接复制
             import shutil
             shutil.copy2(segments[0], output_path)
-            print(f"[VideoMerger] 单段复制到 {output_path}")
+            logger.info(f"单段复制到 {output_path}")
             return output_path
 
-        print(f"[VideoMerger] 合并 {len(segments)} 个视频段 → {output_path}")
+        logger.info(f"合并 {len(segments)} 个视频段 → {output_path}")
 
         if self.config.strategy == "ffmpeg":
             return self._ffmpeg_merge(segments, output_path)
@@ -136,7 +140,7 @@ class VideoMerger:
         try:
             result = subprocess.run(cmd, capture_output=True, text=True)
         except FileNotFoundError:
-            print(f"[VideoMerger] ffmpeg 不可用: {ffmpeg}")
+            logger.warning(f"ffmpeg 不可用: {ffmpeg}")
             # 清理 manifest
             try:
                 os.remove(manifest)
@@ -151,15 +155,15 @@ class VideoMerger:
             pass
 
         if result.returncode != 0:
-            print(f"[VideoMerger] ffmpeg concat 失败 (returncode={result.returncode})")
+            logger.error(f"ffmpeg concat 失败 (returncode={result.returncode})")
             # 截取最后几行 stderr 作为错误摘要
             err_lines = result.stderr.strip().split("\n")[-5:]
             for line in err_lines:
                 if line.strip():
-                    print(f"  {line.strip()}")
+                    logger.error(f"  {line.strip()}")
             return None
 
-        print(f"[VideoMerger] ffmpeg concat 完成: {output_path}")
+        logger.info(f"ffmpeg concat 完成: {output_path}")
         return output_path
 
     # ── moviepy concatenate ────────────────────────────
@@ -172,7 +176,7 @@ class VideoMerger:
         try:
             from moviepy import VideoFileClip, concatenate_videoclips
         except ImportError:
-            print("[VideoMerger] moviepy 不可用，无法使用 moviepy 策略")
+            logger.warning("moviepy 不可用，无法使用 moviepy 策略")
             return None
 
         clips = []
@@ -189,11 +193,11 @@ class VideoMerger:
                 logger=None,
             )
             final.close()
-            print(f"[VideoMerger] moviepy concat 完成: {output_path}")
+            logger.info(f"moviepy concat 完成: {output_path}")
             return output_path
 
         except Exception as e:
-            print(f"[VideoMerger] moviepy 合并失败: {e}")
+            logger.error(f"moviepy 合并失败: {e}")
             return None
 
         finally:

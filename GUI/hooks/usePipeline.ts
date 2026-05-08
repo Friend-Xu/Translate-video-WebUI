@@ -63,6 +63,7 @@ export function usePipeline() {
           skip_demucs: !config.enableDemucs,
           force: config.forceRetry,
           num_workers: config.numWorkers,
+          tts_workers: config.ttsWorkers,
           skip_align: !config.enableAlignment,
           align_lang: config.lang !== 'auto' ? config.lang : '',
           // Caption rendering params (all 13)

@@ -19,6 +19,10 @@ import numpy as np
 import soundfile as sf
 import torch
 
+from pipeline.logger import get_logger
+
+logger = get_logger(__name__)
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _DEMUCS_LOCAL_DIR = os.path.join(PROJECT_ROOT, "models", "Demucs")
 
@@ -166,7 +170,7 @@ def extract_instrumental(video_path: str, output_dir: str,
     instr_path = os.path.join(out_root, "no_vocals.wav")
 
     if os.path.isfile(instr_path):
-        print(f"  [Demucs] 已存在: {instr_path}")
+        logger.info(f"已存在: {instr_path}")
         return instr_path
 
     os.makedirs(out_root, exist_ok=True)
@@ -175,7 +179,7 @@ def extract_instrumental(video_path: str, output_dir: str,
 
     # ── Step 1: ffmpeg 提取音频 ──────────────────────
     tmp_wav = os.path.join(output_dir, f"_demucs_tmp_{name}.wav")
-    print(f"  [Demucs] 提取音频: {os.path.basename(video_path)}")
+    logger.info(f"提取音频: {os.path.basename(video_path)}")
     subprocess.run(
         [ffmpeg, "-y", "-i", video_path, "-vn",
          "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
@@ -184,7 +188,7 @@ def extract_instrumental(video_path: str, output_dir: str,
     )
 
     # ── Step 2: 加载模型（只加载一次） ─────────────────
-    print(f"  [Demucs] 加载 {model_name} 模型...")
+    logger.info(f"加载 {model_name} 模型...")
     _ensure_torch_home()
     from demucs import pretrained
     from demucs.apply import apply_model
@@ -195,7 +199,7 @@ def extract_instrumental(video_path: str, output_dir: str,
         dst = os.path.join(_DEMUCS_LOCAL_DIR, os.path.basename(src))
         if not os.path.isfile(dst):
             shutil.copy2(src, dst)
-            print(f"  [Demucs] checkpoint 已备份: {dst}")
+            logger.info(f"checkpoint 已备份: {dst}")
     model.cpu()
     model.eval()
 
@@ -204,11 +208,11 @@ def extract_instrumental(video_path: str, output_dir: str,
 
     # ── Step 3: 决定是否分段 ─────────────────────────
     duration = _get_audio_duration(tmp_wav)
-    print(f"  [Demucs] 音频时长: {duration/60:.1f} 分钟")
+    logger.info(f"音频时长: {duration/60:.1f} 分钟")
 
     if duration <= _CHUNK_THRESHOLD:
         # 短音频：直接全量处理
-        print(f"  [Demucs] 短音频，直接处理")
+        logger.info(f"短音频，直接处理")
         tensor, sr, ref = _load_and_norm(tmp_wav)
         if sr != sample_rate:
             from demucs.audio import convert_audio
@@ -229,7 +233,7 @@ def extract_instrumental(video_path: str, output_dir: str,
     else:
         # ── 长音频：重叠分段处理 ──────────────────────
         chunk_plan = _build_chunk_plan(duration)
-        print(f"  [Demucs] 长音频，切分为 {len(chunk_plan)} 段 "
+        logger.info(f"长音频，切分为 {len(chunk_plan)} 段 "
               f"({_CHUNK_OVERLAP}s overlap)")
 
         # 临时目录存放提取的原始重叠片段
@@ -239,7 +243,7 @@ def extract_instrumental(video_path: str, output_dir: str,
         for i, (ext_start, ext_end, keep_start, keep_end) in enumerate(chunk_plan):
             ext_dur = ext_end - ext_start
             chunk_raw = os.path.join(extract_dir, f"raw_{i:03d}.wav")
-            print(f"  [Demucs] 提取段 {i+1}/{len(chunk_plan)}: "
+            logger.info(f"提取段 {i+1}/{len(chunk_plan)}: "
                   f"[{ext_start:.0f}s, {ext_end:.0f}s)")
             _extract_chunk(ffmpeg, tmp_wav, chunk_raw, ext_start, ext_dur)
 
@@ -248,7 +252,7 @@ def extract_instrumental(video_path: str, output_dir: str,
                 from demucs.audio import convert_audio
                 tensor = convert_audio(tensor, sr, sample_rate, model.audio_channels)
 
-            print(f"  [Demucs] 分离段 {i+1}/{len(chunk_plan)}: "
+            logger.info(f"分离段 {i+1}/{len(chunk_plan)}: "
                   f"{os.path.basename(chunk_raw)}")
             with torch.no_grad():
                 sources = apply_model(
@@ -279,7 +283,7 @@ def extract_instrumental(video_path: str, output_dir: str,
             os.remove(chunk_raw)
 
         # ── 拼接各源 ──────────────────────────────
-        print(f"  [Demucs] 拼接 {len(chunk_plan)} 段...")
+        logger.info(f"拼接 {len(chunk_plan)} 段...")
         for src_name in source_names:
             final_path = os.path.join(out_root, f"{src_name}.wav")
             seg_list = per_source_segments[src_name]

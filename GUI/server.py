@@ -295,6 +295,7 @@ def _load_yaml_defaults() -> dict:
         "defaultEmotion": tts.get("default_emotion", "neutral"),
         "emotionRefAudio": tts.get("emotion_ref_audio") or "",
         "concurrency": trans.get("concurrency", {}).get("max_workers", tts.get("threading_workers", 3)),
+        "ttsWorkers": tts.get("threading_workers", 7),
         "enableCheckpoint": tts.get("enable_resume", False),
         "captionFont": tts.get("caption_font", ""),
         "videoCodec": tts.get("video_codec", "libx264"),
@@ -416,6 +417,7 @@ class RunRequest(BaseModel):
     caption_width_ratio: float = 0.85
     caption_optimize: bool = True
     num_workers: int = 1
+    tts_workers: int = 7
     skip_align: bool = False
     align_lang: str = ""
 
@@ -476,6 +478,7 @@ def _write_tts_runtime_config(req: RunRequest) -> str:
             "max_speed": req.max_speed,
             "video_speed_min": req.video_speed_min,
             "video_speed_max": req.video_speed_max,
+            "threading_workers": req.tts_workers,
         }
     }
     with open(config_path, "w", encoding="utf-8") as f:

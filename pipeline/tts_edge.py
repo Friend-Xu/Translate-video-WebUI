@@ -9,6 +9,10 @@ from typing import Optional
 from .tts_engine import BaseTTSEngine, EmotionStyle
 import os
 
+from pipeline.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 class EdgeTTSEngine(BaseTTSEngine):
     """Edge-TTS 语音合成引擎。

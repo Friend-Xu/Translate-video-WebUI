@@ -30,6 +30,7 @@ export interface PipelineConfig {
   openvoiceVersion: 'v1' | 'v2'
   concurrency: number
   numWorkers: number
+  ttsWorkers: number
   enableCheckpoint: boolean
   enableDefectCheck: boolean
   enableExtract: boolean
@@ -100,6 +101,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   openvoiceVersion: 'v2',
   concurrency: 3,
   numWorkers: 1,
+  ttsWorkers: 7,
   enableCheckpoint: true,
   enableDefectCheck: true,
   enableExtract: true,

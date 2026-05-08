@@ -11,6 +11,10 @@ import os
 from dataclasses import dataclass
 from typing import Optional, Tuple, Callable
 
+from pipeline.logger import get_logger
+
+logger = get_logger(__name__)
+
 
 @dataclass
 class SpeedDecision:
@@ -197,8 +201,8 @@ class VideoSegmenter:
         # 视频变速
         slow_down_clip = current_video.with_speed_scaled(speed_factor)
 
-        print(
-            f"原视频: {current_video.duration:.2f}s -> {slow_down_clip.duration:.2f}s (speed_factor={speed_factor:.3f})"
+        logger.info(
+            f"视频调速: {current_video.duration:.2f}s -> {slow_down_clip.duration:.2f}s (speed_factor={speed_factor:.3f})"
         )
         # 移除原视频音频
         slow_down_clip = slow_down_clip.with_audio(None)
@@ -224,7 +228,7 @@ class VideoSegmenter:
                     speed_factors=[speed_factor, 1.0],
                 )
             except Exception as e:
-                print("\033[33m", e, "\033[0m")
+                logger.warning("OpenVoice clone 失败: %s", e)
                 with open(r".\file\openvoice_error_log.txt", "a", encoding="utf-8") as f:
                     f.write(f"发生错误: {str(e)}\n")
                 # fallback: 只放 TTS（不混背景乐）
@@ -345,7 +349,7 @@ class VideoSegmenter:
 
         first_start, _, _ = subs[0]
         if first_start != 0:
-            print("-------处理视频开头无人声片段--------")
+            logger.info("处理视频开头无人声片段")
             cm = video.subclipped(0, first_start / 1000)
             audio = _get_audio(0, first_start)
             cm = cm.with_audio(None).with_audio(audio)
@@ -363,7 +367,7 @@ class VideoSegmenter:
 
         last_start, last_end, _ = subs[-1]
         if last_end != total_video_duration * 1000:
-            print("-------处理视频结尾无人声片段--------")
+            logger.info("处理视频结尾无人声片段")
             cm = video.subclipped(last_end / 1000, total_video_duration)
             audio = _get_audio(last_end, int(total_video_duration * 1000))
             cm = cm.with_audio(None).with_audio(audio)
