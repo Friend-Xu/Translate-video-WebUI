@@ -284,6 +284,10 @@ def _load_yaml_defaults() -> dict:
     return {
         "engine": tts.get("engine_type", "edge"),
         "voice": tts.get("voice", "zh-CN-XiaoxiaoNeural"),
+        "speechRate": tts.get("base_speed", 30),
+        "maxSpeed": tts.get("max_speed", 100),
+        "videoSpeedMin": tts.get("video_speed_min", 0.60),
+        "videoSpeedMax": tts.get("video_speed_max", 2.00),
         "enableVoiceClone": tts.get("enable_openvoice", False),
         "voiceCloneSample": tts.get("voice_clone_sample") or "",
         "openvoiceVersion": tts.get("openvoice_model_version", "v2"),
@@ -387,6 +391,11 @@ class RunRequest(BaseModel):
     device: str = "cuda"
     compute_type: str = "float16"
     engine: str = "edge"
+    voice: str = "zh-CN-XiaoxiaoNeural"
+    speech_rate: int = 30
+    max_speed: int = 100
+    video_speed_min: float = 0.60
+    video_speed_max: float = 2.00
     skip_extract: bool = False
     skip_translate: bool = False
     skip_tts: bool = False
@@ -450,10 +459,36 @@ def _write_caption_config(req: RunRequest) -> str:
     return str(caption_config_path)
 
 
+def _write_tts_runtime_config(req: RunRequest) -> str:
+    """Write runtime TTS YAML with frontend-adjustable fields only.
+
+    Only writes fields the user can adjust from the WebUI (engine, voice, speed).
+    TTSConfig.from_yaml() fills missing fields with dataclass defaults, which match
+    the same defaults used when running without --config.
+    """
+    config_path = PROJECT_ROOT / "config" / "runtime_tts.yaml"
+    config_path.parent.mkdir(exist_ok=True)
+    data = {
+        "tts": {
+            "engine_type": req.engine,
+            "voice": req.voice,
+            "base_speed": req.speech_rate,
+            "max_speed": req.max_speed,
+            "video_speed_min": req.video_speed_min,
+            "video_speed_max": req.video_speed_max,
+        }
+    }
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(data, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
+    return str(config_path)
+
+
 def _build_cli_args(req: RunRequest) -> list[str]:
     caption_config_path = _write_caption_config(req)
+    tts_config_path = _write_tts_runtime_config(req)
     args: list[str] = [
         str(VENV_PYTHON), str(MAIN_SCRIPT), str(req.video_path),
+        "--config", tts_config_path,
         "--model", req.model,
         "--device", req.device,
         "--compute-type", req.compute_type,
@@ -487,6 +522,7 @@ async def _run_job_sync(job: Job, args: list[str]) -> None:
     """Run a single job and wait for completion (for batch processing)."""
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUNBUFFERED"] = "1"
     try:
         job.process = await asyncio.create_subprocess_exec(
             *args,

@@ -201,11 +201,35 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                 </Box>
                 <Box>
                   <Box display="flex" justifyContent="space-between">
-                    <Typography variant="body2" fontWeight={500}>语速设置</Typography>
+                    <Typography variant="body2" fontWeight={500}>基础语速</Typography>
                     <Typography variant="body2" fontWeight={600} color="primary">{config.speechRate}%</Typography>
                   </Box>
-                  <Typography variant="caption" display="block" mb={1}>语速 (30%~50%)</Typography>
-                  <Slider value={config.speechRate} min={30} max={50} onChange={(_, v) => onConfigChange('speechRate', v as number)} />
+                  <Typography variant="caption" display="block" mb={1}>TTS 合成起始语速 (10%~50%)</Typography>
+                  <Slider value={config.speechRate} min={10} max={50} onChange={(_, v) => onConfigChange('speechRate', v as number)} />
+                </Box>
+                <Box>
+                  <Box display="flex" justifyContent="space-between">
+                    <Typography variant="body2" fontWeight={500}>最大语速</Typography>
+                    <Typography variant="body2" fontWeight={600} color="primary">{config.maxSpeed}%</Typography>
+                  </Box>
+                  <Typography variant="caption" display="block" mb={1}>对齐时允许的最高加速 (50%~100%)</Typography>
+                  <Slider value={config.maxSpeed} min={50} max={100} step={5} marks={[{ value: 50, label: '50%' }, { value: 70, label: '70%' }, { value: 100, label: '100%' }]} onChange={(_, v) => onConfigChange('maxSpeed', v as number)} />
+                </Box>
+                <Box>
+                  <Box display="flex" justifyContent="space-between">
+                    <Typography variant="body2" fontWeight={500}>视频最低速度</Typography>
+                    <Typography variant="body2" fontWeight={600} color="primary">{config.videoSpeedMin}x</Typography>
+                  </Box>
+                  <Typography variant="caption" display="block" mb={1}>TTS 音频过长时，视频最多减速到此倍数 (&lt;1.0 = 减速)</Typography>
+                  <Slider value={config.videoSpeedMin} min={0.50} max={1.00} step={0.05} marks={[{ value: 0.50, label: '0.50x' }, { value: 0.60, label: '0.60x' }, { value: 0.80, label: '0.80x' }, { value: 1.00, label: '1.00x' }]} onChange={(_, v) => onConfigChange('videoSpeedMin', v as number)} />
+                </Box>
+                <Box>
+                  <Box display="flex" justifyContent="space-between">
+                    <Typography variant="body2" fontWeight={500}>视频最高速度</Typography>
+                    <Typography variant="body2" fontWeight={600} color="primary">{config.videoSpeedMax}x</Typography>
+                  </Box>
+                  <Typography variant="caption" display="block" mb={1}>TTS 音频过短时，视频最多加速到此倍数 (&gt;1.0 = 加速，预留，当前策略不使用)</Typography>
+                  <Slider value={config.videoSpeedMax} min={1.05} max={2.00} step={0.05} marks={[{ value: 1.05, label: '1.05x' }, { value: 1.25, label: '1.25x' }, { value: 2.00, label: '2.00x' }]} onChange={(_, v) => onConfigChange('videoSpeedMax', v as number)} />
                 </Box>
                 <FormControlLabel
                   control={<Checkbox checked={config.enableSubtitleOverlay} onChange={e => onConfigChange('enableSubtitleOverlay', e.target.checked)} />}

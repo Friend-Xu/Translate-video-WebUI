@@ -50,6 +50,7 @@ Thumbs.db
 .env
 .env.local
 config/translate.yaml
+config/runtime_tts.yaml
 
 # ZIP archives
 *.zip
@@ -108,3 +109,4 @@ __启动脚本.bat
 # Personal planning / dev notes
 计划开发/
 .worktrees/
+GUI/graphify-out/

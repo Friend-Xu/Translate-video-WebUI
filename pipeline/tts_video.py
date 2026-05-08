@@ -39,11 +39,13 @@ class VideoSegmenter:
         caption: bool = True,
         openvoice_cloner: Optional[Callable] = None,
         caption_renderer: Optional[Callable] = None,
-        video_bitrate: str = "5000000000k",
+        video_bitrate: str = "5M",
         video_codec: str = "libx264",
-        video_preset: Optional[str] = None,
+        video_preset: Optional[str] = "medium",
         audio_codec: str = "aac",
         speed_tolerance: float = 0.15,
+        video_speed_min: float = 0.60,
+        video_speed_max: float = 2.00,
     ):
         self.video_output_dir = video_output_dir
         self.clone_color = clone_color
@@ -55,6 +57,8 @@ class VideoSegmenter:
         self.video_preset = video_preset
         self.audio_codec = audio_codec
         self.speed_tolerance = speed_tolerance
+        self.video_speed_min = video_speed_min
+        self.video_speed_max = video_speed_max
 
     def decide_speed(self, tts_duration: float, video_duration: float) -> SpeedDecision:
         """两级决策：TTS 时长与视频时长的匹配策略。"""
@@ -179,7 +183,16 @@ class VideoSegmenter:
         )
         import tempfile
 
-        speed_factor = current_video.duration / tts_audio.duration
+        # ── 视频调速策略 ──────────────────────────────────
+        # 不变量: 视频时长 >= TTS 音频时长
+        # 情况一/二: TTS 已适配 → 视频不变速 (speed_factor = 1.0)
+        # 情况三: TTS 达最大语速仍超视频 → 减速视频 (speed_factor < 1)
+        if tts_audio.duration <= current_video.duration:
+            speed_factor = 1.0
+        else:
+            speed_factor = current_video.duration / tts_audio.duration
+            if speed_factor < self.video_speed_min:
+                speed_factor = self.video_speed_min
 
         # 视频变速
         slow_down_clip = current_video.with_speed_scaled(speed_factor)
@@ -235,18 +248,24 @@ class VideoSegmenter:
         if self.caption and self.caption_renderer:
             if caption_groups and len(caption_groups) > 0:
                 from moviepy import CompositeVideoClip
+                # 计算字幕时间轴缩放比例，防止字幕超越视频末尾导致黑屏
+                total_cap_ms = max(t1 for _, t1, _, _ in caption_groups)
+                cap_scale = 1.0
+                video_dur_s = slow_down_clip.duration
+                if total_cap_ms / 1000.0 > video_dur_s:
+                    cap_scale = video_dur_s * 1000.0 / total_cap_ms
                 clips = [slow_down_clip]
                 for t0, t1, t_text, s_text in caption_groups:
-                    dur_sec = (t1 - t0) / 1000.0
+                    dur_sec = (t1 - t0) * cap_scale / 1000.0
                     cap_composite = self.caption_renderer(
                         slow_down_clip, dur_sec, t_text, s_text
                     )
                     # cap_composite = [video, bg, text]; strip video, keep overlays
                     if hasattr(cap_composite, 'clips') and len(cap_composite.clips) > 1:
                         for overlay in cap_composite.clips[1:]:
-                            clips.append(overlay.with_start(t0 / 1000.0))
+                            clips.append(overlay.with_start(t0 * cap_scale / 1000.0))
                     else:
-                        clips.append(cap_composite.with_start(t0 / 1000.0))
+                        clips.append(cap_composite.with_start(t0 * cap_scale / 1000.0))
                 slow_down_clip = CompositeVideoClip(clips, size=slow_down_clip.size)
             else:
                 slow_down_clip = self.caption_renderer(

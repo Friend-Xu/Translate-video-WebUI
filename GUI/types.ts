@@ -7,6 +7,9 @@ export interface PipelineConfig {
   engine: 'edge' | 'chattts' | 'coqui' | 'azure'
   voice: string
   speechRate: number
+  maxSpeed: number
+  videoSpeedMin: number
+  videoSpeedMax: number
   apiKey: string
   apiType: string
   maxTokens: number
@@ -74,6 +77,9 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   engine: 'edge',
   voice: 'zh-CN-XiaoxiaoNeural',
   speechRate: 40,
+  maxSpeed: 100,
+  videoSpeedMin: 0.60,
+  videoSpeedMax: 2.00,
   apiKey: '',
   apiType: 'deepseek',
   maxTokens: 4000,

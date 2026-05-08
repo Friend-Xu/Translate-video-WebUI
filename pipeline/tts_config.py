@@ -29,8 +29,8 @@ class TTSConfig:
     base_speed: int = 30
     """TTS 基础语速: +30% (对应 edge-tts rate 参数, 实际值为 +30%)"""
 
-    max_speed: int = 50
-    """TTS 最大语速: +50% (降低此值可提升音质。超出此值不再加速，进入兜底逻辑)"""
+    max_speed: int = 100
+    """TTS 最大语速: +100% (达到上限仍超视频时长时，减速视频兜底)"""
 
     # ── ChatTTS 专用参数 ──────────────────────────────────
     chattts_speaker_seed: Optional[int] = None
@@ -52,11 +52,11 @@ class TTSConfig:
       执行更快但精细度略低。
     """
 
-    search_method: str = "linear"
+    search_method: str = "binary"
     """TTS rate 搜索方式: "linear" | "binary"
 
+    - binary: 二分搜索，减少 API 调用次数（推荐）
     - linear: 从初始系数逐次 +1%，与原版一致
-    - binary: 二分搜索，减少 API 调用次数
     """
 
     # ── 视频段变速调节参数（核心功能） ────────────────────
@@ -70,11 +70,11 @@ class TTSConfig:
       → 启用 TTS 语速调速（EdgeTTS rate 参数）
     """
 
-    video_speed_min: float = 0.75
-    """视频最低加速因子（<1=减速，>1=加速）。默认 0.75 = 最多减速到原速 75%。"""
+    video_speed_min: float = 0.60
+    """视频最低速度因子（<1=减速）。默认 0.60 = 最多减速到原速 60%。"""
 
-    video_speed_max: float = 1.25
-    """视频最高加速因子。默认 1.25 = 最多加速 25%。"""
+    video_speed_max: float = 2.00
+    """视频最高速度因子（>1=加速）。当前策略不使用，保留给后续平滑优化。"""
 
     search_step: int = 1
     """linear 模式搜索步长百分比。原版为 1，可适当提高减少循环次数。"""

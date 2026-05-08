@@ -43,7 +43,7 @@ class TimingAdjuster:
 
     def __init__(
         self,
-        speed_max: int = 70,
+        speed_max: int = 100,
         base_speed: int = 30,
         trail_dir: str = "file/trail",
         audio_codec: str = "pcm_s32le",
@@ -169,14 +169,30 @@ class TimingAdjuster:
             else:
                 lo = mid + 1  # 需要更高 rate
 
-        # 二分收敛后，微调 ±1
+        # 二分收敛后，微调
         rate = f"+{lo}%"
         wav_time = tts_synthesize_fn(text, write_audio_path, rate)
 
-        # 如果 lo 不 fit，回溯到 last_fit
+        # 如果 lo 不 fit（Edge TTS 非线性），就近查 3 步，再超就二分
         if wav_time > target_time:
-            for back in range(lo + 1, self.speed_max + 1):
+            for back in range(lo + 1, min(lo + 4, self.speed_max + 1)):
                 rate = f"+{back}%"
+                wav_time = tts_synthesize_fn(text, write_audio_path, rate)
+                if wav_time <= target_time:
+                    return False, wav_time, rate
+            # 未在邻近找到 → 剩余区间二分搜索
+            remain_lo = lo + 4
+            remain_hi = self.speed_max
+            if remain_lo < remain_hi:
+                while remain_lo < remain_hi:
+                    mid = (remain_lo + remain_hi) // 2
+                    rate = f"+{mid}%"
+                    wav_time = tts_synthesize_fn(text, write_audio_path, rate)
+                    if wav_time <= target_time:
+                        remain_hi = mid
+                    else:
+                        remain_lo = mid + 1
+                rate = f"+{remain_lo}%"
                 wav_time = tts_synthesize_fn(text, write_audio_path, rate)
                 if wav_time <= target_time:
                     return False, wav_time, rate
@@ -184,12 +200,13 @@ class TimingAdjuster:
 
         # 如果 lo 有余量，尝试再降 1-2%
         if lo > self.base_speed:
-            for lower in range(lo - 1, self.base_speed - 1, -1):
+            for lower in range(lo - 1, max(lo - 3, self.base_speed - 1), -1):
+                if lower < self.base_speed:
+                    break
                 test_rate = f"+{lower}%"
                 test_wav = tts_synthesize_fn(text, write_audio_path, test_rate)
                 if test_wav <= target_time:
                     return False, test_wav, test_rate
-                # 超了但很接近？保留 lo
                 break
 
         return False, wav_time, rate

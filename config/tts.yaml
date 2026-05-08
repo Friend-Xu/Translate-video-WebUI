@@ -2,7 +2,8 @@ tts:
   engine_type: edge
   voice: zh-CN-XiaoxiaoNeural
   base_speed: 30
-  max_speed: 70
+  max_speed: 100
+  search_method: binary
   speed_tolerance: 0.15
   enable_emotion: false
   emotion_engine: ''

@@ -119,6 +119,7 @@ class TtsPipeline:
         return TimingAdjuster(
             speed_max=self.config.max_speed,
             base_speed=self.config.base_speed,
+            search_method=self.config.search_method,
             trail_dir=os.path.join(self.config.output_dir, "trail"),
             audio_codec=self.config.audio_codec,
             audio_bitrate=self.config.audio_bitrate,
@@ -131,6 +132,8 @@ class TtsPipeline:
             clone_color=voice_clone_enabled,
             caption=self.config.enable_caption,
             speed_tolerance=self.config.speed_tolerance,
+            video_speed_min=self.config.video_speed_min,
+            video_speed_max=self.config.video_speed_max,
             openvoice_cloner=self.voice_cloner.clone if hasattr(self.voice_cloner, 'clone') else None,
             caption_renderer=self._render_caption,
             video_bitrate=self.config.video_bitrate,
@@ -315,9 +318,10 @@ class TtsPipeline:
             return {"start": start, "end": end, "text_zh": text_zh, "error": error_msg, "success": False}
 
     def _log_subtitle_error(self, start: int, end: int, text: str, error: str):
-        """记录单条字幕的处理错误。"""
+        """记录单条字幕的处理错误（线程安全）。"""
         tqdm.write(f"[ERROR] 字幕 [{start}-{end}] 处理失败: {error}")
-        self._resume_manager.add_error(start, end, text, error)
+        with self._lock1:
+            self._resume_manager.add_error(start, end, text, error)
 
     # ── 主入口 ────────────────────────────────────────
 
@@ -432,9 +436,8 @@ class TtsPipeline:
             skipped = len(subs_cn) - processed - result.total_error
             errors = result.total_error
 
-        # ── PerSegment 模式：逐段精细调速（原版算法） ──
+        # ── PerSegment 模式：并行逐段精细调速 ──
         else:
-            # 进度条
             total = len(subs_cn)
             skipped = 0
             errors = 0
@@ -442,58 +445,95 @@ class TtsPipeline:
 
             pbar = tqdm(total=total, desc="🎤 TTS 转写", unit="条", ncols=80)
 
-            # 迭代每个字幕段
+            # Phase 1: 准备所有任务参数（主线程）
+            tasks = []
             for i, (start, end, text_cn) in enumerate(subs_cn):
-                try:
-                    # 安全检查：跳过无效时间戳
-                    if end <= start:
-                        tqdm.write(f"  [WARN] 跳过无效字幕段 #{i}: start={start}ms >= end={end}ms")
-                        skipped += 1
-                        continue
-                    if start < 0 or end < 0:
-                        tqdm.write(f"  [WARN] 跳过负时间戳字幕段 #{i}")
-                        skipped += 1
-                        continue
-
-                    # 断点续传：跳过已处理的
-                    if self._resume_manager.is_processed(start, end):
-                        skipped += 1
-                        continue
-
-                    text_en = subs_en[i][2] if i < len(subs_en) else ""
-
-                    # 获取下一条字幕
-                    subs_next = subs_cn[i + 1] if i + 1 < len(subs_cn) else None
-
-                    # 裁剪视频段（有下一条时扩展到下一条起始，给 TTS 缓冲空间）
-                    video_end = subs_next[0] if subs_next else end
-                    current_video = video.subclipped(start / 1000, video_end / 1000)
-
-                    # 背景乐段同步扩展
-                    instr_seg_path = _extract_instrumental_segment(start, video_end)
-                    instrumental_segment = AudioFileClip(instr_seg_path) if instr_seg_path else None
-
-                    result = self._process_single_subtitle(
-                        text_cn, text_en, start, end,
-                        current_video, instrumental_segment,
-                        subs_next=(subs_next[0], subs_next[1], subs_next[2]) if subs_next else None,
-                        caption_groups=caption_groups[i] if caption_groups else None,
-                    )
-
-                    if result and result.get("success"):
-                        processed += 1
-                    elif result and not result.get("success"):
-                        errors += 1
-                    else:
-                        skipped += 1
-
-                    current_video.close()
-                    if instrumental_segment is not None:
-                        instrumental_segment.close()
-
-                finally:
+                # 安全检查：跳过无效时间戳
+                if end <= start:
+                    tqdm.write(f"  [WARN] 跳过无效字幕段 #{i}: start={start}ms >= end={end}ms")
+                    skipped += 1
                     pbar.update(1)
-                    pbar.set_postfix(ok=processed, err=errors, skip=skipped, refresh=False)
+                    continue
+                if start < 0 or end < 0:
+                    tqdm.write(f"  [WARN] 跳过负时间戳字幕段 #{i}")
+                    skipped += 1
+                    pbar.update(1)
+                    continue
+
+                # 断点续传：跳过已处理的
+                if self._resume_manager.is_processed(start, end):
+                    skipped += 1
+                    pbar.update(1)
+                    continue
+
+                text_en = subs_en[i][2] if i < len(subs_en) else ""
+
+                # 获取下一条字幕（SRT 已知，无依赖）
+                subs_next = subs_cn[i + 1] if i + 1 < len(subs_cn) else None
+                subs_next_tuple = (subs_next[0], subs_next[1], subs_next[2]) if subs_next else None
+
+                # 裁剪视频段（独立 VideoFileClip，线程安全）
+                # 不能用 video.subclipped() → 共享 reader 多线程冲突
+                video_end = subs_next[0] if subs_next else end
+                current_video = VideoFileClip(video_path).subclipped(start / 1000, video_end / 1000)
+
+                # 背景乐段同步扩展
+                instr_seg_path = _extract_instrumental_segment(start, video_end)
+                instrumental_segment = AudioFileClip(instr_seg_path) if instr_seg_path else None
+
+                tasks.append({
+                    "text_cn": text_cn,
+                    "text_en": text_en,
+                    "start": start,
+                    "end": end,
+                    "current_video": current_video,
+                    "instrumental_segment": instrumental_segment,
+                    "subs_next": subs_next_tuple,
+                    "caption_groups": caption_groups[i] if caption_groups else None,
+                })
+
+            # Phase 2: 并行提交到线程池
+            if tasks:
+                futures = {}
+                for task in tasks:
+                    future = self._executor.submit(
+                        self._process_single_subtitle,
+                        task["text_cn"], task["text_en"],
+                        task["start"], task["end"],
+                        task["current_video"], task["instrumental_segment"],
+                        subs_next=task["subs_next"],
+                        caption_groups=task["caption_groups"],
+                    )
+                    futures[future] = task
+
+                # Phase 3: 收集结果并更新进度
+                for future in concurrent.futures.as_completed(futures):
+                    task = futures[future]
+                    start, end = task["start"], task["end"]
+                    try:
+                        result = future.result()
+                        if result and result.get("success"):
+                            processed += 1
+                        elif result and not result.get("success"):
+                            errors += 1
+                        else:
+                            skipped += 1
+                    except Exception as e:
+                        errors += 1
+                        tqdm.write(f"  [ERROR] 字幕 [{start}-{end}] 线程异常: {e}")
+                    finally:
+                        # 清理视频/音频资源
+                        try:
+                            task["current_video"].close()
+                        except Exception:
+                            pass
+                        if task["instrumental_segment"] is not None:
+                            try:
+                                task["instrumental_segment"].close()
+                            except Exception:
+                                pass
+                        pbar.update(1)
+                        pbar.set_postfix(ok=processed, err=errors, skip=skipped, refresh=False)
 
             pbar.close()
         video.close()
