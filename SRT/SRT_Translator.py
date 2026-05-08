@@ -188,16 +188,16 @@ class TranslationAPI(ABC):
 
 
 class DeepSeekAPI(TranslationAPI):
-    def __init__(self, api_key: str, model: str = "deepseek-chat", **kwargs):
+    def __init__(self, api_key: str, model: str = "deepseek-chat", base_url: str = "https://api.deepseek.com", **kwargs):
         if not api_key:
-            raise ValueError("DeepSeek API key 未配置")
+            raise ValueError("API key 未配置")
         self.api_key = api_key
         self.model = model
         self.temperature = kwargs.get("temperature", 0.1)
         self.max_tokens = kwargs.get("max_tokens", 4000)
         self.top_p = kwargs.get("top_p", 0.9)
         self.timeout = kwargs.get("timeout", 60)
-        self.url = "https://api.deepseek.com/v1/chat/completions"
+        self.url = f"{base_url.rstrip('/')}/v1/chat/completions"
 
     def translate(self, prompt: str, system_prompt: str = "") -> str:
         headers = {
@@ -230,18 +230,27 @@ class DeepSeekAPI(TranslationAPI):
             raise
 
 
+# OpenAI-compatible API providers with their default base URLs
+_OPENAI_COMPATIBLE_PROVIDERS = {
+    "deepseek": "https://api.deepseek.com",
+    "kimi": "https://api.moonshot.ai/v1",
+    "xiaomi": "https://api.xiaomimimo.com/v1",
+}
+
 def create_api_client(config: dict) -> TranslationAPI:
     api_type = config.get("api_type", "deepseek")
-    if api_type == "deepseek":
-        return DeepSeekAPI(
-            api_key=config.get("api_key", ""),
-            model=config.get("model", "deepseek-chat"),
-            temperature=config.get("temperature", 0.1),
-            max_tokens=config.get("max_tokens", 4000),
-            top_p=config.get("top_p", 0.9),
-            timeout=config.get("timeout", 60),
-        )
-    raise NotImplementedError(f"API 类型 '{api_type}' 尚未实现")
+    base_url = config.get("api_base_url", "")
+    if not base_url:
+        base_url = _OPENAI_COMPATIBLE_PROVIDERS.get(api_type, "https://api.deepseek.com")
+    return DeepSeekAPI(
+        api_key=config.get("api_key", ""),
+        model=config.get("model", "deepseek-chat"),
+        base_url=base_url,
+        temperature=config.get("temperature", 0.1),
+        max_tokens=config.get("max_tokens", 4000),
+        top_p=config.get("top_p", 0.9),
+        timeout=config.get("timeout", 60),
+    )
 
 
 # ── 格式解析 ──────────────────────────────────────

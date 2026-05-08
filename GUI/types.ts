@@ -13,6 +13,11 @@ export interface PipelineConfig {
   apiKey: string
   apiType: string
   maxTokens: number
+  apiProvider: 'deepseek' | 'kimi' | 'xiaomi' | 'custom'
+  apiBaseUrl: string
+  apiModel: string
+  apiTemperature: number
+  apiTopP: number
   enableSemanticValidation: boolean
   enableTermReplacement: boolean
   enableAudioExtract: boolean
@@ -70,6 +75,19 @@ export interface LogEntry {
   timestamp: string
 }
 
+export interface ProviderPreset {
+  name: string
+  baseUrl: string
+  models: string[]
+}
+
+export const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
+  deepseek: { name: 'DeepSeek', baseUrl: 'https://api.deepseek.com', models: ['deepseek-chat', 'deepseek-reasoner'] },
+  kimi: { name: 'Kimi (月之暗面)', baseUrl: 'https://api.moonshot.ai/v1', models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k', 'kimi-latest'] },
+  xiaomi: { name: '小米 MiMo', baseUrl: 'https://api.xiaomimimo.com/v1', models: ['mimo-latest'] },
+  custom: { name: '自定义', baseUrl: '', models: [] },
+}
+
 export const DEFAULT_CONFIG: PipelineConfig = {
   videoPath: '',
   lang: 'auto',
@@ -85,6 +103,11 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   apiKey: '',
   apiType: 'deepseek',
   maxTokens: 4000,
+  apiProvider: 'deepseek',
+  apiBaseUrl: 'https://api.deepseek.com',
+  apiModel: 'deepseek-chat',
+  apiTemperature: 0.1,
+  apiTopP: 0.9,
   enableSemanticValidation: true,
   enableTermReplacement: true,
   enableAudioExtract: true,

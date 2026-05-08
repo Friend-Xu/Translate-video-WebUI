@@ -401,6 +401,20 @@ def _sync_translate_config() -> None:
     if pipeline_cfg.get("apiKey"):
         trans["translate"]["api_key"] = pipeline_cfg["apiKey"]
 
+    # Sync multi-provider API config
+    if pipeline_cfg.get("apiProvider"):
+        trans["translate"]["api_type"] = pipeline_cfg["apiProvider"]
+    if pipeline_cfg.get("apiBaseUrl"):
+        trans["translate"]["api_base_url"] = pipeline_cfg["apiBaseUrl"]
+    if pipeline_cfg.get("apiModel"):
+        trans["translate"]["model"] = pipeline_cfg["apiModel"]
+    if pipeline_cfg.get("apiTemperature") is not None:
+        trans["translate"]["temperature"] = pipeline_cfg["apiTemperature"]
+    if pipeline_cfg.get("apiTopP") is not None:
+        trans["translate"]["top_p"] = pipeline_cfg["apiTopP"]
+    if pipeline_cfg.get("maxTokens"):
+        trans["translate"]["max_tokens"] = pipeline_cfg["maxTokens"]
+
     with open(translate_path, "w", encoding="utf-8") as f:
         yaml.dump(trans, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
 

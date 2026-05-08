@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
 import {
   Box, Typography, Card, CardContent, Select, MenuItem,
-  FormControlLabel, Checkbox, TextField, Slider, Stack,
+  FormControlLabel, Checkbox, Slider, Stack, Button, Chip,
 } from '@mui/material'
 import Grid from '@mui/material/Grid'
 import { SectionHeader } from '../SectionHeader'
+import { ApiConfigDialog } from '../ApiConfigDialog'
 import type { PipelineConfig, SystemInfo } from '../../types'
+import { PROVIDER_PRESETS } from '../../types'
 
 interface StepConfigProps {
   config: PipelineConfig
@@ -21,6 +23,7 @@ const VRAM_PER_WORKER: Record<string, number> = {
 
 export function StepConfig({ config, onConfigChange }: StepConfigProps) {
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
+  const [apiDialogOpen, setApiDialogOpen] = useState(false)
 
   useEffect(() => {
     fetch('/api/system/info')
@@ -129,29 +132,26 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
               <Typography variant="subtitle2" gutterBottom>步骤 2: 翻译配置</Typography>
               <Stack spacing={2} mt={2}>
                 <Box>
-                  <Typography variant="body2" fontWeight={500}>DeepSeek API 设置</Typography>
-                  <TextField
-                    size="small"
-                    fullWidth
-                    type="password"
-                    placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx"
-                    value={config.apiKey}
-                    onChange={e => onConfigChange('apiKey', e.target.value)}
-                    sx={{ bgcolor: 'background.paper', mt: 0.5 }}
-                  />
-                  <Typography variant="caption">输入 DeepSeek API Key</Typography>
+                  <Typography variant="body2" fontWeight={500}>API 配置</Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={() => setApiDialogOpen(true)}
+                    >
+                      配置 API
+                    </Button>
+                    <Chip
+                      label={`${PROVIDER_PRESETS[config.apiProvider]?.name ?? config.apiProvider} / ${config.apiModel || (PROVIDER_PRESETS[config.apiProvider]?.models[0] ?? '未设置')}`}
+                      size="small"
+                      variant="outlined"
+                      color={config.apiKey ? 'success' : 'default'}
+                    />
+                  </Box>
+                  <Typography variant="caption" display="block">
+                    点击按钮配置 API 提供商、密钥和模型参数
+                  </Typography>
                 </Box>
-
-                <Grid container spacing={2}>
-                  <Grid size={{ xs: 6 }}>
-                    <Typography variant="body2" fontWeight={500}>API 类型</Typography>
-                    <TextField size="small" fullWidth value={config.apiType} onChange={e => onConfigChange('apiType', e.target.value)} sx={{ bgcolor: 'background.paper', mt: 0.5 }} />
-                  </Grid>
-                  <Grid size={{ xs: 6 }}>
-                    <Typography variant="body2" fontWeight={500}>最大 Token 数</Typography>
-                    <TextField size="small" fullWidth type="number" value={config.maxTokens} onChange={e => onConfigChange('maxTokens', Number(e.target.value))} sx={{ bgcolor: 'background.paper', mt: 0.5 }} />
-                  </Grid>
-                </Grid>
 
                 <FormControlLabel
                   control={<Checkbox checked={config.enableSemanticValidation} onChange={e => onConfigChange('enableSemanticValidation', e.target.checked)} />}
@@ -255,6 +255,12 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
           </Card>
         </Grid>
       </Grid>
+      <ApiConfigDialog
+        open={apiDialogOpen}
+        onClose={() => setApiDialogOpen(false)}
+        config={config}
+        onConfigChange={onConfigChange}
+      />
     </>
   )
 }

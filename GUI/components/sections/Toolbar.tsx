@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { Box, Typography, Card, Button, Stack } from '@mui/material'
 import UploadFileIcon from '@mui/icons-material/UploadFileRounded'
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHighRounded'
@@ -5,6 +6,8 @@ import VideoLibraryIcon from '@mui/icons-material/VideoLibraryRounded'
 import SettingsBackupRestoreIcon from '@mui/icons-material/SettingsBackupRestoreRounded'
 import SaveAltIcon from '@mui/icons-material/SaveAltRounded'
 import RateReviewIcon from '@mui/icons-material/RateReviewOutlined'
+import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined'
+import FileOpenOutlinedIcon from '@mui/icons-material/FileOpenOutlined'
 import { SectionHeader } from '../SectionHeader'
 
 interface ToolbarProps {
@@ -14,9 +17,25 @@ interface ToolbarProps {
   onExportVideo: () => void
   onQuickConfig: () => void
   onSaveConfig: () => void
+  onExportConfig: () => void
+  onImportConfig: (file: File) => void
 }
 
-export function Toolbar({ onImportVideo, onOptimizeSubtitles, onReviewSubtitles, onExportVideo, onQuickConfig, onSaveConfig }: ToolbarProps) {
+export function Toolbar({ onImportVideo, onOptimizeSubtitles, onReviewSubtitles, onExportVideo, onQuickConfig, onSaveConfig, onExportConfig, onImportConfig }: ToolbarProps) {
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleImportClick = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      onImportConfig(file)
+    }
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
   return (
     <>
       <SectionHeader title="工具栏与快捷按钮" />
@@ -36,10 +55,19 @@ export function Toolbar({ onImportVideo, onOptimizeSubtitles, onReviewSubtitles,
             <Stack direction="row" spacing={2}>
               <Button variant="outlined" color="secondary" startIcon={<SettingsBackupRestoreIcon />} onClick={onQuickConfig}>快速配置</Button>
               <Button variant="outlined" color="secondary" startIcon={<SaveAltIcon />} onClick={onSaveConfig}>保存配置</Button>
+              <Button variant="outlined" color="secondary" startIcon={<FileDownloadOutlinedIcon />} onClick={onExportConfig}>导出配置</Button>
+              <Button variant="outlined" color="secondary" startIcon={<FileOpenOutlinedIcon />} onClick={handleImportClick}>导入配置</Button>
             </Stack>
           </Box>
         </Box>
       </Card>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json"
+        style={{ display: 'none' }}
+        onChange={handleFileChange}
+      />
     </>
   )
 }

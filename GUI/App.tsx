@@ -16,6 +16,7 @@ import { usePipeline } from './hooks/usePipeline'
 import { useSSE } from './hooks/useSSE'
 import { useBatch } from './hooks/useBatch'
 import type { PipelineMode } from './types'
+import { DEFAULT_CONFIG } from './types'
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('主界面')
@@ -134,6 +135,54 @@ export default function App() {
       .catch(() => showMsg('保存失败', 'error'))
   }, [config, showMsg])
 
+  const handleExportConfig = useCallback(() => {
+    const { videoPath, outputPath, forceRetry, defaultVideoDir, ...toExport } = config
+    const blob = new Blob([JSON.stringify(toExport, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const now = new Date()
+    const ts = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}-${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`
+    a.href = url
+    a.download = `pipeline-config-${ts}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    showMsg('配置已导出', 'success')
+  }, [config, showMsg])
+
+  const handleImportConfig = useCallback((file: File) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      try {
+        const raw = JSON.parse(e.target?.result as string)
+        if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+          showMsg('无效的配置文件格式', 'error')
+          return
+        }
+        const validKeys = Object.keys(DEFAULT_CONFIG)
+        const transientKeys = new Set(['videoPath', 'outputPath', 'forceRetry', 'defaultVideoDir'])
+        let imported = 0
+        for (const key of Object.keys(raw)) {
+          if (!validKeys.includes(key) || transientKeys.has(key)) continue
+          const expectedType = typeof (DEFAULT_CONFIG as any)[key]
+          const valueType = typeof raw[key]
+          if (expectedType === 'string' && valueType === 'number') {
+            (updateConfig as any)(key, String(raw[key]))
+            imported++
+          } else if (valueType === expectedType || (expectedType === 'boolean' && valueType === 'boolean')) {
+            (updateConfig as any)(key, raw[key])
+            imported++
+          }
+        }
+        showMsg(`已导入 ${imported} 项配置`, 'success')
+      } catch {
+        showMsg('配置文件解析失败，请检查文件内容', 'error')
+      }
+    }
+    reader.readAsText(file)
+  }, [updateConfig, showMsg])
+
   const handleStartReview = useCallback(() => {
     if (!config.videoPath) return
     const path = config.videoPath.replace(/\\/g, '/')
@@ -212,6 +261,8 @@ export default function App() {
               onExportVideo={() => showMsg('导出功能开发中', 'info')}
               onQuickConfig={resetConfig}
               onSaveConfig={handleSaveConfig}
+              onExportConfig={handleExportConfig}
+              onImportConfig={handleImportConfig}
             />
           </KeepAliveSection>
           <KeepAliveSection active={activeTab === '字幕校准'}>
