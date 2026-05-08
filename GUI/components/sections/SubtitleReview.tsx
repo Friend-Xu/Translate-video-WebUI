@@ -25,6 +25,7 @@ import { SectionHeader } from '../SectionHeader'
 import type { SubtitleEntry } from '../../types'
 
 const SRT_EXTS = ['.srt', '.vtt']
+const DEFAULT_SOURCE_DIR = 'D:/Workspace/Translate_video/source_file'
 const AUTO_SAVE_INTERVAL = 30000
 const PRE_ROLL_MS = 500
 const MAX_UNDO_STEPS = 50
@@ -313,7 +314,9 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
 
   const handleOpenFilePicker = useCallback((mode: 'source' | 'translated' | 'log') => {
     setFilePickerMode(mode)
-    if (mode === 'log' && translatedSrt) {
+    if (mode === 'source') {
+      setFilePickerInitialPath(DEFAULT_SOURCE_DIR)
+    } else if (mode === 'log' && translatedSrt) {
       const d = translatedSrt.replace(/\\/g, '/')
       setFilePickerInitialPath(d.substring(0, d.lastIndexOf('/')))
     } else if (defaultDir) {
@@ -761,159 +764,90 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
     <>
       <SectionHeader title="字幕校准" />
 
-      {/* Load panel */}
-      {!sessionMeta && (
-        <Card sx={{ p: 3 }}>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}>
-            <Typography variant="subtitle2">加载字幕文件</Typography>
+      {/* Unified review layout */}
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {/* Toolbar */}
+        <Card sx={{ p: 1.5, display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+          <Chip label={`${totalCount} 条`} size="small" />
+          <Chip label={`${approvedCount} ✓`} size="small" color="success" variant="outlined" />
+          <Chip label={`${modifiedCount} ✎`} size="small" color="info" variant="outlined" />
+          {flaggedCount > 0 && (
+            <Chip label={`${flaggedCount} ⚠`} size="small" color="warning" variant="outlined" />
+          )}
 
-            <Box>
-              <Typography variant="body2" mb={0.5} fontWeight={500}>
-                原文字幕 <Typography component="span" color="error">*</Typography>
-              </Typography>
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                <TextField size="small" fullWidth value={fileLabel(sourceSrt)}
-                  placeholder="选择原文字幕文件 (.srt)" InputProps={{ readOnly: true }}
-                  onClick={() => handleOpenFilePicker('source')}
-                  sx={{ cursor: 'pointer', '& .MuiInputBase-root': { cursor: 'pointer' } }} />
-                <Button variant="outlined" startIcon={<FolderOpenIcon />}
-                  onClick={() => handleOpenFilePicker('source')} size="small" sx={{ minWidth: 100, flexShrink: 0 }}>
-                  选择文件
-                </Button>
-              </Box>
-            </Box>
+          {loading && <LinearProgress sx={{ width: 100, height: 4, borderRadius: 2 }} />}
 
-            <Box>
-              <Typography variant="body2" mb={0.5} fontWeight={500}>
-                机器翻译字幕 <Typography component="span" color="error">*</Typography>
-              </Typography>
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                <TextField size="small" fullWidth value={fileLabel(translatedSrt)}
-                  placeholder="选择机器翻译字幕文件 (*-auto.srt)" InputProps={{ readOnly: true }}
-                  onClick={() => handleOpenFilePicker('translated')}
-                  sx={{ cursor: 'pointer', '& .MuiInputBase-root': { cursor: 'pointer' } }} />
-                <Button variant="outlined" startIcon={<FolderOpenIcon />}
-                  onClick={() => handleOpenFilePicker('translated')} size="small" sx={{ minWidth: 100, flexShrink: 0 }}>
-                  选择文件
-                </Button>
-              </Box>
-            </Box>
+          <TextField
+            id="subtitle-search-input"
+            size="small"
+            placeholder="搜索… (Ctrl+F)"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            disabled={!sessionMeta}
+            sx={{ width: 180, '& .MuiInputBase-root': { fontSize: '0.8rem' } }}
+            InputProps={{
+              startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>,
+            }}
+          />
 
-            <Box>
-              <Typography variant="body2" mb={0.5} fontWeight={500}>
-                翻译日志 <Typography component="span" color="text.secondary">(可选，用于语义质量标记)</Typography>
-              </Typography>
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                <TextField size="small" fullWidth value={fileLabel(translateLog)}
-                  placeholder="选择 translate-log.json" InputProps={{ readOnly: true }}
-                  onClick={() => handleOpenFilePicker('log')}
-                  sx={{ cursor: 'pointer', '& .MuiInputBase-root': { cursor: 'pointer' } }} />
-                <Button variant="outlined" startIcon={<FolderOpenIcon />}
-                  onClick={() => handleOpenFilePicker('log')} size="small" sx={{ minWidth: 100, flexShrink: 0 }}>
-                  选择文件
-                </Button>
-              </Box>
-            </Box>
+          <Box sx={{ flexGrow: 1 }} />
 
-            {error && <Alert severity="error" onClose={() => setError('')}>{error}</Alert>}
-
-            <Box sx={{ display: 'flex', gap: 2 }}>
-              <Button variant="contained" onClick={handleLoad}
-                disabled={!sourceSrt || !translatedSrt || loading}
-                startIcon={loading ? <CircularProgress size={18} /> : undefined}>
-                {loading ? '加载中...' : '加载字幕'}
+          {selectedIndices.size > 0 && (
+            <>
+              <Chip label={`${selectedIndices.size} 已选`} size="small" color="primary"
+                onDelete={() => setSelectedIndices(new Set())} />
+              <Button size="small" variant="outlined" color="success" onClick={handleApproveSelected}>
+                批准所选
               </Button>
-            </Box>
-          </Box>
+            </>
+          )}
+
+          <Tooltip title="撤销 (Ctrl+Z)">
+            <span>
+              <IconButton size="small" onClick={() => { undo(); showToast('撤销') }} disabled={!canUndo}>
+                <UndoIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+          <Tooltip title="重做 (Ctrl+Y)">
+            <span>
+              <IconButton size="small" onClick={() => { redo(); showToast('重做') }} disabled={!canRedo}>
+                <RedoIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+
+          {autoSaveDirty && (
+            <Tooltip title="有未保存的修改 (30s 自动保存)">
+              <Chip icon={<CloudDoneIcon />} label="未保存" size="small" color="warning" variant="outlined" />
+            </Tooltip>
+          )}
+          {lastSaved && !autoSaveDirty && (
+            <Tooltip title={`上次保存: ${lastSaved.toLocaleTimeString()}`}>
+              <Chip icon={<CloudDoneIcon />} label="已保存" size="small" color="success" variant="outlined" />
+            </Tooltip>
+          )}
+
+          <ToggleButtonGroup size="small" value={filterMode} exclusive
+            onChange={(_, v) => v && setFilterMode(v)}>
+            <ToggleButton value="all" sx={{ px: 1.5 }}>
+              全部<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>1</Box>
+            </ToggleButton>
+            <ToggleButton value="pending" sx={{ px: 1.5 }}>
+              待审<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>2</Box>
+            </ToggleButton>
+            <ToggleButton value="flagged" sx={{ px: 1.5 }}>
+              标记<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>3</Box>
+            </ToggleButton>
+          </ToggleButtonGroup>
+
+          <Button size="small" variant="outlined" onClick={handleApproveAll} disabled={!sessionMeta}>全部批准</Button>
+          <Button size="small" variant="contained" startIcon={saving ? <CircularProgress size={16} /> : <SaveIcon />}
+            onClick={() => doSave(false)} disabled={saving || !sessionMeta}>
+            {saving ? '保存中...' : '保存'}
+            <Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>^S</Box>
+          </Button>
         </Card>
-      )}
-
-      {/* Review panel */}
-      {sessionMeta && (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {/* Toolbar */}
-          <Card sx={{ p: 1.5, display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
-            <Chip label={`${totalCount} 条`} size="small" />
-            <Chip label={`${approvedCount} ✓`} size="small" color="success" variant="outlined" />
-            <Chip label={`${modifiedCount} ✎`} size="small" color="info" variant="outlined" />
-            {flaggedCount > 0 && (
-              <Chip label={`${flaggedCount} ⚠`} size="small" color="warning" variant="outlined" />
-            )}
-
-            <TextField
-              id="subtitle-search-input"
-              size="small"
-              placeholder="搜索… (Ctrl+F)"
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              sx={{ width: 180, '& .MuiInputBase-root': { fontSize: '0.8rem' } }}
-              InputProps={{
-                startAdornment: <InputAdornment position="start"><SearchIcon fontSize="small" /></InputAdornment>,
-              }}
-            />
-
-            <Box sx={{ flexGrow: 1 }} />
-
-            {selectedIndices.size > 0 && (
-              <>
-                <Chip label={`${selectedIndices.size} 已选`} size="small" color="primary"
-                  onDelete={() => setSelectedIndices(new Set())} />
-                <Button size="small" variant="outlined" color="success" onClick={handleApproveSelected}>
-                  批准所选
-                </Button>
-              </>
-            )}
-
-            <Tooltip title="撤销 (Ctrl+Z)">
-              <span>
-                <IconButton size="small" onClick={() => { undo(); showToast('撤销') }} disabled={!canUndo}>
-                  <UndoIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
-            <Tooltip title="重做 (Ctrl+Y)">
-              <span>
-                <IconButton size="small" onClick={() => { redo(); showToast('重做') }} disabled={!canRedo}>
-                  <RedoIcon fontSize="small" />
-                </IconButton>
-              </span>
-            </Tooltip>
-
-            {autoSaveDirty && (
-              <Tooltip title="有未保存的修改 (30s 自动保存)">
-                <Chip icon={<CloudDoneIcon />} label="未保存" size="small" color="warning" variant="outlined" />
-              </Tooltip>
-            )}
-            {lastSaved && !autoSaveDirty && (
-              <Tooltip title={`上次保存: ${lastSaved.toLocaleTimeString()}`}>
-                <Chip icon={<CloudDoneIcon />} label="已保存" size="small" color="success" variant="outlined" />
-              </Tooltip>
-            )}
-
-            <ToggleButtonGroup size="small" value={filterMode} exclusive
-              onChange={(_, v) => v && setFilterMode(v)}>
-              <ToggleButton value="all" sx={{ px: 1.5 }}>
-                全部<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>1</Box>
-              </ToggleButton>
-              <ToggleButton value="pending" sx={{ px: 1.5 }}>
-                待审<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>2</Box>
-              </ToggleButton>
-              <ToggleButton value="flagged" sx={{ px: 1.5 }}>
-                标记<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>3</Box>
-              </ToggleButton>
-            </ToggleButtonGroup>
-
-            <Button size="small" variant="outlined" onClick={handleApproveAll}>全部批准</Button>
-            <Button size="small" variant="contained" startIcon={saving ? <CircularProgress size={16} /> : <SaveIcon />}
-              onClick={() => doSave(false)} disabled={saving}>
-              {saving ? '保存中...' : '保存'}
-              <Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>^S</Box>
-            </Button>
-            <Button size="small" variant="outlined" color="secondary"
-              onClick={() => { setSessionMeta(null); setCurrentEntryIndex(null); setSelectedIndices(new Set()) }}>
-              关闭
-            </Button>
-          </Card>
 
           {toast && (
             <Alert severity="info" sx={{ py: 0 }} onClose={() => setToast('')}>
@@ -948,7 +882,20 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {filteredEntries.map(entry => (
+                  {!sessionMeta && !loading ? (
+                    <TableRow>
+                      <TableCell colSpan={7} align="center" sx={{ py: 6 }}>
+                        <Typography color="text.secondary">请在右侧选择字幕文件并加载</Typography>
+                      </TableCell>
+                    </TableRow>
+                  ) : filteredEntries.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
+                        <Typography color="text.secondary">无匹配字幕</Typography>
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filteredEntries.map(entry => (
                     <SubtitleRowMemo key={entry.index}
                       entry={entry}
                       isCurrent={entry.index === currentEntryIndex}
@@ -963,7 +910,8 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
                       onCancelEdit={handleCancelEdit}
                       onToggleStatus={handleToggleStatus}
                     />
-                  ))}
+                  ))
+                  )}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -971,7 +919,7 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
             {/* Video panel */}
             <Box sx={{ flex: 2, minWidth: 280, display: 'flex', flexDirection: 'column', gap: 1 }}>
               <Card sx={{ bgcolor: '#111', borderRadius: 2, minHeight: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-                {sessionMeta.videoPath ? (
+                {sessionMeta?.videoPath ? (
                   <video ref={videoRef}
                     src={`/api/files/stream?path=${encodeURIComponent(sessionMeta.videoPath)}`}
                     style={{ width: '100%', maxHeight: 350 }}
@@ -1087,10 +1035,45 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
                   Ctrl+Z/Y 撤销/重做 | Ctrl+S 保存 | Ctrl+F 搜索 | [ ] 跳转标记 | 1/2/3 筛选 | Esc 取消
                 </Typography>
               </Card>
+
+              {/* File loader */}
+              <Card sx={{ p: 2 }}>
+                <Typography variant="subtitle2" mb={1.5}>加载字幕文件</Typography>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    <TextField size="small" fullWidth value={fileLabel(sourceSrt)}
+                      placeholder="原文字幕 (*.srt)" InputProps={{ readOnly: true }}
+                      onClick={() => handleOpenFilePicker('source')}
+                      sx={{ cursor: 'pointer', '& .MuiInputBase-root': { cursor: 'pointer', fontSize: '0.8rem' } }} />
+                    <IconButton size="small" onClick={() => handleOpenFilePicker('source')}
+                      sx={{ flexShrink: 0 }}><FolderOpenIcon fontSize="small" /></IconButton>
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    <TextField size="small" fullWidth value={fileLabel(translatedSrt)}
+                      placeholder="机翻字幕 (*.srt)" InputProps={{ readOnly: true }}
+                      onClick={() => handleOpenFilePicker('translated')}
+                      sx={{ cursor: 'pointer', '& .MuiInputBase-root': { cursor: 'pointer', fontSize: '0.8rem' } }} />
+                    <IconButton size="small" onClick={() => handleOpenFilePicker('translated')}
+                      sx={{ flexShrink: 0 }}><FolderOpenIcon fontSize="small" /></IconButton>
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
+                    <TextField size="small" fullWidth value={fileLabel(translateLog)}
+                      placeholder="翻译日志 (.json, 可选)" InputProps={{ readOnly: true }}
+                      onClick={() => handleOpenFilePicker('log')}
+                      sx={{ cursor: 'pointer', '& .MuiInputBase-root': { cursor: 'pointer', fontSize: '0.8rem' } }} />
+                    <IconButton size="small" onClick={() => handleOpenFilePicker('log')}
+                      sx={{ flexShrink: 0 }}><FolderOpenIcon fontSize="small" /></IconButton>
+                  </Box>
+                  <Button variant="contained" size="small" onClick={handleLoad}
+                    disabled={!sourceSrt || !translatedSrt || loading} fullWidth
+                    startIcon={loading ? <CircularProgress size={16} /> : undefined}>
+                    {loading ? '加载中...' : sessionMeta ? '重新加载' : '加载字幕'}
+                  </Button>
+                </Box>
+              </Card>
             </Box>
           </Box>
         </Box>
-      )}
 
       <FilePickerDialog
         open={filePickerOpen}
