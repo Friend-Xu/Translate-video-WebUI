@@ -206,6 +206,24 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   />
                 </Box>
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                  <FormControlLabel
+                    control={<Checkbox checked={config.multiAgentEnabled} onChange={e => onConfigChange('multiAgentEnabled', e.target.checked)} />}
+                    label={<Box><Typography variant="body2">Multi-Agent 翻译流水线</Typography><Typography variant="caption" display="block">Director→Glossary→Translate→Mapper→Review→Polish（需 3-5x API 调用）</Typography></Box>}
+                  />
+                </Box>
+                {config.multiAgentEnabled && (
+                  <Box>
+                    <Box display="flex" justifyContent="space-between">
+                      <Typography variant="body2" fontWeight={500}>MQM 质量阈值</Typography>
+                      <Typography variant="body2" fontWeight={600} color="primary">{config.mqmThreshold}</Typography>
+                    </Box>
+                    <Typography variant="caption" display="block" mb={1}>低于此值自动重试（0.5~0.8）</Typography>
+                    <Slider value={config.mqmThreshold} min={0.5} max={0.8} step={0.05}
+                      marks={[{ value: 0.5, label: '0.5' }, { value: 0.6, label: '0.6' }, { value: 0.7, label: '0.7' }, { value: 0.8, label: '0.8' }]}
+                      onChange={(_, v) => onConfigChange('mqmThreshold', v as number)} />
+                  </Box>
+                )}
+                <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
                   <Button variant="outlined" size="small" fullWidth onClick={() => setGlossaryOpen(true)}>
                     Glossary Editor
                   </Button>

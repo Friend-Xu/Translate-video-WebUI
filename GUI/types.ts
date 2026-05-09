@@ -71,6 +71,9 @@ export interface PipelineConfig {
   customSinglePrompt: string
   splitBrainEnabled: boolean
   activeGlossary: string
+  multiAgentEnabled: boolean
+  mqmEnabled: boolean
+  mqmThreshold: number
 }
 
 export interface PipelineStatus {
@@ -172,6 +175,9 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   customSinglePrompt: '',
   splitBrainEnabled: false,
   activeGlossary: 'minecraft.json',
+  multiAgentEnabled: false,
+  mqmEnabled: false,
+  mqmThreshold: 0.6,
 }
 
 export interface SubtitleIssue {

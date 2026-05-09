@@ -443,6 +443,12 @@ def _sync_translate_config() -> None:
         trans["translate"]["split_brain"] = {}
     trans["translate"]["split_brain"]["enabled"] = pipeline_cfg.get("splitBrainEnabled", False)
 
+    # Sync multi-agent
+    if "multi_agent" not in trans["translate"]:
+        trans["translate"]["multi_agent"] = {}
+    trans["translate"]["multi_agent"]["enabled"] = pipeline_cfg.get("multiAgentEnabled", False)
+    trans["translate"]["multi_agent"]["mqm_threshold"] = pipeline_cfg.get("mqmThreshold", 0.6)
+
     with open(translate_path, "w", encoding="utf-8") as f:
         yaml.dump(trans, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
 

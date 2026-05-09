@@ -793,7 +793,10 @@ class SRTTranslator:
         pending_groups = []
 
         # 选择翻译方法
-        if self.split_brain_enabled:
+        if self.multi_agent_enabled:
+            translate_fn = self._translate_group_multi_agent
+            logger.info("翻译模式: multi-agent (Translator→Mapper→Reviewer→Polisher)")
+        elif self.split_brain_enabled:
             translate_fn = self._translate_group_split_brain
             logger.info("翻译模式: split-brain")
         else:
@@ -866,6 +869,64 @@ class SRTTranslator:
         subs.save(final_path, encoding="utf-8")
         logger.info(f"人工回填完成: {final_path}")
         return final_path
+
+    def _translate_group_multi_agent(self, group_index: int, group: List[pysrt.SubRipItem]) -> bool:
+        """Multi-Agent 流水线翻译一组字幕: Translator → Mapper → Reviewer → Polisher。"""
+        group_label = f"组 {group_index}/{self.log.total_groups}"
+        indices = [sub.index for sub in group]
+        logger.info(f"[{group_label}] Multi-Agent 翻译 (索引: {indices})")
+
+        from SRT.translation_agents import AgentPipeline
+        import tempfile
+
+        work_dir = os.path.join(tempfile.gettempdir(), f"tragent_g{group_index}")
+        term_dict_path = os.path.join(
+            self.term_dict_dir, self.term_dict_name
+        ) if self.term_enabled else ""
+
+        pipeline = AgentPipeline(
+            self.api, self.rate_limiter, work_dir,
+            source_lang=self.source_lang,
+            target_lang=self.target_lang,
+            glossary_path=term_dict_path,
+        )
+        group_dicts = [{"index": sub.index, "text": sub.text} for sub in group]
+        glossary_terms = {}
+        if term_dict_path and os.path.isfile(term_dict_path):
+            try:
+                glossary_terms = json.loads(
+                    open(term_dict_path, encoding="utf-8").read()
+                ).get("terms", {})
+            except Exception:
+                pass
+
+        t0 = time.time()
+        try:
+            mapping, mqm_report = pipeline.run_group(
+                group_dicts, group_index, glossary_terms,
+            )
+        except Exception as e:
+            logger.error(f"[{group_label}] Multi-Agent 异常: {e}")
+            return self._translate_group_with_fallback(group_index, group)
+
+        if not mapping or len(mapping) != len(group):
+            logger.warning(f"[{group_label}] Multi-Agent 映射失败，回退传统模式")
+            return self._translate_group_with_fallback(group_index, group)
+
+        for sub in group:
+            if sub.index in mapping:
+                sub.text = mapping[sub.index]
+
+        with self._log_lock:
+            self.log.success += 1
+            self.log.details.append({
+                "group": group_index,
+                "status": "success",
+                "method": "multi_agent",
+                "mqm": mqm_report.get("average_composite", 0),
+                "duration": round(time.time() - t0, 2),
+            })
+        return True
 
     def _translate_group_split_brain(self, group_index: int, group: List[pysrt.SubRipItem]) -> bool:
         """Split-brain 翻译一组字幕。
