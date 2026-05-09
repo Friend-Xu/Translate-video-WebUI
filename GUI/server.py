@@ -320,9 +320,11 @@ def _load_yaml_defaults() -> dict:
         "maxSpeed": tts.get("max_speed", 100),
         "videoSpeedMin": tts.get("video_speed_min", 0.60),
         "videoSpeedMax": tts.get("video_speed_max", 2.00),
-        "enableVoiceClone": tts.get("enable_openvoice", False),
+        "enableVoiceClone": tts.get("voice_clone_engine", "openvoice") != "none",
+        "voiceCloneEngine": tts.get("voice_clone_engine", "openvoice"),
+        "voiceCloneDevice": tts.get("voice_clone_device", "auto"),
+        "voiceCloneConcurrency": tts.get("voice_clone_concurrency", 1),
         "voiceCloneSample": tts.get("voice_clone_sample") or "",
-        "openvoiceVersion": tts.get("openvoice_model_version", "v2"),
         "enableEmotionClone": tts.get("enable_emotion", False),
         "defaultEmotion": tts.get("default_emotion", "neutral"),
         "emotionRefAudio": tts.get("emotion_ref_audio") or "",
@@ -464,6 +466,9 @@ class RunRequest(BaseModel):
     caption_width_ratio: float = 0.85
     caption_optimize: bool = True
     bgm_volume: float = 1.0
+    voice_clone_engine: str = "openvoice"
+    voice_clone_device: str = "auto"
+    voice_clone_concurrency: int = 1
     num_workers: int = 1
     tts_workers: int = 7
     skip_align: bool = False
@@ -529,6 +534,9 @@ def _write_tts_runtime_config(req: RunRequest) -> str:
             "video_speed_max": req.video_speed_max,
             "threading_workers": req.tts_workers,
             "bgm_volume": req.bgm_volume,
+            "voice_clone_engine": req.voice_clone_engine,
+            "voice_clone_device": req.voice_clone_device,
+            "voice_clone_concurrency": req.voice_clone_concurrency,
         }
     }
     with open(config_path, "w", encoding="utf-8") as f:
@@ -560,6 +568,10 @@ def _build_cli_args(req: RunRequest) -> list[str]:
         args.append("--skip-defect-check")
     if req.skip_demucs:
         args.append("--skip-demucs")
+    if req.voice_clone_engine and req.voice_clone_engine != "openvoice":
+        args.extend(["--voice-clone-engine", req.voice_clone_engine])
+    if req.voice_clone_device and req.voice_clone_device != "auto":
+        args.extend(["--voice-clone-device", req.voice_clone_device])
     if req.force:
         args.append("--force")
     if req.num_workers > 1:
