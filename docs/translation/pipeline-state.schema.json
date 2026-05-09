@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://translate-video.local/pipeline-state.schema.json",
+  "title": "Pipeline State",
+  "description": "翻译流水线状态文件 schema。由 Conductor 独占读写。",
+  "type": "object",
+  "properties": {
+    "phase": {
+      "type": "string",
+      "enum": ["docs", "phase1", "phase2", "phase3", "integration", "done"],
+      "description": "当前流水线阶段。docs=等待参数, phase1=Simple模式, phase2=Split-Brain模式, phase3=Multi-Agent模式, integration=写回SRT, done=完成"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["simple", "split-brain", "multi-agent"],
+      "description": "翻译模式"
+    },
+    "sourceFile": {
+      "type": "string",
+      "description": "源视频文件绝对路径"
+    },
+    "workdir": {
+      "type": "string",
+      "description": "工作目录绝对路径（{video_dir}/{stem}_project/）"
+    },
+    "completedSteps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "step": {
+            "type": "string",
+            "description": "步骤名称，如 translator, reviewer, polisher"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pass", "warn", "fail"]
+          },
+          "mqmScore": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "outputFiles": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": ["step", "status", "completedAt"]
+      }
+    },
+    "failedSteps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "step": { "type": "string" },
+          "error": { "type": "string" },
+          "retries": { "type": "integer", "minimum": 0 },
+          "failedAt": { "type": "string", "format": "date-time" }
+        },
+        "required": ["step", "error", "retries", "failedAt"]
+      }
+    },
+    "lastCheckpoint": {
+      "type": "string",
+      "enum": ["cp1", "cp2", "cp3", null],
+      "description": "最近通过的 Checkpoint 编号"
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "流水线启动时间"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "状态最后更新时间"
+    }
+  },
+  "required": ["phase", "mode", "completedSteps", "failedSteps", "startedAt", "updatedAt"]
+}

@@ -319,9 +319,30 @@ def detect_source_language(subs: pysrt.SubRipFile, sample_size: int = 20) -> str
     return "en"
 
 
+# ── Prompt 变量替换 ───────────────────────────────
+
+def resolve_prompt_variables(template: str, variables: dict) -> str:
+    """替换模板中的 {var_name} 占位符。"""
+    result = template
+    for key, value in variables.items():
+        result = result.replace(f"{{{key}}}", str(value))
+    return result
+
+
 # ── Prompt 构建 ───────────────────────────────────
 
-def build_system_prompt(source_lang: str, fmt: str = "numbered_list", retry: bool = False) -> str:
+def build_system_prompt(source_lang: str, fmt: str = "numbered_list", retry: bool = False,
+                        custom_template: str = None, target_lang: str = "简体中文") -> str:
+    # 自定义模板路径
+    if custom_template:
+        variables = {
+            "source_lang": source_lang,
+            "target_lang": target_lang,
+            "fmt": fmt,
+            "retry": str(retry),
+        }
+        return resolve_prompt_variables(custom_template, variables)
+
     if source_lang == "ja":
         base = "你是专业日语字幕翻译。请将以下日语逐条翻译成简体中文。"
     else:
@@ -374,7 +395,18 @@ def build_system_prompt(source_lang: str, fmt: str = "numbered_list", retry: boo
     return "\n".join(parts)
 
 
-def build_batch_prompt(group: List[pysrt.SubRipItem], fmt: str = "numbered_list") -> str:
+def build_batch_prompt(group: List[pysrt.SubRipItem], fmt: str = "numbered_list",
+                      custom_template: str = None, source_lang: str = "ja",
+                      target_lang: str = "简体中文") -> str:
+    if custom_template:
+        if fmt == "json":
+            items = json.dumps({str(sub.index): sub.text for sub in group}, ensure_ascii=False)
+        else:
+            items = "\n".join([f"<{sub.index}> {sub.text}" for sub in group])
+        variables = {"source_lang": source_lang, "target_lang": target_lang,
+                     "fmt": fmt, "items": items}
+        return resolve_prompt_variables(custom_template, variables)
+
     if fmt == "json":
         items = {str(sub.index): sub.text for sub in group}
         body = json.dumps(items, ensure_ascii=False)
@@ -385,8 +417,25 @@ def build_batch_prompt(group: List[pysrt.SubRipItem], fmt: str = "numbered_list"
     return f"待翻译：\n{body}\n\n翻译："
 
 
-def build_single_prompt(subtitle: pysrt.SubRipItem, prev_subs: List[pysrt.SubRipItem], next_subs: List[pysrt.SubRipItem], source_lang: str) -> Tuple[str, str]:
+def build_single_prompt(subtitle: pysrt.SubRipItem, prev_subs: List[pysrt.SubRipItem],
+                       next_subs: List[pysrt.SubRipItem], source_lang: str,
+                       custom_template: str = None, target_lang: str = "简体中文") -> Tuple[str, str]:
     """逐条翻译 prompt，返回 (system_prompt, user_prompt)"""
+    if custom_template:
+        ctx_parts = []
+        for s in prev_subs[-2:]:
+            ctx_parts.append(f"前文: {s.text}")
+        ctx_parts.append(f"当前: {subtitle.text}")
+        for s in next_subs[:2]:
+            ctx_parts.append(f"后文: {s.text}")
+        variables = {
+            "source_lang": source_lang,
+            "target_lang": target_lang,
+            "current_text": subtitle.text,
+            "context": "\n".join(ctx_parts),
+        }
+        return resolve_prompt_variables(custom_template, variables), ""
+
     if source_lang == "ja":
         system = "你是专业日语字幕翻译。请将提供的句子翻译成简体中文。只输出译文，不要解释，不要加引号。"
     else:
@@ -572,6 +621,14 @@ class SRTTranslator:
         self.term_enabled = term_cfg.get("enabled", False)
         self.term_dict_dir = term_cfg.get("dict_dir", "config/terms/")
         self.term_dict_name = term_cfg.get("default_dict", "minecraft.json")
+        # 自定义 prompt 配置
+        prompt_cfg = self.config.get("custom_prompt", {})
+        self.custom_prompt_enabled = prompt_cfg.get("enabled", False)
+        self.custom_system_prompt = prompt_cfg.get("system_prompt", "")
+        self.custom_batch_prompt = prompt_cfg.get("batch_prompt", "")
+        self.custom_single_prompt = prompt_cfg.get("single_prompt", "")
+        # 目标语言（从 source_lang 推断）
+        self.target_lang = "简体中文" if self.source_lang in ("ja", "zh") else "Simplified Chinese"
 
     def translate(self, srt_path: str) -> Tuple[str, str]:
         """主入口
@@ -749,8 +806,16 @@ class SRTTranslator:
         """尝试分组翻译
         成功则回填并返回 True
         """
-        system = build_system_prompt(self.source_lang, self.fmt, retry=retry)
-        prompt = build_batch_prompt(group, self.fmt)
+        system = build_system_prompt(
+            self.source_lang, self.fmt, retry=retry,
+            custom_template=self.custom_system_prompt if self.custom_prompt_enabled else None,
+            target_lang=self.target_lang,
+        )
+        prompt = build_batch_prompt(
+            group, self.fmt,
+            custom_template=self.custom_batch_prompt if self.custom_prompt_enabled else None,
+            source_lang=self.source_lang, target_lang=self.target_lang,
+        )
 
         try:
             self.rate_limiter.acquire()
@@ -782,7 +847,11 @@ class SRTTranslator:
             prev_subs = group[max(0, i - 2) : i]
             next_subs = group[i + 1 : min(len(group), i + 3)]
 
-            system, prompt = build_single_prompt(sub, prev_subs, next_subs, self.source_lang)
+            system, prompt = build_single_prompt(
+                sub, prev_subs, next_subs, self.source_lang,
+                custom_template=self.custom_single_prompt if self.custom_prompt_enabled else None,
+                target_lang=self.target_lang,
+            )
 
             try:
                 self.rate_limiter.acquire()
