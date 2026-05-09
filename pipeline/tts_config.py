@@ -119,6 +119,22 @@ class TTSConfig:
     voice_clone_vram_limit_mb: int = 0
     """克隆显存上限(MB)。0=自动检测"""
 
+    # ── CosyVoice 专属配置 ──────────────────────────────────
+    cosyvoice_mode: str = "local"
+    """CosyVoice 运行模式: local | docker"""
+
+    cosyvoice_model_version: str = "v2"
+    """CosyVoice 模型版本: v2 | v3"""
+
+    cosyvoice_model_path: str = "./models/CosyVoice2-0.5B"
+    """CosyVoice 模型 checkpoint 路径"""
+
+    cosyvoice_fp16: bool = True
+    """CosyVoice 本地模式是否启用 fp16"""
+
+    cosyvoice_docker_url: str = "http://127.0.0.1:5000"
+    """CosyVoice Docker 服务地址"""
+
     # ── 字幕 ──────────────────────────────────────────────
     enable_caption: bool = True
     """是否为输出视频叠加字幕"""

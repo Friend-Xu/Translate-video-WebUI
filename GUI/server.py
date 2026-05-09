@@ -324,6 +324,8 @@ def _load_yaml_defaults() -> dict:
         "voiceCloneEngine": tts.get("voice_clone_engine", "openvoice"),
         "voiceCloneDevice": tts.get("voice_clone_device", "auto"),
         "voiceCloneConcurrency": tts.get("voice_clone_concurrency", 1),
+        "cosyvoiceMode": tts.get("cosyvoice_mode", "local"),
+        "cosyvoiceModelVersion": tts.get("cosyvoice_model_version", "v2"),
         "voiceCloneSample": tts.get("voice_clone_sample") or "",
         "enableEmotionClone": tts.get("enable_emotion", False),
         "defaultEmotion": tts.get("default_emotion", "neutral"),
@@ -425,6 +427,17 @@ def _sync_translate_config() -> None:
     if pipeline_cfg.get("maxTokens"):
         trans["translate"]["max_tokens"] = pipeline_cfg["maxTokens"]
 
+    # Sync custom prompt
+    if pipeline_cfg.get("customPromptEnabled"):
+        if "custom_prompt" not in trans["translate"]:
+            trans["translate"]["custom_prompt"] = {}
+        trans["translate"]["custom_prompt"]["enabled"] = True
+        trans["translate"]["custom_prompt"]["system_prompt"] = pipeline_cfg.get("customSystemPrompt", "")
+        trans["translate"]["custom_prompt"]["batch_prompt"] = pipeline_cfg.get("customBatchPrompt", "")
+        trans["translate"]["custom_prompt"]["single_prompt"] = pipeline_cfg.get("customSinglePrompt", "")
+    else:
+        trans["translate"]["custom_prompt"] = {"enabled": False, "system_prompt": "", "batch_prompt": "", "single_prompt": ""}
+
     with open(translate_path, "w", encoding="utf-8") as f:
         yaml.dump(trans, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
 
@@ -469,6 +482,8 @@ class RunRequest(BaseModel):
     voice_clone_engine: str = "openvoice"
     voice_clone_device: str = "auto"
     voice_clone_concurrency: int = 1
+    cosyvoice_mode: str = "local"
+    cosyvoice_model_version: str = "v2"
     num_workers: int = 1
     tts_workers: int = 7
     skip_align: bool = False
@@ -537,6 +552,8 @@ def _write_tts_runtime_config(req: RunRequest) -> str:
             "voice_clone_engine": req.voice_clone_engine,
             "voice_clone_device": req.voice_clone_device,
             "voice_clone_concurrency": req.voice_clone_concurrency,
+            "cosyvoice_mode": req.cosyvoice_mode,
+            "cosyvoice_model_version": req.cosyvoice_model_version,
         }
     }
     with open(config_path, "w", encoding="utf-8") as f:
@@ -1441,6 +1458,39 @@ async def post_config(payload: dict) -> dict:
     settings["pipeline"] = overrides
     save_settings(settings)
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Prompt preview
+# ---------------------------------------------------------------------------
+
+class PreviewPromptRequest(BaseModel):
+    system_prompt: str = ""
+    batch_prompt: str = ""
+    source_lang: str = "ja"
+    target_lang: str = "简体中文"
+    fmt: str = "numbered_list"
+
+
+@app.post("/api/translate/preview-prompt")
+async def preview_prompt(req: PreviewPromptRequest) -> dict:
+    """解析 prompt 变量并返回预览。"""
+    from SRT.SRT_Translator import resolve_prompt_variables
+    variables = {
+        "source_lang": req.source_lang,
+        "target_lang": req.target_lang,
+        "fmt": req.fmt,
+        "retry": "false",
+        "items": "<1> 示例字幕 1\n<2> 示例字幕 2\n<3> 示例字幕 3",
+        "current_text": "示例字幕文本",
+        "context": "前文: 上下文示例\n当前: 示例字幕文本\n后文: 后续字幕",
+    }
+    result = {}
+    if req.system_prompt:
+        result["system_preview"] = resolve_prompt_variables(req.system_prompt, variables)
+    if req.batch_prompt:
+        result["batch_preview"] = resolve_prompt_variables(req.batch_prompt, variables)
+    return result
 
 
 # ---------------------------------------------------------------------------
