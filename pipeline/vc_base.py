@@ -39,7 +39,7 @@ class VoiceCloneConfig:
     vad_duration: int = 8
     """VAD 分段时长（秒）"""
 
-    error_log_path: str = "./file/openvoice_error_log.txt"
+    error_log_path: str = ""  # default: written to workspace by tts_video.py
 
     # CosyVoice 专用
     cosyvoice_mode: str = "local"

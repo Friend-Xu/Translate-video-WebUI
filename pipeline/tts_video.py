@@ -227,7 +227,9 @@ class VideoSegmenter:
             slow_down_clip = slow_down_clip.with_audio(tts_audio.subclipped(0, tts_dur))
         elif self.clone_color and self.openvoice_cloner:
             try:
-                openvoice_output_dir = "file/OpenVoice_file"
+                # Clone output goes to workspace: {workspace}/03_tts/cloned/
+                openvoice_output_dir = os.path.join(
+                    os.path.dirname(self.video_output_dir), "cloned")
                 clone_color_file = self.openvoice_cloner(tts_audio_path, openvoice_output_dir)
                 # 导出背景乐 → ffmpeg 混音: 背景乐(变速) + clone
                 instr_path = self._export_audio_to_wav(audio_instrumental)
@@ -239,7 +241,10 @@ class VideoSegmenter:
                 )
             except Exception as e:
                 logger.warning("OpenVoice clone 失败: %s", e)
-                with open(r".\file\openvoice_error_log.txt", "a", encoding="utf-8") as f:
+                error_log = os.path.join(
+                    os.path.dirname(self.video_output_dir), "openvoice_error_log.txt")
+                os.makedirs(os.path.dirname(error_log) or ".", exist_ok=True)
+                with open(error_log, "a", encoding="utf-8") as f:
                     f.write(f"发生错误: {str(e)}\n")
                 # fallback: 背景乐 + TTS 混合（跳过音色克隆）
                 instr_path = self._export_audio_to_wav(audio_instrumental)

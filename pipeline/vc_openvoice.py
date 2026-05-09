@@ -286,6 +286,8 @@ class OpenVoiceCloner:
     def _log_error(self, message: str) -> None:
         """Append a timestamped message to the error log."""
         log_path = self.config.error_log_path
+        if not log_path:
+            return  # error log not configured, skip
         os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
         from datetime import datetime
 
