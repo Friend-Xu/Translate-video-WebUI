@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import {
   Box, Typography, Card, CardContent, Select, MenuItem,
-  FormControlLabel, Checkbox, Slider, Stack, Button, Chip,
+  FormControlLabel, Checkbox, Slider, Stack, Button, Chip, TextField,
 } from '@mui/material'
 import Grid from '@mui/material/Grid'
 import { SectionHeader } from '../SectionHeader'
@@ -169,6 +169,34 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   <Typography variant="caption" display="block" mb={1}>同时翻译的组数 (1=串行, 2~8=并行)</Typography>
                   <Slider value={config.concurrency} min={1} max={8} step={1} marks={[{ value: 1, label: '1' }, { value: 3, label: '3' }, { value: 5, label: '5' }, { value: 8, label: '8' }]} onChange={(_, v) => onConfigChange('concurrency', v as number)} />
                 </Box>
+                <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                  <FormControlLabel
+                    control={<Checkbox checked={config.customPromptEnabled} onChange={e => onConfigChange('customPromptEnabled', e.target.checked)} />}
+                    label={<Box><Typography variant="body2">启用自定义 System Prompt</Typography><Typography variant="caption" display="block">自定义翻译风格和格式要求</Typography></Box>}
+                  />
+                </Box>
+                {config.customPromptEnabled && (
+                  <>
+                    <TextField
+                      label="System Prompt"
+                      multiline minRows={3} maxRows={6}
+                      fullWidth size="small"
+                      value={config.customSystemPrompt}
+                      onChange={e => onConfigChange('customSystemPrompt', e.target.value)}
+                      placeholder="你是专业{source_lang}字幕翻译。请将以下{source_lang}逐条翻译成{target_lang}。"
+                      helperText="支持变量: {source_lang}, {target_lang}, {fmt}, {retry}"
+                    />
+                    <TextField
+                      label="Batch Prompt 模板"
+                      multiline minRows={3} maxRows={6}
+                      fullWidth size="small"
+                      value={config.customBatchPrompt}
+                      onChange={e => onConfigChange('customBatchPrompt', e.target.value)}
+                      placeholder="待翻译：{items}翻译："
+                      helperText="{items} 将被替换为待翻译字幕列表"
+                    />
+                  </>
+                )}
               </Stack>
             </CardContent>
           </Card>
