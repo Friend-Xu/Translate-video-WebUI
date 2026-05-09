@@ -1,6 +1,7 @@
 export interface PipelineConfig {
   videoPath: string
   lang: 'auto' | 'en' | 'zh' | 'ja'
+  targetLang: 'zh-CN' | 'en' | 'ja' | 'ko' | 'auto'
   model: 'tiny' | 'base' | 'small' | 'medium' | 'turbo' | 'large-v3'
   device: 'cpu' | 'cuda'
   computeType: 'int8' | 'float32' | 'float16' | 'int8_float16'
@@ -105,6 +106,7 @@ export const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
 export const DEFAULT_CONFIG: PipelineConfig = {
   videoPath: '',
   lang: 'auto',
+  targetLang: 'zh-CN',
   model: 'turbo',
   device: 'cuda',
   computeType: 'float16',

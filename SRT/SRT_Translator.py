@@ -767,8 +767,16 @@ class SRTTranslator:
         self.custom_system_prompt = prompt_cfg.get("system_prompt", "")
         self.custom_batch_prompt = prompt_cfg.get("batch_prompt", "")
         self.custom_single_prompt = prompt_cfg.get("single_prompt", "")
-        # 目标语言（从 source_lang 推断）
-        self.target_lang = "简体中文" if self.source_lang in ("ja", "zh") else "Simplified Chinese"
+        # 目标语言：优先从配置读取，否则从 source_lang 推断
+        target_cfg = self.config.get("target_lang", "")
+        if target_cfg and target_cfg != "auto":
+            _target_map = {
+                "zh-CN": "简体中文", "zh": "简体中文",
+                "en": "English", "ja": "日本語", "ko": "한국어",
+            }
+            self.target_lang = _target_map.get(target_cfg, target_cfg)
+        else:
+            self.target_lang = "简体中文" if self.source_lang in ("ja", "zh") else "Simplified Chinese"
         # Split-brain 配置
         sb_cfg = self.config.get("split_brain", {})
         self.split_brain_enabled = sb_cfg.get("enabled", False)

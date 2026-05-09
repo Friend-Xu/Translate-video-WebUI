@@ -401,6 +401,12 @@ def _sync_translate_config() -> None:
     if "translate" not in trans:
         trans["translate"] = {}
 
+    # Sync source/target language
+    if pipeline_cfg.get("lang"):
+        trans["translate"]["source_lang"] = pipeline_cfg["lang"]
+    if pipeline_cfg.get("targetLang"):
+        trans["translate"]["target_lang"] = pipeline_cfg["targetLang"]
+
     # Sync concurrency setting
     if "concurrency" in pipeline_cfg:
         conc = pipeline_cfg["concurrency"]

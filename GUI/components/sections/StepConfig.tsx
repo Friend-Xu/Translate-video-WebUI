@@ -50,14 +50,25 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
               <Typography variant="subtitle2" gutterBottom>步骤 1: 字幕提取配置</Typography>
               <Stack spacing={2} mt={2}>
                 <Box>
-                  <Typography variant="body2" fontWeight={500}>语言选择 (--lang)</Typography>
+                  <Typography variant="body2" fontWeight={500}>源语言 (--lang)</Typography>
                   <Select size="small" fullWidth value={config.lang} onChange={e => onConfigChange('lang', e.target.value as PipelineConfig['lang'])} sx={{ bgcolor: 'background.paper' }}>
                     <MenuItem value="auto">自动检测</MenuItem>
                     <MenuItem value="en">英文</MenuItem>
                     <MenuItem value="zh">中文</MenuItem>
                     <MenuItem value="ja">日文</MenuItem>
                   </Select>
-                  <Typography variant="caption">选择字幕提取时使用的语言</Typography>
+                  <Typography variant="caption">字幕提取和翻译的源语言</Typography>
+                </Box>
+                <Box>
+                  <Typography variant="body2" fontWeight={500}>目标语言</Typography>
+                  <Select size="small" fullWidth value={config.targetLang} onChange={e => onConfigChange('targetLang', e.target.value as PipelineConfig['targetLang'])} sx={{ bgcolor: 'background.paper' }}>
+                    <MenuItem value="zh-CN">简体中文</MenuItem>
+                    <MenuItem value="en">English</MenuItem>
+                    <MenuItem value="ja">日本語</MenuItem>
+                    <MenuItem value="ko">한국어</MenuItem>
+                    <MenuItem value="auto">自动</MenuItem>
+                  </Select>
+                  <Typography variant="caption">翻译的目标语言</Typography>
                 </Box>
                 <Box>
                   <Typography variant="body2" fontWeight={500}>模型选择 (--model)</Typography>
@@ -133,6 +144,27 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
             <CardContent>
               <Typography variant="subtitle2" gutterBottom>步骤 2: 翻译配置</Typography>
               <Stack spacing={2} mt={2}>
+                <Box sx={{ display: 'flex', gap: 2 }}>
+                  <Box sx={{ flex: 1 }}>
+                    <Typography variant="body2" fontWeight={500}>源语言</Typography>
+                    <Select size="small" fullWidth value={config.lang} onChange={e => onConfigChange('lang', e.target.value as PipelineConfig['lang'])} sx={{ bgcolor: 'background.paper' }}>
+                      <MenuItem value="auto">自动检测</MenuItem>
+                      <MenuItem value="en">英文</MenuItem>
+                      <MenuItem value="zh">中文</MenuItem>
+                      <MenuItem value="ja">日文</MenuItem>
+                    </Select>
+                  </Box>
+                  <Box sx={{ flex: 1 }}>
+                    <Typography variant="body2" fontWeight={500}>目标语言</Typography>
+                    <Select size="small" fullWidth value={config.targetLang} onChange={e => onConfigChange('targetLang', e.target.value as PipelineConfig['targetLang'])} sx={{ bgcolor: 'background.paper' }}>
+                      <MenuItem value="zh-CN">简体中文</MenuItem>
+                      <MenuItem value="en">English</MenuItem>
+                      <MenuItem value="ja">日本語</MenuItem>
+                      <MenuItem value="ko">한국어</MenuItem>
+                      <MenuItem value="auto">自动</MenuItem>
+                    </Select>
+                  </Box>
+                </Box>
                 <Box>
                   <Typography variant="body2" fontWeight={500}>API 配置</Typography>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
