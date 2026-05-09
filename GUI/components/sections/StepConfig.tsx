@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import {
   Box, Typography, Card, CardContent, Select, MenuItem,
-  FormControlLabel, Checkbox, Slider, Stack, Button, Chip, TextField,
+  FormControlLabel, Checkbox, Slider, Stack, Button, Chip,
 } from '@mui/material'
 import Grid from '@mui/material/Grid'
 import { SectionHeader } from '../SectionHeader'
 import { ApiConfigDialog } from '../ApiConfigDialog'
 import { GlossaryEditor } from './GlossaryEditor'
+import { CustomPromptDialog } from '../CustomPromptDialog'
 import type { PipelineConfig, SystemInfo } from '../../types'
 import { PROVIDER_PRESETS } from '../../types'
 
@@ -26,6 +27,7 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
   const [apiDialogOpen, setApiDialogOpen] = useState(false)
   const [glossaryOpen, setGlossaryOpen] = useState(false)
+  const [customPromptOpen, setCustomPromptOpen] = useState(false)
 
   useEffect(() => {
     fetch('/api/system/info')
@@ -205,49 +207,17 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                 </Box>
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
                   <Box display="flex" justifyContent="space-between" alignItems="center">
-                    <FormControlLabel
-                      control={<Checkbox checked={config.customPromptEnabled} onChange={e => onConfigChange('customPromptEnabled', e.target.checked)} />}
-                      label={<Box><Typography variant="body2">自定义 System Prompt</Typography><Typography variant="caption" display="block">仅可修改翻译风格指令，格式规则由系统自动追加</Typography></Box>}
-                    />
-                    <Button size="small" color="warning" variant="text"
-                      onClick={() => { onConfigChange('customSystemPrompt', ''); onConfigChange('customBatchPrompt', ''); }}
-                      sx={{ minWidth: 'auto', fontSize: '0.75rem', flexShrink: 0, mr: 1 }}>
-                      重置
+                    <Box>
+                      <Typography variant="body2" fontWeight={500}>System Prompt</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {config.customPromptEnabled ? '已自定义' : '使用系统默认'}
+                      </Typography>
+                    </Box>
+                    <Button size="small" variant="outlined" onClick={() => setCustomPromptOpen(true)}>
+                      编辑
                     </Button>
                   </Box>
                 </Box>
-                {config.customPromptEnabled ? (
-                  <>
-                    <TextField
-                      label="自定义翻译指令（风格/语气/角色）"
-                      multiline minRows={3} maxRows={5}
-                      fullWidth size="small"
-                      value={config.customSystemPrompt}
-                      onChange={e => onConfigChange('customSystemPrompt', e.target.value)}
-                      placeholder={'你是专业{source_lang}字幕翻译。请用口语化风格翻译成{target_lang}。'}
-                      helperText={'支持变量: {source_lang}, {target_lang}, {fmt}。格式规则会自动追加'}
-                    />
-                    <Box sx={{ bgcolor: 'grey.100', borderRadius: 1, p: 1.5 }}>
-                      <Typography variant="caption" color="text.secondary" fontWeight={600}>
-                        系统自动追加（不可修改）
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        输出格式必须严格为 &lt;index&gt; 译文，编号数量和顺序必须与输入完全一致，每条独立成行。
-                      </Typography>
-                    </Box>
-                  </>
-                ) : (
-                  <>
-                    <TextField
-                      label="当前 System Prompt（只读预览）"
-                      multiline minRows={4} maxRows={6}
-                      fullWidth size="small"
-                      disabled
-                      value={'你是专业{source_lang}字幕翻译。请将以下{source_lang}逐条翻译成{target_lang}。\n要求：\n1. 保持口语化风格，上下文连贯\n2. 输出格式必须严格为 <index> 译文，编号数量和顺序必须与输入完全一致'}
-                      helperText="勾选「自定义」后，可修改上方风格指令，格式规则始终由系统追加"
-                    />
-                  </>
-                )}
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
                   <FormControlLabel
                     control={<Checkbox checked={config.splitBrainEnabled} onChange={e => onConfigChange('splitBrainEnabled', e.target.checked)} />}
@@ -399,6 +369,12 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
       <GlossaryEditor
         open={glossaryOpen}
         onClose={() => setGlossaryOpen(false)}
+      />
+      <CustomPromptDialog
+        open={customPromptOpen}
+        onClose={() => setCustomPromptOpen(false)}
+        config={config}
+        onConfigChange={onConfigChange}
       />
     </>
   )
