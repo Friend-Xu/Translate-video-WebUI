@@ -57,7 +57,9 @@ import gc
 import hashlib
 import io
 import os
+import shutil
 import sys
+import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -73,10 +75,34 @@ from .vc_device import detect_vram_mb
 _cosyvoice_root = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "models", "CosyVoice")
 )
-_matcha_root = os.path.join(_cosyvoice_root, "third_party", "Matcha-TTS")
+# Use TEMP copy of Matcha-TTS to avoid Windows TxF errors (error 6714) on
+# the git-managed original during Python importlib directory scans.
+_temp_matcha = os.path.join(tempfile.gettempdir(), "Matcha-TTS-py")
+_src_matcha = os.path.join(_cosyvoice_root, "third_party", "Matcha-TTS")
+if not os.path.isdir(_temp_matcha) and os.path.isdir(_src_matcha):
+    try:
+        shutil.copytree(_src_matcha, _temp_matcha)
+    except Exception:
+        pass
+_matcha_root = _temp_matcha if os.path.isdir(_temp_matcha) else _src_matcha
 for _p in (_cosyvoice_root, _matcha_root):
     if os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, _p)
+
+# Pre-import CosyVoice at module init (imported immediately to avoid
+# Windows TxF issues during lazy _load_model() inside thread pools)
+CosyVoice2 = None
+CosyVoice3 = None
+try:
+    from cosyvoice.cli.cosyvoice import CosyVoice2 as _CV2  # type: ignore[import-untyped]
+    CosyVoice2 = _CV2
+except ImportError:
+    pass
+try:
+    from cosyvoice.cli.cosyvoice import CosyVoice3 as _CV3  # type: ignore[import-untyped]
+    CosyVoice3 = _CV3
+except ImportError:
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -371,12 +397,14 @@ class CosyVoiceCloner:
         model_version = self.config.model_version
 
         try:
-            _ensure_cosyvoice_path()
-
             if model_version == "v3":
-                from cosyvoice.cli.cosyvoice import CosyVoice3 as CVModel  # type: ignore[import-untyped]
+                if CosyVoice3 is None:
+                    raise ImportError("CosyVoice3 not available (check Python version and installation)")
+                CVModel = CosyVoice3
             else:
-                from cosyvoice.cli.cosyvoice import CosyVoice2 as CVModel  # type: ignore[import-untyped]
+                if CosyVoice2 is None:
+                    raise ImportError("CosyVoice2 not available (check Python version and installation)")
+                CVModel = CosyVoice2
 
             self._model = CVModel(
                 model_path,
