@@ -292,21 +292,40 @@ export function AdvancedSettings({ config, onConfigChange, showTitle = true }: A
 
             <Box>
               <FormControlLabel
-                control={<Checkbox size="small" checked={config.enableVoiceClone} onChange={e => onConfigChange('enableVoiceClone', e.target.checked)} />}
-                label={<Typography variant="body2" fontWeight={500}>声音克隆 (OpenVoice)</Typography>} />
-              <Box sx={{ ml: 3.5, mt: 0.5, opacity: config.enableVoiceClone ? 1 : 0.5, pointerEvents: config.enableVoiceClone ? 'auto' : 'none' }}>
+                control={<Checkbox size="small" checked={config.voiceCloneEngine !== 'none'} onChange={e => onConfigChange('voiceCloneEngine', e.target.checked ? 'openvoice' : 'none')} />}
+                label={<Typography variant="body2" fontWeight={500}>声音克隆</Typography>} />
+              <Box sx={{ ml: 3.5, mt: 0.5, opacity: config.voiceCloneEngine !== 'none' ? 1 : 0.5, pointerEvents: config.voiceCloneEngine !== 'none' ? 'auto' : 'none' }}>
                 <Stack spacing={1}>
                   <Box>
-                    <Typography variant="caption" color="text.secondary">版本</Typography>
-                    <Select size="small" fullWidth value={config.openvoiceVersion}
-                      onChange={e => onConfigChange('openvoiceVersion', e.target.value as PipelineConfig['openvoiceVersion'])}
+                    <Typography variant="caption" color="text.secondary">引擎</Typography>
+                    <Select size="small" fullWidth value={config.voiceCloneEngine}
+                      onChange={e => onConfigChange('voiceCloneEngine', e.target.value as PipelineConfig['voiceCloneEngine'])}
                       sx={{ mt: 0.25, bgcolor: 'background.paper' }}>
-                      <MenuItem value="v2">V2（推荐）</MenuItem>
-                      <MenuItem value="v1">V1</MenuItem>
+                      <MenuItem value="openvoice">OpenVoice V2</MenuItem>
+                      <MenuItem value="cosyvoice">CosyVoice 2.0/3.0</MenuItem>
+                      <MenuItem value="none">禁用</MenuItem>
                     </Select>
                   </Box>
                   <Box>
-                    <Typography variant="caption" color="text.secondary">参考音频路径</Typography>
+                    <Typography variant="caption" color="text.secondary">推理设备</Typography>
+                    <Select size="small" fullWidth value={config.voiceCloneDevice}
+                      onChange={e => onConfigChange('voiceCloneDevice', e.target.value as PipelineConfig['voiceCloneDevice'])}
+                      sx={{ mt: 0.25, bgcolor: 'background.paper' }}>
+                      <MenuItem value="auto">自动检测</MenuItem>
+                      <MenuItem value="cuda:0">GPU (CUDA)</MenuItem>
+                      <MenuItem value="cpu">CPU</MenuItem>
+                    </Select>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">并发克隆数</Typography>
+                    <Select size="small" fullWidth value={config.voiceCloneConcurrency}
+                      onChange={e => onConfigChange('voiceCloneConcurrency', Number(e.target.value))}
+                      sx={{ mt: 0.25, bgcolor: 'background.paper' }}>
+                      {[1, 2, 3, 4].map(n => <MenuItem key={n} value={n}>{n}{n === 1 ? '（串行）' : ''}</MenuItem>)}
+                    </Select>
+                  </Box>
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">参考音频路径（留空自动从 Demucs 人声提取）</Typography>
                     <TextField size="small" fullWidth placeholder="留空自动查找 Vocals.wav"
                       value={config.voiceCloneSample}
                       onChange={e => onConfigChange('voiceCloneSample', e.target.value)}

@@ -31,8 +31,10 @@ export interface PipelineConfig {
   emotionRefAudio: string
   defaultEmotion: string
   enableVoiceClone: boolean
+  voiceCloneEngine: 'openvoice' | 'cosyvoice' | 'none'
+  voiceCloneDevice: 'auto' | 'cuda:0' | 'cpu'
+  voiceCloneConcurrency: number
   voiceCloneSample: string
-  openvoiceVersion: 'v1' | 'v2'
   concurrency: number
   numWorkers: number
   ttsWorkers: number
@@ -122,8 +124,10 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   emotionRefAudio: '',
   defaultEmotion: 'neutral',
   enableVoiceClone: false,
+  voiceCloneEngine: 'openvoice',
+  voiceCloneDevice: 'auto',
+  voiceCloneConcurrency: 1,
   voiceCloneSample: '',
-  openvoiceVersion: 'v2',
   concurrency: 3,
   numWorkers: 1,
   ttsWorkers: 7,

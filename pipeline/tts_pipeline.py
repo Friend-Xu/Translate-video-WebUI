@@ -103,6 +103,22 @@ class TtsPipeline:
             max_workers=config.threading_workers
         )
 
+    def _find_vocals(self, video_path: str) -> str | None:
+        """Derive the Demucs vocal WAV path from the video path.
+
+        Tries workspace convention first, then legacy flat convention.
+        """
+        target = os.path.dirname(video_path)
+        name = os.path.splitext(os.path.basename(video_path))[0]
+        ws_vocals = os.path.join(target, f"{name}_project", "01_extract", "vocals.wav")
+        if os.path.isfile(ws_vocals):
+            return ws_vocals
+        # Legacy: flat naming in same directory
+        legacy = os.path.join(target, f"{name}_(Vocals).wav")
+        if os.path.isfile(legacy):
+            return legacy
+        return None
+
     # ── 默认组件工厂 ──────────────────────────────────
 
     def _default_engine(self):
@@ -361,6 +377,15 @@ class TtsPipeline:
         self._resume_manager.state.total_subs = len(subs_cn)
 
         logger.info(f"TTS Pipeline: {len(subs_cn)} 条字幕, 视频总长 {total_duration:.1f}s")
+
+        # ── 音色克隆准备：从 Demucs vocal 提取 speaker embedding ──
+        if self.config.voice_clone_active:
+            vocals = self._find_vocals(video_path)
+            if vocals:
+                ok = self.voice_cloner.prepare(vocals)
+                logger.info("音色克隆: speaker embedding %s", "OK" if ok else "FAIL")
+            else:
+                logger.warning("音色克隆: 找不到 vocals.wav，跳过 prepare()")
 
         # ── 字幕渲染优化（可选） ───────────────────────
         caption_groups = None

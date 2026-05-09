@@ -1,20 +1,15 @@
 import os
-import glob
+from glob import glob
 import torch
 import hashlib
-import librosa
 import base64
-from glob import glob
 import numpy as np
 from pydub import AudioSegment
 from faster_whisper import WhisperModel
-import hashlib
-import base64
-import librosa
-from whisper_timestamped.transcribe import get_audio_tensor, get_vad_segments
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _WHISPER_ROOT = os.path.join(_PROJECT_ROOT, "models", "whisper")
+_VAD_ROOT = os.path.join(_PROJECT_ROOT, "models", "vad")
 os.makedirs(_WHISPER_ROOT, exist_ok=True)
 
 model_size = "medium"
@@ -82,25 +77,69 @@ def split_audio_whisper(audio_path, audio_name, target_dir='processed',
     return wavs_folder
 
 
+def _load_vad_model():
+    """Load Silero VAD model from project's models/vad/ directory.
+
+    Prefers JIT model for simpler API compatibility, falls back to ONNX.
+    """
+    jit_path = os.path.join(_VAD_ROOT, "silero_vad.jit")
+    if os.path.isfile(jit_path):
+        return torch.jit.load(jit_path)
+    onnx_path = os.path.join(_VAD_ROOT, "silero_vad.onnx")
+    if os.path.isfile(onnx_path):
+        import onnxruntime
+        return onnxruntime.InferenceSession(onnx_path, providers=['CPUExecutionProvider'])
+    model, _ = torch.hub.load(
+        "snakers4/silero-vad:v4.0", "silero_vad",
+        force_reload=False, trust_repo=True)
+    return model
+
+
+def _get_speech_timestamps(audio_1d: torch.Tensor, model, sr: int = 16000):
+    """Get speech segments using project's Silero VAD.
+
+    Returns list of {'start': float, 'end': float} in seconds.
+    """
+    import onnxruntime
+
+    if isinstance(model, onnxruntime.InferenceSession):
+        # ONNX path: use OnnxWrapper properly
+        from models.vad.utils_vad import OnnxWrapper, get_speech_timestamps as gst
+        onnx_path = os.path.join(_VAD_ROOT, "silero_vad.onnx")
+        wrapper = OnnxWrapper(onnx_path, force_onnx_cpu=True)
+        return gst(audio_1d, wrapper, sampling_rate=16000,
+                   min_speech_duration_ms=100, min_silence_duration_ms=1000,
+                   return_seconds=True)
+    else:
+        from models.vad.utils_vad import get_speech_timestamps as gst
+        return gst(audio_1d, model, sampling_rate=sr,
+                   min_speech_duration_ms=100, min_silence_duration_ms=1000,
+                   return_seconds=True)
+
+
 def split_audio_vad(audio_path, audio_name, target_dir, split_seconds=10.0):
     SAMPLE_RATE = 16000
-    audio_vad = get_audio_tensor(audio_path)
-    segments = get_vad_segments(
-        audio_vad,
-        output_sample=True,
-        min_speech_duration=0.1,
-        min_silence_duration=1,
-        method="silero",
-    )
-    segments = [(seg["start"], seg["end"]) for seg in segments]
-    segments = [(float(s) / SAMPLE_RATE, float(e) / SAMPLE_RATE) for s,e in segments]
-    print(segments)
+
+    # Load audio with torchaudio (replaces whisper_timestamped's get_audio_tensor)
+    import torchaudio
+    audio_vad, sr = torchaudio.load(audio_path)
+    if audio_vad.shape[0] > 1:
+        audio_vad = audio_vad.mean(dim=0)
+    if sr != SAMPLE_RATE:
+        audio_vad = torchaudio.functional.resample(
+            audio_vad.unsqueeze(0), sr, SAMPLE_RATE).squeeze(0)
+
+    # Run Silero VAD (replaces whisper_timestamped's get_vad_segments)
+    vad_model = _load_vad_model()
+    segments = _get_speech_timestamps(audio_vad, vad_model, SAMPLE_RATE)
+    # segments are already in seconds when return_seconds=True
+    segments = [(s["start"], s["end"]) for s in segments]
     audio_active = AudioSegment.silent(duration=0)
     audio = AudioSegment.from_file(audio_path)
 
     for start_time, end_time in segments:
         audio_active += audio[int( start_time * 1000) : int(end_time * 1000)]
-    
+
     audio_dur = audio_active.duration_seconds
     print(f'after vad: dur = {audio_dur}')
     target_folder = os.path.join(target_dir, audio_name)
@@ -108,12 +147,6 @@ def split_audio_vad(audio_path, audio_name, target_dir, split_seconds=10.0):
     os.makedirs(wavs_folder, exist_ok=True)
     start_time = 0.
     count = 0
-    # ---------------------------------------------------------
-    '''
-    原来的代码：
-    num_splits = int(np.round(audio_dur / split_seconds))
-    修改后:
-    '''
     if audio_dur<5:
         if audio_dur < 0.2:
             exit("音频文件时长太短！！")
@@ -121,7 +154,6 @@ def split_audio_vad(audio_path, audio_name, target_dir, split_seconds=10.0):
             num_splits = 1
     else:
         num_splits = int(np.round(audio_dur / split_seconds))
-    #---------------------------------------------------------
     assert num_splits > 0, 'input audio is too short'
     interval = audio_dur / num_splits
 
@@ -137,9 +169,13 @@ def split_audio_vad(audio_path, audio_name, target_dir, split_seconds=10.0):
     return wavs_folder
 
 def hash_numpy_array(audio_path):
-    array, _ = librosa.load(audio_path, sr=None, mono=True)
+    import torchaudio
+    array, sr = torchaudio.load(audio_path)
+    if array.shape[0] > 1:
+        array = array.mean(dim=0)
+    array_np = array.numpy()
     # Convert the array to bytes
-    array_bytes = array.tobytes()
+    array_bytes = array_np.tobytes()
     # Calculate the hash of the array bytes
     hash_object = hashlib.sha256(array_bytes)
     hash_value = hash_object.digest()
