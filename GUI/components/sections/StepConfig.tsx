@@ -204,10 +204,17 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   <Slider value={config.concurrency} min={1} max={8} step={1} marks={[{ value: 1, label: '1' }, { value: 3, label: '3' }, { value: 5, label: '5' }, { value: 8, label: '8' }]} onChange={(_, v) => onConfigChange('concurrency', v as number)} />
                 </Box>
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
-                  <FormControlLabel
-                    control={<Checkbox checked={config.customPromptEnabled} onChange={e => onConfigChange('customPromptEnabled', e.target.checked)} />}
-                    label={<Box><Typography variant="body2">自定义 System Prompt</Typography><Typography variant="caption" display="block">仅可修改翻译风格指令，格式规则由系统自动追加</Typography></Box>}
-                  />
+                  <Box display="flex" justifyContent="space-between" alignItems="center">
+                    <FormControlLabel
+                      control={<Checkbox checked={config.customPromptEnabled} onChange={e => onConfigChange('customPromptEnabled', e.target.checked)} />}
+                      label={<Box><Typography variant="body2">自定义 System Prompt</Typography><Typography variant="caption" display="block">仅可修改翻译风格指令，格式规则由系统自动追加</Typography></Box>}
+                    />
+                    <Button size="small" color="warning" variant="text"
+                      onClick={() => { onConfigChange('customSystemPrompt', ''); onConfigChange('customBatchPrompt', ''); }}
+                      sx={{ minWidth: 'auto', fontSize: '0.75rem', flexShrink: 0, mr: 1 }}>
+                      重置
+                    </Button>
+                  </Box>
                 </Box>
                 {config.customPromptEnabled ? (
                   <>
