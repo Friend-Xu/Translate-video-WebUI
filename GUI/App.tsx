@@ -264,6 +264,16 @@ export default function App() {
     setReviewSaved(false)
   }, [config.videoPath])
 
+  const handleOpenOutputFolder = useCallback(async () => {
+    if (!config.videoPath) return
+    try {
+      const res = await fetch(`/api/files/open-folder?video_path=${encodeURIComponent(config.videoPath)}`, { method: 'POST' })
+      if (!res.ok) showMsg('输出目录尚不存在，请先完成一次处理', 'error')
+    } catch (e: any) {
+      showMsg(`打开失败: ${e.message}`, 'error')
+    }
+  }, [config.videoPath, showMsg])
+
   const handleContinueTTS = useCallback(() => {
     if (!config.videoPath) return
     startPipeline({ ...config, enableExtract: false, enableTranslate: false, enableTTS: true })
@@ -306,6 +316,7 @@ export default function App() {
               reviewSaved={reviewSaved}
               onContinueTTS={handleContinueTTS}
               onFileDropped={handleFileDropped}
+              onOpenOutputFolder={handleOpenOutputFolder}
             />
           </KeepAliveSection>
           <KeepAliveSection active={activeTab === '步骤配置'}>

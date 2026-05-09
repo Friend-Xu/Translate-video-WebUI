@@ -50,6 +50,7 @@ interface PipelinePanelProps {
   reviewSaved?: boolean
   onContinueTTS?: () => void
   onFileDropped?: (file: File) => void
+  onOpenOutputFolder?: () => void
 }
 
 const statusChipColor: Record<string, 'default' | 'primary' | 'success' | 'error' | 'warning'> = {
@@ -81,6 +82,7 @@ export function PipelinePanel({
   reviewSaved = false,
   onContinueTTS,
   onFileDropped,
+  onOpenOutputFolder,
 }: PipelinePanelProps) {
 
   const isRunning = status.state === 'running' || batch.status === 'running'
@@ -255,6 +257,17 @@ export function PipelinePanel({
               : batch.total_count > 0 ? (batch.completed_count / batch.total_count) * 100 : 0
           }
         />
+        {config.videoPath && onOpenOutputFolder && (
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<FolderOpenIcon />}
+            onClick={onOpenOutputFolder}
+            sx={{ mt: 2, borderRadius: 2 }}
+          >
+            {status.state === 'completed' ? '打开输出文件夹' : '打开视频所在目录'}
+          </Button>
+        )}
       </CardContent>
     </Card>
   )

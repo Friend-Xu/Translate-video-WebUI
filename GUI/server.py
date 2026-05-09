@@ -2101,6 +2101,21 @@ async def list_drives() -> dict:
     return {"drives": drives, "quickAccess": quick_access}
 
 
+@app.post("/api/files/open-folder")
+async def open_folder(video_path: str = "") -> dict:
+    """Open workspace dir if exists, otherwise open video's parent dir."""
+    if not video_path:
+        raise HTTPException(status_code=400, detail="Missing video_path")
+    target = os.path.dirname(video_path)
+    name = os.path.splitext(os.path.basename(video_path))[0]
+    ws = os.path.join(target, f"{name}_project")
+    folder = ws if os.path.isdir(ws) else target
+    if not os.path.isdir(folder):
+        raise HTTPException(status_code=404, detail=f"Directory not found: {folder}")
+    os.startfile(folder)
+    return {"ok": True, "opened": folder}
+
+
 @app.get("/api/files/browse")
 async def browse_files(path: str = "") -> dict:
     """List directory contents for the file picker."""
