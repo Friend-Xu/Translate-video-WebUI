@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react'
 import {
   Box, Typography, Card, CardContent, Select, MenuItem,
-  FormControlLabel, Checkbox, Slider, Stack, Button, Chip,
+  FormControlLabel, Checkbox, Slider, Stack, Button, Chip, TextField,
 } from '@mui/material'
 import Grid from '@mui/material/Grid'
 import { SectionHeader } from '../SectionHeader'
 import { ApiConfigDialog } from '../ApiConfigDialog'
+import { GlossaryEditor } from './GlossaryEditor'
 import type { PipelineConfig, SystemInfo } from '../../types'
 import { PROVIDER_PRESETS } from '../../types'
 
@@ -24,6 +25,7 @@ const VRAM_PER_WORKER: Record<string, number> = {
 export function StepConfig({ config, onConfigChange }: StepConfigProps) {
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
   const [apiDialogOpen, setApiDialogOpen] = useState(false)
+  const [glossaryOpen, setGlossaryOpen] = useState(false)
 
   useEffect(() => {
     fetch('/api/system/info')
@@ -169,6 +171,63 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   <Typography variant="caption" display="block" mb={1}>同时翻译的组数 (1=串行, 2~8=并行)</Typography>
                   <Slider value={config.concurrency} min={1} max={8} step={1} marks={[{ value: 1, label: '1' }, { value: 3, label: '3' }, { value: 5, label: '5' }, { value: 8, label: '8' }]} onChange={(_, v) => onConfigChange('concurrency', v as number)} />
                 </Box>
+                <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                  <FormControlLabel
+                    control={<Checkbox checked={config.customPromptEnabled} onChange={e => onConfigChange('customPromptEnabled', e.target.checked)} />}
+                    label={<Box><Typography variant="body2">启用自定义 System Prompt</Typography><Typography variant="caption" display="block">自定义翻译风格和格式要求</Typography></Box>}
+                  />
+                </Box>
+                {config.customPromptEnabled && (
+                  <>
+                    <TextField
+                      label="System Prompt"
+                      multiline minRows={3} maxRows={6}
+                      fullWidth size="small"
+                      value={config.customSystemPrompt}
+                      onChange={e => onConfigChange('customSystemPrompt', e.target.value)}
+                      placeholder="你是专业{source_lang}字幕翻译。请将以下{source_lang}逐条翻译成{target_lang}。"
+                      helperText="支持变量: {source_lang}, {target_lang}, {fmt}, {retry}"
+                    />
+                    <TextField
+                      label="Batch Prompt 模板"
+                      multiline minRows={3} maxRows={6}
+                      fullWidth size="small"
+                      value={config.customBatchPrompt}
+                      onChange={e => onConfigChange('customBatchPrompt', e.target.value)}
+                      placeholder="待翻译：{items}翻译："
+                      helperText="{items} 将被替换为待翻译字幕列表"
+                    />
+                  </>
+                )}
+                <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                  <FormControlLabel
+                    control={<Checkbox checked={config.splitBrainEnabled} onChange={e => onConfigChange('splitBrainEnabled', e.target.checked)} />}
+                    label={<Box><Typography variant="body2">Split-Brain 翻译模式</Typography><Typography variant="caption" display="block">分离创意翻译与行数约束，提高翻译质量（需额外 API 调用）</Typography></Box>}
+                  />
+                </Box>
+                <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                  <FormControlLabel
+                    control={<Checkbox checked={config.multiAgentEnabled} onChange={e => onConfigChange('multiAgentEnabled', e.target.checked)} />}
+                    label={<Box><Typography variant="body2">Multi-Agent 翻译流水线</Typography><Typography variant="caption" display="block">Director→Glossary→Translate→Mapper→Review→Polish（需 3-5x API 调用）</Typography></Box>}
+                  />
+                </Box>
+                {config.multiAgentEnabled && (
+                  <Box>
+                    <Box display="flex" justifyContent="space-between">
+                      <Typography variant="body2" fontWeight={500}>MQM 质量阈值</Typography>
+                      <Typography variant="body2" fontWeight={600} color="primary">{config.mqmThreshold}</Typography>
+                    </Box>
+                    <Typography variant="caption" display="block" mb={1}>低于此值自动重试（0.5~0.8）</Typography>
+                    <Slider value={config.mqmThreshold} min={0.5} max={0.8} step={0.05}
+                      marks={[{ value: 0.5, label: '0.5' }, { value: 0.6, label: '0.6' }, { value: 0.7, label: '0.7' }, { value: 0.8, label: '0.8' }]}
+                      onChange={(_, v) => onConfigChange('mqmThreshold', v as number)} />
+                  </Box>
+                )}
+                <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                  <Button variant="outlined" size="small" fullWidth onClick={() => setGlossaryOpen(true)}>
+                    Glossary Editor
+                  </Button>
+                </Box>
               </Stack>
             </CardContent>
           </Card>
@@ -283,6 +342,10 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
         onClose={() => setApiDialogOpen(false)}
         config={config}
         onConfigChange={onConfigChange}
+      />
+      <GlossaryEditor
+        open={glossaryOpen}
+        onClose={() => setGlossaryOpen(false)}
       />
     </>
   )

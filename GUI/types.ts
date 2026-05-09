@@ -34,6 +34,8 @@ export interface PipelineConfig {
   voiceCloneEngine: 'openvoice' | 'cosyvoice' | 'none'
   voiceCloneDevice: 'auto' | 'cuda:0' | 'cpu'
   voiceCloneConcurrency: number
+  cosyvoiceMode: 'local' | 'docker'
+  cosyvoiceModelVersion: 'v2' | 'v3'
   voiceCloneSample: string
   concurrency: number
   numWorkers: number
@@ -63,6 +65,15 @@ export interface PipelineConfig {
   enableSubtitleOptimization: boolean
   subtitleEngine: 'pil' | 'imagemagick'
   bgmVolume: number
+  customPromptEnabled: boolean
+  customSystemPrompt: string
+  customBatchPrompt: string
+  customSinglePrompt: string
+  splitBrainEnabled: boolean
+  activeGlossary: string
+  multiAgentEnabled: boolean
+  mqmEnabled: boolean
+  mqmThreshold: number
 }
 
 export interface PipelineStatus {
@@ -127,6 +138,8 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   voiceCloneEngine: 'openvoice',
   voiceCloneDevice: 'auto',
   voiceCloneConcurrency: 1,
+  cosyvoiceMode: 'local',
+  cosyvoiceModelVersion: 'v2',
   voiceCloneSample: '',
   concurrency: 3,
   numWorkers: 1,
@@ -156,6 +169,15 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   enableSubtitleOptimization: true,
   subtitleEngine: 'pil',
   bgmVolume: 1.0,
+  customPromptEnabled: false,
+  customSystemPrompt: '',
+  customBatchPrompt: '',
+  customSinglePrompt: '',
+  splitBrainEnabled: false,
+  activeGlossary: 'minecraft.json',
+  multiAgentEnabled: false,
+  mqmEnabled: false,
+  mqmThreshold: 0.6,
 }
 
 export interface SubtitleIssue {

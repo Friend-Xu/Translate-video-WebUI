@@ -367,6 +367,9 @@ def step_tts(
     voice_clone_device: str | None = None,
     vram_limit: int | None = None,
     clone_concurrency: int | None = None,
+    cosyvoice_mode: str | None = None,
+    cosyvoice_model_version: str | None = None,
+    cosyvoice_model_path: str | None = None,
 ) -> None:
     """步骤 3: TTS 合成 + 视频合并（新管线 TtsPipeline）
 
@@ -413,6 +416,12 @@ def step_tts(
         cfg.voice_clone_vram_limit_mb = vram_limit
     if clone_concurrency is not None:
         cfg.voice_clone_concurrency = clone_concurrency
+    if cosyvoice_mode is not None:
+        cfg.cosyvoice_mode = cosyvoice_mode
+    if cosyvoice_model_version is not None:
+        cfg.cosyvoice_model_version = cosyvoice_model_version
+    if cosyvoice_model_path is not None:
+        cfg.cosyvoice_model_path = cosyvoice_model_path
 
     # ── 字幕配置: CaptionConfig 文件 > 单独 CLI args（后者覆盖） ──
     if caption_config_path and os.path.isfile(caption_config_path):
@@ -576,6 +585,14 @@ def main():
                         help="显存上限(MB), 0=自动检测")
     parser.add_argument("--clone-concurrency", type=int, default=None,
                         help="音色克隆并发数")
+    parser.add_argument("--cosyvoice-mode", default=None,
+                        choices=["local", "docker"],
+                        help="CosyVoice 运行模式 (local/docker)")
+    parser.add_argument("--cosyvoice-model-version", default=None,
+                        choices=["v2", "v3"],
+                        help="CosyVoice 模型版本 (v2/v3)")
+    parser.add_argument("--cosyvoice-model-path", default=None,
+                        help="CosyVoice 模型 checkpoint 路径")
     parser.add_argument("--skip-extract", action="store_true",
                         help="跳过字幕提取")
     parser.add_argument("--skip-defect-check", action="store_true",
@@ -707,6 +724,9 @@ def main():
                 voice_clone_device=args.voice_clone_device,
                 vram_limit=args.vram_limit,
                 clone_concurrency=args.clone_concurrency,
+                cosyvoice_mode=args.cosyvoice_mode,
+                cosyvoice_model_version=args.cosyvoice_model_version,
+                cosyvoice_model_path=args.cosyvoice_model_path,
             )
         else:
             print("[3/3] TTS 合成 — 已跳过 (--skip-tts)")

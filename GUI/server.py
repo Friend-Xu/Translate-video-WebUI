@@ -324,6 +324,8 @@ def _load_yaml_defaults() -> dict:
         "voiceCloneEngine": tts.get("voice_clone_engine", "openvoice"),
         "voiceCloneDevice": tts.get("voice_clone_device", "auto"),
         "voiceCloneConcurrency": tts.get("voice_clone_concurrency", 1),
+        "cosyvoiceMode": tts.get("cosyvoice_mode", "local"),
+        "cosyvoiceModelVersion": tts.get("cosyvoice_model_version", "v2"),
         "voiceCloneSample": tts.get("voice_clone_sample") or "",
         "enableEmotionClone": tts.get("enable_emotion", False),
         "defaultEmotion": tts.get("default_emotion", "neutral"),
@@ -425,6 +427,28 @@ def _sync_translate_config() -> None:
     if pipeline_cfg.get("maxTokens"):
         trans["translate"]["max_tokens"] = pipeline_cfg["maxTokens"]
 
+    # Sync custom prompt
+    if pipeline_cfg.get("customPromptEnabled"):
+        if "custom_prompt" not in trans["translate"]:
+            trans["translate"]["custom_prompt"] = {}
+        trans["translate"]["custom_prompt"]["enabled"] = True
+        trans["translate"]["custom_prompt"]["system_prompt"] = pipeline_cfg.get("customSystemPrompt", "")
+        trans["translate"]["custom_prompt"]["batch_prompt"] = pipeline_cfg.get("customBatchPrompt", "")
+        trans["translate"]["custom_prompt"]["single_prompt"] = pipeline_cfg.get("customSinglePrompt", "")
+    else:
+        trans["translate"]["custom_prompt"] = {"enabled": False, "system_prompt": "", "batch_prompt": "", "single_prompt": ""}
+
+    # Sync split-brain
+    if "split_brain" not in trans["translate"]:
+        trans["translate"]["split_brain"] = {}
+    trans["translate"]["split_brain"]["enabled"] = pipeline_cfg.get("splitBrainEnabled", False)
+
+    # Sync multi-agent
+    if "multi_agent" not in trans["translate"]:
+        trans["translate"]["multi_agent"] = {}
+    trans["translate"]["multi_agent"]["enabled"] = pipeline_cfg.get("multiAgentEnabled", False)
+    trans["translate"]["multi_agent"]["mqm_threshold"] = pipeline_cfg.get("mqmThreshold", 0.6)
+
     with open(translate_path, "w", encoding="utf-8") as f:
         yaml.dump(trans, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
 
@@ -469,6 +493,8 @@ class RunRequest(BaseModel):
     voice_clone_engine: str = "openvoice"
     voice_clone_device: str = "auto"
     voice_clone_concurrency: int = 1
+    cosyvoice_mode: str = "local"
+    cosyvoice_model_version: str = "v2"
     num_workers: int = 1
     tts_workers: int = 7
     skip_align: bool = False
@@ -537,6 +563,8 @@ def _write_tts_runtime_config(req: RunRequest) -> str:
             "voice_clone_engine": req.voice_clone_engine,
             "voice_clone_device": req.voice_clone_device,
             "voice_clone_concurrency": req.voice_clone_concurrency,
+            "cosyvoice_mode": req.cosyvoice_mode,
+            "cosyvoice_model_version": req.cosyvoice_model_version,
         }
     }
     with open(config_path, "w", encoding="utf-8") as f:
@@ -1441,6 +1469,93 @@ async def post_config(payload: dict) -> dict:
     settings["pipeline"] = overrides
     save_settings(settings)
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Prompt preview
+# ---------------------------------------------------------------------------
+
+class PreviewPromptRequest(BaseModel):
+    system_prompt: str = ""
+    batch_prompt: str = ""
+    source_lang: str = "ja"
+    target_lang: str = "简体中文"
+    fmt: str = "numbered_list"
+
+
+@app.post("/api/translate/preview-prompt")
+async def preview_prompt(req: PreviewPromptRequest) -> dict:
+    """解析 prompt 变量并返回预览。"""
+    from SRT.SRT_Translator import resolve_prompt_variables
+    variables = {
+        "source_lang": req.source_lang,
+        "target_lang": req.target_lang,
+        "fmt": req.fmt,
+        "retry": "false",
+        "items": "<1> 示例字幕 1\n<2> 示例字幕 2\n<3> 示例字幕 3",
+        "current_text": "示例字幕文本",
+        "context": "前文: 上下文示例\n当前: 示例字幕文本\n后文: 后续字幕",
+    }
+    result = {}
+    if req.system_prompt:
+        result["system_preview"] = resolve_prompt_variables(req.system_prompt, variables)
+    if req.batch_prompt:
+        result["batch_preview"] = resolve_prompt_variables(req.batch_prompt, variables)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Glossary CRUD
+# ---------------------------------------------------------------------------
+
+@app.get("/api/glossary/dicts")
+async def list_glossary_dicts() -> dict:
+    terms_dir = PROJECT_ROOT / "config" / "terms"
+    if not terms_dir.is_dir():
+        return {"dicts": []}
+    dicts = []
+    for f in sorted(terms_dir.glob("*.json")):
+        try:
+            data = json.loads(f.read_text("utf-8"))
+            dicts.append({
+                "name": f.stem,
+                "description": data.get("description", ""),
+                "termCount": len(data.get("terms", {})),
+            })
+        except Exception:
+            pass
+    return {"dicts": dicts}
+
+
+@app.get("/api/glossary/dict/{name}")
+async def get_glossary_dict(name: str) -> dict:
+    path = PROJECT_ROOT / "config" / "terms" / f"{name}.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"Dictionary not found: {name}")
+    return json.loads(path.read_text("utf-8"))
+
+
+@app.post("/api/glossary/dict/{name}")
+async def save_glossary_dict(name: str, payload: dict) -> dict:
+    terms_dir = PROJECT_ROOT / "config" / "terms"
+    terms_dir.mkdir(parents=True, exist_ok=True)
+    path = terms_dir / f"{name}.json"
+    data = {
+        "name": name,
+        "description": payload.get("description", ""),
+        "terms": payload.get("terms", {}),
+    }
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"ok": True, "name": name, "termCount": len(data["terms"])}
+
+
+@app.delete("/api/glossary/dict/{name}")
+async def delete_glossary_dict(name: str) -> dict:
+    path = PROJECT_ROOT / "config" / "terms" / f"{name}.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"Dictionary not found: {name}")
+    path.unlink()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

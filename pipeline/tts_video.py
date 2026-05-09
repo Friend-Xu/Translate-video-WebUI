@@ -41,7 +41,7 @@ class VideoSegmenter:
         video_output_dir: str = "file/Video_file",
         clone_color: bool = False,
         caption: bool = True,
-        openvoice_cloner: Optional[Callable] = None,
+        voice_cloner_callback: Optional[Callable] = None,
         caption_renderer: Optional[Callable] = None,
         video_bitrate: str = "5M",
         video_codec: str = "libx264",
@@ -55,7 +55,7 @@ class VideoSegmenter:
         self.video_output_dir = video_output_dir
         self.clone_color = clone_color
         self.caption = caption
-        self.openvoice_cloner = openvoice_cloner
+        self.voice_cloner_callback = voice_cloner_callback
         self.caption_renderer = caption_renderer
         self.video_bitrate = video_bitrate
         self.video_codec = video_codec
@@ -225,12 +225,12 @@ class VideoSegmenter:
         if audio_instrumental is None:
             # 无背景乐：直接使用 TTS 音频，跳过混音
             slow_down_clip = slow_down_clip.with_audio(tts_audio.subclipped(0, tts_dur))
-        elif self.clone_color and self.openvoice_cloner:
+        elif self.clone_color and self.voice_cloner_callback:
             try:
                 # Clone output goes to workspace: {workspace}/03_tts/cloned/
                 openvoice_output_dir = os.path.join(
                     os.path.dirname(self.video_output_dir), "cloned")
-                clone_color_file = self.openvoice_cloner(tts_audio_path, openvoice_output_dir)
+                clone_color_file = self.voice_cloner_callback(tts_audio_path, openvoice_output_dir)
                 # 导出背景乐 → ffmpeg 混音: 背景乐(变速) + clone
                 instr_path = self._export_audio_to_wav(audio_instrumental)
                 self._ffmpeg_mix_audio(
@@ -240,9 +240,9 @@ class VideoSegmenter:
                     bgm_gain_db=bgm_gain_db,
                 )
             except Exception as e:
-                logger.warning("OpenVoice clone 失败: %s", e)
+                logger.warning("音色克隆失败: %s", e)
                 error_log = os.path.join(
-                    os.path.dirname(self.video_output_dir), "openvoice_error_log.txt")
+                    os.path.dirname(self.video_output_dir), "voice_clone_error_log.txt")
                 os.makedirs(os.path.dirname(error_log) or ".", exist_ok=True)
                 with open(error_log, "a", encoding="utf-8") as f:
                     f.write(f"发生错误: {str(e)}\n")

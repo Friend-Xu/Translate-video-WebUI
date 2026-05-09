@@ -153,7 +153,7 @@ class TtsPipeline:
             speed_tolerance=self.config.speed_tolerance,
             video_speed_min=self.config.video_speed_min,
             video_speed_max=self.config.video_speed_max,
-            openvoice_cloner=self.voice_cloner.clone if hasattr(self.voice_cloner, 'clone') else None,
+            voice_cloner_callback=self.voice_cloner.clone if hasattr(self.voice_cloner, 'clone') else None,
             caption_renderer=self._render_caption,
             video_bitrate=self.config.video_bitrate,
             video_codec=self.config.video_codec,
@@ -197,6 +197,11 @@ class TtsPipeline:
             concurrent_workers=self.config.voice_clone_concurrency,
             vram_limit_mb=self.config.voice_clone_vram_limit_mb,
             color_audio_path="./speakers/Color_audio.WAV",
+            model_dir=self.config.cosyvoice_model_path,
+            cosyvoice_mode=self.config.cosyvoice_mode,
+            model_version=self.config.cosyvoice_model_version,
+            cosyvoice_fp16=self.config.cosyvoice_fp16,
+            cosyvoice_docker_url=self.config.cosyvoice_docker_url,
         )
 
         if engine == "cosyvoice":
