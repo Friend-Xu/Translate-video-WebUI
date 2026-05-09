@@ -174,10 +174,10 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
                   <FormControlLabel
                     control={<Checkbox checked={config.customPromptEnabled} onChange={e => onConfigChange('customPromptEnabled', e.target.checked)} />}
-                    label={<Box><Typography variant="body2">启用自定义 System Prompt</Typography><Typography variant="caption" display="block">自定义翻译风格和格式要求</Typography></Box>}
+                    label={<Box><Typography variant="body2">自定义 System Prompt</Typography><Typography variant="caption" display="block">覆盖默认翻译指令，支持 {'{source_lang}'} 等变量</Typography></Box>}
                   />
                 </Box>
-                {config.customPromptEnabled && (
+                {config.customPromptEnabled ? (
                   <>
                     <TextField
                       label="System Prompt"
@@ -198,6 +198,15 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                       helperText="{items} 将被替换为待翻译字幕列表"
                     />
                   </>
+                ) : (
+                  <TextField
+                    label="当前使用的 System Prompt（只读）"
+                    multiline minRows={3} maxRows={6}
+                    fullWidth size="small"
+                    disabled
+                    value="你是专业{source_lang}字幕翻译。请将以下{source_lang}逐条翻译成{target_lang}。\n要求：\n1. 保持口语化风格，上下文连贯\n2. 输出格式必须严格为 <index> 译文\n   编号数量和顺序必须与输入完全一致"
+                    helperText="勾选「自定义」后可修改此提示词"
+                  />
                 )}
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
                   <FormControlLabel
