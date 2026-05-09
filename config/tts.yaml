@@ -14,7 +14,7 @@ tts:
   voice_clone_sample: null
   openvoice_model_version: v2
   # 新版音色克隆引擎配置
-  voice_clone_engine: openvoice  # openvoice | cosyvoice | none
+  voice_clone_engine: none  # openvoice | cosyvoice | none (需提供参考音频)
   voice_clone_device: auto  # auto | cuda:0 | cpu
   voice_clone_concurrency: 1  # 并发数（需足够显存）
   voice_clone_vram_limit_mb: 0  # 0=auto

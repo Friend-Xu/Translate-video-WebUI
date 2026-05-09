@@ -107,7 +107,7 @@ class TTSConfig:
     """OpenVoice 模型版本: v1 或 v2（已废弃）"""
 
     # ── 音色克隆引擎（新版统一配置） ──────────────────────
-    voice_clone_engine: str = "openvoice"
+    voice_clone_engine: str = "none"
     """音色克隆引擎: openvoice | cosyvoice | none。none=禁用"""
 
     voice_clone_device: str = "auto"

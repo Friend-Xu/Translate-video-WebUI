@@ -321,7 +321,7 @@ def _load_yaml_defaults() -> dict:
         "videoSpeedMin": tts.get("video_speed_min", 0.60),
         "videoSpeedMax": tts.get("video_speed_max", 2.00),
         "enableVoiceClone": tts.get("voice_clone_engine", "openvoice") != "none",
-        "voiceCloneEngine": tts.get("voice_clone_engine", "openvoice"),
+        "voiceCloneEngine": tts.get("voice_clone_engine", "none"),
         "voiceCloneDevice": tts.get("voice_clone_device", "auto"),
         "voiceCloneConcurrency": tts.get("voice_clone_concurrency", 1),
         "cosyvoiceMode": tts.get("cosyvoice_mode", "local"),
@@ -496,7 +496,7 @@ class RunRequest(BaseModel):
     caption_width_ratio: float = 0.85
     caption_optimize: bool = True
     bgm_volume: float = 1.0
-    voice_clone_engine: str = "openvoice"
+    voice_clone_engine: str = "none"
     voice_clone_device: str = "auto"
     voice_clone_concurrency: int = 1
     cosyvoice_mode: str = "local"

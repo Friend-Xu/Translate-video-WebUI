@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   Button, TextField, Box, Typography, Chip, Paper, Divider,
@@ -31,6 +31,13 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Pr
   const [localEnabled, setLocalEnabled] = useState(config.customPromptEnabled)
   const [localPrompt, setLocalPrompt] = useState(config.customSystemPrompt)
   const textFieldRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (open) {
+      setLocalEnabled(config.customPromptEnabled)
+      setLocalPrompt(config.customSystemPrompt)
+    }
+  }, [open])
 
   const handleSave = () => {
     onConfigChange('customPromptEnabled', localEnabled)

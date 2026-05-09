@@ -227,11 +227,11 @@ class VideoSegmenter:
             slow_down_clip = slow_down_clip.with_audio(tts_audio.subclipped(0, tts_dur))
         elif self.clone_color and self.voice_cloner_callback:
             try:
-                # Clone output goes to workspace: {workspace}/03_tts/cloned/
                 openvoice_output_dir = os.path.join(
                     os.path.dirname(self.video_output_dir), "cloned")
                 clone_color_file = self.voice_cloner_callback(tts_audio_path, openvoice_output_dir)
-                # 导出背景乐 → ffmpeg 混音: 背景乐(变速) + clone
+                if clone_color_file is None or not os.path.isfile(clone_color_file):
+                    raise RuntimeError("音色克隆返回空结果")
                 instr_path = self._export_audio_to_wav(audio_instrumental)
                 self._ffmpeg_mix_audio(
                     [instr_path, clone_color_file],

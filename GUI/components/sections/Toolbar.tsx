@@ -65,7 +65,7 @@ export function Toolbar({ onImportVideo, onOptimizeSubtitles, onReviewSubtitles,
         ref={fileInputRef}
         type="file"
         accept=".json"
-        style={{ display: 'none' }}
+        style={{ position: 'absolute', width: 0, height: 0, opacity: 0, overflow: 'hidden' }}
         onChange={handleFileChange}
       />
     </>
