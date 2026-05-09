@@ -438,6 +438,11 @@ def _sync_translate_config() -> None:
     else:
         trans["translate"]["custom_prompt"] = {"enabled": False, "system_prompt": "", "batch_prompt": "", "single_prompt": ""}
 
+    # Sync split-brain
+    if "split_brain" not in trans["translate"]:
+        trans["translate"]["split_brain"] = {}
+    trans["translate"]["split_brain"]["enabled"] = pipeline_cfg.get("splitBrainEnabled", False)
+
     with open(translate_path, "w", encoding="utf-8") as f:
         yaml.dump(trans, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
 
@@ -1491,6 +1496,60 @@ async def preview_prompt(req: PreviewPromptRequest) -> dict:
     if req.batch_prompt:
         result["batch_preview"] = resolve_prompt_variables(req.batch_prompt, variables)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Glossary CRUD
+# ---------------------------------------------------------------------------
+
+@app.get("/api/glossary/dicts")
+async def list_glossary_dicts() -> dict:
+    terms_dir = PROJECT_ROOT / "config" / "terms"
+    if not terms_dir.is_dir():
+        return {"dicts": []}
+    dicts = []
+    for f in sorted(terms_dir.glob("*.json")):
+        try:
+            data = json.loads(f.read_text("utf-8"))
+            dicts.append({
+                "name": f.stem,
+                "description": data.get("description", ""),
+                "termCount": len(data.get("terms", {})),
+            })
+        except Exception:
+            pass
+    return {"dicts": dicts}
+
+
+@app.get("/api/glossary/dict/{name}")
+async def get_glossary_dict(name: str) -> dict:
+    path = PROJECT_ROOT / "config" / "terms" / f"{name}.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"Dictionary not found: {name}")
+    return json.loads(path.read_text("utf-8"))
+
+
+@app.post("/api/glossary/dict/{name}")
+async def save_glossary_dict(name: str, payload: dict) -> dict:
+    terms_dir = PROJECT_ROOT / "config" / "terms"
+    terms_dir.mkdir(parents=True, exist_ok=True)
+    path = terms_dir / f"{name}.json"
+    data = {
+        "name": name,
+        "description": payload.get("description", ""),
+        "terms": payload.get("terms", {}),
+    }
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"ok": True, "name": name, "termCount": len(data["terms"])}
+
+
+@app.delete("/api/glossary/dict/{name}")
+async def delete_glossary_dict(name: str) -> dict:
+    path = PROJECT_ROOT / "config" / "terms" / f"{name}.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"Dictionary not found: {name}")
+    path.unlink()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

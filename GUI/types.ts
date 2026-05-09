@@ -69,6 +69,8 @@ export interface PipelineConfig {
   customSystemPrompt: string
   customBatchPrompt: string
   customSinglePrompt: string
+  splitBrainEnabled: boolean
+  activeGlossary: string
 }
 
 export interface PipelineStatus {
@@ -168,6 +170,8 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   customSystemPrompt: '',
   customBatchPrompt: '',
   customSinglePrompt: '',
+  splitBrainEnabled: false,
+  activeGlossary: 'minecraft.json',
 }
 
 export interface SubtitleIssue {

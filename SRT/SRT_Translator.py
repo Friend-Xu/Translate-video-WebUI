@@ -452,6 +452,136 @@ def build_single_prompt(subtitle: pysrt.SubRipItem, prev_subs: List[pysrt.SubRip
     return system, user
 
 
+# ── Split-Brain 翻译器 ────────────────────────────
+
+class SplitBrainTranslator:
+    """两阶段翻译：创意翻译 + 结构映射（Vimeo split-brain 模式）。
+
+    Phase A: 纯翻译，不限制行数，追求自然表达。
+    Phase B: 将翻译文本按源字幕索引切分映射。
+
+    两阶段失败时兜底使用规则算法。
+    """
+
+    def __init__(self, api: TranslationAPI, rate_limiter: RateLimiter,
+                 source_lang: str = "ja", target_lang: str = "简体中文"):
+        self.api = api
+        self.rate_limiter = rate_limiter
+        self.source_lang = source_lang
+        self.target_lang = target_lang
+
+    def translate_group(self, group: List[pysrt.SubRipItem]) -> Dict[int, str]:
+        """Split-brain 翻译一个字幕组，返回 {index: translated_text}。"""
+        if not group:
+            return {}
+
+        # Phase A: 创意翻译
+        creative_prompt = self._build_creative_prompt(group)
+        self.rate_limiter.acquire()
+        creative_text = self.api.translate(creative_prompt)
+
+        if not creative_text or not creative_text.strip():
+            logger.warning("Split-brain Phase A 返回空，回退逐条映射")
+            return self._fallback_rule(group, creative_text or "")
+
+        # Phase B: 结构映射
+        mapping_prompt = self._build_mapping_prompt(group, creative_text)
+        self.rate_limiter.acquire()
+        mapping_text = self.api.translate(mapping_prompt)
+
+        result = self._parse_mapping(mapping_text, len(group))
+        if result and len(result) == len(group):
+            return result
+
+        logger.warning(f"Split-brain Phase B 映射失败 ({len(result) if result else 0}/{len(group)})，使用兜底算法")
+        return self._fallback_rule(group, creative_text)
+
+    def _build_creative_prompt(self, group: List[pysrt.SubRipItem]) -> str:
+        """构建创意翻译 prompt：强调自然表达，不限制行数。"""
+        if self.source_lang == "ja":
+            role = "你是专业日语字幕翻译。"
+        else:
+            role = "你是专业英语字幕翻译。"
+
+        lines = []
+        for i, sub in enumerate(group):
+            lines.append(f"[{sub.index}] {sub.text}")
+
+        return (
+            f"{role}请将以下{len(group)}条字幕翻译成{self.target_lang}。\n\n"
+            f"重要：只关注翻译质量和自然表达，不需要保持行数或编号一致。\n"
+            f"把整段内容当成一个整体来翻译，用自然流畅的{self.target_lang}表达。\n"
+            f"可以适当合并短句或拆分长句，以表达清晰为首要目标。\n\n"
+            f"源字幕：\n" + "\n".join(lines) + "\n\n"
+            f"请直接输出流畅自然的翻译文本（不需要编号，不需要格式）："
+        )
+
+    def _build_mapping_prompt(self, group: List[pysrt.SubRipItem],
+                               creative_text: str) -> str:
+        """构建结构映射 prompt：把创意翻译切回源行数。"""
+        lines = []
+        for i, sub in enumerate(group):
+            lines.append(f"<{sub.index}> {sub.text}")
+
+        return (
+            f"下面有{len(group)}条源字幕（带编号和原文），以及一段翻译文本。\n"
+            f"请将翻译文本按语义切分成恰好{len(group)}条，每条对应一条源字幕。\n\n"
+            f"源字幕：\n" + "\n".join(lines) + "\n\n"
+            f"翻译文本：\n{creative_text}\n\n"
+            f"输出格式（严格）：\n" +
+            "\n".join([f"<{sub.index}> [译文]" for sub in group]) +
+            f"\n\n请直接输出{len(group)}条译文，每条一行，编号严格对应："
+        )
+
+    def _parse_mapping(self, text: str, expected_count: int) -> Dict[int, str]:
+        """解析映射结果。"""
+        if not text:
+            return {}
+        result = parse_numbered_list(text)
+        if len(result) == expected_count:
+            return result
+        # 尝试 JSON 格式兜底
+        json_result = parse_json_translation(text)
+        if len(json_result) == expected_count:
+            return json_result
+        return result if len(result) > 0 else json_result
+
+    def _fallback_rule(self, group: List[pysrt.SubRipItem],
+                        creative_text: str) -> Dict[int, str]:
+        """规则兜底：将创意翻译文本按源行字符比例分配。"""
+        if not creative_text or not creative_text.strip():
+            # 完全失败：返回原文
+            return {sub.index: sub.text for sub in group}
+
+        # 按源文本长度比例分配翻译文本
+        total_chars = sum(len(sub.text) for sub in group)
+        if total_chars == 0:
+            # 均分
+            return {sub.index: creative_text for sub in group}
+
+        # 简单的逐句切分（按标点）
+        segments = re.split(r'(?<=[。！？.!?\n])\s*', creative_text)
+        segments = [s.strip() for s in segments if s.strip()]
+
+        result = {}
+        if len(segments) >= len(group):
+            # 足够分配
+            for i, sub in enumerate(group):
+                result[sub.index] = segments[i] if i < len(segments) else sub.text
+        else:
+            # 不够分配：按比例
+            ratios = [len(sub.text) / total_chars for sub in group]
+            seg_idx = 0
+            for i, sub in enumerate(group):
+                if seg_idx < len(segments):
+                    result[sub.index] = segments[seg_idx]
+                    seg_idx += 1
+                else:
+                    result[sub.index] = sub.text
+
+        return result
+
+
 # ── 语义分组 ──────────────────────────────────────
 
 def group_semantically(
@@ -629,6 +759,12 @@ class SRTTranslator:
         self.custom_single_prompt = prompt_cfg.get("single_prompt", "")
         # 目标语言（从 source_lang 推断）
         self.target_lang = "简体中文" if self.source_lang in ("ja", "zh") else "Simplified Chinese"
+        # Split-brain 配置
+        sb_cfg = self.config.get("split_brain", {})
+        self.split_brain_enabled = sb_cfg.get("enabled", False)
+        # Multi-agent 配置
+        ma_cfg = self.config.get("multi_agent", {})
+        self.multi_agent_enabled = ma_cfg.get("enabled", False)
 
     def translate(self, srt_path: str) -> Tuple[str, str]:
         """主入口
@@ -656,11 +792,19 @@ class SRTTranslator:
 
         pending_groups = []
 
+        # 选择翻译方法
+        if self.split_brain_enabled:
+            translate_fn = self._translate_group_split_brain
+            logger.info("翻译模式: split-brain")
+        else:
+            translate_fn = self._translate_group_with_fallback
+            logger.info("翻译模式: 传统（格式校验 + 降级链）")
+
         if self.concurrent_enabled:
             logger.info(f"并发翻译模式: max_workers={self.max_workers}")
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 future_to_group = {
-                    executor.submit(self._translate_group_with_fallback, gi, group): (gi, group)
+                    executor.submit(translate_fn, gi, group): (gi, group)
                     for gi, group in enumerate(groups, 1)
                 }
                 for future in as_completed(future_to_group):
@@ -674,7 +818,7 @@ class SRTTranslator:
                         pending_groups.append(group)
         else:
             for gi, group in enumerate(groups, 1):
-                success = self._translate_group_with_fallback(gi, group)
+                success = translate_fn(gi, group)
                 if not success:
                     pending_groups.append(group)
 
@@ -722,6 +866,45 @@ class SRTTranslator:
         subs.save(final_path, encoding="utf-8")
         logger.info(f"人工回填完成: {final_path}")
         return final_path
+
+    def _translate_group_split_brain(self, group_index: int, group: List[pysrt.SubRipItem]) -> bool:
+        """Split-brain 翻译一组字幕。
+        返回: 是否成功
+        """
+        group_label = f"组 {group_index}/{self.log.total_groups}"
+        indices = [sub.index for sub in group]
+        logger.info(f"[{group_label}] Split-brain 翻译 (索引: {indices})")
+
+        sb_translator = SplitBrainTranslator(
+            self.api, self.rate_limiter,
+            source_lang=self.source_lang,
+            target_lang=self.target_lang,
+        )
+        t0 = time.time()
+        try:
+            mapping = sb_translator.translate_group(group)
+        except Exception as e:
+            logger.error(f"[{group_label}] Split-brain 异常: {e}")
+            return False
+
+        if not mapping or len(mapping) != len(group):
+            logger.warning(f"[{group_label}] Split-brain 失败，回退传统模式")
+            return self._translate_group_with_fallback(group_index, group)
+
+        # 回填翻译结果
+        for sub in group:
+            if sub.index in mapping:
+                sub.text = mapping[sub.index]
+
+        with self._log_lock:
+            self.log.success += 1
+            self.log.details.append({
+                "group": group_index,
+                "status": "success",
+                "method": "split_brain",
+                "duration": round(time.time() - t0, 2),
+            })
+        return True
 
     def _translate_group_with_fallback(self, group_index: int, group: List[pysrt.SubRipItem]) -> bool:
         """翻译一组字幕，带完整降级链

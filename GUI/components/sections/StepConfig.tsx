@@ -6,6 +6,7 @@ import {
 import Grid from '@mui/material/Grid'
 import { SectionHeader } from '../SectionHeader'
 import { ApiConfigDialog } from '../ApiConfigDialog'
+import { GlossaryEditor } from './GlossaryEditor'
 import type { PipelineConfig, SystemInfo } from '../../types'
 import { PROVIDER_PRESETS } from '../../types'
 
@@ -24,6 +25,7 @@ const VRAM_PER_WORKER: Record<string, number> = {
 export function StepConfig({ config, onConfigChange }: StepConfigProps) {
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
   const [apiDialogOpen, setApiDialogOpen] = useState(false)
+  const [glossaryOpen, setGlossaryOpen] = useState(false)
 
   useEffect(() => {
     fetch('/api/system/info')
@@ -197,6 +199,17 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                     />
                   </>
                 )}
+                <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                  <FormControlLabel
+                    control={<Checkbox checked={config.splitBrainEnabled} onChange={e => onConfigChange('splitBrainEnabled', e.target.checked)} />}
+                    label={<Box><Typography variant="body2">Split-Brain 翻译模式</Typography><Typography variant="caption" display="block">分离创意翻译与行数约束，提高翻译质量（需额外 API 调用）</Typography></Box>}
+                  />
+                </Box>
+                <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                  <Button variant="outlined" size="small" fullWidth onClick={() => setGlossaryOpen(true)}>
+                    Glossary Editor
+                  </Button>
+                </Box>
               </Stack>
             </CardContent>
           </Card>
@@ -311,6 +324,10 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
         onClose={() => setApiDialogOpen(false)}
         config={config}
         onConfigChange={onConfigChange}
+      />
+      <GlossaryEditor
+        open={glossaryOpen}
+        onClose={() => setGlossaryOpen(false)}
       />
     </>
   )
