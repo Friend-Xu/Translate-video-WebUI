@@ -40,12 +40,20 @@ from typing import AsyncIterator
 
 import yaml
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import pysrt
+
+# Windows asyncio subprocess 兼容修复
+# uvicorn reload 模式下可能丢失 ProactorEventLoop 策略
+if os.name == "nt":
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------------------
 # Logging setup: file + console
@@ -137,7 +145,7 @@ async def log_requests(request: Request, call_next):
 @dataclass
 class Job:
     id: str
-    process: asyncio.subprocess.Process | None = None
+    process: subprocess.Popen | None = None
     status: str = "idle"        # idle | running | completed | failed | cancelled
     progress: int = 0
     current_step: str = "就绪"
@@ -455,6 +463,7 @@ class RunRequest(BaseModel):
     caption_font_size_factor: float = 0.030
     caption_width_ratio: float = 0.85
     caption_optimize: bool = True
+    bgm_volume: float = 1.0
     num_workers: int = 1
     tts_workers: int = 7
     skip_align: bool = False
@@ -519,6 +528,7 @@ def _write_tts_runtime_config(req: RunRequest) -> str:
             "video_speed_min": req.video_speed_min,
             "video_speed_max": req.video_speed_max,
             "threading_workers": req.tts_workers,
+            "bgm_volume": req.bgm_volume,
         }
     }
     with open(config_path, "w", encoding="utf-8") as f:
@@ -561,32 +571,34 @@ def _build_cli_args(req: RunRequest) -> list[str]:
     return args
 
 
-async def _run_job_sync(job: Job, args: list[str]) -> None:
-    """Run a single job and wait for completion (for batch processing)."""
+def _run_job_sync(job: Job, args: list[str]) -> None:
+    """Run a single job synchronously (called from thread executor)."""
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
 
-    # 将服务器端 logging 路由到该 Job 的 SSE 流
     sse_handler = SSELogHandler(job.append_log)
     root_logger = logging.getLogger()
     root_logger.addHandler(sse_handler)
     try:
         logger.info("启动流水线: %s", " ".join(args))
-        job.process = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+        job.process = subprocess.Popen(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             cwd=str(PROJECT_ROOT),
             env=env,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         assert job.process.stdout is not None
-        async for raw_line in job.process.stdout:
-            line = raw_line.decode("utf-8", errors="replace").rstrip()
+        for line in job.process.stdout:
+            line = line.rstrip()
             if line:
                 job.append_log(line)
 
-        await job.process.wait()
+        job.process.wait()
         if job.status == "cancelled":
             _save_job(job)
             return
@@ -642,8 +654,8 @@ async def start_pipeline(req: RunRequest) -> RunResponse:
 
 
 async def _run_job(job: Job, args: list[str]) -> None:
-    """Run a job as a fire-and-forget background task."""
-    await _run_job_sync(job, args)
+    """Run a job in a thread pool to avoid blocking the event loop."""
+    await asyncio.to_thread(_run_job_sync, job, args)
 
 
 async def _batch_processor(batch_id: str) -> None:
@@ -689,7 +701,7 @@ async def _batch_processor(batch_id: str) -> None:
             _sync_translate_config()
             args = _build_cli_args(req)
 
-            await _run_job_sync(job, args)
+            await asyncio.to_thread(_run_job_sync, job, args)
 
             if job.status == "completed":
                 batch.append_log(f"[BATCH] [OK] ({i+1}/{len(batch.video_paths)}) {video_name}")
@@ -772,8 +784,8 @@ async def cancel_job(job_id: str) -> dict:
     if job.process and job.process.returncode is None:
         job.process.terminate()
         try:
-            await asyncio.wait_for(job.process.wait(), timeout=5.0)
-        except asyncio.TimeoutError:
+            job.process.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
             job.process.kill()
         job.status = "cancelled"
         job.current_step = "已取消"
@@ -849,8 +861,8 @@ async def skip_current_video(batch_id: str) -> dict:
             if job and job.process and job.process.returncode is None:
                 job.process.terminate()
                 try:
-                    await asyncio.wait_for(job.process.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
+                    job.process.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
                     job.process.kill()
                 job.status = "cancelled"
                 job.current_step = "已跳过"
@@ -941,8 +953,8 @@ async def cancel_batch(batch_id: str) -> dict:
             if job and job.process and job.process.returncode is None:
                 job.process.terminate()
                 try:
-                    await asyncio.wait_for(job.process.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
+                    job.process.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
                     job.process.kill()
                 job.status = "cancelled"
                 job.current_step = "已取消"
@@ -2069,6 +2081,26 @@ async def subtitle_preview(
 # File browser
 # ---------------------------------------------------------------------------
 
+@app.get("/api/files/drives")
+async def list_drives() -> dict:
+    """Return available drives and quick-access locations."""
+    drives: list[dict] = []
+    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        root = f"{letter}:\\"
+        if os.path.exists(root):
+            drives.append({"name": f"本地磁盘 ({letter}:)", "path": root})
+
+    home = str(Path.home())
+    quick_access = [
+        {"label": "桌面", "path": os.path.join(home, "Desktop")},
+        {"label": "下载", "path": os.path.join(home, "Downloads")},
+        {"label": "视频", "path": os.path.join(home, "Videos")},
+        {"label": "文档", "path": os.path.join(home, "Documents")},
+    ]
+
+    return {"drives": drives, "quickAccess": quick_access}
+
+
 @app.get("/api/files/browse")
 async def browse_files(path: str = "") -> dict:
     """List directory contents for the file picker."""
@@ -2094,6 +2126,62 @@ async def browse_files(path: str = "") -> dict:
         "current": str(target),
         "parent": str(target.parent) if target.parent != target else None,
         "entries": entries,
+    }
+
+
+@app.get("/api/files/find")
+async def find_file(name: str = "", size: int = 0) -> dict:
+    """Find a video file by name+size in known directories. Returns path if found."""
+    if not name:
+        raise HTTPException(status_code=400, detail="Missing file name")
+
+    search_dirs = []
+    sd = PROJECT_ROOT / "source_file"
+    if sd.is_dir():
+        search_dirs.append(sd)
+    search_dirs.append(PROJECT_ROOT)
+
+    # Also search common user directories
+    home = Path.home()
+    for d in ["Desktop", "Downloads", "Videos", "Documents"]:
+        p = home / d
+        if p.is_dir():
+            search_dirs.append(p)
+
+    for base in search_dirs:
+        for item in base.rglob(name):
+            if item.is_file() and (size == 0 or item.stat().st_size == size):
+                return {"path": str(item), "name": item.name, "size": item.stat().st_size}
+
+    raise HTTPException(status_code=404, detail=f"File not found: {name}")
+
+
+@app.post("/api/files/upload")
+async def upload_file(file: UploadFile = File(...)) -> dict:
+    """Upload a dropped file to source_file/, return server-side path."""
+    SOURCE_DIR = PROJECT_ROOT / "source_file"
+    SOURCE_DIR.mkdir(parents=True, exist_ok=True)
+
+    original_name = Path(file.filename).name
+    dest = SOURCE_DIR / original_name
+
+    counter = 1
+    stem, suffix = dest.stem, dest.suffix
+    while dest.exists():
+        dest = SOURCE_DIR / f"{stem} ({counter}){suffix}"
+        counter += 1
+
+    try:
+        with open(dest, "wb") as f:
+            while chunk := await file.read(1024 * 1024):
+                f.write(chunk)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Save failed: {e}")
+
+    return {
+        "path": str(dest),
+        "name": dest.name,
+        "size": dest.stat().st_size,
     }
 
 

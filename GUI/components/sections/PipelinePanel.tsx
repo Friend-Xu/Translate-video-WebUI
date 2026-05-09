@@ -1,4 +1,5 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { CloudUploadOutlined, InsertDriveFileOutlined } from '@mui/icons-material'
 import {
   Box, Typography, Card, CardContent, Button, Select, MenuItem,
   LinearProgress, Stack, Checkbox, FormControlLabel, Divider,
@@ -48,6 +49,7 @@ interface PipelinePanelProps {
   onStartReview?: () => void
   reviewSaved?: boolean
   onContinueTTS?: () => void
+  onFileDropped?: (file: File) => void
 }
 
 const statusChipColor: Record<string, 'default' | 'primary' | 'success' | 'error' | 'warning'> = {
@@ -78,9 +80,26 @@ export function PipelinePanel({
   onStartReview,
   reviewSaved = false,
   onContinueTTS,
+  onFileDropped,
 }: PipelinePanelProps) {
 
   const isRunning = status.state === 'running' || batch.status === 'running'
+  const [dragOver, setDragOver] = useState(false)
+  const [videoInfo, setVideoInfo] = useState<{ duration: number; width: number; height: number } | null>(null)
+
+  useEffect(() => {
+    if (mode === 'single' && config.videoPath) {
+      fetch(`/api/video/info?path=${encodeURIComponent(config.videoPath)}`)
+        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        .then((info: any) => {
+          if (info.duration > 0 || info.width > 0) setVideoInfo(info)
+          else setVideoInfo(null)
+        })
+        .catch(() => setVideoInfo(null))
+    } else {
+      setVideoInfo(null)
+    }
+  }, [config.videoPath, mode])
 
   // Translation is complete when pipeline has moved past the translate step into TTS, or finished entirely
   const translationComplete =
@@ -101,6 +120,27 @@ export function PipelinePanel({
       onReorderFiles(reordered)
     }
   }, [batchFiles, onReorderFiles])
+
+  // ---- Drag-and-drop from OS ----
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation()
+    if (e.dataTransfer.types.includes('Files')) setDragOver(true)
+  }, [])
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation()
+    // Only set false if leaving the card itself (not a child)
+    if ((e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) return
+    setDragOver(false)
+  }, [])
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation()
+  }, [])
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); e.stopPropagation()
+    setDragOver(false)
+    const file = e.dataTransfer.files[0]
+    if (file && onFileDropped) onFileDropped(file)
+  }, [onFileDropped])
 
   const logHeaderLabel = mode === 'batch' && activeVideoJobId
     ? `查看日志: ${(batch.videos.find(v => v.job_id === activeVideoJobId) || {} as any).video_name || activeVideoJobId}`
@@ -251,35 +291,88 @@ export function PipelinePanel({
 
       <Grid container spacing={3}>
         <Grid size={{ xs: 12, md: 3 }}>
-          <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column', bgcolor: 'action.hover', border: '2px dashed', borderColor: 'divider' }}>
-            <CardContent sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', flex: 1, gap: 1.5 }}>
-              <Box display="flex" alignItems="center" gap={1}>
-                <FolderOpenIcon color="primary" />
-                <Typography variant="body1" fontWeight={600} color="text.primary">
-                  {mode === 'single' ? '视频导入' : '批次导入'}
-                </Typography>
-              </Box>
-              {mode === 'single' ? (
-                <>
-                  <TextFieldDisplay value={config.videoPath} placeholder="请选择视频文件（.mp4）" />
-                  <Button variant="contained" size="small" disableElevation sx={{ borderRadius: 2 }} onClick={onSelectFile}>
-                    选择文件
-                  </Button>
-                </>
-              ) : (
-                <>
-                  {batchFiles.length === 0 ? (
-                    <Typography variant="body2" color="text.secondary">尚未选择视频文件</Typography>
+          {mode === 'single' ? (
+            <Card
+              onDragEnter={handleDragEnter}
+              onDragLeave={handleDragLeave}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+              sx={{
+                height: '100%', display: 'flex', flexDirection: 'column',
+                bgcolor: dragOver ? 'primary.dark' : 'action.hover',
+                border: '2px dashed',
+                borderColor: dragOver ? 'primary.main' : config.videoPath ? 'success.main' : 'divider',
+                transition: 'all 0.2s ease',
+                transform: dragOver ? 'scale(1.02)' : 'scale(1)',
+                boxShadow: dragOver ? 6 : 0,
+                cursor: 'pointer',
+              }}
+              onClick={() => !config.videoPath && onSelectFile()}
+            >
+              <CardContent sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', flex: 1, gap: 1.5 }}>
+                <Box display="flex" alignItems="center" gap={1}>
+                  {config.videoPath ? (
+                    <InsertDriveFileOutlined color="success" />
                   ) : (
-                    <Typography variant="body2">已选 {batchFiles.length} 个视频</Typography>
+                    <CloudUploadOutlined color={dragOver ? 'inherit' : 'primary'} sx={{ fontSize: 32, opacity: dragOver ? 1 : 0.7 }} />
                   )}
-                  <Button variant="contained" size="small" disableElevation sx={{ borderRadius: 2 }} onClick={onAddFiles} startIcon={<AddIcon />}>
-                    添加文件
-                  </Button>
-                </>
-              )}
-            </CardContent>
-          </Card>
+                  <Typography variant="body1" fontWeight={600} color={dragOver ? 'white' : 'text.primary'}>
+                    {config.videoPath ? '视频已选择' : dragOver ? '释放以选择文件' : '视频导入'}
+                  </Typography>
+                </Box>
+                {config.videoPath ? (
+                  <>
+                    <TextFieldDisplay value={config.videoPath.split(/[\\/]/).pop() || config.videoPath} placeholder="" />
+                    {videoInfo && (
+                      <Box display="flex" gap={2} flexWrap="wrap">
+                        {videoInfo.duration > 0 && (
+                          <Typography variant="caption" color="text.secondary">
+                            {Math.floor(videoInfo.duration / 60)}:{String(Math.floor(videoInfo.duration % 60)).padStart(2, '0')}
+                          </Typography>
+                        )}
+                        {videoInfo.width > 0 && (
+                          <Typography variant="caption" color="text.secondary">
+                            {videoInfo.width}x{videoInfo.height}
+                          </Typography>
+                        )}
+                      </Box>
+                    )}
+                    <Button variant="outlined" size="small" disableElevation sx={{ borderRadius: 2 }} onClick={onSelectFile}>
+                      更换文件
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Typography variant="body2" color={dragOver ? 'rgba(255,255,255,0.7)' : 'text.secondary'}>
+                      将视频拖放到此处或点击选择
+                    </Typography>
+                    <Button variant="contained" size="small" disableElevation sx={{ borderRadius: 2 }} onClick={onSelectFile}>
+                      选择文件
+                    </Button>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          ) : (
+            <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column', bgcolor: 'action.hover', border: '2px dashed', borderColor: 'divider' }}>
+              <CardContent sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', flex: 1, gap: 1.5 }}>
+                <Box display="flex" alignItems="center" gap={1}>
+                  <FolderOpenIcon color="primary" />
+                  <Typography variant="body1" fontWeight={600} color="text.primary">
+                    批次导入
+                  </Typography>
+                </Box>
+                {batchFiles.length === 0 ? (
+                  <Typography variant="body2" color="text.secondary">尚未选择视频文件</Typography>
+                ) : (
+                  <Typography variant="body2">已选 {batchFiles.length} 个视频</Typography>
+                )}
+                <Button variant="contained" size="small" disableElevation sx={{ borderRadius: 2 }} onClick={onAddFiles} startIcon={<AddIcon />}>
+                  添加文件
+                </Button>
+              </CardContent>
+            </Card>
+          )}
         </Grid>
 
         <Grid size={{ xs: 12, md: 3 }}>

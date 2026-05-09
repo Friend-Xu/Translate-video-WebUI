@@ -940,7 +940,7 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
           {/* Main content */}
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
             {/* Table */}
-            <TableContainer component={Card} sx={{ flex: 3, minWidth: 550, maxHeight: 'calc(100vh - 280px)' }}>
+            <TableContainer component={Card} sx={{ flex: 3, minWidth: 550, maxHeight: 'calc(100vh - 280px)', overflow: 'auto' }}>
               <Table size="small" stickyHeader>
                 <TableHead>
                   <TableRow>

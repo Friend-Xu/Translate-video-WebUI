@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { ThemeProvider, CssBaseline, Box, Alert, Snackbar, Typography } from '@mui/material'
+import CloudUploadOutlined from '@mui/icons-material/CloudUploadOutlined'
 import theme from './theme'
 import { Sidebar } from './components/Sidebar'
 import { PipelinePanel } from './components/sections/PipelinePanel'
@@ -38,6 +39,39 @@ export default function App() {
   const [reviewSaved, setReviewSaved] = useState(false)
   const [prefillSrt, setPrefillSrt] = useState<{ source: string; translated: string; log: string; workspace: string } | null>(null)
   const [backendOnline, setBackendOnline] = useState(true)
+  const [dragOverWindow, setDragOverWindow] = useState(false)
+
+  // ---- Window-level drag overlay ----
+  useEffect(() => {
+    let counter = 0
+    const onDragEnter = (e: DragEvent) => {
+      e.preventDefault()
+      if (e.dataTransfer?.types.includes('Files')) {
+        counter++
+        if (counter === 1) setDragOverWindow(true)
+      }
+    }
+    const onDragLeave = (e: DragEvent) => {
+      e.preventDefault()
+      if (e.dataTransfer?.types.includes('Files')) {
+        counter--
+        if (counter <= 0) { counter = 0; setDragOverWindow(false) }
+      }
+    }
+    const onDragOver = (e: DragEvent) => { e.preventDefault() }
+    const onDrop = (e: DragEvent) => { e.preventDefault(); counter = 0; setDragOverWindow(false) }
+
+    window.addEventListener('dragenter', onDragEnter)
+    window.addEventListener('dragleave', onDragLeave)
+    window.addEventListener('dragover', onDragOver)
+    window.addEventListener('drop', onDrop)
+    return () => {
+      window.removeEventListener('dragenter', onDragEnter)
+      window.removeEventListener('dragleave', onDragLeave)
+      window.removeEventListener('dragover', onDragOver)
+      window.removeEventListener('drop', onDrop)
+    }
+  }, [])
 
   useEffect(() => {
     const ping = () => {
@@ -57,6 +91,38 @@ export default function App() {
   const showMsg = useCallback((msg: string, severity: 'success' | 'error' | 'info' = 'info') => {
     setSnackbar({ open: true, msg, severity })
   }, [])
+
+  const handleFileDropped = useCallback(async (file: File) => {
+    // 1. Try to find the file on the server filesystem by name+size
+    const q = `name=${encodeURIComponent(file.name)}&size=${file.size}`
+    try {
+      const findRes = await fetch(`/api/files/find?${q}`)
+      if (findRes.ok) {
+        const data = await findRes.json()
+        updateConfig('videoPath', data.path)
+        showMsg(`已选择: ${data.name}`, 'success')
+        return
+      }
+    } catch (_) { /* fall through to upload */ }
+
+    // 2. Not found on disk — upload the file bytes
+    showMsg(`正在导入 "${file.name}"...`, 'info')
+    const form = new FormData()
+    form.append('file', file)
+    try {
+      const upRes = await fetch('/api/files/upload', { method: 'POST', body: form })
+      if (!upRes.ok) {
+        const err = await upRes.json().catch(() => ({ detail: upRes.statusText }))
+        showMsg(`导入失败: ${(err as any).detail || upRes.statusText}`, 'error')
+        return
+      }
+      const data = await upRes.json()
+      updateConfig('videoPath', data.path)
+      showMsg(`已导入: ${data.name}`, 'success')
+    } catch (e: any) {
+      showMsg(`导入失败: ${e.message}`, 'error')
+    }
+  }, [updateConfig, showMsg])
 
   const handleReorderFiles = useCallback((reordered: string[]) => {
     setBatchFiles(reordered)
@@ -239,6 +305,7 @@ export default function App() {
               onStartReview={handleStartReview}
               reviewSaved={reviewSaved}
               onContinueTTS={handleContinueTTS}
+              onFileDropped={handleFileDropped}
             />
           </KeepAliveSection>
           <KeepAliveSection active={activeTab === '步骤配置'}>
@@ -305,6 +372,30 @@ export default function App() {
           {snackbar.msg}
         </Alert>
       </Snackbar>
+
+      {/* Full-page drag overlay */}
+      {dragOverWindow && mode === 'single' && (
+        <Box
+          onDragOver={(e) => { e.preventDefault(); e.stopPropagation() }}
+          onDrop={(e) => {
+            e.preventDefault(); e.stopPropagation()
+            setDragOverWindow(false)
+            const file = e.dataTransfer.files[0]
+            if (file) handleFileDropped(file)
+          }}
+          sx={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            bgcolor: 'rgba(0,0,0,0.65)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            border: '4px dashed', borderColor: 'primary.main',
+            m: 4, borderRadius: 4,
+          }}>
+          <CloudUploadOutlined sx={{ fontSize: 80, color: 'primary.main', mb: 3, opacity: 0.9 }} />
+          <Typography variant="h4" color="white" fontWeight={600}>释放以选择视频文件</Typography>
+          <Typography variant="body1" color="rgba(255,255,255,0.6)" mt={1}>支持 .mp4 / .mkv / .avi / .mov 等常见格式</Typography>
+        </Box>
+      )}
+
       <Box sx={{ position: 'fixed', bottom: 0, left: 0, right: 0, bgcolor: 'grey.900', py: 0.5, px: 2, display: 'flex', alignItems: 'center', gap: 1, zIndex: 2000 }}>
         <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: backendOnline ? '#4caf50' : '#f44336' }} />
         <Typography variant="caption" color="text.secondary">
