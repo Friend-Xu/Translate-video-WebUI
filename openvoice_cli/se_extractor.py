@@ -185,6 +185,10 @@ def hash_numpy_array(audio_path):
 
 def get_se(audio_path, vc_model, target_dir='processed', vad=True,
           whisper_device="cuda", compute_type="float16"):
+    if target_dir == 'processed':
+        # Use temp dir to avoid polluting project root
+        import tempfile
+        target_dir = tempfile.mkdtemp(prefix='ov_se_')
     vc_device = vc_model.device
 
     audio_name = f"{os.path.basename(audio_path).rsplit('.', 1)[0]}_{hash_numpy_array(audio_path)}"
