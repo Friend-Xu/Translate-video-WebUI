@@ -206,17 +206,25 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   <Slider value={config.concurrency} min={1} max={8} step={1} marks={[{ value: 1, label: '1' }, { value: 3, label: '3' }, { value: 5, label: '5' }, { value: 8, label: '8' }]} onChange={(_, v) => onConfigChange('concurrency', v as number)} />
                 </Box>
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
-                  <Box display="flex" justifyContent="space-between" alignItems="center">
-                    <Box>
-                      <Typography variant="body2" fontWeight={500}>System Prompt</Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {config.customPromptEnabled ? '已自定义' : '使用系统默认'}
-                      </Typography>
-                    </Box>
-                    <Button size="small" variant="outlined" onClick={() => setCustomPromptOpen(true)}>
-                      编辑
+                  <Typography variant="body2" fontWeight={500}>System Prompt</Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={() => setCustomPromptOpen(true)}
+                    >
+                      配置 Prompt
                     </Button>
+                    <Chip
+                      label={config.customPromptEnabled ? '已自定义' : '系统默认'}
+                      size="small"
+                      variant="outlined"
+                      color={config.customPromptEnabled ? 'primary' : 'default'}
+                    />
                   </Box>
+                  <Typography variant="caption" display="block">
+                    点击按钮配置翻译风格、语气和自定义指令
+                  </Typography>
                 </Box>
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
                   <FormControlLabel
