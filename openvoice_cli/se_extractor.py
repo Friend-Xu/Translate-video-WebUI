@@ -1,5 +1,5 @@
 import os
-import glob
+from glob import glob
 import torch
 import hashlib
 import base64
@@ -78,47 +78,43 @@ def split_audio_whisper(audio_path, audio_name, target_dir='processed',
 
 
 def _load_vad_model():
-    """Load Silero VAD ONNX model from project's models/vad/ directory."""
-    import onnxruntime
+    """Load Silero VAD model from project's models/vad/ directory.
+
+    Prefers JIT model for simpler API compatibility, falls back to ONNX.
+    """
+    jit_path = os.path.join(_VAD_ROOT, "silero_vad.jit")
+    if os.path.isfile(jit_path):
+        return torch.jit.load(jit_path)
     onnx_path = os.path.join(_VAD_ROOT, "silero_vad.onnx")
     if os.path.isfile(onnx_path):
-        session = onnxruntime.InferenceSession(
-            onnx_path, providers=['CPUExecutionProvider'])
-    else:
-        # Fallback: load JIT model from torch.hub
-        jit_path = os.path.join(_VAD_ROOT, "silero_vad.jit")
-        if os.path.isfile(jit_path):
-            return torch.jit.load(jit_path)
-        model, _ = torch.hub.load(
-            "snakers4/silero-vad:v4.0", "silero_vad",
-            force_reload=False, trust_repo=True)
-        return model
-    return session
+        import onnxruntime
+        return onnxruntime.InferenceSession(onnx_path, providers=['CPUExecutionProvider'])
+    model, _ = torch.hub.load(
+        "snakers4/silero-vad:v4.0", "silero_vad",
+        force_reload=False, trust_repo=True)
+    return model
 
 
 def _get_speech_timestamps(audio_1d: torch.Tensor, model, sr: int = 16000):
     """Get speech segments using project's Silero VAD.
 
     Returns list of {'start': float, 'end': float} in seconds.
-    A replacement for whisper_timestamped's get_vad_segments().
     """
     import onnxruntime
-    is_onnx = isinstance(model, onnxruntime.InferenceSession)
 
-    if is_onnx:
-        # ONNX path: use utils_vad helpers
-        from models.vad.utils_vad import get_speech_timestamps as gst
-        from models.vad.utils_vad import OnnxWrapper
-        wrapper = OnnxWrapper.__new__(OnnxWrapper)
-        wrapper.session = model
-        wrapper.reset_states = lambda: None
-        wrapper._h, wrapper._c = None, None
-        return gst(audio_1d, wrapper, 16000, max_speech_duration_s=20,
-                   min_speech_duration_s=0.1, min_silence_duration_s=1)
+    if isinstance(model, onnxruntime.InferenceSession):
+        # ONNX path: use OnnxWrapper properly
+        from models.vad.utils_vad import OnnxWrapper, get_speech_timestamps as gst
+        onnx_path = os.path.join(_VAD_ROOT, "silero_vad.onnx")
+        wrapper = OnnxWrapper(onnx_path, force_onnx_cpu=True)
+        return gst(audio_1d, wrapper, sampling_rate=16000,
+                   min_speech_duration_ms=100, min_silence_duration_ms=1000,
+                   return_seconds=True)
     else:
         from models.vad.utils_vad import get_speech_timestamps as gst
-        return gst(audio_1d, model, sr, max_speech_duration_s=20,
-                   min_speech_duration_s=0.1, min_silence_duration_s=1)
+        return gst(audio_1d, model, sampling_rate=sr,
+                   min_speech_duration_ms=100, min_silence_duration_ms=1000,
+                   return_seconds=True)
 
 
 def split_audio_vad(audio_path, audio_name, target_dir, split_seconds=10.0):
@@ -136,8 +132,8 @@ def split_audio_vad(audio_path, audio_name, target_dir, split_seconds=10.0):
     # Run Silero VAD (replaces whisper_timestamped's get_vad_segments)
     vad_model = _load_vad_model()
     segments = _get_speech_timestamps(audio_vad, vad_model, SAMPLE_RATE)
+    # segments are already in seconds when return_seconds=True
     segments = [(s["start"], s["end"]) for s in segments]
-    print(segments)
     audio_active = AudioSegment.silent(duration=0)
     audio = AudioSegment.from_file(audio_path)
 
