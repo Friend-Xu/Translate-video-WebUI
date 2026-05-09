@@ -389,13 +389,22 @@ export function PipelinePanel({
         </Grid>
 
         <Grid size={{ xs: 12, md: 3 }}>
-          <ControlCard icon={<LanguageIcon color="primary" />} title="源语言" subtitle="自动检测 / 英文 / 中文 / 日文">
-            <Select size="small" fullWidth value={config.lang} onChange={e => onConfigChange('lang', e.target.value as PipelineConfig['lang'])} sx={{ mt: 1 }}>
-              <MenuItem value="auto">自动检测</MenuItem>
-              <MenuItem value="en">英文</MenuItem>
-              <MenuItem value="zh">中文</MenuItem>
-              <MenuItem value="ja">日文</MenuItem>
-            </Select>
+          <ControlCard icon={<LanguageIcon color="primary" />} title="语言设置" subtitle="源语言 / 目标语言">
+            <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
+              <Select size="small" fullWidth value={config.lang} onChange={e => onConfigChange('lang', e.target.value as PipelineConfig['lang'])}>
+                <MenuItem value="auto">源: 自动检测</MenuItem>
+                <MenuItem value="en">源: 英文</MenuItem>
+                <MenuItem value="zh">源: 中文</MenuItem>
+                <MenuItem value="ja">源: 日文</MenuItem>
+              </Select>
+              <Select size="small" fullWidth value={config.targetLang} onChange={e => onConfigChange('targetLang', e.target.value as PipelineConfig['targetLang'])}>
+                <MenuItem value="zh-CN">目标: 简体中文</MenuItem>
+                <MenuItem value="en">目标: English</MenuItem>
+                <MenuItem value="ja">目标: 日本語</MenuItem>
+                <MenuItem value="ko">目标: 한국어</MenuItem>
+                <MenuItem value="auto">目标: 自动</MenuItem>
+              </Select>
+            </Box>
           </ControlCard>
         </Grid>
 
