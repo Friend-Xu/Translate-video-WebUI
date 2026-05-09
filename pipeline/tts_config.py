@@ -279,14 +279,10 @@ class TTSConfig:
     def voice_clone_active(self) -> bool:
         """声音克隆是否激活。
 
-        同时考虑新旧配置标志。向后兼容：enable_openvoice=False
-        且 voice_clone_engine="openvoice" 时视为禁用。
+        voice_clone_engine="none" 时禁用，其他值启用。
+        不再需要 enable_openvoice 双重门控。
         """
-        if self.voice_clone_engine == "none":
-            return False
-        if self.voice_clone_engine == "openvoice" and not self.enable_openvoice:
-            return False
-        return True
+        return self.voice_clone_engine != "none"
 
     @classmethod
     def from_yaml(cls, path: str) -> "TTSConfig":

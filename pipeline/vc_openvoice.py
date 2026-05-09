@@ -62,7 +62,8 @@ class OpenVoiceCloner:
 
         # --- Internal state --------------------------------------------
         self._model: Optional[object] = None
-        self._embedding: Optional[torch.Tensor] = None
+        self._embedding: Optional[torch.Tensor] = None   # tgt_se: target voice
+        self._src_embedding: Optional[torch.Tensor] = None  # src_se: TTS voice
         self._lock = threading.Lock()
         self._embedding_cache_dir = config.se_cache_dir
         os.makedirs(self._embedding_cache_dir, exist_ok=True)
@@ -94,6 +95,7 @@ class OpenVoiceCloner:
 
         try:
             self._embedding = self._extract_or_load_embedding(color_path)
+            self._src_embedding = None  # reset when reference changes
             return True
         except Exception as exc:
             self._log_error(f"prepare 失败 [{color_path}]: {exc}")
@@ -101,6 +103,9 @@ class OpenVoiceCloner:
 
     def clone(self, tts_audio_path: str, output_dir: str) -> Optional[str]:
         """Convert the TTS audio to the target speaker timbre.
+
+        Extracts source embedding from the TTS audio and target embedding
+        from the color reference, then runs tone color conversion.
 
         Thread-safe: multiple callers may invoke ``clone()`` concurrently; the
         shared model is guarded by a lock.
@@ -115,9 +120,22 @@ class OpenVoiceCloner:
         try:
             self._load_model()
 
+            # Target embedding: cached from color_audio (the voice to clone TO)
             if self._embedding is None:
                 self._embedding = self._extract_or_load_embedding(
                     self.config.color_audio_path
+                )
+
+            # Source embedding: from the TTS audio (the voice to convert FROM).
+            # Cached since all TTS segments share the same TTS engine voice.
+            if self._src_embedding is None:
+                import openvoice_cli.se_extractor as se_extractor
+                self._src_embedding, _ = se_extractor.get_se(
+                    tts_audio_path,
+                    self._model,
+                    vad=True,
+                    whisper_device=self._device,
+                    compute_type=self._compute_type,
                 )
 
             os.makedirs(output_dir, exist_ok=True)
@@ -127,14 +145,12 @@ class OpenVoiceCloner:
             with self._lock:
                 self._model.convert(
                     audio_src_path=tts_audio_path,
-                    src_se=self._embedding,
+                    src_se=self._src_embedding,
                     tgt_se=self._embedding,
                     output_path=save_path,
                 )
             return save_path
         except Exception as exc:
-            # Clear cached embedding so the next attempt re-extracts
-            self._embedding = None
             self._log_error(f"clone 失败 [{tts_audio_path}]: {exc}")
             return None
 
@@ -187,6 +203,7 @@ class OpenVoiceCloner:
         """Release GPU memory and reset internal state."""
         self._model = None
         self._embedding = None
+        self._src_embedding = None
         self._unload_whisper()
 
     # ------------------------------------------------------------------
