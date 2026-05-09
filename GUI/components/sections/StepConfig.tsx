@@ -246,6 +246,29 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                     onChange={(_, v) => onConfigChange('ttsWorkers', v as number)}
                   />
                 </Box>
+                <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                  <Box display="flex" justifyContent="space-between">
+                    <Typography variant="body2" fontWeight={500}>背景音乐音量</Typography>
+                    <Typography variant="body2" fontWeight={600} color="primary">{config.bgmVolume.toFixed(2)}x</Typography>
+                  </Box>
+                  <Typography variant="caption" display="block" mb={1}>
+                    BGM 与 TTS 语音混合比例 (0=静音, 1=原始电平, 2=加倍)
+                  </Typography>
+                  <Slider
+                    value={config.bgmVolume}
+                    min={0}
+                    max={2.0}
+                    step={0.05}
+                    marks={[
+                      { value: 0, label: '静音' },
+                      { value: 0.5, label: '0.5x' },
+                      { value: 1.0, label: '1.0x' },
+                      { value: 1.5, label: '1.5x' },
+                      { value: 2.0, label: '2.0x' },
+                    ]}
+                    onChange={(_, v) => onConfigChange('bgmVolume', v as number)}
+                  />
+                </Box>
                 <FormControlLabel
                   control={<Checkbox checked={config.enableSubtitleOverlay} onChange={e => onConfigChange('enableSubtitleOverlay', e.target.checked)} />}
                   label={<Box><Typography variant="body2">启用字幕叠加</Typography><Typography variant="caption" display="block">选择是否在视频中显示字幕</Typography></Box>}

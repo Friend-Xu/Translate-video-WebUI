@@ -20,6 +20,7 @@ import soundfile as sf
 import torch
 
 from pipeline.logger import get_logger
+from pipeline.loudness import calculate_bgm_gain, apply_gain_to_wav
 
 logger = get_logger(__name__)
 
@@ -158,10 +159,14 @@ def _trim_wav(ffmpeg: str, src: str, dst: str,
 
 
 def extract_instrumental(video_path: str, output_dir: str,
-                         model_name: str = "htdemucs") -> str:
+                         model_name: str = "htdemucs",
+                         bgm_volume: float = 1.0) -> str:
     """从视频中提取纯背景乐（去除人声）。
 
     长视频自动分段处理，段间带重叠消除边界效应。
+
+    Args:
+        bgm_volume: 背景乐音量比例 (0.0~2.0, 1.0=自动补偿响度损失)
     """
     import shutil
 
@@ -318,6 +323,15 @@ def extract_instrumental(video_path: str, output_dir: str,
         else:
             shutil.copy2(non_vocal_paths[0], instr_path)
         logger.info(f"→ {instr_path}")
+
+    # ── Step 5: BGM 响度补偿 ──────────────────────────
+    if bgm_volume > 0:
+        gain_db = calculate_bgm_gain(tmp_wav, instr_path, target_ratio=bgm_volume)
+        if abs(gain_db) > 0.1:
+            normalized = instr_path + ".normalized.wav"
+            apply_gain_to_wav(instr_path, normalized, gain_db)
+            os.replace(normalized, instr_path)
+            logger.info(f"BGM 响度已补偿: {gain_db:+.1f} dB")
 
     os.remove(tmp_wav)
     return instr_path

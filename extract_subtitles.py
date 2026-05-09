@@ -181,6 +181,13 @@ def main():
     t0 = time.time()
     vocal_path = os.path.join(out_dir, f"{video_name}_(Vocals).wav")
     instrumental_path = os.path.join(out_dir, f"{video_name}_(Instrumental).wav")
+    # 若 instrumental 是降级 fallback（不是真实 Demucs 输出），删除后重跑
+    demucs_no_vocals = os.path.join(out_dir, "htdemucs", video_name, "no_vocals.wav")
+    if os.path.isfile(instrumental_path) and not os.path.isfile(demucs_no_vocals):
+        print(f"  [INFO] 检测到降级残留，删除后重试 Demucs")
+        os.remove(instrumental_path)
+        if os.path.isfile(vocal_path):
+            os.remove(vocal_path)
 
     if not os.path.isfile(instrumental_path):
         if args.skip_demucs:

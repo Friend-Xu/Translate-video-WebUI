@@ -143,6 +143,7 @@ class TtsPipeline:
             video_codec=self.config.video_codec,
             video_preset=self.config.video_preset,
             audio_codec=self.config.audio_codec,
+            bgm_volume=self.config.bgm_volume,
         )
 
     def _default_caption(self) -> CaptionRenderer:

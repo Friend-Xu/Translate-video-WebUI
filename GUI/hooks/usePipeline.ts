@@ -81,6 +81,7 @@ export function usePipeline() {
           caption_font_size_factor: config.captionFontSizeFactor,
           caption_width_ratio: config.captionWidthRatio,
           caption_optimize: config.enableSubtitleOptimization,
+          bgm_volume: config.bgmVolume,
         }),
       })
 

@@ -176,6 +176,11 @@ class TTSConfig:
     enable_resume: bool = False
     """是否启用断点续传（跳过已存在的输出视频段，默认关闭以全新运行）"""
 
+    # ── 背景音乐 ──────────────────────────────────────────
+    bgm_volume: float = 1.0
+    """背景乐音量比例 (0.0=静音, 1.0=原始电平, 2.0=加倍)。
+    与 Demucs 响度补偿独立工作，用于最终混合时调整 BGM 与 TTS 的平衡。"""
+
     # ── 输出路径 ──────────────────────────────────────────
     output_dir: str = "file/EdgeTTS_Audio_file"
     """TTS 音频输出目录（临时）"""
@@ -267,6 +272,8 @@ class TTSConfig:
             raise ValueError(f"caption_max_font_size 不能为负数，当前: {self.caption_max_font_size}")
         if self.caption_min_font_size < 4:
             raise ValueError(f"caption_min_font_size 不能小于 4，当前: {self.caption_min_font_size}")
+        if not 0.0 <= self.bgm_volume <= 2.0:
+            raise ValueError(f"bgm_volume 应在 [0.0, 2.0] 范围内，当前: {self.bgm_volume}")
 
     @property
     def voice_clone_active(self) -> bool:

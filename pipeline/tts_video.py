@@ -50,6 +50,7 @@ class VideoSegmenter:
         speed_tolerance: float = 0.15,
         video_speed_min: float = 0.60,
         video_speed_max: float = 2.00,
+        bgm_volume: float = 1.0,
     ):
         self.video_output_dir = video_output_dir
         self.clone_color = clone_color
@@ -63,6 +64,7 @@ class VideoSegmenter:
         self.speed_tolerance = speed_tolerance
         self.video_speed_min = video_speed_min
         self.video_speed_max = video_speed_max
+        self.bgm_volume = bgm_volume
 
     def decide_speed(self, tts_duration: float, video_duration: float) -> SpeedDecision:
         """两级决策：TTS 时长与视频时长的匹配策略。"""
@@ -86,6 +88,7 @@ class VideoSegmenter:
         output_path: str,
         speed_factors: Optional[list[float]] = None,
         output_duration: Optional[float] = None,
+        bgm_gain_db: float = 0.0,
     ) -> None:
         """使用 ffmpeg amix 混合多轨音频，可选对每轨独立变速。
 
@@ -97,6 +100,7 @@ class VideoSegmenter:
             speed_factors: 每轨的 atempo 变速因子（与 audio_paths 等长），
                            None 表示所有轨不变速
             output_duration: 输出最大时长（秒），None 表示自动取最长轨
+            bgm_gain_db: 背景乐轨 (track 0) 的增益 (dB)，0.0=不变
         """
         import subprocess
         import math
@@ -112,6 +116,9 @@ class VideoSegmenter:
         n = len(audio_paths)
         for i in range(n):
             chain = []
+            # BGM 轨 (track 0) 增益
+            if i == 0 and abs(bgm_gain_db) > 0.1:
+                chain.append(f"volume={bgm_gain_db:+.1f}dB")
             # 变速（链式 atempo 突破 0.5-2.0 限制）
             sf = 1.0 if speed_factors is None else speed_factors[i]
             if abs(sf - 1.0) > 0.001:
@@ -208,10 +215,12 @@ class VideoSegmenter:
         slow_down_clip = slow_down_clip.with_audio(None)
 
         # ── 音频混合（ffmpeg amix，根治电音） ──
+        import math
         tts_dur = self.reserve_2_num(tts_audio.duration)
         mixed_wav = os.path.join(
             tempfile.gettempdir(), f"_tv_mixed_{start}_{end}.wav"
         )
+        bgm_gain_db = 20.0 * math.log10(self.bgm_volume) if self.bgm_volume > 0.001 else -70.0
 
         if audio_instrumental is None:
             # 无背景乐：直接使用 TTS 音频，跳过混音
@@ -226,6 +235,7 @@ class VideoSegmenter:
                     [instr_path, clone_color_file],
                     mixed_wav,
                     speed_factors=[speed_factor, 1.0],
+                    bgm_gain_db=bgm_gain_db,
                 )
             except Exception as e:
                 logger.warning("OpenVoice clone 失败: %s", e)
@@ -238,6 +248,7 @@ class VideoSegmenter:
                     mixed_wav,
                     speed_factors=[speed_factor, 1.0],
                     output_duration=tts_dur,
+                    bgm_gain_db=bgm_gain_db,
                 )
         else:
             # ★ 核心修复: ffmpeg amix 替代 CompositeAudioClip
@@ -248,6 +259,7 @@ class VideoSegmenter:
                 mixed_wav,
                 speed_factors=[speed_factor, 1.0],
                 output_duration=tts_dur,
+                bgm_gain_db=bgm_gain_db,
             )
 
         # 加载混合音频

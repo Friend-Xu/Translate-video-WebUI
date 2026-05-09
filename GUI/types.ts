@@ -60,6 +60,7 @@ export interface PipelineConfig {
   captionWidthRatio: number
   enableSubtitleOptimization: boolean
   subtitleEngine: 'pil' | 'imagemagick'
+  bgmVolume: number
 }
 
 export interface PipelineStatus {
@@ -150,6 +151,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   captionWidthRatio: 0.85,
   enableSubtitleOptimization: true,
   subtitleEngine: 'pil',
+  bgmVolume: 1.0,
 }
 
 export interface SubtitleIssue {
