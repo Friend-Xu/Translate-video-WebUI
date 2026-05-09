@@ -333,21 +333,7 @@ def resolve_prompt_variables(template: str, variables: dict) -> str:
 
 def build_system_prompt(source_lang: str, fmt: str = "numbered_list", retry: bool = False,
                         custom_template: str = None, target_lang: str = "简体中文") -> str:
-    # 自定义模板路径
-    if custom_template:
-        variables = {
-            "source_lang": source_lang,
-            "target_lang": target_lang,
-            "fmt": fmt,
-            "retry": str(retry),
-        }
-        return resolve_prompt_variables(custom_template, variables)
-
-    if source_lang == "ja":
-        base = "你是专业日语字幕翻译。请将以下日语逐条翻译成简体中文。"
-    else:
-        base = "你是专业英语字幕翻译。请将以下英文逐条翻译成简体中文。"
-
+    # 构建格式强制要求（自定义 prompt 不可移除此部分）
     if fmt == "json":
         fmt_rules = (
             "输出格式必须为 JSON 对象: {\"1\":\"译文1\",\"2\":\"译文2\",...}\n"
@@ -355,8 +341,6 @@ def build_system_prompt(source_lang: str, fmt: str = "numbered_list", retry: boo
             "不要添加任何额外字段或说明\n"
             "只返回 JSON，不要 markdown 代码块"
         )
-        example_in = '{"1":"Hello everyone","2":"welcome back","3":"today we have something exciting"}'
-        example_out = '{"1":"大家好","2":"欢迎回来","3":"今天我们有个激动人心的消息"}'
     else:
         fmt_rules = (
             "输出格式必须严格为 <index> 译文（如 <1> 大家好）\n"
@@ -364,8 +348,34 @@ def build_system_prompt(source_lang: str, fmt: str = "numbered_list", retry: boo
             "每条独立成行，不要合并\n"
             "不要添加任何额外说明或标注"
         )
-        example_in = "<1> Hello everyone\n<2> welcome back\n<3> today we have something exciting"
-        example_out = "<1> 大家好\n<2> 欢迎回来\n<3> 今天我们有个激动人心的消息"
+
+    if retry:
+        fmt_suffix = (
+            "\n\n⚠️ 警告：上次翻译输出格式错误，请严格遵守上述格式要求！"
+        )
+    else:
+        fmt_suffix = ""
+
+    # 自定义模板路径：用户内容 + 系统强制格式规则
+    if custom_template:
+        variables = {
+            "source_lang": source_lang,
+            "target_lang": target_lang,
+            "fmt": fmt,
+            "retry": str(retry),
+        }
+        user_part = resolve_prompt_variables(custom_template, variables)
+        system_part = (
+            f"\n\n【以下为系统强制格式要求，必须严格遵守】\n"
+            f"{fmt_rules}"
+            f"{fmt_suffix}"
+        )
+        return user_part + system_part
+
+    if source_lang == "ja":
+        base = "你是专业日语字幕翻译。请将以下日语逐条翻译成简体中文。"
+    else:
+        base = "你是专业英语字幕翻译。请将以下英文逐条翻译成简体中文。"
 
     parts = [
         base,
@@ -378,10 +388,10 @@ def build_system_prompt(source_lang: str, fmt: str = "numbered_list", retry: boo
         parts.extend([
             "",
             "示例输入：",
-            example_in,
+            "<1> Hello everyone\n<2> welcome back\n<3> today we have something exciting",
             "",
             "示例输出：",
-            example_out,
+            "<1> 大家好\n<2> 欢迎回来\n<3> 今天我们有个激动人心的消息",
         ])
     else:
         parts.extend([
@@ -389,7 +399,7 @@ def build_system_prompt(source_lang: str, fmt: str = "numbered_list", retry: boo
             "⚠️ 警告：上次翻译输出格式错误，请严格遵守上述格式要求！",
             "",
             "示例：",
-            example_out,
+            "<1> 大家好\n<2> 欢迎回来\n<3> 今天我们有个激动人心的消息",
         ])
 
     return "\n".join(parts)

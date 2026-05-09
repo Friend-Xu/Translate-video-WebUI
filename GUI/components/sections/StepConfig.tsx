@@ -174,39 +174,40 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
                   <FormControlLabel
                     control={<Checkbox checked={config.customPromptEnabled} onChange={e => onConfigChange('customPromptEnabled', e.target.checked)} />}
-                    label={<Box><Typography variant="body2">自定义 System Prompt</Typography><Typography variant="caption" display="block">覆盖默认翻译指令，支持 {'{source_lang}'} 等变量</Typography></Box>}
+                    label={<Box><Typography variant="body2">自定义 System Prompt</Typography><Typography variant="caption" display="block">仅可修改翻译风格指令，格式规则由系统自动追加</Typography></Box>}
                   />
                 </Box>
                 {config.customPromptEnabled ? (
                   <>
                     <TextField
-                      label="System Prompt"
-                      multiline minRows={3} maxRows={6}
+                      label="自定义翻译指令（风格/语气/角色）"
+                      multiline minRows={3} maxRows={5}
                       fullWidth size="small"
                       value={config.customSystemPrompt}
                       onChange={e => onConfigChange('customSystemPrompt', e.target.value)}
-                      placeholder="你是专业{source_lang}字幕翻译。请将以下{source_lang}逐条翻译成{target_lang}。"
-                      helperText="支持变量: {source_lang}, {target_lang}, {fmt}, {retry}"
+                      placeholder={'你是专业{source_lang}字幕翻译。请用口语化风格翻译成{target_lang}。'}
+                      helperText={'支持变量: {source_lang}, {target_lang}, {fmt}。格式规则会自动追加'}
                     />
-                    <TextField
-                      label="Batch Prompt 模板"
-                      multiline minRows={3} maxRows={6}
-                      fullWidth size="small"
-                      value={config.customBatchPrompt}
-                      onChange={e => onConfigChange('customBatchPrompt', e.target.value)}
-                      placeholder="待翻译：{items}翻译："
-                      helperText="{items} 将被替换为待翻译字幕列表"
-                    />
+                    <Box sx={{ bgcolor: 'grey.100', borderRadius: 1, p: 1.5 }}>
+                      <Typography variant="caption" color="text.secondary" fontWeight={600}>
+                        系统自动追加（不可修改）
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        输出格式必须严格为 &lt;index&gt; 译文，编号数量和顺序必须与输入完全一致，每条独立成行。
+                      </Typography>
+                    </Box>
                   </>
                 ) : (
-                  <TextField
-                    label="当前使用的 System Prompt（只读）"
-                    multiline minRows={3} maxRows={6}
-                    fullWidth size="small"
-                    disabled
-                    value="你是专业{source_lang}字幕翻译。请将以下{source_lang}逐条翻译成{target_lang}。\n要求：\n1. 保持口语化风格，上下文连贯\n2. 输出格式必须严格为 <index> 译文\n   编号数量和顺序必须与输入完全一致"
-                    helperText="勾选「自定义」后可修改此提示词"
-                  />
+                  <>
+                    <TextField
+                      label="当前 System Prompt（只读预览）"
+                      multiline minRows={4} maxRows={6}
+                      fullWidth size="small"
+                      disabled
+                      value={'你是专业{source_lang}字幕翻译。请将以下{source_lang}逐条翻译成{target_lang}。\n要求：\n1. 保持口语化风格，上下文连贯\n2. 输出格式必须严格为 <index> 译文，编号数量和顺序必须与输入完全一致'}
+                      helperText="勾选「自定义」后，可修改上方风格指令，格式规则始终由系统追加"
+                    />
+                  </>
                 )}
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
                   <FormControlLabel
