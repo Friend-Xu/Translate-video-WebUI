@@ -69,6 +69,15 @@ import torchaudio
 from .vc_base import VoiceCloneConfig
 from .vc_device import detect_vram_mb
 
+# ── ensure CosyVoice is importable (runs once at module init) ────────
+_cosyvoice_root = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "models", "CosyVoice")
+)
+_matcha_root = os.path.join(_cosyvoice_root, "third_party", "Matcha-TTS")
+for _p in (_cosyvoice_root, _matcha_root):
+    if os.path.isdir(_p) and _p not in sys.path:
+        sys.path.insert(0, _p)
+
 
 # ---------------------------------------------------------------------------
 # CosyVoiceCloner
@@ -251,7 +260,7 @@ class CosyVoiceCloner:
     # ------------------------------------------------------------------
 
     def _prepare_local(self, voice_path: str) -> bool:
-        """Load reference audio into memory (16 kHz mono tensor)."""
+        """Load reference audio into memory (16 kHz mono tensor, trimmed to <=30s)."""
         self._load_model()
 
         try:
@@ -260,6 +269,10 @@ class CosyVoiceCloner:
                 wav = wav.mean(dim=0, keepdim=True)
             if sr != 16000:
                 wav = torchaudio.functional.resample(wav, sr, 16000)
+            # CosyVoice speech token extraction limits audio to 30s
+            max_samples = 16000 * 30
+            if wav.shape[1] > max_samples:
+                wav = wav[:, :max_samples]
             self._prompt_audio = wav
             self._prompt_audio_path = voice_path
 
@@ -273,7 +286,13 @@ class CosyVoiceCloner:
     def _clone_local(
         self, tts_audio_path: str, output_dir: str
     ) -> Optional[str]:
-        """Run inference_vc locally."""
+        """Run inference_vc locally.
+
+        CosyVoice's inference_vc() expects file paths (not tensors) because
+        its internal load_wav() calls torchaudio.load().  We save the
+        pre-loaded prompt tensor to a temp file and pass the original
+        TTS path directly.
+        """
         self._load_model()
 
         if self._prompt_audio is None:
@@ -287,16 +306,13 @@ class CosyVoiceCloner:
                 )
                 return None
 
-        try:
-            source_wav, sr = torchaudio.load(tts_audio_path)
-            if source_wav.shape[0] > 1:
-                source_wav = source_wav.mean(dim=0, keepdim=True)
-            if sr != 16000:
-                source_wav = torchaudio.functional.resample(source_wav, sr, 16000)
+        import tempfile
 
-            device = self._model_device()
-            source_wav = source_wav.to(device)
-            prompt_wav = self._prompt_audio.to(device)
+        prompt_tmp = None
+        try:
+            # Save prompt audio to temp file (CosyVoice API needs file paths)
+            prompt_tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            torchaudio.save(prompt_tmp.name, self._prompt_audio, 16000)
 
             os.makedirs(output_dir, exist_ok=True)
             filename = f"cosyvc_{os.path.basename(tts_audio_path)}"
@@ -304,7 +320,7 @@ class CosyVoiceCloner:
 
             with self._lock:
                 generator = self._model.inference_vc(
-                    source_wav, prompt_wav, stream=False
+                    tts_audio_path, prompt_tmp.name, stream=False
                 )
                 for _, result in enumerate(generator):
                     tts_speech = result["tts_speech"]
@@ -321,6 +337,12 @@ class CosyVoiceCloner:
                 f"_clone_local inference failed [{tts_audio_path}]: {exc}"
             )
             return None
+        finally:
+            if prompt_tmp is not None:
+                try:
+                    os.unlink(prompt_tmp.name)
+                except OSError:
+                    pass
 
     def _load_model(self) -> None:
         """Lazy-load the CosyVoice2 or CosyVoice3 model.
@@ -396,7 +418,7 @@ class CosyVoiceCloner:
 
         try:
             embedding = self._model.frontend._extract_spk_embedding(
-                wav_16k.to(self._model_device())
+                voice_path
             )
             os.makedirs(os.path.dirname(cache_path), exist_ok=True)
             torch.save(embedding.cpu(), cache_path)
@@ -577,6 +599,8 @@ class CosyVoiceCloner:
     def _log_error(self, message: str) -> None:
         """Append a timestamped message to the error log."""
         log_path = self.config.error_log_path
+        if not log_path:
+            return
         os.makedirs(os.path.dirname(log_path) or ".", exist_ok=True)
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         try:
@@ -591,22 +615,8 @@ class CosyVoiceCloner:
 # ---------------------------------------------------------------------------
 
 def _ensure_cosyvoice_path() -> None:
-    """Add CosyVoice third-party dependencies to sys.path if needed.
-
-    Matcha-TTS is a git submodule of the CosyVoice repo.  We locate it
-    relative to the installed cosyvoice package.
-    """
-    try:
-        import cosyvoice  # type: ignore[import-untyped]
-
-        pkg_dir = os.path.dirname(os.path.abspath(cosyvoice.__file__))
-        matcha_path = os.path.normpath(
-            os.path.join(pkg_dir, "..", "third_party", "Matcha-TTS")
-        )
-        if os.path.isdir(matcha_path) and matcha_path not in sys.path:
-            sys.path.insert(0, matcha_path)
-    except ImportError:
-        pass
+    """No-op: paths are set at module import time (see top of file)."""
+    pass
 
 
 def _tensor_to_wav_bytes(wav: torch.Tensor, sample_rate: int) -> bytes:
