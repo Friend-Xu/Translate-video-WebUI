@@ -224,8 +224,12 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   </Box>
                 )}
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                  <Box sx={{ mb: 0.5 }}>
+                    <Typography variant="body2" fontWeight={500}>术语词典</Typography>
+                    <Typography variant="caption" color="text.secondary">管理专有名词的翻译映射，如 Creeper → 爬行者</Typography>
+                  </Box>
                   <Button variant="outlined" size="small" fullWidth onClick={() => setGlossaryOpen(true)}>
-                    Glossary Editor
+                    编辑术语词典
                   </Button>
                 </Box>
               </Stack>
