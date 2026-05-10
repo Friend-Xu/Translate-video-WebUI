@@ -191,6 +191,8 @@ Visit `http://localhost:5173`.
 | **Subtitle Review** | Edit translations, mark issues, re-run TTS after save |
 | **Tools** | Config import/export/reset, external subtitle optimizer, batch manager |
 
+📖 **[Detailed WebUI Guide →](README_GUI.md)** (screenshots, features, FAQ)
+
 <details>
 <summary>WebUI Architecture</summary>
 

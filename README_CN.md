@@ -194,6 +194,8 @@ cd GUI && npm run dev
 | **字幕校准** | 审核/编辑翻译结果、标记问题条目、保存后重新 TTS |
 | **工具栏** | 配置导入/导出/重置、外挂字幕优化器、批量文件管理 |
 
+📖 **[详细 WebUI 使用指南 →](README_GUI_CN.md)**（含截图、功能详解、常见问题）
+
 <details>
 <summary>点击展开：WebUI 架构</summary>
 
