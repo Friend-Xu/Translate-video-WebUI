@@ -6,7 +6,6 @@ import {
 import Grid from '@mui/material/Grid'
 import { SectionHeader } from '../SectionHeader'
 import { ApiConfigDialog } from '../ApiConfigDialog'
-import { GlossaryEditor } from './GlossaryEditor'
 import { CustomPromptDialog } from '../CustomPromptDialog'
 import type { PipelineConfig, SystemInfo } from '../../types'
 import { PROVIDER_PRESETS } from '../../types'
@@ -253,13 +252,17 @@ function ChatTTSPanel({ config, onConfigChange, chatttsWorkers }: StepConfigProp
 export function StepConfig({ config, onConfigChange }: StepConfigProps) {
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
   const [apiDialogOpen, setApiDialogOpen] = useState(false)
-  const [glossaryOpen, setGlossaryOpen] = useState(false)
+  const [glossaryDicts, setGlossaryDicts] = useState<{name: string, description: string, termCount: number}[]>([])
   const [customPromptOpen, setCustomPromptOpen] = useState(false)
 
   useEffect(() => {
     fetch('/api/system/info')
       .then(r => r.json())
       .then(setSysInfo)
+      .catch(() => {})
+    fetch('/api/glossary/dicts')
+      .then(r => r.json())
+      .then(d => setGlossaryDicts(d.dicts || []))
       .catch(() => {})
   }, [])
 
@@ -467,18 +470,25 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   </Box>
                 )}
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
-                  <Box sx={{ mb: 0.5 }}>
-                    <Typography variant="body2" fontWeight={500}>术语词典</Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      当前词典: <Chip label={config.activeGlossary} size="small" sx={{ fontSize: '0.7rem' }} />
-                    </Typography>
-                    <Typography variant="caption" display="block" color="text.secondary">
-                      术语表按需注入翻译 prompt，只传递源文本中实际匹配的术语
-                    </Typography>
-                  </Box>
-                  <Button variant="outlined" size="small" fullWidth onClick={() => setGlossaryOpen(true)}>
-                    编辑术语词典
-                  </Button>
+                  <Typography variant="body2" fontWeight={500}>术语词典</Typography>
+                  <Typography variant="caption" color="text.secondary" display="block" mb={0.5}>
+                    选择本地术语表，按需注入翻译 prompt（仅源文本中实际出现的术语会被传递）
+                  </Typography>
+                  <Select
+                    size="small"
+                    fullWidth
+                    value={config.activeGlossary}
+                    onChange={e => onConfigChange('activeGlossary', e.target.value)}
+                    sx={{ bgcolor: 'background.paper' }}
+                  >
+                    {glossaryDicts.length === 0 ? (
+                      <MenuItem value="" disabled>未找到术语表文件</MenuItem>
+                    ) : glossaryDicts.map(d => (
+                      <MenuItem key={d.name} value={d.name + '.json'}>
+                        {d.name} ({d.termCount}条) {d.description ? `— ${d.description}` : ''}
+                      </MenuItem>
+                    ))}
+                  </Select>
                 </Box>
               </Stack>
             </CardContent>
@@ -601,10 +611,6 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
         onClose={() => setApiDialogOpen(false)}
         config={config}
         onConfigChange={onConfigChange}
-      />
-      <GlossaryEditor
-        open={glossaryOpen}
-        onClose={() => setGlossaryOpen(false)}
       />
       <CustomPromptDialog
         open={customPromptOpen}

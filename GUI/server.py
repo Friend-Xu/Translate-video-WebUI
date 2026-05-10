@@ -1546,10 +1546,10 @@ class PreviewPromptRequest(BaseModel):
 @app.post("/api/translate/preview-prompt")
 async def preview_prompt(req: PreviewPromptRequest) -> dict:
     """解析 prompt 变量并返回预览。"""
-    from SRT.SRT_Translator import resolve_prompt_variables
+    from SRT.SRT_Translator import resolve_prompt_variables, _LANG_LABELS
     variables = {
-        "source_lang": req.source_lang,
-        "target_lang": req.target_lang,
+        "source_lang": _LANG_LABELS.get(req.source_lang, req.source_lang),
+        "target_lang": _LANG_LABELS.get(req.target_lang, req.target_lang),
         "fmt": req.fmt,
         "retry": "false",
         "items": "<1> 示例字幕 1\n<2> 示例字幕 2\n<3> 示例字幕 3",

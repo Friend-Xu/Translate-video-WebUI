@@ -392,21 +392,20 @@ def build_system_prompt(source_lang: str, fmt: str = "numbered_list", retry: boo
     ]
 
     if not retry:
-        parts.extend([
-            "",
-            "示例输入：",
-            "<1> Hello everyone\n<2> welcome back\n<3> today we have something exciting",
-            "",
-            "示例输出：",
-            "<1> 大家好\n<2> 欢迎回来\n<3> 今天我们有个激动人心的消息",
-        ])
+        # 只在目标语言为中文时展示示例（非中文目标用英文示例会误导 LLM）
+        if "中文" in target_label or "Chinese" in target_label:
+            parts.extend([
+                "",
+                "示例输入：",
+                "<1> Hello everyone\n<2> welcome back\n<3> today we have something exciting",
+                "",
+                "示例输出：",
+                "<1> 大家好\n<2> 欢迎回来\n<3> 今天我们有个激动人心的消息",
+            ])
     else:
         parts.extend([
             "",
             "⚠️ 警告：上次翻译输出格式错误，请严格遵守上述格式要求！",
-            "",
-            "示例：",
-            "<1> 大家好\n<2> 欢迎回来\n<3> 今天我们有个激动人心的消息",
         ])
 
     return "\n".join(parts)
