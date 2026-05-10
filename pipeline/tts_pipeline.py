@@ -110,7 +110,7 @@ class TtsPipeline:
             for _ in range(n_workers):
                 engine = self._default_engine()
                 self._engine_pool.put(engine)
-            log.info(f"ChatTTS 模型池: {n_workers} 副本 (VRAM ≈ {n_workers * _CHATTS_MODEL_SIZE_GB:.1f} GB)")
+            logger.info(f"ChatTTS 模型池: {n_workers} 副本 (VRAM ≈ {n_workers * _CHATTS_MODEL_SIZE_GB:.1f} GB)")
             self.engine = None  # 池模式下无单例引擎
         else:
             self.engine = self._default_engine()
