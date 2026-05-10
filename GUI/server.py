@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 
 import yaml
 
@@ -315,6 +315,9 @@ def _load_yaml_defaults() -> dict:
 
     return {
         "engine": tts.get("engine_type", "edge"),
+        "chatttsSpeakerSeed": tts.get("chattts_speaker_seed", 2),
+        "chatttsModelSource": tts.get("chattts_model_source", "local"),
+        "chatttsModelPath": tts.get("chattts_model_path") or "",
         "voice": tts.get("voice", "zh-CN-XiaoxiaoNeural"),
         "speechRate": tts.get("base_speed", 30),
         "maxSpeed": tts.get("max_speed", 100),
@@ -332,6 +335,7 @@ def _load_yaml_defaults() -> dict:
         "emotionRefAudio": tts.get("emotion_ref_audio") or "",
         "concurrency": trans.get("concurrency", {}).get("max_workers", tts.get("threading_workers", 3)),
         "ttsWorkers": tts.get("threading_workers", 7),
+        "chatttsWorkers": tts.get("chattts_workers", 0),  # 0 = VRAM自动
         "enableCheckpoint": tts.get("enable_resume", False),
         "captionFont": tts.get("caption_font", ""),
         "videoCodec": tts.get("video_codec", "libx264"),
@@ -340,6 +344,8 @@ def _load_yaml_defaults() -> dict:
         "apiType": trans.get("api_type", "deepseek"),
         "enableSemanticValidation": trans.get("semantic_check", True),
         "enableTermReplacement": trans.get("terms_dict", {}).get("enabled", True),
+        "activeGlossary": trans.get("terms_dict", {}).get("default_dict", "minecraft.json"),
+        "targetLang": trans.get("target_lang", "zh-CN"),
     }
 
 
@@ -462,6 +468,14 @@ def _sync_translate_config(target_lang: str = "") -> None:
     trans["translate"]["multi_agent"]["enabled"] = pipeline_cfg.get("multiAgentEnabled", False)
     trans["translate"]["multi_agent"]["mqm_threshold"] = pipeline_cfg.get("mqmThreshold", 0.6)
 
+    # Sync terms_dict
+    if "terms_dict" not in trans["translate"]:
+        trans["translate"]["terms_dict"] = {}
+    trans["translate"]["terms_dict"]["enabled"] = pipeline_cfg.get("enableTermReplacement", True)
+    if pipeline_cfg.get("activeGlossary"):
+        trans["translate"]["terms_dict"]["default_dict"] = pipeline_cfg["activeGlossary"]
+        trans["translate"]["terms_dict"]["dict_dir"] = "config/terms/"
+
     with open(translate_path, "w", encoding="utf-8") as f:
         yaml.dump(trans, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
 
@@ -478,6 +492,9 @@ class RunRequest(BaseModel):
     device: str = "cuda"
     compute_type: str = "float16"
     engine: str = "edge"
+    chattts_speaker_seed: Optional[int] = 2
+    chattts_model_source: str = "local"
+    chattts_model_path: str = ""
     voice: str = "zh-CN-XiaoxiaoNeural"
     speech_rate: int = 40
     max_speed: int = 100
@@ -511,6 +528,7 @@ class RunRequest(BaseModel):
     cosyvoice_model_version: str = "v2"
     num_workers: int = 1
     tts_workers: int = 7
+    chattts_workers: int = 0  # 0 = VRAM自动
     skip_align: bool = False
     align_lang: str = "ja"
 
@@ -568,7 +586,12 @@ def _write_tts_runtime_config(req: RunRequest) -> str:
     data = {
         "tts": {
             "engine_type": req.engine,
+            "chattts_speaker_seed": req.chattts_speaker_seed,
+            "chattts_model_source": req.chattts_model_source,
+            "chattts_model_path": req.chattts_model_path or None,
+            "chattts_workers": req.chattts_workers,
             "voice": req.voice,
+            "target_lang": req.target_lang,
             "base_speed": req.speech_rate,
             "max_speed": req.max_speed,
             "video_speed_min": req.video_speed_min,
@@ -685,6 +708,19 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
 
 @app.post("/api/pipeline/run", response_model=RunResponse)
 async def start_pipeline(req: RunRequest) -> RunResponse:
+    # 释放 ChatTTS 预览缓存，归还 GPU 显存给流水线
+    global _chattts_engine, _chattts_engine_config
+    if _chattts_engine is not None:
+        _chattts_engine = None
+        _chattts_engine_config = None
+        import gc; gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
     video = Path(req.video_path)
     if not video.is_file():
         raise HTTPException(status_code=400, detail=f"视频文件不存在: {req.video_path}")
@@ -1514,10 +1550,10 @@ class PreviewPromptRequest(BaseModel):
 @app.post("/api/translate/preview-prompt")
 async def preview_prompt(req: PreviewPromptRequest) -> dict:
     """解析 prompt 变量并返回预览。"""
-    from SRT.SRT_Translator import resolve_prompt_variables
+    from SRT.SRT_Translator import resolve_prompt_variables, _LANG_LABELS
     variables = {
-        "source_lang": req.source_lang,
-        "target_lang": req.target_lang,
+        "source_lang": _LANG_LABELS.get(req.source_lang, req.source_lang),
+        "target_lang": _LANG_LABELS.get(req.target_lang, req.target_lang),
         "fmt": req.fmt,
         "retry": "false",
         "items": "<1> 示例字幕 1\n<2> 示例字幕 2\n<3> 示例字幕 3",
@@ -1530,6 +1566,142 @@ async def preview_prompt(req: PreviewPromptRequest) -> dict:
     if req.batch_prompt:
         result["batch_preview"] = resolve_prompt_variables(req.batch_prompt, variables)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Model Manager endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/models")
+async def list_models() -> dict:
+    """列出所有已知模型及其下载状态。"""
+    from pipeline.model_manager import ModelManager
+    models = []
+    for s in ModelManager.list_all():
+        models.append({
+            "id": s.id,
+            "name": s.name,
+            "exists": s.exists,
+            "path": s.path,
+            "size_gb": s.size_gb,
+            "size_mb": s.size_mb,
+        })
+    return {"models": models}
+
+
+@app.get("/api/models/download/{model_id}")
+async def download_model_stream(model_id: str, req: Request):
+    """SSE 流式下载模型，推送实时进度。"""
+    from pipeline.model_manager import ModelManager
+
+    if model_id != "chattts":
+        raise HTTPException(400, "仅支持 chattts 模型下载")
+
+    async def event_stream():
+        import json
+        from queue import Queue
+
+        q: Queue = Queue()
+
+        def on_progress(pct: int, downloaded_gb: float, total_gb: float):
+            q.put({"status": "downloading", "progress": pct,
+                    "downloaded_gb": downloaded_gb, "total_gb": total_gb})
+
+        def do_download():
+            try:
+                path = ModelManager.download_chattts(progress_callback=on_progress)
+                q.put({"status": "completed", "path": path})
+            except Exception as e:
+                q.put({"status": "error", "message": str(e)})
+            q.put(None)
+
+        import threading
+        t = threading.Thread(target=do_download, daemon=True)
+        t.start()
+
+        while True:
+            item = q.get()
+            if item is None:
+                break
+            yield f"data: {json.dumps(item)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ---------------------------------------------------------------------------
+# ChatTTS voice preview (gacha)
+# ---------------------------------------------------------------------------
+
+class ChatTTSPreviewRequest(BaseModel):
+    seed: Optional[int] = None
+    text: str = "这是一个ChatTTS语音合成测试案例。"
+    model_source: str = "local"
+    model_path: str = ""
+
+
+# 模块级 ChatTTS 引擎缓存：多次抽卡复用同一模型实例，避免反复加载 2.37GB
+_chattts_engine = None
+_chattts_engine_config = None  # (model_source, model_path)
+
+
+@app.post("/api/tts/preview-chattts")
+async def preview_chattts_voice(req: ChatTTSPreviewRequest) -> dict:
+    """抽卡预览 ChatTTS 音色。引擎仅首次加载，后续抽卡只换 seed。"""
+    global _chattts_engine, _chattts_engine_config
+
+    import base64
+    import tempfile
+    from pipeline.tts_chattts import ChatTTSEngine
+
+    config_key = (req.model_source, req.model_path or "")
+
+    # 首次加载或模型来源变更时重新创建引擎
+    if _chattts_engine is None or _chattts_engine_config != config_key:
+        _chattts_engine = ChatTTSEngine(
+            speaker_seed=req.seed,
+            model_source=req.model_source,
+            model_path=req.model_path or None,
+        )
+        _chattts_engine_config = config_key
+    else:
+        # 复用已加载的模型，只换说话人
+        _chattts_engine.reset_speaker(req.seed)
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        duration = _chattts_engine.synthesize(req.text, tmp_path)
+        with open(tmp_path, "rb") as f:
+            audio_b64 = base64.b64encode(f.read()).decode("ascii")
+        return {
+            "seed": _chattts_engine.speaker_seed,
+            "audio_base64": audio_b64,
+            "duration": round(duration, 2),
+            "text": req.text,
+        }
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+@app.post("/api/tts/release-chattts")
+async def release_chattts_engine() -> dict:
+    """释放 ChatTTS 预览引擎，归还 GPU 显存给流水线使用。"""
+    global _chattts_engine, _chattts_engine_config
+    _chattts_engine = None
+    _chattts_engine_config = None
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+    return {"status": "released"}
 
 
 # ---------------------------------------------------------------------------
@@ -1646,6 +1818,14 @@ async def system_info() -> dict:
     source_dir = os.path.join(PROJECT_ROOT, "source_file")
     default_video_dir = source_dir if os.path.isdir(source_dir) else str(PROJECT_ROOT)
 
+    # ChatTTS worker count based on VRAM
+    chattts_workers = 1
+    try:
+        from pipeline.tts_pipeline import calc_chattts_workers
+        chattts_workers = calc_chattts_workers()
+    except Exception:
+        pass
+
     return {
         "cpuCount": cpu_count,
         "hasGpu": has_gpu,
@@ -1653,6 +1833,7 @@ async def system_info() -> dict:
         "gpuVramMb": gpu_vram_mb,
         "recommendedConcurrency": recommended,
         "defaultVideoDir": default_video_dir,
+        "chatttsWorkers": chattts_workers,
     }
 
 

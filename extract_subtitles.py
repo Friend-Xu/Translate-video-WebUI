@@ -221,16 +221,10 @@ def main():
                 instr_size = os.path.getsize(instrumental_path)
                 log_node("2.5", f"背景乐: {instrumental_path} ({format_size(instr_size)})")
             except Exception as e:
-                # Demucs 失败时降级：直接用 ffmpeg 提取完整音轨
-                print(f"  [WARN] Demucs 失败 ({e})，降级为完整音轨提取")
-                subprocess.run(
-                    [ffmpeg_exe, "-y", "-i", video,
-                     "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
-                     instrumental_path],
-                    capture_output=True, text=True, check=True,
-                )
-                instr_size = os.path.getsize(instrumental_path)
-                log_node("2.5", f"背景乐(降级): {instrumental_path} ({format_size(instr_size)})")
+                # Demucs 失败时跳过背景乐分离，不生成假的 instrumental 文件
+                # 下游 TTS 管线检测到无背景乐后仅使用 TTS 音频，避免混入原始人声
+                print(f"  [WARN] Demucs 失败 ({e})，跳过背景乐分离")
+                log_node("2.5", f"跳过: Demucs 失败 — 无背景乐")
     else:
         instr_size = os.path.getsize(instrumental_path)
         log_node("2.5", f"已有背景乐 ({format_size(instr_size)})，跳过分离")

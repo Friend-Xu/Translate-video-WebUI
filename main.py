@@ -232,6 +232,7 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
                   backup_dir: str = "", skip_defect_check: bool = False,
                   skip_demucs: bool = False, skip_align: bool = False,
                   align_lang: str | None = None, num_workers: int = 1,
+                  force: bool = False,
                   checkpoint: PipelineCheckpoint | None = None) -> None:
     """步骤 1: 委托 extract_subtitles.py 完成全流程。
 
@@ -242,16 +243,26 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
     ws_dir = _workspace_dir(video)
     ck = checkpoint or PipelineCheckpoint.load(ws_dir)
 
-    if ck.is_step_done("extract"):
+    name = os.path.splitext(os.path.basename(video))[0]
+    extract_dir = os.path.join(os.path.dirname(video), f"{name}_project", "01_extract")
+
+    # 验证输出文件是否存在（用户可能删了部分文件希望重跑）
+    ck.verify_files({
+        "source_srt": os.path.join(extract_dir, "source.srt"),
+        "audio_wav": os.path.join(extract_dir, "audio.wav"),
+        "vocals_wav": os.path.join(extract_dir, "vocals.wav"),
+        "instrumental_wav": os.path.join(extract_dir, "instrumental.wav"),
+        "transcript_json": os.path.join(extract_dir, "transcript.json"),
+        "vad_segments": os.path.join(extract_dir, "vad_segments.json"),
+    })
+
+    if ck.is_step_done("extract") and not force:
         print("\n[1/3] 字幕提取 — 已完成 (checkpoint)，跳过")
         return
 
     print("\n[1/3] 字幕提取...")
     ck.start_step("extract")
     ck.save()
-
-    name = os.path.splitext(os.path.basename(video))[0]
-    extract_dir = os.path.join(os.path.dirname(video), f"{name}_project", "01_extract")
     script = os.path.join(PROJECT_ROOT, "extract_subtitles.py")
     cmd = [
         sys.executable, script,
@@ -333,6 +344,9 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
     ws_dir = _workspace_dir(video)
     ck = checkpoint or PipelineCheckpoint.load(ws_dir)
 
+    # 验证输出文件是否存在（用户可能删了部分文件希望重跑）
+    ck.verify_files({"machine_srt": output})
+
     if ck.is_step_done("translate") and not force:
         print(f"  [OK] 翻译已完成 (checkpoint)，跳过")
         _manifest_set_step(video, "translate", "completed")
@@ -353,7 +367,6 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
     sys.path.insert(0, PROJECT_ROOT)
 
     from SRT.SRT_Translator import SRTTranslator
-    from SRT.TermReplacer import TermReplacer
 
     translator = SRTTranslator()
     auto_srt, pending = translator.translate(srt_path)
@@ -373,9 +386,6 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
         shutil.move(auto_srt, output)
 
     if os.path.isfile(output):
-        print("  术语词典替换...")
-        replacer = TermReplacer()
-        replacer.replace_file(output, output)
 
         from pipeline.checkpoint import _file_sha256
         ck.complete_step("translate", output_hashes={"machine_srt": _file_sha256(output)})
@@ -445,6 +455,9 @@ def step_tts(
     instrumental = ws["instrumental_wav"] if os.path.isfile(ws["instrumental_wav"]) else None
     final_output = ws["dubbed_mp4"]
 
+    # 验证输出文件是否存在（用户可能删了部分文件希望重跑）
+    ck.verify_files({"dubbed_mp4": final_output})
+
     if ck.is_step_done("tts") and not force:
         print(f"\n[3/3] TTS 合成 [OK] 已完成 (checkpoint)，跳过")
         _manifest_set_step(video, "tts", "completed")
@@ -468,11 +481,27 @@ def step_tts(
     ck.start_step("tts")
     ck.save()
 
-    from pipeline.tts_config import TTSConfig
+    from pipeline.tts_config import TTSConfig, EDGE_VOICE_MAP
 
     cfg = TTSConfig.from_yaml(config_path) if config_path and os.path.isfile(config_path) else TTSConfig()
 
     cfg.engine_type = engine
+
+    # 目标语言：从 translate.yaml 读取并写入 TTSConfig（驱动 EdgeTTS 语音自动选择）
+    translate_yaml = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
+    if os.path.isfile(translate_yaml):
+        try:
+            import yaml as _yaml
+            with open(translate_yaml, "r", encoding="utf-8") as _f:
+                _tc = _yaml.safe_load(_f) or {}
+            _tl = (_tc.get("translate") or {}).get("target_lang", "")
+            if _tl:
+                cfg.target_lang = _tl
+                # __post_init__ already ran in from_yaml() / TTSConfig(); re-apply auto voice
+                if cfg.voice == "zh-CN-XiaoxiaoNeural" and _tl in EDGE_VOICE_MAP:
+                    cfg.voice = EDGE_VOICE_MAP[_tl]
+        except Exception:
+            pass
 
     # ── 音色克隆 CLI 覆盖 ──
     if voice_clone_engine is not None:
@@ -554,12 +583,15 @@ def step_tts(
     from pipeline.tts_pipeline import TtsPipeline
 
     pipeline = TtsPipeline(cfg)
-    pipeline.run(
-        video_path=video,
-        instrumental_path=instrumental,
-        chinese_srt_path=srt_translated,
-        english_srt_path=srt_source,
-    )
+    try:
+        pipeline.run(
+            video_path=video,
+            instrumental_path=instrumental,
+            translated_srt_path=srt_translated,
+            source_srt_path=srt_source,
+        )
+    finally:
+        pipeline.cleanup()
 
     if os.path.isfile(final_output):
         sz = os.path.getsize(final_output)
@@ -644,7 +676,7 @@ def main():
                         help="计算设备 (cuda/cpu)")
     parser.add_argument("--compute-type", default="float16",
                         help="计算精度 (float16/int8_float16/int8/float32)")
-    parser.add_argument("--engine", default="edge", choices=["edge", "chattts", "coqui", "azure"],
+    parser.add_argument("--engine", default="edge", choices=["edge", "chattts"],
                         help="TTS 引擎 (默认 edge)")
     parser.add_argument("--config", help="TTS YAML 配置文件路径")
     parser.add_argument("--caption-config", default=None,
@@ -777,7 +809,7 @@ def main():
                          backup_dir=args.backup_dir, skip_defect_check=args.skip_defect_check,
                          skip_demucs=args.skip_demucs, skip_align=args.skip_align,
                          align_lang=args.align_lang, num_workers=args.num_workers,
-                         checkpoint=ck)
+                         force=args.force, checkpoint=ck)
         else:
             print("[1/3] 字幕提取 — 已跳过 (--skip-extract)")
 

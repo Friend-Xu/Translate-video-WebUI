@@ -671,6 +671,11 @@ with open(output_file, "w", encoding="utf-8") as f:
             self._model_pool = None
             if destroyed:
                 logger.info("已释放 %d 个模型实例", destroyed)
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
         gc.collect()
 
         return {

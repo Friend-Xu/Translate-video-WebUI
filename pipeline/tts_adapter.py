@@ -51,10 +51,14 @@ class TTSAdapter:
         base_speed: int = 3,
         caption: bool = True,
         voice: Optional[str] = None,
+        engine_type: str = "edge",
+        chattts_speaker_seed: Optional[int] = None,
+        chattts_model_source: str = "local",
+        chattts_model_path: Optional[str] = None,
     ):
         # 构建旧参数映射
         self._config = TTSConfig(
-            engine_type="edge",
+            engine_type=engine_type,
             voice=edgeTTS_vocal,
             base_speed=speed_max * 10,
             max_speed=speed_max * 10,
@@ -67,6 +71,9 @@ class TTSAdapter:
             audio_codec="pcm_s32le",
             audio_bitrate="192k",
             video_bitrate="10M",
+            chattts_speaker_seed=chattts_speaker_seed,
+            chattts_model_source=chattts_model_source,
+            chattts_model_path=chattts_model_path,
         )
         # 字体路径
         self._config.caption_font = "./models/font/Minecraft_font/5_Minecraft_AE_zh_en.ttf"

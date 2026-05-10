@@ -5,7 +5,12 @@ export interface PipelineConfig {
   model: 'tiny' | 'base' | 'small' | 'medium' | 'turbo' | 'large-v3'
   device: 'cpu' | 'cuda'
   computeType: 'int8' | 'float32' | 'float16' | 'int8_float16'
-  engine: 'edge' | 'chattts' | 'coqui' | 'azure'
+  engine: 'edge' | 'chattts'
+  chatttsSpeakerSeed: number | null
+  chatttsModelSource: 'local' | 'huggingface' | 'custom'
+  chatttsModelPath: string
+  chatttsPreviewAudio: string
+  chatttsPreviewSeed: number | null
   voice: string
   speechRate: number
   maxSpeed: number
@@ -41,6 +46,7 @@ export interface PipelineConfig {
   concurrency: number
   numWorkers: number
   ttsWorkers: number
+  chatttsWorkers: number
   enableCheckpoint: boolean
   enableDefectCheck: boolean
   enableExtract: boolean
@@ -112,6 +118,11 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   device: 'cuda',
   computeType: 'float16',
   engine: 'edge',
+  chatttsSpeakerSeed: 2,
+  chatttsModelSource: 'local',
+  chatttsModelPath: '',
+  chatttsPreviewAudio: '',
+  chatttsPreviewSeed: null,
   voice: 'zh-CN-XiaoxiaoNeural',
   speechRate: 40,
   maxSpeed: 100,
@@ -147,6 +158,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   concurrency: 3,
   numWorkers: 1,
   ttsWorkers: 7,
+  chatttsWorkers: 0,  // 0 = VRAM自动
   enableCheckpoint: true,
   enableDefectCheck: true,
   enableExtract: true,
@@ -217,6 +229,7 @@ export interface SystemInfo {
   gpuVramMb: number
   recommendedConcurrency: number
   defaultVideoDir: string
+  chatttsWorkers: number
 }
 
 export interface VideoInfo {

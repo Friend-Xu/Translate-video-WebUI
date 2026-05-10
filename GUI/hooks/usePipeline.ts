@@ -66,6 +66,7 @@ export function usePipeline() {
           force: config.forceRetry,
           num_workers: config.numWorkers,
           tts_workers: config.ttsWorkers,
+          chattts_workers: config.chatttsWorkers,
           skip_align: !config.enableAlignment,
           align_lang: config.lang !== 'auto' ? config.lang : '',
           // Caption rendering params (all 13)
@@ -84,6 +85,9 @@ export function usePipeline() {
           caption_width_ratio: config.captionWidthRatio,
           caption_optimize: config.enableSubtitleOptimization,
           bgm_volume: config.bgmVolume,
+          chattts_speaker_seed: config.chatttsSpeakerSeed,
+          chattts_model_source: config.chatttsModelSource,
+          chattts_model_path: config.chatttsModelPath,
           voice_clone_engine: config.voiceCloneEngine,
           voice_clone_device: config.voiceCloneDevice,
           voice_clone_concurrency: config.voiceCloneConcurrency,

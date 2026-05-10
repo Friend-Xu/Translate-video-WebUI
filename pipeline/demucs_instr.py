@@ -333,5 +333,9 @@ def extract_instrumental(video_path: str, output_dir: str,
             os.replace(normalized, instr_path)
             logger.info(f"BGM 响度已补偿: {gain_db:+.1f} dB")
 
+    del model
+    torch.cuda.empty_cache()
+    import gc
+    gc.collect()
     os.remove(tmp_wav)
     return instr_path
