@@ -9,6 +9,8 @@
 
 A browser-based visual interface to run the Translate_video pipeline — **drag, configure, and click**. No command line needed.
 
+![Main Panel](主面板.png)
+
 ---
 
 ## Quick Start
@@ -62,6 +64,8 @@ All settings saved to YAML. Export/import configs to share between machines. Res
 
 ### Subtitle Calibration
 Review every translated subtitle line. Edit text, mark entries for re-translation. Changes write back to `reviewed.srt` and re-trigger TTS.
+
+![Subtitle Review](字幕校验.png)
 
 ### ChatTTS Voice Gacha
 Preview ChatTTS voices instantly. Random seed → hear the result → lock in your favorite speaker. No GPU reload needed between previews.
