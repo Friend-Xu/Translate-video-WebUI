@@ -98,8 +98,15 @@ class TtsPipeline:
         self._subs_list: list = []
         self._queue_list: list = []
 
-        # 线程池 — ChatTTS 本地 GPU 模型不支持并发推理，固定串行
-        workers = 1 if config.engine_type == "chattts" else config.threading_workers
+        # 线程池
+        # EdgeTTS 走云端 API，可使用用户配置的并发数
+        # ChatTTS/Cooqui 等本地 GPU 模型不支持单实例并发推理，固定串行
+        if config.engine_type in ("chattts", "coqui"):
+            workers = 1
+            log.info(f"GPU 推理引擎 ({config.engine_type})：强制单线程串行")
+        else:
+            workers = config.threading_workers
+            log.info(f"云端引擎 ({config.engine_type})：线程池 workers={workers}")
         self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
 
     def _find_vocals(self, video_path: str) -> str | None:
