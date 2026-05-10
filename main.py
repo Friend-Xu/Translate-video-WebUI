@@ -32,6 +32,11 @@ if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
 
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, PROJECT_ROOT)
+sys.path.insert(0, os.path.join(PROJECT_ROOT, "pipeline"))
+
+
+from pipeline.checkpoint import PipelineCheckpoint, StepState
 
 
 def backup_step(label: str, paths: list[str], backup_root: str) -> None:
@@ -226,14 +231,25 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
                   compute_type: str = "float16",
                   backup_dir: str = "", skip_defect_check: bool = False,
                   skip_demucs: bool = False, skip_align: bool = False,
-                  align_lang: str | None = None, num_workers: int = 1) -> None:
+                  align_lang: str | None = None, num_workers: int = 1,
+                  checkpoint: PipelineCheckpoint | None = None) -> None:
     """步骤 1: 委托 extract_subtitles.py 完成全流程。
 
     含缺陷检测(N1.5)、音频提取(N2)、背景乐提取(N2.5)、
     VAD+转录(N3)、wav2vec2 对齐(N3.5，指定 --lang 时启用)、
     JSON→SRT(N4)。
     """
+    ws_dir = _workspace_dir(video)
+    ck = checkpoint or PipelineCheckpoint.load(ws_dir)
+
+    if ck.is_step_done("extract"):
+        print("\n[1/3] 字幕提取 — 已完成 (checkpoint)，跳过")
+        return
+
     print("\n[1/3] 字幕提取...")
+    ck.start_step("extract")
+    ck.save()
+
     name = os.path.splitext(os.path.basename(video))[0]
     extract_dir = os.path.join(os.path.dirname(video), f"{name}_project", "01_extract")
     script = os.path.join(PROJECT_ROOT, "extract_subtitles.py")
@@ -265,10 +281,30 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
     print(f"  运行: extract_subtitles.py")
     result = subprocess.run(cmd, cwd=PROJECT_ROOT, env=env)
     if result.returncode != 0:
+        ck.fail_step("extract", f"subprocess exit code {result.returncode}",
+                       error_type="APPLICATION")
+        ck.save()
         print(f"[X] 字幕提取失败 (code={result.returncode})")
         sys.exit(result.returncode)
+
     # 标准化文件名
     _rename_extract_files(extract_dir, name)
+
+    # Record output hashes for change detection
+    ws = workspace_paths(video)
+    file_map = {
+        "source_srt": ws["source_srt"],
+        "transcript_json": ws["transcript_json"],
+        "audio_wav": ws["audio_wav"],
+        "vocals_wav": ws["vocals_wav"],
+        "instrumental_wav": ws["instrumental_wav"],
+        "vad_segments": ws["vad_segments"],
+    }
+    from pipeline.checkpoint import _file_sha256
+    output_hashes = {k: _file_sha256(p) for k, p in file_map.items() if os.path.isfile(p)}
+    ck.complete_step("extract", output_hashes=output_hashes)
+    ck.save()
+
     if backup_dir:
         backup_step("01_extract", [extract_dir], backup_dir)
     _manifest_set_step(video, "extract", "completed")
@@ -283,7 +319,8 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
     print("  [OK] 字幕提取完成")
 
 
-def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "") -> str:
+def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
+                   checkpoint: PipelineCheckpoint | None = None) -> str:
     """步骤 2: 翻译 + 术语替换。
 
     输出到工作目录 02_translate/machine.srt。
@@ -293,13 +330,26 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "")
     ws = workspace_paths(video)
     output = ws["machine_srt"] if ws else os.path.join(target, f"{name}_project", "02_translate", "machine.srt")
 
-    if os.path.isfile(output) and not force:
+    ws_dir = _workspace_dir(video)
+    ck = checkpoint or PipelineCheckpoint.load(ws_dir)
+
+    if ck.is_step_done("translate") and not force:
+        print(f"  [OK] 翻译已完成 (checkpoint)，跳过")
+        _manifest_set_step(video, "translate", "completed")
+        _manifest_set_files(video, {"machine_srt": "02_translate/machine.srt"})
+        return output
+
+    # Fallback: old file-existence check (backward compat, no checkpoint yet)
+    if os.path.isfile(output) and not force and not ck.is_step_done("translate"):
         print(f"  [OK] 翻译文件已存在: {output}")
         _manifest_set_step(video, "translate", "completed")
         _manifest_set_files(video, {"machine_srt": "02_translate/machine.srt"})
         return output
 
     print("\n[2/3] 字幕翻译 + 术语替换...")
+    ck.start_step("translate")
+    ck.save()
+
     sys.path.insert(0, PROJECT_ROOT)
 
     from SRT.SRT_Translator import SRTTranslator
@@ -309,6 +359,8 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "")
     auto_srt, pending = translator.translate(srt_path)
 
     if pending:
+        ck.fail_step("translate", "manual review pending", error_type="USER")
+        ck.save()
         print(f"\n[!] 有 {getattr(translator.log, 'manual_pending', '?')} 组需人工翻译")
         print(f"  待翻文件: {pending}")
         print("  请完成人工翻译后重新运行")
@@ -324,7 +376,13 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "")
         print("  术语词典替换...")
         replacer = TermReplacer()
         replacer.replace_file(output, output)
+
+        from pipeline.checkpoint import _file_sha256
+        ck.complete_step("translate", output_hashes={"machine_srt": _file_sha256(output)})
+        ck.save()
     else:
+        ck.fail_step("translate", "no output file produced", error_type="APPLICATION")
+        ck.save()
         print(f"  [OK] 翻译完成: {auto_srt}")
         return auto_srt
 
@@ -381,10 +439,19 @@ def step_tts(
         print("[X] 工作目录不存在，请先执行字幕提取")
         sys.exit(1)
 
+    ws_dir = _workspace_dir(video)
+    ck = PipelineCheckpoint.load(ws_dir)
+
     instrumental = ws["instrumental_wav"] if os.path.isfile(ws["instrumental_wav"]) else None
     final_output = ws["dubbed_mp4"]
 
-    if os.path.isfile(final_output) and not force:
+    if ck.is_step_done("tts") and not force:
+        print(f"\n[3/3] TTS 合成 [OK] 已完成 (checkpoint)，跳过")
+        _manifest_set_step(video, "tts", "completed")
+        return
+
+    # Fallback: old file-existence check
+    if os.path.isfile(final_output) and not force and not ck.is_step_done("tts"):
         print(f"\n[3/3] TTS 合成 [OK] 最终视频已存在: {final_output}")
         _manifest_set_step(video, "tts", "completed")
         return
@@ -398,6 +465,8 @@ def step_tts(
             sys.exit(1)
 
     print(f"\n[3/3] TTS 语音合成 + 视频合并 ({engine})...")
+    ck.start_step("tts")
+    ck.save()
 
     from pipeline.tts_config import TTSConfig
 
@@ -494,8 +563,13 @@ def step_tts(
 
     if os.path.isfile(final_output):
         sz = os.path.getsize(final_output)
+        from pipeline.checkpoint import _file_sha256
+        ck.complete_step("tts", output_hashes={"dubbed_mp4": _file_sha256(final_output)})
+        ck.save()
         print(f"  [OK] 最终视频: {final_output} ({sz/1024/1024:.1f}MB)")
     else:
+        ck.fail_step("tts", "final output not produced", error_type="APPLICATION")
+        ck.save()
         print(f"  [OK] TTS 合成完成（最终视频路径: {final_output}）")
     _manifest_set_step(video, "tts", "completed")
     _manifest_set_files(video, {"dubbed": "04_output/dubbed.mp4"})
@@ -665,6 +739,35 @@ def main():
     # ── 创建工作目录 ──
     _ensure_workspace(video)
 
+    # ── 断点续传: 加载/创建 checkpoint ──
+    ws_dir = _workspace_dir(video)
+    ck = PipelineCheckpoint.load(ws_dir)
+
+    # Clean .tmp residue from previous crash
+    ck.clean_tmp_files(ws_dir)
+    for sub in ("01_extract", "02_translate", "03_tts", "04_output"):
+        ck.clean_tmp_files(os.path.join(ws_dir, sub))
+
+    # Detect and fix stale 'running' states
+    crashed_steps = ck.recover_from_crash()
+    if crashed_steps:
+        print(f"  [checkpoint] 检测到上次崩溃，将重新执行: {', '.join(crashed_steps)}")
+
+    # First run: record video fingerprint
+    if not ck.video_hash:
+        ck.init_from_video(video)
+    elif ck.check_video_changed(video):
+        print("  [checkpoint] 源视频已变更，所有步骤将重新执行")
+        ck.init_from_video(video)
+        for step in ("extract", "translate", "tts"):
+            ck.steps[step] = StepState()
+
+    ck.save()
+
+    # Build CLI params fingerprint for change detection
+    _cli_params = {k: v for k, v in vars(args).items() if v is not None and v is not False}
+    _cli_params.pop("video", None)
+
     try:
         # ── 步骤 1: 字幕提取 ──
         # extract_subtitles.py 包含: 缺陷检测 → 音频提取 → VAD → 转录 → 对齐 → SRT
@@ -673,7 +776,8 @@ def main():
                          compute_type=args.compute_type,
                          backup_dir=args.backup_dir, skip_defect_check=args.skip_defect_check,
                          skip_demucs=args.skip_demucs, skip_align=args.skip_align,
-                         align_lang=args.align_lang, num_workers=args.num_workers)
+                         align_lang=args.align_lang, num_workers=args.num_workers,
+                         checkpoint=ck)
         else:
             print("[1/3] 字幕提取 — 已跳过 (--skip-extract)")
 
@@ -686,7 +790,8 @@ def main():
         # ── 步骤 2: 翻译 ──
         srt_translated = srt_source
         if not args.skip_translate:
-            srt_translated = step_translate(video, srt_source, force=args.force, backup_dir=args.backup_dir)
+            srt_translated = step_translate(video, srt_source, force=args.force, backup_dir=args.backup_dir,
+                                              checkpoint=ck)
         else:
             print("[2/3] 翻译 — 已跳过 (--skip-translate)")
             existing = guess_translated_srt(video)

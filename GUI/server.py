@@ -515,6 +515,7 @@ class StatusResponse(BaseModel):
     status: str
     progress: int
     current_step: str
+    detail: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -781,10 +782,23 @@ async def get_status(job_id: str) -> StatusResponse:
     job = _jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    detail = ""
+    try:
+        from pipeline.checkpoint import PipelineCheckpoint
+        stem = os.path.splitext(os.path.basename(job.video_path))[0]
+        ws_dir = os.path.join(os.path.dirname(job.video_path), f"{stem}_project")
+        ck = PipelineCheckpoint.load(ws_dir)
+        prog = ck.progress()
+        detail = prog.get("detail", "")
+    except Exception:
+        pass
+
     return StatusResponse(
         status=job.status,
         progress=job.progress,
         current_step=job.current_step,
+        detail=detail,
     )
 
 

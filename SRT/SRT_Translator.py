@@ -810,6 +810,16 @@ class SRTTranslator:
 
         pending_groups = []
 
+        # ── 断点续传: 从 checkpoint 获取上次完成的组号 ──
+        ws_dir = os.path.dirname(os.path.dirname(base))
+        last_batch = 0
+        try:
+            from pipeline.checkpoint import PipelineCheckpoint
+            _ck = PipelineCheckpoint.load(ws_dir)
+            last_batch = _ck.get_extra("translate", "last_batch", 0)
+        except Exception:
+            _ck = None
+
         # 选择翻译方法
         if self.multi_agent_enabled:
             translate_fn = self._translate_group_multi_agent
@@ -839,9 +849,18 @@ class SRTTranslator:
                         pending_groups.append(group)
         else:
             for gi, group in enumerate(groups, 1):
+                if gi <= last_batch:
+                    continue
                 success = translate_fn(gi, group)
                 if not success:
                     pending_groups.append(group)
+                # Save checkpoint every 5 groups (API calls are expensive)
+                if _ck is not None and gi % 5 == 0:
+                    _ck.update_extra("translate", last_batch=gi, groups_total=len(groups))
+                    _ck.save()
+            if _ck is not None:
+                _ck.update_extra("translate", last_batch=len(groups), groups_total=len(groups))
+                _ck.save()
 
         # 保存自动翻译结果
         base = os.path.splitext(srt_path)[0]

@@ -82,6 +82,7 @@ export interface PipelineStatus {
   progress: number
   currentStep: string
   jobId: string | null
+  detail: string
 }
 
 export interface LogEntry {
