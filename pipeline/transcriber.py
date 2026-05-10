@@ -302,7 +302,7 @@ with open(output_file, "w", encoding="utf-8") as f:
                 return segments
             with open(output_file, "r", encoding="utf-8") as f:
                 aligned = json.load(f)
-            return aligned.get("segments", segments)
+            return self._merge_aligned(segments, aligned.get("segments", segments))
         except Exception as e:
             logger.warning("对齐子进程异常: %s", e)
             return segments
@@ -312,6 +312,37 @@ with open(output_file, "w", encoding="utf-8") as f:
                     os.remove(f)
                 except OSError:
                     pass
+
+    @staticmethod
+    def _merge_aligned(original: list, aligned: list) -> list:
+        """对齐结果尾部丢失时，用 whisper 原始词补齐覆盖。"""
+        if not original or not aligned:
+            return aligned or original
+        orig_end = max(s["end"] for s in original)
+        aligned_end = max(s["end"] for s in aligned)
+        truncation = orig_end - aligned_end
+        if truncation <= 1.0:
+            return aligned
+        # 找到原始段中超出对齐覆盖的词
+        tail_words = []
+        for s in original:
+            for w in s.get("words", []):
+                if w["start"] >= aligned_end:
+                    tail_words.append(w)
+        if not tail_words:
+            return aligned
+        logger = logging.getLogger(__name__)
+        logger.warning("对齐尾部丢失 %.1fs，用 whisper 原始时间戳补齐 %d 个词", truncation, len(tail_words))
+        # 创建补齐段：尾部词 + 对齐段中最后一段的文本延续
+        result = list(aligned)
+        tail_seg = {
+            "start": tail_words[0]["start"],
+            "end": tail_words[-1]["end"],
+            "text": " ".join(w["word"] for w in tail_words),
+            "words": tail_words,
+        }
+        result.append(tail_seg)
+        return result
 
     # ── 段合并 ──────────────────────────────────────────────────
 
@@ -373,7 +404,6 @@ with open(output_file, "w", encoding="utf-8") as f:
             word_timestamps=True,
             beam_size=2,
             vad_filter=False,
-            suppress_numerals=True,
         )
         for seg in segments:
             if seg.words:
