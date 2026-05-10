@@ -38,7 +38,7 @@ pip install -r requirements.txt
 
 模型首次运行时自动下载到 `models/` 目录，无需手动操作。
 
-> **环境要求：** Python 3.12+ | ffmpeg（自动使用内置 `imageio_ffmpeg`）| 推荐 NVIDIA GPU（CUDA）
+> **环境要求：** Python 3.10+ | ffmpeg（自动使用内置 `imageio_ffmpeg`）| 推荐 NVIDIA GPU（CUDA, 4GB+ VRAM）
 
 ---
 
