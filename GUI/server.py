@@ -694,6 +694,19 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
 
 @app.post("/api/pipeline/run", response_model=RunResponse)
 async def start_pipeline(req: RunRequest) -> RunResponse:
+    # 释放 ChatTTS 预览缓存，归还 GPU 显存给流水线
+    global _chattts_engine, _chattts_engine_config
+    if _chattts_engine is not None:
+        _chattts_engine = None
+        _chattts_engine_config = None
+        import gc; gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
     video = Path(req.video_path)
     if not video.is_file():
         raise HTTPException(status_code=400, detail=f"视频文件不存在: {req.video_path}")
@@ -1658,6 +1671,23 @@ async def preview_chattts_voice(req: ChatTTSPreviewRequest) -> dict:
             os.unlink(tmp_path)
         except OSError:
             pass
+
+
+@app.post("/api/tts/release-chattts")
+async def release_chattts_engine() -> dict:
+    """释放 ChatTTS 预览引擎，归还 GPU 显存给流水线使用。"""
+    global _chattts_engine, _chattts_engine_config
+    _chattts_engine = None
+    _chattts_engine_config = None
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+    return {"status": "released"}
 
 
 # ---------------------------------------------------------------------------

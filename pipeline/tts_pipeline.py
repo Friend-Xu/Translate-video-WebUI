@@ -98,10 +98,9 @@ class TtsPipeline:
         self._subs_list: list = []
         self._queue_list: list = []
 
-        # 线程池
-        self._executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=config.threading_workers
-        )
+        # 线程池 — ChatTTS 本地 GPU 模型不支持并发推理，固定串行
+        workers = 1 if config.engine_type == "chattts" else config.threading_workers
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
 
     def _find_vocals(self, video_path: str) -> str | None:
         """Derive the Demucs vocal WAV path from the video path.
