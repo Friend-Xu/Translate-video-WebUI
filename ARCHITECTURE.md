@@ -503,7 +503,7 @@ pipeline/
 ### 已知限制
 
 1. **OpenVoice 暂为 Noop**：`NoopCloner` 空操作，音色克隆待集成
-2. **仅 Edge TTS 可用**：ChatTTS/Cooqui/Azure 引擎待实现
+2. **TTS 引擎状态**：Edge TTS（默认）、ChatTTS 本地引擎已可用（需 pip install chattts），Cooqui/Azure 引擎待实现
 3. **SRT 时间戳质量问题**：`extract_subtitles.py` 生成的 SRT 首条偶有反转时间戳，`parse_srt()` 已自动修正
 4. **Windows 路径兼容**：TimingAdjuster 原用 Unix `/` 路径拼接，已改为 `os.path.join`
 

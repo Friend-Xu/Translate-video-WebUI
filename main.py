@@ -644,7 +644,7 @@ def main():
                         help="计算设备 (cuda/cpu)")
     parser.add_argument("--compute-type", default="float16",
                         help="计算精度 (float16/int8_float16/int8/float32)")
-    parser.add_argument("--engine", default="edge", choices=["edge", "chattts", "coqui", "azure"],
+    parser.add_argument("--engine", default="edge", choices=["edge", "chattts"],
                         help="TTS 引擎 (默认 edge)")
     parser.add_argument("--config", help="TTS YAML 配置文件路径")
     parser.add_argument("--caption-config", default=None,

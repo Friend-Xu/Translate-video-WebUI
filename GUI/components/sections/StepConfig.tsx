@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
-  Box, Typography, Card, CardContent, Select, MenuItem,
-  FormControlLabel, Checkbox, Slider, Stack, Button, Chip,
+  Box, Typography, Card, CardContent, Select, MenuItem, TextField, Divider, Alert,
+  FormControlLabel, Checkbox, Slider, Stack, Button, Chip, CircularProgress,
 } from '@mui/material'
 import Grid from '@mui/material/Grid'
 import { SectionHeader } from '../SectionHeader'
@@ -21,6 +21,232 @@ const VRAM_PER_WORKER: Record<string, number> = {
   small: 1500,
   medium: 3000,
   large: 6000,
+}
+
+function ChatTTSPanel({ config, onConfigChange }: StepConfigProps) {
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [modelReady, setModelReady] = useState(false)
+  const [modelCheckDone, setModelCheckDone] = useState(false)
+  const [downloading, setDownloading] = useState(false)
+  const [downloadPct, setDownloadPct] = useState(0)
+  const [downloadGb, setDownloadGb] = useState(0)
+  const [downloadTotalGb, setDownloadTotalGb] = useState(2.37)
+
+  // 检查模型状态
+  const checkModel = async () => {
+    try {
+      const res = await fetch('/api/models')
+      if (res.ok) {
+        const data = await res.json()
+        const chattts = (data.models || []).find((m: any) => m.id === 'chattts')
+        if (chattts) {
+          setModelReady(chattts.exists)
+        }
+      }
+    } catch { /* API 不可用，按模型未下载处理 */ }
+    setModelCheckDone(true)
+  }
+
+  useEffect(() => { checkModel() }, [])
+
+  const doGacha = async () => {
+    setLoading(true)
+    setError('')
+    onConfigChange('chatttsPreviewAudio', '')
+    try {
+      const res = await fetch('/api/tts/preview-chattts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          seed: config.chatttsSpeakerSeed,
+          model_source: config.chatttsModelSource,
+          model_path: config.chatttsModelPath,
+        }),
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.detail || `服务器错误 (${res.status})`)
+      }
+      const data = await res.json()
+      onConfigChange('chatttsPreviewAudio', data.audio_base64)
+      onConfigChange('chatttsPreviewSeed', data.seed)
+      onConfigChange('chatttsSpeakerSeed', data.seed)
+    } catch (e: any) {
+      console.error('ChatTTS preview failed:', e)
+      setError(e?.message || '预览失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const startDownload = () => {
+    setDownloading(true)
+    setDownloadPct(0)
+    setError('')
+    const es = new EventSource('/api/models/download/chattts')
+    es.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data)
+        if (msg.status === 'downloading') {
+          setDownloadPct(msg.progress)
+          setDownloadGb(msg.downloaded_gb)
+          setDownloadTotalGb(msg.total_gb)
+        } else if (msg.status === 'completed') {
+          setDownloading(false)
+          setModelReady(true)
+          es.close()
+        } else if (msg.status === 'error') {
+          setError(msg.message || '下载失败')
+          setDownloading(false)
+          es.close()
+        }
+      } catch { /* ignore parse errors */ }
+    }
+    es.onerror = () => {
+      if (downloading) {
+        setError('下载连接中断，请重试')
+        setDownloading(false)
+      }
+      es.close()
+    }
+  }
+
+  return (
+    <>
+      <Box>
+        <Typography variant="body2" fontWeight={500}>音色预览</Typography>
+        {!modelCheckDone ? (
+          <Typography variant="caption" color="text.secondary">检测模型状态...</Typography>
+        ) : !modelReady ? (
+          <Box sx={{ mt: 0.5 }}>
+            {downloading ? (
+              <Stack spacing={1}>
+                <Box display="flex" alignItems="center" gap={1}>
+                  <CircularProgress size={16} />
+                  <Typography variant="body2">
+                    下载中 {downloadPct}% ({downloadGb.toFixed(1)}/{downloadTotalGb.toFixed(1)} GB)
+                  </Typography>
+                </Box>
+                <Box sx={{ width: '100%', bgcolor: 'divider', borderRadius: 1, height: 6 }}>
+                  <Box sx={{ width: `${downloadPct}%`, bgcolor: 'primary.main', borderRadius: 1, height: 6, transition: 'width 0.3s' }} />
+                </Box>
+              </Stack>
+            ) : (
+              <Stack spacing={1}>
+                <Alert severity="warning" sx={{ mt: 1 }}>
+                  模型未下载（{downloadTotalGb} GB）。下载后即可抽卡试听音色。
+                </Alert>
+                <Button variant="contained" size="small" onClick={startDownload}>
+                  下载 ChatTTS 模型 (2.37 GB)
+                </Button>
+              </Stack>
+            )}
+          </Box>
+        ) : (
+          <>
+            <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
+              <TextField
+                size="small"
+                type="number"
+                value={config.chatttsSpeakerSeed ?? ''}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                  const v = e.target.value
+                  onConfigChange('chatttsSpeakerSeed', v === '' ? null : Number(v))
+                  onConfigChange('chatttsPreviewAudio', '')
+                  onConfigChange('chatttsPreviewSeed', null)
+                  setError('')
+                }}
+                placeholder="留空随机"
+                inputProps={{ min: 0, max: 99999, style: { width: 80 } }}
+                sx={{ bgcolor: 'background.paper', width: 100 }}
+              />
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={doGacha}
+                disabled={loading}
+                sx={{ flexShrink: 0 }}
+              >
+                {loading ? <CircularProgress size={16} sx={{ mr: 0.5 }} /> : null}
+                抽卡试听
+              </Button>
+              <Button
+                variant="text"
+                size="small"
+                color="error"
+                onClick={() => {
+                  onConfigChange('chatttsSpeakerSeed', null)
+                  onConfigChange('chatttsPreviewAudio', '')
+                  onConfigChange('chatttsPreviewSeed', null)
+                  setError('')
+                }}
+                sx={{ flexShrink: 0 }}
+              >
+                随机
+              </Button>
+            </Stack>
+            <Typography variant="caption">输入种子固定音色，或点"抽卡试听"随机预览，点"随机"每次运行不同音色</Typography>
+          </>
+        )}
+      </Box>
+      {error && (
+        <Alert severity="error" onClose={() => setError('')} sx={{ mt: 1 }}>
+          {error}
+        </Alert>
+      )}
+      {config.chatttsPreviewAudio && (
+        <Box>
+          <Typography variant="body2" fontWeight={500}>
+            试听样本 {config.chatttsPreviewSeed != null ? `(种子: ${config.chatttsPreviewSeed})` : ''}
+          </Typography>
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <audio
+            controls
+            autoPlay
+            src={`data:audio/wav;base64,${config.chatttsPreviewAudio}`}
+            style={{ width: '100%', marginTop: 4 }}
+          />
+        </Box>
+      )}
+      <Box>
+        <Typography variant="body2" fontWeight={500}>模型来源 (chattts_model_source)</Typography>
+        <Select
+          size="small"
+          fullWidth
+          value={config.chatttsModelSource}
+          onChange={e => onConfigChange('chatttsModelSource', e.target.value as 'local' | 'huggingface' | 'custom')}
+          sx={{ bgcolor: 'background.paper', mt: 0.5 }}
+        >
+          <MenuItem value="local">local (models/chattts)</MenuItem>
+          <MenuItem value="huggingface">huggingface (通过 models/hf_cache/)</MenuItem>
+          <MenuItem value="custom">custom (自定义路径)</MenuItem>
+        </Select>
+        <Typography variant="caption">模型统一存储在 models/ 目录下</Typography>
+      </Box>
+      {config.chatttsModelSource === 'custom' && (
+        <Box>
+          <Typography variant="body2" fontWeight={500}>自定义模型路径 (chattts_model_path)</Typography>
+          <TextField
+            size="small"
+            fullWidth
+            value={config.chatttsModelPath}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => onConfigChange('chatttsModelPath', e.target.value)}
+            placeholder="D:/models/ChatTTS"
+            sx={{ bgcolor: 'background.paper', mt: 0.5 }}
+          />
+          <Typography variant="caption">本地模型文件夹的绝对路径</Typography>
+        </Box>
+      )}
+      <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+        <Box display="flex" justifyContent="space-between">
+          <Typography variant="body2" fontWeight={500}>TTS 线程数</Typography>
+          <Typography variant="body2" fontWeight={600} color="text.secondary">1</Typography>
+        </Box>
+        <Typography variant="caption">GPU 模型串行推理，不可调整</Typography>
+      </Box>
+    </>
+  )
 }
 
 export function StepConfig({ config, onConfigChange }: StepConfigProps) {
@@ -264,36 +490,58 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   <Select size="small" fullWidth value={config.engine} onChange={e => onConfigChange('engine', e.target.value as PipelineConfig['engine'])} sx={{ bgcolor: 'background.paper', mt: 0.5 }}>
                     <MenuItem value="edge">edge</MenuItem>
                     <MenuItem value="chattts">chattts</MenuItem>
-                    <MenuItem value="coqui">coqui</MenuItem>
-                    <MenuItem value="azure">azure</MenuItem>
                   </Select>
                   <Typography variant="caption">选择用于语音合成的TTS引擎</Typography>
                 </Box>
-                <Box>
-                  <Typography variant="body2" fontWeight={500}>选择语音音色 (voice)</Typography>
-                  <Select size="small" fullWidth value={config.voice} onChange={e => onConfigChange('voice', e.target.value)} sx={{ bgcolor: 'background.paper', mt: 0.5 }}>
-                    <MenuItem value="zh-CN-XiaoxiaoNeural">zh-CN-XiaoxiaoNeural</MenuItem>
-                    <MenuItem value="zh-CN-YunxiNeural">zh-CN-YunxiNeural</MenuItem>
-                    <MenuItem value="zh-CN-XiaoyiNeural">zh-CN-XiaoyiNeural</MenuItem>
-                  </Select>
-                  <Typography variant="caption">选择语音音色</Typography>
-                </Box>
-                <Box>
-                  <Box display="flex" justifyContent="space-between">
-                    <Typography variant="body2" fontWeight={500}>基础语速</Typography>
-                    <Typography variant="body2" fontWeight={600} color="primary">{config.speechRate}%</Typography>
-                  </Box>
-                  <Typography variant="caption" display="block" mb={1}>TTS 合成起始语速 (10%~50%)</Typography>
-                  <Slider value={config.speechRate} min={10} max={50} onChange={(_, v) => onConfigChange('speechRate', v as number)} />
-                </Box>
-                <Box>
-                  <Box display="flex" justifyContent="space-between">
-                    <Typography variant="body2" fontWeight={500}>最大语速</Typography>
-                    <Typography variant="body2" fontWeight={600} color="primary">{config.maxSpeed}%</Typography>
-                  </Box>
-                  <Typography variant="caption" display="block" mb={1}>对齐时允许的最高加速 (50%~100%)</Typography>
-                  <Slider value={config.maxSpeed} min={50} max={100} step={5} marks={[{ value: 50, label: '50%' }, { value: 70, label: '70%' }, { value: 100, label: '100%' }]} onChange={(_, v) => onConfigChange('maxSpeed', v as number)} />
-                </Box>
+                {config.engine === 'chattts' && (
+                  <ChatTTSPanel config={config} onConfigChange={onConfigChange} />
+                )}
+                {config.engine === 'edge' && (
+                  <>
+                    <Box>
+                      <Typography variant="body2" fontWeight={500}>选择语音音色 (voice)</Typography>
+                      <Select size="small" fullWidth value={config.voice} onChange={e => onConfigChange('voice', e.target.value)} sx={{ bgcolor: 'background.paper', mt: 0.5 }}>
+                        <MenuItem value="zh-CN-XiaoxiaoNeural">zh-CN-XiaoxiaoNeural</MenuItem>
+                        <MenuItem value="zh-CN-YunxiNeural">zh-CN-YunxiNeural</MenuItem>
+                        <MenuItem value="zh-CN-XiaoyiNeural">zh-CN-XiaoyiNeural</MenuItem>
+                      </Select>
+                      <Typography variant="caption">选择语音音色</Typography>
+                    </Box>
+                    <Box>
+                      <Box display="flex" justifyContent="space-between">
+                        <Typography variant="body2" fontWeight={500}>基础语速</Typography>
+                        <Typography variant="body2" fontWeight={600} color="primary">{config.speechRate}%</Typography>
+                      </Box>
+                      <Typography variant="caption" display="block" mb={1}>TTS 合成起始语速 (10%~50%)</Typography>
+                      <Slider value={config.speechRate} min={10} max={50} onChange={(_, v) => onConfigChange('speechRate', v as number)} />
+                    </Box>
+                    <Box>
+                      <Box display="flex" justifyContent="space-between">
+                        <Typography variant="body2" fontWeight={500}>最大语速</Typography>
+                        <Typography variant="body2" fontWeight={600} color="primary">{config.maxSpeed}%</Typography>
+                      </Box>
+                      <Typography variant="caption" display="block" mb={1}>对齐时允许的最高加速 (50%~100%)</Typography>
+                      <Slider value={config.maxSpeed} min={50} max={100} step={5} marks={[{ value: 50, label: '50%' }, { value: 70, label: '70%' }, { value: 100, label: '100%' }]} onChange={(_, v) => onConfigChange('maxSpeed', v as number)} />
+                    </Box>
+                    <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                      <Box display="flex" justifyContent="space-between">
+                        <Typography variant="body2" fontWeight={500}>TTS 线程数</Typography>
+                        <Typography variant="body2" fontWeight={600} color="primary">{config.ttsWorkers}</Typography>
+                      </Box>
+                      <Typography variant="caption" display="block" mb={1}>EdgeTTS 云端并发线程数 (1=串行, 4~7=推荐)</Typography>
+                      <Slider
+                        value={config.ttsWorkers}
+                        min={1}
+                        max={16}
+                        step={1}
+                        marks={[{ value: 1, label: '1' }, { value: 4, label: '4' }, { value: 7, label: '7' }, { value: 12, label: '12' }, { value: 16, label: '16' }]}
+                        onChange={(_, v) => onConfigChange('ttsWorkers', v as number)}
+                      />
+                    </Box>
+                  </>
+                )}
+                <Divider sx={{ my: 1 }} />
+                <Typography variant="body2" fontWeight={500} color="text.secondary">通用设置</Typography>
                 <Box>
                   <Box display="flex" justifyContent="space-between">
                     <Typography variant="body2" fontWeight={500}>视频最低速度</Typography>
@@ -309,21 +557,6 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   </Box>
                   <Typography variant="caption" display="block" mb={1}>TTS 音频过短时，视频最多加速到此倍数 (&gt;1.0 = 加速，预留，当前策略不使用)</Typography>
                   <Slider value={config.videoSpeedMax} min={1.05} max={2.00} step={0.05} marks={[{ value: 1.05, label: '1.05x' }, { value: 1.25, label: '1.25x' }, { value: 2.00, label: '2.00x' }]} onChange={(_, v) => onConfigChange('videoSpeedMax', v as number)} />
-                </Box>
-                <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
-                  <Box display="flex" justifyContent="space-between">
-                    <Typography variant="body2" fontWeight={500}>TTS 线程数</Typography>
-                    <Typography variant="body2" fontWeight={600} color="primary">{config.ttsWorkers}</Typography>
-                  </Box>
-                  <Typography variant="caption" display="block" mb={1}>EdgeTTS 并行合成线程数 (1=串行, 2~16=并行)</Typography>
-                  <Slider
-                    value={config.ttsWorkers}
-                    min={1}
-                    max={16}
-                    step={1}
-                    marks={[{ value: 1, label: '1' }, { value: 4, label: '4' }, { value: 7, label: '7' }, { value: 12, label: '12' }, { value: 16, label: '16' }]}
-                    onChange={(_, v) => onConfigChange('ttsWorkers', v as number)}
-                  />
                 </Box>
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
                   <Box display="flex" justifyContent="space-between">

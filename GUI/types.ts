@@ -5,7 +5,12 @@ export interface PipelineConfig {
   model: 'tiny' | 'base' | 'small' | 'medium' | 'turbo' | 'large-v3'
   device: 'cpu' | 'cuda'
   computeType: 'int8' | 'float32' | 'float16' | 'int8_float16'
-  engine: 'edge' | 'chattts' | 'coqui' | 'azure'
+  engine: 'edge' | 'chattts'
+  chatttsSpeakerSeed: number | null
+  chatttsModelSource: 'local' | 'huggingface' | 'custom'
+  chatttsModelPath: string
+  chatttsPreviewAudio: string
+  chatttsPreviewSeed: number | null
   voice: string
   speechRate: number
   maxSpeed: number
@@ -112,6 +117,11 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   device: 'cuda',
   computeType: 'float16',
   engine: 'edge',
+  chatttsSpeakerSeed: 2,
+  chatttsModelSource: 'local',
+  chatttsModelPath: '',
+  chatttsPreviewAudio: '',
+  chatttsPreviewSeed: null,
   voice: 'zh-CN-XiaoxiaoNeural',
   speechRate: 40,
   maxSpeed: 100,

@@ -256,7 +256,7 @@ class TTSConfig:
         elif self.enable_openvoice and self.voice_clone_engine == "none":
             self.enable_openvoice = False  # 显式禁用优先
 
-        if self.engine_type not in ("edge", "chattts", "coqui", "azure"):
+        if self.engine_type not in ("edge", "chattts"):
             raise ValueError(f"不支持的 TTS 引擎类型: {self.engine_type}")
         if self.voice_clone_engine not in ("openvoice", "cosyvoice", "none"):
             raise ValueError(f"不支持的音色克隆引擎: {self.voice_clone_engine}")

@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 
 import yaml
 
@@ -315,6 +315,9 @@ def _load_yaml_defaults() -> dict:
 
     return {
         "engine": tts.get("engine_type", "edge"),
+        "chatttsSpeakerSeed": tts.get("chattts_speaker_seed", 2),
+        "chatttsModelSource": tts.get("chattts_model_source", "local"),
+        "chatttsModelPath": tts.get("chattts_model_path") or "",
         "voice": tts.get("voice", "zh-CN-XiaoxiaoNeural"),
         "speechRate": tts.get("base_speed", 30),
         "maxSpeed": tts.get("max_speed", 100),
@@ -478,6 +481,9 @@ class RunRequest(BaseModel):
     device: str = "cuda"
     compute_type: str = "float16"
     engine: str = "edge"
+    chattts_speaker_seed: Optional[int] = 2
+    chattts_model_source: str = "local"
+    chattts_model_path: str = ""
     voice: str = "zh-CN-XiaoxiaoNeural"
     speech_rate: int = 40
     max_speed: int = 100
@@ -568,6 +574,9 @@ def _write_tts_runtime_config(req: RunRequest) -> str:
     data = {
         "tts": {
             "engine_type": req.engine,
+            "chattts_speaker_seed": req.chattts_speaker_seed,
+            "chattts_model_source": req.chattts_model_source,
+            "chattts_model_path": req.chattts_model_path or None,
             "voice": req.voice,
             "base_speed": req.speech_rate,
             "max_speed": req.max_speed,
@@ -1530,6 +1539,120 @@ async def preview_prompt(req: PreviewPromptRequest) -> dict:
     if req.batch_prompt:
         result["batch_preview"] = resolve_prompt_variables(req.batch_prompt, variables)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Model Manager endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/models")
+async def list_models() -> dict:
+    """列出所有已知模型及其下载状态。"""
+    from pipeline.model_manager import ModelManager
+    models = []
+    for s in ModelManager.list_all():
+        models.append({
+            "id": s.id,
+            "name": s.name,
+            "exists": s.exists,
+            "path": s.path,
+            "size_gb": s.size_gb,
+            "size_mb": s.size_mb,
+        })
+    return {"models": models}
+
+
+@app.get("/api/models/download/{model_id}")
+async def download_model_stream(model_id: str, req: Request):
+    """SSE 流式下载模型，推送实时进度。"""
+    from pipeline.model_manager import ModelManager
+
+    if model_id != "chattts":
+        raise HTTPException(400, "仅支持 chattts 模型下载")
+
+    async def event_stream():
+        import json
+        from queue import Queue
+
+        q: Queue = Queue()
+
+        def on_progress(pct: int, downloaded_gb: float, total_gb: float):
+            q.put({"status": "downloading", "progress": pct,
+                    "downloaded_gb": downloaded_gb, "total_gb": total_gb})
+
+        def do_download():
+            try:
+                path = ModelManager.download_chattts(progress_callback=on_progress)
+                q.put({"status": "completed", "path": path})
+            except Exception as e:
+                q.put({"status": "error", "message": str(e)})
+            q.put(None)
+
+        import threading
+        t = threading.Thread(target=do_download, daemon=True)
+        t.start()
+
+        while True:
+            item = q.get()
+            if item is None:
+                break
+            yield f"data: {json.dumps(item)}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ---------------------------------------------------------------------------
+# ChatTTS voice preview (gacha)
+# ---------------------------------------------------------------------------
+
+class ChatTTSPreviewRequest(BaseModel):
+    seed: Optional[int] = None
+    text: str = "这是一个ChatTTS语音合成测试案例。"
+    model_source: str = "local"
+    model_path: str = ""
+
+
+@app.post("/api/tts/preview-chattts")
+async def preview_chattts_voice(req: ChatTTSPreviewRequest) -> dict:
+    """抽卡预览 ChatTTS 音色。返回 seed + base64 音频。"""
+    import base64
+    import tempfile
+    from pipeline.tts_chattts import ChatTTSEngine
+
+    engine = ChatTTSEngine(
+        speaker_seed=req.seed,
+        model_source=req.model_source,
+        model_path=req.model_path or None,
+    )
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        duration = engine.synthesize(req.text, tmp_path)
+        with open(tmp_path, "rb") as f:
+            audio_b64 = base64.b64encode(f.read()).decode("ascii")
+        return {
+            "seed": engine.speaker_seed,
+            "audio_base64": audio_b64,
+            "duration": round(duration, 2),
+            "text": req.text,
+        }
+    finally:
+        # 释放 GPU 显存
+        del engine
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 # ---------------------------------------------------------------------------

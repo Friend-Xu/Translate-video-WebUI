@@ -1,5 +1,9 @@
 tts:
   engine_type: edge
+  # ChatTTS 本地 TTS 配置
+  chattts_speaker_seed: 2      # 固定音色种子（null=随机）
+  chattts_model_source: local   # local | huggingface | custom
+  chattts_model_path: null      # custom 模式下的本地模型路径
   voice: zh-CN-XiaoxiaoNeural
   base_speed: 40
   max_speed: 100

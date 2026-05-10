@@ -811,7 +811,7 @@ class SRTTranslator:
         pending_groups = []
 
         # ── 断点续传: 从 checkpoint 获取上次完成的组号 ──
-        ws_dir = os.path.dirname(os.path.dirname(base))
+        ws_dir = os.path.dirname(os.path.dirname(srt_path))
         last_batch = 0
         try:
             from pipeline.checkpoint import PipelineCheckpoint
