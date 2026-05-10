@@ -322,7 +322,7 @@ class TestConfigFields:
     def test_search_method_default(self):
         from pipeline.tts_config import TTSConfig
         cfg = TTSConfig()
-        assert cfg.search_method == "linear"
+        assert cfg.search_method == "binary"
 
     def test_search_method_binary(self):
         from pipeline.tts_config import TTSConfig
@@ -337,8 +337,8 @@ class TestConfigFields:
     def test_video_speed_min_default(self):
         from pipeline.tts_config import TTSConfig
         cfg = TTSConfig()
-        assert cfg.video_speed_min == 0.75
-        assert cfg.video_speed_max == 1.25
+        assert cfg.video_speed_min == 0.60
+        assert cfg.video_speed_max == 2.00
 
     def test_video_speed_min_invalid(self):
         from pipeline.tts_config import TTSConfig
@@ -375,5 +375,5 @@ class TestConfigFields:
         restored = TTSConfig.from_yaml(path)
         assert restored.speed_mode == "global"
         assert restored.search_method == "binary"
-        assert restored.video_speed_min == 0.75
-        assert restored.video_speed_max == 1.25
+        assert restored.video_speed_min == 0.60
+        assert restored.video_speed_max == 2.00

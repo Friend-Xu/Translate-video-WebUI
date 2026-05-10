@@ -26,74 +26,75 @@ class TestTtsPipeline:
 
 
 class TestResumeState:
-    """ResumeState dataclass 测试"""
+    """ResumeState dataclass 测试 (文件存在性检查模式)"""
 
     def test_defaults(self):
         from pipeline.tts_resume import ResumeState
         rs = ResumeState()
-        assert rs.processed_pairs == set()
         assert rs.error_subtitles == []
+        assert rs.total_subs == 0
 
-    def test_roundtrip(self):
+    def test_field_assignment(self):
         from pipeline.tts_resume import ResumeState
         rs = ResumeState()
-        rs.processed_pairs.add((1000, 5000))
-        rs.processed_pairs.add((6000, 10000))
         rs.error_subtitles.append({"start": 0, "end": 1000, "text": "hi", "error": "fail"})
-
-        d = rs.to_dict()
-        rs2 = ResumeState.from_dict(d)
-        assert (1000, 5000) in rs2.processed_pairs
-        assert (6000, 10000) in rs2.processed_pairs
-        assert len(rs2.error_subtitles) == 1
+        rs.total_subs = 10
+        assert len(rs.error_subtitles) == 1
+        assert rs.total_subs == 10
 
 
 class TestResumeManager:
-    """ResumeManager 测试"""
+    """ResumeManager 测试 (基于输出文件存在性判断)"""
 
-    def test_new_file(self, temp_dir):
-        """状态文件不存在时创建空状态"""
+    def test_default_disabled(self, temp_dir):
+        """默认不启用续传时 is_processed 返回 False"""
         from pipeline.tts_resume import ResumeManager
-        path = os.path.join(temp_dir, "resume.json")
-        mgr = ResumeManager(path)
-        assert len(mgr.state.processed_pairs) == 0
+        mgr = ResumeManager(video_output_dir=temp_dir)
+        mgr.is_processed = lambda start, end: False
+        assert mgr.is_processed(1000, 2000) is False
+        assert mgr.is_processed(5000, 6000) is False
 
-    def test_mark_and_save(self, temp_dir):
-        """标记处理后保存并恢复"""
+    def test_is_processed_checks_file(self, temp_dir):
+        """输出文件存在时 is_processed 返回 True"""
         from pipeline.tts_resume import ResumeManager
-        path = os.path.join(temp_dir, "resume.json")
-        mgr = ResumeManager(path)
-        mgr.mark_processed(1000, 2000)
-        mgr.mark_processed(3000, 4000)
-        mgr.save()
-
-        mgr2 = ResumeManager(path)
-        assert mgr2.is_processed(1000, 2000) is True
-        assert mgr2.is_processed(3000, 4000) is True
-        assert mgr2.is_processed(5000, 6000) is False
+        import os
+        mgr = ResumeManager(video_output_dir=temp_dir)
+        out = os.path.join(temp_dir, "TTS_1000_2000.mp4")
+        with open(out, "w") as f:
+            f.write("fake")
+        assert mgr.is_processed(1000, 2000) is True
+        assert mgr.is_processed(3000, 4000) is False
 
     def test_add_error(self, temp_dir):
-        """添加错误记录"""
+        """添加错误记录到内存"""
         from pipeline.tts_resume import ResumeManager
-        path = os.path.join(temp_dir, "resume.json")
-        mgr = ResumeManager(path)
-        mgr.add_error(0, 1000, "测试", "TTS失败")
-        mgr.save()
-
-        mgr2 = ResumeManager(path)
-        assert len(mgr2.state.error_subtitles) == 1
-        assert mgr2.state.error_subtitles[0]["text"] == "测试"
+        mgr = ResumeManager(video_output_dir=temp_dir)
+        mgr.add_error(0, 1000, "测试文本", "TTS失败")
+        assert len(mgr.state.error_subtitles) == 1
+        assert mgr.state.error_subtitles[0]["text"] == "测试文本"
+        assert mgr.state.error_subtitles[0]["error"] == "TTS失败"
 
     def test_reset(self, temp_dir):
-        """重置状态"""
+        """重置清除错误记录"""
         from pipeline.tts_resume import ResumeManager
-        path = os.path.join(temp_dir, "resume.json")
-        mgr = ResumeManager(path)
-        mgr.mark_processed(1000, 2000)
-        mgr.save()
+        mgr = ResumeManager(video_output_dir=temp_dir)
+        mgr.add_error(1000, 2000, "text", "err")
+        assert len(mgr.state.error_subtitles) == 1
         mgr.reset()
-        assert len(mgr.state.processed_pairs) == 0
-        assert not os.path.isfile(path)
+        assert len(mgr.state.error_subtitles) == 0
+        assert mgr.state.total_subs == 0
+
+    def test_clear_outputs(self, temp_dir):
+        """删除所有已生成的视频段文件"""
+        from pipeline.tts_resume import ResumeManager
+        import os, glob
+        for s, e in [(0, 1000), (1000, 2000), (2000, 3000)]:
+            with open(os.path.join(temp_dir, f"TTS_{s}_{e}.mp4"), "w") as f:
+                f.write("fake")
+        mgr = ResumeManager(video_output_dir=temp_dir)
+        mgr.clear_outputs()
+        remaining = glob.glob(os.path.join(temp_dir, "TTS_*.mp4"))
+        assert len(remaining) == 0
 
 
 class TestTtsPipelineResumeIntegration:
@@ -172,7 +173,7 @@ class TestTtsPipelineErrorHandling:
         from pipeline.tts_resume import ResumeManager
 
         cfg = TTSConfig()
-        mgr = ResumeManager(os.path.join(temp_dir, "resume.json"))
+        mgr = ResumeManager(video_output_dir=os.path.join(temp_dir, "video"))
         pipeline = TtsPipeline(config=cfg, resume_manager=mgr)
 
         # 模拟当前视频片段（给 _process_single_subtitle 传递 mock）
@@ -189,17 +190,14 @@ class TestTtsPipelineErrorHandling:
         assert pipeline._resume_manager is mgr
 
     def test_error_saved_to_resume(self, temp_dir):
-        """处理失败的条目被记录到 ResumeManager"""
+        """处理失败的条目被记录到 ResumeManager (内存追踪)"""
         from pipeline.tts_resume import ResumeManager
 
-        mgr = ResumeManager(os.path.join(temp_dir, "resume.json"))
+        mgr = ResumeManager(video_output_dir=os.path.join(temp_dir, "video"))
         mgr.add_error(1000, 4000, "测试文本", "TTS 合成失败")
-        mgr.save()
-
-        mgr2 = ResumeManager(os.path.join(temp_dir, "resume.json"))
-        assert len(mgr2.state.error_subtitles) == 1
-        assert mgr2.state.error_subtitles[0]["text"] == "测试文本"
-        assert "TTS 合成失败" in mgr2.state.error_subtitles[0]["error"]
+        assert len(mgr.state.error_subtitles) == 1
+        assert mgr.state.error_subtitles[0]["text"] == "测试文本"
+        assert "TTS 合成失败" in mgr.state.error_subtitles[0]["error"]
 
     def test_video_bitrate_reasonable(self):
         """video_bitrate 默认值合理（非 5Tbps 笔误）"""

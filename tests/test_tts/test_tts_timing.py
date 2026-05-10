@@ -54,7 +54,7 @@ class TestTimingAdjusterSimple:
         """默认构造参数"""
         from pipeline.tts_timing import TimingAdjuster
         a = TimingAdjuster()
-        assert a.speed_max == 70
+        assert a.speed_max == 100
         assert a.base_speed == 30
 
     def test_custom_params(self):
