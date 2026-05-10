@@ -243,6 +243,19 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
     ws_dir = _workspace_dir(video)
     ck = checkpoint or PipelineCheckpoint.load(ws_dir)
 
+    name = os.path.splitext(os.path.basename(video))[0]
+    extract_dir = os.path.join(os.path.dirname(video), f"{name}_project", "01_extract")
+
+    # 验证输出文件是否存在（用户可能删了部分文件希望重跑）
+    ck.verify_files({
+        "source_srt": os.path.join(extract_dir, "source.srt"),
+        "audio_wav": os.path.join(extract_dir, "audio.wav"),
+        "vocals_wav": os.path.join(extract_dir, "vocals.wav"),
+        "instrumental_wav": os.path.join(extract_dir, "instrumental.wav"),
+        "transcript_json": os.path.join(extract_dir, "transcript.json"),
+        "vad_segments": os.path.join(extract_dir, "vad_segments.json"),
+    })
+
     if ck.is_step_done("extract") and not force:
         print("\n[1/3] 字幕提取 — 已完成 (checkpoint)，跳过")
         return
@@ -250,9 +263,6 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
     print("\n[1/3] 字幕提取...")
     ck.start_step("extract")
     ck.save()
-
-    name = os.path.splitext(os.path.basename(video))[0]
-    extract_dir = os.path.join(os.path.dirname(video), f"{name}_project", "01_extract")
     script = os.path.join(PROJECT_ROOT, "extract_subtitles.py")
     cmd = [
         sys.executable, script,
@@ -333,6 +343,9 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
 
     ws_dir = _workspace_dir(video)
     ck = checkpoint or PipelineCheckpoint.load(ws_dir)
+
+    # 验证输出文件是否存在（用户可能删了部分文件希望重跑）
+    ck.verify_files({"machine_srt": output})
 
     if ck.is_step_done("translate") and not force:
         print(f"  [OK] 翻译已完成 (checkpoint)，跳过")
@@ -445,6 +458,9 @@ def step_tts(
 
     instrumental = ws["instrumental_wav"] if os.path.isfile(ws["instrumental_wav"]) else None
     final_output = ws["dubbed_mp4"]
+
+    # 验证输出文件是否存在（用户可能删了部分文件希望重跑）
+    ck.verify_files({"dubbed_mp4": final_output})
 
     if ck.is_step_done("tts") and not force:
         print(f"\n[3/3] TTS 合成 [OK] 已完成 (checkpoint)，跳过")
