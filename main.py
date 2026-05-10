@@ -571,12 +571,15 @@ def step_tts(
     from pipeline.tts_pipeline import TtsPipeline
 
     pipeline = TtsPipeline(cfg)
-    pipeline.run(
-        video_path=video,
-        instrumental_path=instrumental,
-        chinese_srt_path=srt_translated,
-        english_srt_path=srt_source,
-    )
+    try:
+        pipeline.run(
+            video_path=video,
+            instrumental_path=instrumental,
+            chinese_srt_path=srt_translated,
+            english_srt_path=srt_source,
+        )
+    finally:
+        pipeline.cleanup()
 
     if os.path.isfile(final_output):
         sz = os.path.getsize(final_output)

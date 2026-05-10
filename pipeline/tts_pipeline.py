@@ -152,6 +152,43 @@ class TtsPipeline:
         if self._engine_pool is not None:
             self._engine_pool.put(engine)
 
+    def cleanup(self):
+        """释放所有 GPU 模型和线程池资源。"""
+        # 1. 释放引擎池
+        if self._engine_pool is not None:
+            while True:
+                try:
+                    engine = self._engine_pool.get_nowait()
+                    if hasattr(engine, 'cleanup'):
+                        engine.cleanup()
+                except queue.Empty:
+                    break
+            self._engine_pool = None
+        if self.engine is not None and hasattr(self.engine, 'cleanup'):
+            self.engine.cleanup()
+            self.engine = None
+
+        # 2. 释放声音克隆模型
+        if self.voice_cloner is not None and hasattr(self.voice_cloner, 'cleanup'):
+            try:
+                self.voice_cloner.cleanup()
+            except Exception:
+                pass
+
+        # 3. 关闭线程池
+        if self._executor is not None:
+            self._executor.shutdown(wait=False)
+            self._executor = None
+
+        # 4. 释放 CUDA 缓存
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+        import gc
+        gc.collect()
+
     def _find_vocals(self, video_path: str) -> str | None:
         """Derive the Demucs vocal WAV path from the video path.
 
@@ -391,17 +428,17 @@ class TtsPipeline:
             if not os.path.isfile(load_path):
                 raise FileNotFoundError(f"TTS 音频文件不存在: {load_path}")
             tts_audio = AudioFileClip(load_path)
-
-            # 4. 视频段处理（统一走 slow_down_video_to_file）
-            #    根据视频时长/TTS时长自动计算 speed_factor，
-            #    sf=1.0 时等价于不变速。
-            self.video_seg.slow_down_video_to_file(
-                current_video, instrumental_audio, tts_audio,
-                load_path, start, text_zh, text_eng, end,
-                caption_groups=caption_groups,
-            )
-
-            tts_audio.close()
+            try:
+                # 4. 视频段处理（统一走 slow_down_video_to_file）
+                #    根据视频时长/TTS时长自动计算 speed_factor，
+                #    sf=1.0 时等价于不变速。
+                self.video_seg.slow_down_video_to_file(
+                    current_video, instrumental_audio, tts_audio,
+                    load_path, start, text_zh, text_eng, end,
+                    caption_groups=caption_groups,
+                )
+            finally:
+                tts_audio.close()
 
             return {
                 "start": start,

@@ -161,6 +161,21 @@ class ChatTTSEngine:
         except Exception as e:
             raise RuntimeError(f"ChatTTS 合成失败: {e}") from e
 
+    def cleanup(self) -> None:
+        """释放 GPU 模型，归还显存。"""
+        if self._chat is not None:
+            del self._chat
+            self._chat = None
+        self._loaded = False
+        self._spk_emb = None
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+        import gc
+        gc.collect()
+
     def get_voices(self) -> List[str]:
         return []
 
