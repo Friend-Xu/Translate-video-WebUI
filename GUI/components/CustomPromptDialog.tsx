@@ -6,10 +6,18 @@ import {
 } from '@mui/material'
 import type { PipelineConfig } from '../types'
 
+const LANG_LABELS: Record<string, string> = {
+  auto: '自动检测', ja: '日文', en: 'English', zh: '中文',
+  'zh-CN': '简体中文', 'zh-TW': '繁體中文', ko: '한국어',
+  fr: 'Français', de: 'Deutsch', es: 'Español', pt: 'Português',
+  ru: 'Русский', ar: 'العربية', th: 'ไทย', vi: 'Tiếng Việt',
+  id: 'Indonesia', it: 'Italiano',
+}
+
 const VARIABLES = [
-  { key: '{source_lang}', label: '源语言', desc: 'ja / en / zh' },
-  { key: '{target_lang}', label: '目标语言', desc: '简体中文 / English' },
-  { key: '{fmt}', label: '输出格式', desc: 'numbered_list / json' },
+  { key: '{source_lang}', label: '源语言' },
+  { key: '{target_lang}', label: '目标语言' },
+  { key: '{fmt}', label: '输出格式' },
 ]
 
 const TONE_PRESETS = [
@@ -38,6 +46,12 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Pr
       setLocalPrompt(config.customSystemPrompt)
     }
   }, [open])
+
+  const resolveLabel = (key: string, label: string) => {
+    if (key === '{source_lang}') return `{source_lang} → ${LANG_LABELS[config.lang] || config.lang || '自动'}`
+    if (key === '{target_lang}') return `{target_lang} → ${LANG_LABELS[config.targetLang] || config.targetLang}`
+    return `${key} — ${label}`
+  }
 
   const handleSave = () => {
     onConfigChange('customPromptEnabled', localEnabled)
@@ -90,6 +104,18 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Pr
       <DialogTitle sx={{ pb: 0 }}>自定义 System Prompt</DialogTitle>
 
       <DialogContent sx={{ pt: 2 }}>
+        <Paper variant="outlined" sx={{ p: 1.5, mb: 2, bgcolor: 'action.hover', display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Typography variant="body2" fontWeight={500} color="text.secondary" sx={{ flexShrink: 0 }}>
+            翻译方向:
+          </Typography>
+          <Chip label={LANG_LABELS[config.lang] || config.lang || '自动'} size="small" color="primary" variant="outlined" />
+          <Typography variant="body2" color="text.secondary">→</Typography>
+          <Chip label={LANG_LABELS[config.targetLang] || config.targetLang} size="small" color="primary" variant="outlined" />
+          <Typography variant="caption" color="text.disabled" sx={{ ml: 'auto' }}>
+            通过主面板源语言/目标语言设置
+          </Typography>
+        </Paper>
+
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
           <FormControlLabel
             control={<Switch checked={localEnabled} onChange={e => setLocalEnabled(e.target.checked)} />}
@@ -137,7 +163,7 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Pr
                 {VARIABLES.map(v => (
                   <Chip
                     key={v.key}
-                    label={`${v.key} — ${v.label}`}
+                    label={resolveLabel(v.key, v.label)}
                     size="small"
                     variant="outlined"
                     onClick={() => insertVariable(v.key)}
@@ -156,7 +182,7 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Pr
               size="small"
               value={localPrompt}
               onChange={e => setLocalPrompt(e.target.value)}
-              placeholder={'你是专业{source_lang}字幕翻译。请用口语化风格翻译成{target_lang}。'}
+              placeholder={`你是专业${LANG_LABELS[config.lang] || config.lang || '自动'}字幕翻译。请用口语化风格翻译成${LANG_LABELS[config.targetLang] || config.targetLang}。`}
               inputRef={textFieldRef}
               helperText="上方变量点击即可插入。格式规则由系统自动追加。"
             />

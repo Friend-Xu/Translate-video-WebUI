@@ -10,6 +10,27 @@ import os
 from dataclasses import dataclass, field, asdict
 from typing import Optional, List
 
+# target_lang → EdgeTTS voice name mapping
+# When TTSConfig.target_lang is set and voice is still the default zh-CN-XiaoxiaoNeural,
+# __post_init__ auto-selects the matching voice.
+EDGE_VOICE_MAP = {
+    "zh-CN": "zh-CN-XiaoxiaoNeural",
+    "zh-TW": "zh-TW-HsiaoChenNeural",
+    "ja": "ja-JP-NanamiNeural",
+    "en": "en-US-AriaNeural",
+    "ko": "ko-KR-SunHiNeural",
+    "fr": "fr-FR-DeniseNeural",
+    "de": "de-DE-KatjaNeural",
+    "es": "es-ES-ElviraNeural",
+    "pt": "pt-BR-FranciscaNeural",
+    "ru": "ru-RU-SvetlanaNeural",
+    "ar": "ar-SA-ZariyahNeural",
+    "th": "th-TH-PremwadeeNeural",
+    "vi": "vi-VN-HoaiMyNeural",
+    "id": "id-ID-GadisNeural",
+    "it": "it-IT-ElsaNeural",
+}
+
 
 @dataclass
 class TTSConfig:
@@ -26,6 +47,10 @@ class TTSConfig:
     voice: str = "zh-CN-XiaoxiaoNeural"
     """TTS 音色名称（EdgeTTS/Coqui 使用）"""
 
+    target_lang: str = ""
+    """目标语言代码 (ja/en/ko/...)。非空时，若 voice 仍为默认值 zh-CN-XiaoxiaoNeural，
+    则 __post_init__ 自动从 EDGE_VOICE_MAP 选取对应语音。"""
+
     base_speed: int = 40
     """TTS 基础语速: +40% (对应 edge-tts rate 参数)"""
 
@@ -35,6 +60,10 @@ class TTSConfig:
     # ── ChatTTS 专用参数 ──────────────────────────────────
     chattts_speaker_seed: Optional[int] = None
     """ChatTTS 说话人种子。固定种子保持音色一致，None 为随机。"""
+
+    chattts_workers: int = 0
+    """ChatTTS 模型副本数（0=自动根据 VRAM 计算上限）。实际值 = min(chattts_workers, VRAM上限)。
+    每个 worker 加载独立模型副本（~2.37 GB VRAM），可并行处理多条字幕。"""
 
     chattts_model_source: str = "local"
     """ChatTTS 模型来源: local | huggingface | custom"""
@@ -253,6 +282,13 @@ class TTSConfig:
 
     def __post_init__(self) -> None:
         """校验参数合法性"""
+        # 目标语言 → EdgeTTS 语音自动选择
+        # 仅当 target_lang 非空且 voice 仍为默认中文语音时触发
+        if (self.target_lang
+                and self.target_lang in EDGE_VOICE_MAP
+                and self.voice == "zh-CN-XiaoxiaoNeural"):
+            self.voice = EDGE_VOICE_MAP[self.target_lang]
+
         # 向后兼容：enable_openvoice=True 自动映射到 voice_clone_engine
         if self.enable_openvoice and self.voice_clone_engine == "openvoice":
             pass  # 保持默认

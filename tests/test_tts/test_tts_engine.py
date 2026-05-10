@@ -93,6 +93,9 @@ class TestCustomEngineProtocol:
             def get_voices(self):
                 return []
 
+            def supports_rate(self):
+                return True
+
             def supports_emotion(self):
                 return False
 

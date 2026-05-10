@@ -198,7 +198,8 @@ class ChatTTSEngine:
     ) -> float:
         """合成语音，返回音频时长（秒）。
 
-        rate/emotion 参数接受但忽略（ChatTTS 不支持）。
+        rate 参数接受但忽略（ChatTTS 不支持语速调节）。
+        语速对齐由下游视频变速（slow_down_video_to_file）处理。
         """
         import ChatTTS
         import soundfile as sf
@@ -256,6 +257,9 @@ class ChatTTSEngine:
 
     def get_voices(self) -> List[str]:
         return []
+
+    def supports_rate(self) -> bool:
+        return False
 
     def supports_emotion(self) -> bool:
         return False

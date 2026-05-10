@@ -46,6 +46,7 @@ export interface PipelineConfig {
   concurrency: number
   numWorkers: number
   ttsWorkers: number
+  chatttsWorkers: number
   enableCheckpoint: boolean
   enableDefectCheck: boolean
   enableExtract: boolean
@@ -157,6 +158,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   concurrency: 3,
   numWorkers: 1,
   ttsWorkers: 7,
+  chatttsWorkers: 0,  // 0 = VRAM自动
   enableCheckpoint: true,
   enableDefectCheck: true,
   enableExtract: true,

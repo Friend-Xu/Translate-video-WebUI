@@ -66,6 +66,7 @@ export function usePipeline() {
           force: config.forceRetry,
           num_workers: config.numWorkers,
           tts_workers: config.ttsWorkers,
+          chattts_workers: config.chatttsWorkers,
           skip_align: !config.enableAlignment,
           align_lang: config.lang !== 'auto' ? config.lang : '',
           // Caption rendering params (all 13)

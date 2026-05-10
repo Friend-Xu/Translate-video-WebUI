@@ -95,6 +95,14 @@ class BaseTTSEngine(Protocol):
         """
         return []
 
+    def supports_rate(self) -> bool:
+        """引擎是否支持语速调节。
+
+        EdgeTTS 原生支持 rate 参数；ChatTTS 不支持（返回 False），
+        依赖下游视频变速补偿。
+        """
+        return True
+
     def supports_emotion(self) -> bool:
         """引擎是否支持情感克隆。
 
@@ -139,6 +147,9 @@ class NoopTTSEngine:
 
     def get_voices(self) -> List[str]:
         return []
+
+    def supports_rate(self) -> bool:
+        return False
 
     def supports_emotion(self) -> bool:
         return True

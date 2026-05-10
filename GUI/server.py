@@ -335,6 +335,7 @@ def _load_yaml_defaults() -> dict:
         "emotionRefAudio": tts.get("emotion_ref_audio") or "",
         "concurrency": trans.get("concurrency", {}).get("max_workers", tts.get("threading_workers", 3)),
         "ttsWorkers": tts.get("threading_workers", 7),
+        "chatttsWorkers": tts.get("chattts_workers", 0),  # 0 = VRAM自动
         "enableCheckpoint": tts.get("enable_resume", False),
         "captionFont": tts.get("caption_font", ""),
         "videoCodec": tts.get("video_codec", "libx264"),
@@ -527,6 +528,7 @@ class RunRequest(BaseModel):
     cosyvoice_model_version: str = "v2"
     num_workers: int = 1
     tts_workers: int = 7
+    chattts_workers: int = 0  # 0 = VRAM自动
     skip_align: bool = False
     align_lang: str = "ja"
 
@@ -587,7 +589,9 @@ def _write_tts_runtime_config(req: RunRequest) -> str:
             "chattts_speaker_seed": req.chattts_speaker_seed,
             "chattts_model_source": req.chattts_model_source,
             "chattts_model_path": req.chattts_model_path or None,
+            "chattts_workers": req.chattts_workers,
             "voice": req.voice,
+            "target_lang": req.target_lang,
             "base_speed": req.speech_rate,
             "max_speed": req.max_speed,
             "video_speed_min": req.video_speed_min,

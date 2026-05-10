@@ -481,11 +481,27 @@ def step_tts(
     ck.start_step("tts")
     ck.save()
 
-    from pipeline.tts_config import TTSConfig
+    from pipeline.tts_config import TTSConfig, EDGE_VOICE_MAP
 
     cfg = TTSConfig.from_yaml(config_path) if config_path and os.path.isfile(config_path) else TTSConfig()
 
     cfg.engine_type = engine
+
+    # 目标语言：从 translate.yaml 读取并写入 TTSConfig（驱动 EdgeTTS 语音自动选择）
+    translate_yaml = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
+    if os.path.isfile(translate_yaml):
+        try:
+            import yaml as _yaml
+            with open(translate_yaml, "r", encoding="utf-8") as _f:
+                _tc = _yaml.safe_load(_f) or {}
+            _tl = (_tc.get("translate") or {}).get("target_lang", "")
+            if _tl:
+                cfg.target_lang = _tl
+                # __post_init__ already ran in from_yaml() / TTSConfig(); re-apply auto voice
+                if cfg.voice == "zh-CN-XiaoxiaoNeural" and _tl in EDGE_VOICE_MAP:
+                    cfg.voice = EDGE_VOICE_MAP[_tl]
+        except Exception:
+            pass
 
     # ── 音色克隆 CLI 覆盖 ──
     if voice_clone_engine is not None:

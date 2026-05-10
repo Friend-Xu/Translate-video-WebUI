@@ -364,7 +364,7 @@ def build_system_prompt(source_lang: str, fmt: str = "numbered_list", retry: boo
     else:
         fmt_suffix = ""
 
-    # 自定义模板路径：用户内容 + 系统强制格式规则
+    # 自定义模板路径：系统角色/任务行 + 用户风格指令 + 系统强制格式规则
     if custom_template:
         variables = {
             "source_lang": source_lang,
@@ -373,12 +373,16 @@ def build_system_prompt(source_lang: str, fmt: str = "numbered_list", retry: boo
             "retry": str(retry),
         }
         user_part = resolve_prompt_variables(custom_template, variables)
+        lang_label = _LANG_LABELS.get(source_lang, source_lang)
+        target_label = _LANG_LABELS.get(target_lang, target_lang)
+        role_line = f"你是专业{lang_label}字幕翻译。请将以下{lang_label}逐条翻译为{target_label}。"
+        style_line = f"\n风格要求：{user_part}" if user_part.strip() else ""
         system_part = (
             f"\n\n【以下为系统强制格式要求，必须严格遵守】\n"
             f"{fmt_rules}"
             f"{fmt_suffix}"
         )
-        return user_part + system_part
+        return role_line + style_line + system_part
 
     lang_label = _LANG_LABELS.get(source_lang, source_lang)
     target_label = _LANG_LABELS.get(target_lang, target_lang)

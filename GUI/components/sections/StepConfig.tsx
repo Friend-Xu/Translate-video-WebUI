@@ -8,6 +8,35 @@ import { SectionHeader } from '../SectionHeader'
 import { ApiConfigDialog } from '../ApiConfigDialog'
 import { CustomPromptDialog } from '../CustomPromptDialog'
 import type { PipelineConfig, SystemInfo } from '../../types'
+
+const EDGE_VOICE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'zh-CN-XiaoxiaoNeural', label: 'zh-CN-XiaoxiaoNeural (简体中文)' },
+  { value: 'zh-CN-YunxiNeural', label: 'zh-CN-YunxiNeural (简体中文)' },
+  { value: 'zh-CN-XiaoyiNeural', label: 'zh-CN-XiaoyiNeural (简体中文)' },
+  { value: 'zh-TW-HsiaoChenNeural', label: 'zh-TW-HsiaoChenNeural (繁體中文)' },
+  { value: 'ja-JP-NanamiNeural', label: 'ja-JP-NanamiNeural (日本語)' },
+  { value: 'en-US-AriaNeural', label: 'en-US-AriaNeural (English)' },
+  { value: 'ko-KR-SunHiNeural', label: 'ko-KR-SunHiNeural (한국어)' },
+  { value: 'fr-FR-DeniseNeural', label: 'fr-FR-DeniseNeural (Français)' },
+  { value: 'de-DE-KatjaNeural', label: 'de-DE-KatjaNeural (Deutsch)' },
+  { value: 'es-ES-ElviraNeural', label: 'es-ES-ElviraNeural (Español)' },
+  { value: 'pt-BR-FranciscaNeural', label: 'pt-BR-FranciscaNeural (Português)' },
+  { value: 'ru-RU-SvetlanaNeural', label: 'ru-RU-SvetlanaNeural (Русский)' },
+]
+
+// 目标语言 → 默认 EdgeTTS voice
+const TARGET_LANG_TO_VOICE: Record<string, string> = {
+  'zh-CN': 'zh-CN-XiaoxiaoNeural',
+  'zh-TW': 'zh-TW-HsiaoChenNeural',
+  ja: 'ja-JP-NanamiNeural',
+  en: 'en-US-AriaNeural',
+  ko: 'ko-KR-SunHiNeural',
+  fr: 'fr-FR-DeniseNeural',
+  de: 'de-DE-KatjaNeural',
+  es: 'es-ES-ElviraNeural',
+  pt: 'pt-BR-FranciscaNeural',
+  ru: 'ru-RU-SvetlanaNeural',
+}
 import { PROVIDER_PRESETS } from '../../types'
 
 interface StepConfigProps {
@@ -240,10 +269,24 @@ function ChatTTSPanel({ config, onConfigChange, chatttsWorkers }: StepConfigProp
       )}
       <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
         <Box display="flex" justifyContent="space-between">
-          <Typography variant="body2" fontWeight={500}>TTS 线程数</Typography>
-          <Typography variant="body2" fontWeight={600} color="text.secondary">{chatttsWorkers || 1}</Typography>
+          <Typography variant="body2" fontWeight={500}>ChatTTS 并行数</Typography>
+          <Typography variant="body2" fontWeight={600} color="primary">{config.chatttsWorkers || chatttsWorkers || 1}</Typography>
         </Box>
-        <Typography variant="caption">GPU 模型池：每线程加载独立模型副本，VRAM 自适应</Typography>
+        <Typography variant="caption" display="block" mb={1}>
+          模型副本数 (0=自动, 上限 {chatttsWorkers || 1} 由 VRAM 决定, 每个 ~2.37 GB)
+        </Typography>
+        <Slider
+          value={config.chatttsWorkers}
+          min={0}
+          max={chatttsWorkers || 1}
+          step={1}
+          marks={[
+            { value: 0, label: '自动' },
+            { value: 1, label: '1' },
+            ...(chatttsWorkers && chatttsWorkers >= 2 ? [{ value: chatttsWorkers, label: String(chatttsWorkers) }] : []),
+          ]}
+          onChange={(_, v) => onConfigChange('chatttsWorkers', v as number)}
+        />
       </Box>
     </>
   )
@@ -265,6 +308,14 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
       .then(d => setGlossaryDicts(d.dicts || []))
       .catch(() => {})
   }, [])
+
+  // 目标语言变化时自动选取默认 EdgeTTS 语音
+  useEffect(() => {
+    const defaultVoice = TARGET_LANG_TO_VOICE[config.targetLang]
+    if (defaultVoice && config.voice !== defaultVoice) {
+      onConfigChange('voice', defaultVoice)
+    }
+  }, [config.targetLang])
 
   const gpuVramMb = sysInfo?.gpuVramMb ?? 0
   const perWorker = VRAM_PER_WORKER[config.model] ?? 1500
@@ -517,11 +568,11 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                     <Box>
                       <Typography variant="body2" fontWeight={500}>选择语音音色 (voice)</Typography>
                       <Select size="small" fullWidth value={config.voice} onChange={e => onConfigChange('voice', e.target.value)} sx={{ bgcolor: 'background.paper', mt: 0.5 }}>
-                        <MenuItem value="zh-CN-XiaoxiaoNeural">zh-CN-XiaoxiaoNeural</MenuItem>
-                        <MenuItem value="zh-CN-YunxiNeural">zh-CN-YunxiNeural</MenuItem>
-                        <MenuItem value="zh-CN-XiaoyiNeural">zh-CN-XiaoyiNeural</MenuItem>
+                        {EDGE_VOICE_OPTIONS.map(opt => (
+                          <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
+                        ))}
                       </Select>
-                      <Typography variant="caption">选择语音音色</Typography>
+                      <Typography variant="caption">根据目标语言自动推荐，可手动切换</Typography>
                     </Box>
                     <Box>
                       <Box display="flex" justifyContent="space-between">

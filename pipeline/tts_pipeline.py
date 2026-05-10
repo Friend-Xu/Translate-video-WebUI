@@ -105,12 +105,16 @@ class TtsPipeline:
         if tts_engine is not None:
             self.engine = tts_engine
         elif config.engine_type in ("chattts", "coqui"):
-            n_workers = calc_chattts_workers()
+            max_workers = calc_chattts_workers()
+            if config.chattts_workers > 0:
+                n_workers = min(config.chattts_workers, max_workers)
+            else:
+                n_workers = max_workers
             self._engine_pool = queue.Queue(maxsize=n_workers)
             for _ in range(n_workers):
                 engine = self._default_engine()
                 self._engine_pool.put(engine)
-            logger.info(f"ChatTTS 模型池: {n_workers} 副本 (VRAM ≈ {n_workers * _CHATTS_MODEL_SIZE_GB:.1f} GB)")
+            logger.info(f"ChatTTS 模型池: {n_workers} 副本 (VRAM ≈ {n_workers * _CHATTS_MODEL_SIZE_GB:.1f} GB, 上限 {max_workers})")
             self.engine = None  # 池模式下无单例引擎
         else:
             self.engine = self._default_engine()
@@ -399,6 +403,7 @@ class TtsPipeline:
 
             # 1. TTS 合成（借用引擎，同一字幕段复用同一引擎处理对齐重试）
             engine = self._borrow_engine()
+            engine_supports_rate = getattr(engine, 'supports_rate', lambda: True)()
             try:
                 wav_time = engine.synthesize(
                     text_zh, output_audio_path, f"+{self.config.base_speed}%"
@@ -406,11 +411,38 @@ class TtsPipeline:
                 wav_time_original = wav_time
 
                 # 2. 时序对齐
-                over_time_path, adj_result = self.timing.align(
-                    text=text_zh,
-                    wav_time=wav_time,
-                    start=start,
-                    end=end,
+                # ChatTTS 不支持语速调节 → 跳过无效的 rate 搜索，
+                # 改用 Rubber Band 后处理加速音频，仍超时则视频变速兜底
+                if not engine_supports_rate:
+                    segment_duration = (end - start) / 1000
+                    if wav_time > segment_duration:
+                        from pipeline.tts_timing import AdjustResult
+                        from pipeline.audio_stretch import stretch_audio, compute_stretch_rate
+                        stretch_rate = compute_stretch_rate(wav_time, segment_duration)
+                        if stretch_rate is not None and stretch_rate <= 1.5:
+                            stretched_path = output_audio_path + ".stretched.wav"
+                            try:
+                                new_dur = stretch_audio(output_audio_path, stretched_path, stretch_rate)
+                                os.replace(stretched_path, output_audio_path)
+                                wav_time = new_dur
+                                wav_time_original = wav_time
+                                logger.debug(f"RubberBand stretch: rate={stretch_rate:.2f}, "
+                                    f"{segment_duration:.2f}s target → {new_dur:.2f}s")
+                            except Exception:
+                                pass  # stretch failed, use original
+                        adj_result = AdjustResult("speed_up_limited",
+                            over_time_path=output_audio_path,
+                            final_duration=wav_time, rate_used="N/A")
+                        over_time_path = output_audio_path
+                    else:
+                        over_time_path = None
+                        adj_result = AdjustResult("re_write", final_duration=wav_time)
+                else:
+                    over_time_path, adj_result = self.timing.align(
+                        text=text_zh,
+                        wav_time=wav_time,
+                        start=start,
+                        end=end,
                     output_audio_path=output_audio_path,
                     subs_next=subs_next,
                     tts_synthesize_fn=lambda t, p, r: engine.synthesize(t, p, r),

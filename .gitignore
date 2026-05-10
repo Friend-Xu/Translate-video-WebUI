@@ -111,3 +111,4 @@ __启动脚本.bat
 .worktrees/
 GUI/graphify-out/
 .playwright-mcp/
+tools/rubberband/
