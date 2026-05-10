@@ -15,6 +15,7 @@ import json
 import os
 from tqdm import tqdm
 import sys
+import queue
 import threading
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Tuple
@@ -31,6 +32,29 @@ from pipeline.tts_engine import BaseTTSEngine
 from pipeline.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+_CHATTS_MODEL_SIZE_GB = 2.37
+_CHATTS_VRAM_OVERHEAD_GB = 1.0
+
+
+def calc_chattts_workers(model_size_gb: float = _CHATTS_MODEL_SIZE_GB,
+                         overhead_gb: float = _CHATTS_VRAM_OVERHEAD_GB) -> int:
+    """根据 GPU 显存计算 ChatTTS 可并行加载的模型副本数。
+
+    每个 worker 加载一份独立模型（~2.37 GB），需要充足显存。
+    """
+    try:
+        import torch
+        if torch.cuda.is_available():
+            total_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+            available = total_gb - overhead_gb
+            workers = max(1, int(available / model_size_gb))
+            logger.info(f"ChatTTS VRAM: {total_gb:.1f} GB → 最大 {workers} worker(s)")
+            return workers
+    except Exception:
+        pass
+    return 1
 
 
 class TtsPipeline:
@@ -69,20 +93,35 @@ class TtsPipeline:
         except Exception:
             pass  # 检测失败不影响主流程
 
-        self.engine = tts_engine or self._default_engine()
         self.timing = timing_adjuster or self._default_timing()
         self.voice_cloner = voice_cloner or self._default_voice_cloner()
         self.caption = caption_renderer or self._default_caption()
         self.video_seg = video_segmenter or self._default_video()
 
-        # ── 断点续传（基于输出文件存在性） ──────────────
+        # ── 引擎池 ────────────────────────────────────────
+        # EdgeTTS: 云端 API，单引擎足够（无本地资源限制）
+        # ChatTTS: 每个 worker 加载独立模型副本 → Queue 池
+        self._engine_pool: queue.Queue | None = None
+        if tts_engine is not None:
+            self.engine = tts_engine
+        elif config.engine_type in ("chattts", "coqui"):
+            n_workers = calc_chattts_workers()
+            self._engine_pool = queue.Queue(maxsize=n_workers)
+            for _ in range(n_workers):
+                engine = self._default_engine()
+                self._engine_pool.put(engine)
+            log.info(f"ChatTTS 模型池: {n_workers} 副本 (VRAM ≈ {n_workers * _CHATTS_MODEL_SIZE_GB:.1f} GB)")
+            self.engine = None  # 池模式下无单例引擎
+        else:
+            self.engine = self._default_engine()
+
+        # ── 断点续传 ──────────────────────────────────────
         video_out = os.path.join(config.output_dir, "video")
         if resume_manager is not None:
             self._resume_manager = resume_manager
         else:
             self._resume_manager = ResumeManager(video_output_dir=video_out)
             if not config.enable_resume:
-                # 默认全新运行：不跳过已有文件
                 self._resume_manager.is_processed = lambda start, end: False
 
         # 多线程同步锁
@@ -98,16 +137,20 @@ class TtsPipeline:
         self._subs_list: list = []
         self._queue_list: list = []
 
-        # 线程池
-        # EdgeTTS 走云端 API，可使用用户配置的并发数
-        # ChatTTS/Cooqui 等本地 GPU 模型不支持单实例并发推理，固定串行
-        if config.engine_type in ("chattts", "coqui"):
-            workers = 1
-            log.info(f"GPU 推理引擎 ({config.engine_type})：强制单线程串行")
-        else:
-            workers = config.threading_workers
-            log.info(f"云端引擎 ({config.engine_type})：线程池 workers={workers}")
-        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=n_workers if self._engine_pool else config.threading_workers
+        )
+
+    def _borrow_engine(self):
+        """从池中借用一个引擎实例（阻塞直到有可用）。"""
+        if self._engine_pool is not None:
+            return self._engine_pool.get()
+        return self.engine
+
+    def _return_engine(self, engine):
+        """归还引擎到池中。"""
+        if self._engine_pool is not None:
+            self._engine_pool.put(engine)
 
     def _find_vocals(self, video_path: str) -> str | None:
         """Derive the Demucs vocal WAV path from the video path.
@@ -317,22 +360,26 @@ class TtsPipeline:
         try:
             os.makedirs(os.path.dirname(output_audio_path), exist_ok=True)
 
-            # 1. TTS 合成
-            wav_time = self.engine.synthesize(
-                text_zh, output_audio_path, f"+{self.config.base_speed}%"
-            )
-            wav_time_original = wav_time
+            # 1. TTS 合成（借用引擎，同一字幕段复用同一引擎处理对齐重试）
+            engine = self._borrow_engine()
+            try:
+                wav_time = engine.synthesize(
+                    text_zh, output_audio_path, f"+{self.config.base_speed}%"
+                )
+                wav_time_original = wav_time
 
-            # 2. 时序对齐
-            over_time_path, adj_result = self.timing.align(
-                text=text_zh,
-                wav_time=wav_time,
-                start=start,
-                end=end,
-                output_audio_path=output_audio_path,
-                subs_next=subs_next,
-                tts_synthesize_fn=lambda t, p, r: self.engine.synthesize(t, p, r),
-            )
+                # 2. 时序对齐
+                over_time_path, adj_result = self.timing.align(
+                    text=text_zh,
+                    wav_time=wav_time,
+                    start=start,
+                    end=end,
+                    output_audio_path=output_audio_path,
+                    subs_next=subs_next,
+                    tts_synthesize_fn=lambda t, p, r: engine.synthesize(t, p, r),
+                )
+            finally:
+                self._return_engine(engine)
 
             # 3. TTS 音频加载
             from moviepy import AudioFileClip
@@ -499,7 +546,11 @@ class TtsPipeline:
             from pipeline.speed_strategy import create_strategy, StrategyContext
 
             def _synth_fn(text: str, path: str, rate: str) -> float:
-                return self.engine.synthesize(text, path, rate)
+                engine = self._borrow_engine()
+                try:
+                    return engine.synthesize(text, path, rate)
+                finally:
+                    self._return_engine(engine)
 
             strategy = create_strategy("global", StrategyContext(
                 trail_dir=os.path.join(self.config.output_dir, "trail"),
