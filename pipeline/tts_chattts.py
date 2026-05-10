@@ -110,7 +110,9 @@ class ChatTTSEngine:
         if self._speaker_seed is not None:
             np.random.seed(self._speaker_seed)
         else:
-            np.random.seed(random.randint(0, 2 ** 31 - 1))
+            # 随机生成 seed 并保存，确保前端能获取到种子值
+            self._speaker_seed = random.randint(0, 2 ** 31 - 1)
+            np.random.seed(self._speaker_seed)
 
         self._spk_emb = self._chat.sample_random_speaker()
 

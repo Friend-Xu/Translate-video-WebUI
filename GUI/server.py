@@ -1612,43 +1612,48 @@ class ChatTTSPreviewRequest(BaseModel):
     model_path: str = ""
 
 
+# 模块级 ChatTTS 引擎缓存：多次抽卡复用同一模型实例，避免反复加载 2.37GB
+_chattts_engine = None
+_chattts_engine_config = None  # (model_source, model_path)
+
+
 @app.post("/api/tts/preview-chattts")
 async def preview_chattts_voice(req: ChatTTSPreviewRequest) -> dict:
-    """抽卡预览 ChatTTS 音色。返回 seed + base64 音频。"""
+    """抽卡预览 ChatTTS 音色。引擎仅首次加载，后续抽卡只换 seed。"""
+    global _chattts_engine, _chattts_engine_config
+
     import base64
     import tempfile
     from pipeline.tts_chattts import ChatTTSEngine
 
-    engine = ChatTTSEngine(
-        speaker_seed=req.seed,
-        model_source=req.model_source,
-        model_path=req.model_path or None,
-    )
+    config_key = (req.model_source, req.model_path or "")
+
+    # 首次加载或模型来源变更时重新创建引擎
+    if _chattts_engine is None or _chattts_engine_config != config_key:
+        _chattts_engine = ChatTTSEngine(
+            speaker_seed=req.seed,
+            model_source=req.model_source,
+            model_path=req.model_path or None,
+        )
+        _chattts_engine_config = config_key
+    else:
+        # 复用已加载的模型，只换说话人
+        _chattts_engine.reset_speaker(req.seed)
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp_path = tmp.name
 
     try:
-        duration = engine.synthesize(req.text, tmp_path)
+        duration = _chattts_engine.synthesize(req.text, tmp_path)
         with open(tmp_path, "rb") as f:
             audio_b64 = base64.b64encode(f.read()).decode("ascii")
         return {
-            "seed": engine.speaker_seed,
+            "seed": _chattts_engine.speaker_seed,
             "audio_base64": audio_b64,
             "duration": round(duration, 2),
             "text": req.text,
         }
     finally:
-        # 释放 GPU 显存
-        del engine
-        import gc
-        gc.collect()
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except Exception:
-            pass
         try:
             os.unlink(tmp_path)
         except OSError:
