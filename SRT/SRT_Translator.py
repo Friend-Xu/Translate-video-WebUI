@@ -310,6 +310,14 @@ def validate_format(source_group: List[pysrt.SubRipItem], translated_text: str, 
 
 # ── 语言检测 ──────────────────────────────────────
 
+_LANG_LABELS = {
+    "ja": "日语", "en": "英语", "zh": "简体中文", "zh-CN": "简体中文",
+    "zh-TW": "繁體中文", "ko": "韩语", "fr": "法语", "de": "德语",
+    "es": "西班牙语", "pt": "葡萄牙语", "ru": "俄语", "ar": "阿拉伯语",
+    "th": "泰语", "vi": "越南语", "id": "印尼语", "it": "意大利语",
+}
+
+
 def detect_source_language(subs: pysrt.SubRipFile, sample_size: int = 20) -> str:
     sample = " ".join(sub.text for sub in subs[:sample_size])
     ja_chars = re.findall(r"[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]", sample)
@@ -372,10 +380,9 @@ def build_system_prompt(source_lang: str, fmt: str = "numbered_list", retry: boo
         )
         return user_part + system_part
 
-    if source_lang == "ja":
-        base = "你是专业日语字幕翻译。请将以下日语逐条翻译成简体中文。"
-    else:
-        base = "你是专业英语字幕翻译。请将以下英文逐条翻译成简体中文。"
+    lang_label = _LANG_LABELS.get(source_lang, source_lang)
+    target_label = _LANG_LABELS.get(target_lang, target_lang)
+    base = f"你是专业{lang_label}字幕翻译。请将以下{lang_label}逐条翻译为{target_label}。"
 
     parts = [
         base,
@@ -446,10 +453,9 @@ def build_single_prompt(subtitle: pysrt.SubRipItem, prev_subs: List[pysrt.SubRip
         }
         return resolve_prompt_variables(custom_template, variables), ""
 
-    if source_lang == "ja":
-        system = "你是专业日语字幕翻译。请将提供的句子翻译成简体中文。只输出译文，不要解释，不要加引号。"
-    else:
-        system = "You are a professional English subtitle translator. Translate the provided sentence into Simplified Chinese. Output only the translation, no explanations, no quotes."
+    lang_label = _LANG_LABELS.get(source_lang, source_lang)
+    target_label = _LANG_LABELS.get(target_lang, target_lang)
+    system = f"你是专业{lang_label}字幕翻译。请将提供的句子翻译为{target_label}。只输出译文，不要解释，不要加引号。"
 
     ctx_parts = []
     for s in prev_subs[-2:]:
@@ -761,6 +767,11 @@ class SRTTranslator:
         self.term_enabled = term_cfg.get("enabled", False)
         self.term_dict_dir = term_cfg.get("dict_dir", "config/terms/")
         self.term_dict_name = term_cfg.get("default_dict", "minecraft.json")
+        # 加载术语表到内存（用于按需注入 prompt）
+        self._glossary: Dict[str, str] = {}
+        if self.term_enabled:
+            from SRT.glossary_injector import load_glossary
+            self._glossary = load_glossary(self.term_dict_dir, self.term_dict_name)
         # 自定义 prompt 配置
         prompt_cfg = self.config.get("custom_prompt", {})
         self.custom_prompt_enabled = prompt_cfg.get("enabled", False)
@@ -770,11 +781,7 @@ class SRTTranslator:
         # 目标语言：优先从配置读取，否则从 source_lang 推断
         target_cfg = self.config.get("target_lang", "")
         if target_cfg and target_cfg != "auto":
-            _target_map = {
-                "zh-CN": "简体中文", "zh": "简体中文",
-                "en": "English", "ja": "日本語", "ko": "한국어",
-            }
-            self.target_lang = _target_map.get(target_cfg, target_cfg)
+            self.target_lang = _LANG_LABELS.get(target_cfg, target_cfg)
         else:
             self.target_lang = "简体中文" if self.source_lang in ("ja", "zh") else "Simplified Chinese"
         # Split-brain 配置
@@ -867,19 +874,6 @@ class SRTTranslator:
         auto_path = f"{base}-auto.srt"
         subs.save(auto_path, encoding="utf-8")
         logger.info(f"自动翻译结果已保存: {auto_path}")
-
-        # 术语替换（配置中 enabled=true 时生效）
-        if self.term_enabled:
-            try:
-                replace_terms_fn = _lazy_import_term_replacer()
-                replaced = replace_terms_fn(
-                    auto_path,
-                    dict_dir=self.term_dict_dir,
-                    dict_name=self.term_dict_name,
-                )
-                logger.info(f"术语替换完成: {replaced}")
-            except Exception as e:
-                logger.warning(f"术语替换失败，已跳过: {e}")
 
         # 按组号排序日志（并发模式完成顺序不确定）
         self.log.details.sort(key=lambda d: d.get("group", 0))
@@ -1097,6 +1091,14 @@ class SRTTranslator:
             custom_template=self.custom_batch_prompt if self.custom_prompt_enabled else None,
             source_lang=self.source_lang, target_lang=self.target_lang,
         )
+
+        # 术语表按需注入：只注入源文本中实际出现的术语
+        if self._glossary:
+            from SRT.glossary_injector import collect_glossary_for_group
+            src_texts = [sub.text for sub in group]
+            gloss_str, matched = collect_glossary_for_group(src_texts, self._glossary)
+            if gloss_str:
+                prompt = gloss_str + "\n\n" + prompt
 
         try:
             self.rate_limiter.acquire()

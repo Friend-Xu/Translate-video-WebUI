@@ -42,6 +42,9 @@ class TTSConfig:
     chattts_model_path: Optional[str] = None
     """ChatTTS 自定义模型路径（source=custom 时使用）"""
 
+    tts_pronunciation: dict = field(default_factory=dict)
+    """ChatTTS 发音术语表 {原文: 替换后文本}，优先于自动数字转换"""
+
     # ── 速度策略 ────────────────────────────────────────
     speed_mode: str = "per_segment"
     """速度控制模式: "per_segment" | "global"

@@ -4,6 +4,10 @@ tts:
   chattts_speaker_seed: 2      # 固定音色种子（null=随机）
   chattts_model_source: local   # local | huggingface | custom
   chattts_model_path: null      # custom 模式下的本地模型路径
+  # ChatTTS 发音术语表（优先于自动数字转换，key → 替换后文本）
+  tts_pronunciation:
+    "RTX": "RTX"
+    "3060": "三零六零"
   voice: zh-CN-XiaoxiaoNeural
   base_speed: 40
   max_speed: 100

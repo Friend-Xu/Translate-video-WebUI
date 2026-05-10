@@ -486,8 +486,8 @@ class TtsPipeline:
         self,
         video_path: str,
         instrumental_path: str | None,
-        chinese_srt_path: str,
-        english_srt_path: str,
+        translated_srt_path: str,
+        source_srt_path: str,
     ):
         """执行端到端 TTS 流水线。
 
@@ -498,23 +498,23 @@ class TtsPipeline:
         Args:
             video_path: 原视频路径
             instrumental_path: 背景音乐 WAV 路径（None 表示无背景乐，仅使用 TTS 音频）
-            chinese_srt_path: 中文 SRT 字幕路径
-            english_srt_path: 英文 SRT 字幕路径
+            translated_srt_path: 翻译后 SRT 字幕路径（用于 TTS 朗读）
+            source_srt_path: 源语言 SRT 字幕路径（用于双语字幕渲染）
         """
         from moviepy import VideoFileClip, AudioFileClip
 
         # 加载 SRT
         from pipeline.tts_config import parse_srt
         from pipeline.utils import get_ffmpeg_exe
-        subs_cn = parse_srt(chinese_srt_path)
-        subs_en = parse_srt(english_srt_path)
+        subs_translated = parse_srt(translated_srt_path)
+        subs_src = parse_srt(source_srt_path)
 
         video = VideoFileClip(video_path)
         total_duration = video.duration
         ffmpeg_exe = get_ffmpeg_exe()
 
         # 设置 ResumeManager 总字幕数
-        self._resume_manager.state.total_subs = len(subs_cn)
+        self._resume_manager.state.total_subs = len(subs_translated)
 
         # ── 断点续传: 加载 checkpoint 并初始化进度追踪 ──
         ws_dir = os.path.dirname(os.path.dirname(self.config.output_dir))
@@ -525,10 +525,10 @@ class TtsPipeline:
             self._ck = None
 
         if self._ck is not None:
-            self._ck.update_extra("tts", segs_total=len(subs_cn), segs_done=0)
+            self._ck.update_extra("tts", segs_total=len(subs_translated), segs_done=0)
             self._ck.save()
 
-        logger.info(f"TTS Pipeline: {len(subs_cn)} 条字幕, 视频总长 {total_duration:.1f}s")
+        logger.info(f"TTS Pipeline: {len(subs_translated)} 条字幕, 视频总长 {total_duration:.1f}s")
 
         # ── 音色克隆准备：提取人声 VAD 片段作为 Color_audio.WAV，然后提取 speaker embedding ──
         if self.config.voice_clone_active:
@@ -545,10 +545,10 @@ class TtsPipeline:
         caption_groups = None
         if self.config.enable_subtitle_optimization and self.config.enable_caption:
             from pipeline.subtitle_optimizer import optimize
-            caption_groups = optimize(subs_cn, subs_en, self.caption, video.w)
+            caption_groups = optimize(subs_translated, subs_src, self.caption, video.w)
             total_sub_captions = sum(len(g) for g in caption_groups)
-            if total_sub_captions > len(subs_cn):
-                logger.info(f"字幕优化: {len(subs_cn)} → {total_sub_captions} 段 (拆分 {total_sub_captions - len(subs_cn)} 条)")
+            if total_sub_captions > len(subs_translated):
+                logger.info(f"字幕优化: {len(subs_translated)} → {total_sub_captions} 段 (拆分 {total_sub_captions - len(subs_translated)} 条)")
 
         # 背景音乐：提取各个视频段对应的独立 WAV 片段
         def _extract_instrumental_segment(seg_start_ms: int, seg_end_ms: int) -> str | None:
@@ -575,7 +575,7 @@ class TtsPipeline:
 
         # 处理开头/结尾无人声
         self.video_seg.handle_begin_end_silence(
-            video, instrumental_path, subs_cn, total_duration, _extract_instrumental_segment
+            video, instrumental_path, subs_translated, total_duration, _extract_instrumental_segment
         )
 
         # ── Global 模式：全局统一调速 ─────────────────
@@ -608,21 +608,21 @@ class TtsPipeline:
                     self._pbar.update(1)
                     self._pbar.set_postfix(**stats, refresh=False)
 
-            self._pbar = tqdm(total=len(subs_cn), desc="Global TTS", unit="条", ncols=80)
+            self._pbar = tqdm(total=len(subs_translated), desc="Global TTS", unit="条", ncols=80)
             result = strategy.process(
-                subs_cn, subs_en, _synth_fn,
+                subs_translated, subs_src, _synth_fn,
                 video, instrumental_path,
                 self.video_seg, self._resume_manager,
                 progress_callback=pbar_fn,
             )
             self._pbar.close()
             processed = result.total_success
-            skipped = len(subs_cn) - processed - result.total_error
+            skipped = len(subs_translated) - processed - result.total_error
             errors = result.total_error
 
         # ── PerSegment 模式：并行逐段精细调速 ──
         else:
-            total = len(subs_cn)
+            total = len(subs_translated)
             skipped = 0
             errors = 0
             processed = 0
@@ -631,7 +631,7 @@ class TtsPipeline:
 
             # Phase 1: 准备所有任务参数（主线程）
             tasks = []
-            for i, (start, end, text_cn) in enumerate(subs_cn):
+            for i, (start, end, text_cn) in enumerate(subs_translated):
                 # 安全检查：跳过无效时间戳
                 if end <= start:
                     tqdm.write(f"  [WARN] 跳过无效字幕段 #{i}: start={start}ms >= end={end}ms")
@@ -650,10 +650,10 @@ class TtsPipeline:
                     pbar.update(1)
                     continue
 
-                text_en = subs_en[i][2] if i < len(subs_en) else ""
+                text_en = subs_src[i][2] if i < len(subs_src) else ""
 
                 # 获取下一条字幕（SRT 已知，无依赖）
-                subs_next = subs_cn[i + 1] if i + 1 < len(subs_cn) else None
+                subs_next = subs_translated[i + 1] if i + 1 < len(subs_translated) else None
                 subs_next_tuple = (subs_next[0], subs_next[1], subs_next[2]) if subs_next else None
 
                 # 裁剪视频段（独立 VideoFileClip，线程安全）

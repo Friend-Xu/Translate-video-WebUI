@@ -367,7 +367,6 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
     sys.path.insert(0, PROJECT_ROOT)
 
     from SRT.SRT_Translator import SRTTranslator
-    from SRT.TermReplacer import TermReplacer
 
     translator = SRTTranslator()
     auto_srt, pending = translator.translate(srt_path)
@@ -387,9 +386,6 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
         shutil.move(auto_srt, output)
 
     if os.path.isfile(output):
-        print("  术语词典替换...")
-        replacer = TermReplacer()
-        replacer.replace_file(output, output)
 
         from pipeline.checkpoint import _file_sha256
         ck.complete_step("translate", output_hashes={"machine_srt": _file_sha256(output)})
@@ -575,8 +571,8 @@ def step_tts(
         pipeline.run(
             video_path=video,
             instrumental_path=instrumental,
-            chinese_srt_path=srt_translated,
-            english_srt_path=srt_source,
+            translated_srt_path=srt_translated,
+            source_srt_path=srt_source,
         )
     finally:
         pipeline.cleanup()

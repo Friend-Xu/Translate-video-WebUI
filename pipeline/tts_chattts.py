@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import random
+import re
 from typing import List, Optional
 
 import numpy as np
@@ -22,6 +23,76 @@ import numpy as np
 from pipeline.logger import get_logger
 
 logger = get_logger(__name__)
+
+_DIGIT_MAP = {"0": "零", "1": "一", "2": "二", "3": "三", "4": "四",
+              "5": "五", "6": "六", "7": "七", "8": "八", "9": "九"}
+_UNITS = ["", "十", "百", "千"]
+_BIG_UNITS = ["", "万", "亿"]
+
+
+def _segment_to_chinese(seg: str) -> str:
+    """Convert up to 4-digit segment to Chinese (e.g. '1234' → '一千二百三十四')."""
+    if not seg:
+        return ""
+    n = len(seg)
+    result = ""
+    for i, ch in enumerate(seg):
+        d = _DIGIT_MAP[ch]
+        unit = _UNITS[n - i - 1] if n - i - 1 > 0 else ""
+        if d == "零":
+            if result and not result.endswith("零"):
+                result += "零"
+            continue
+        result += d + unit
+    result = result.rstrip("零")
+    if not result and seg.startswith("0"):
+        result = "零"
+    return result
+
+
+def _arabic_to_chinese(num_str: str) -> str:
+    """Convert Arabic numeral string to Chinese reading. e.g. '123' → '一百二十三'."""
+    if not num_str:
+        return num_str
+    num_str = num_str.lstrip("0") or "0"
+    # Split into 4-digit groups from right
+    groups = []
+    s = num_str
+    while s:
+        groups.append(s[-4:])
+        s = s[:-4]
+    groups.reverse()
+
+    result = ""
+    for i, g in enumerate(groups):
+        seg = _segment_to_chinese(g)
+        if seg == "零":
+            if result and not result.endswith("零"):
+                result += "零"
+            continue
+        # Insert 零 when segment starts with zeros (e.g. 10001 → 一万零一)
+        if i > 0 and g != "0" * len(g) and g.lstrip("0") != g:
+            result += "零"
+        big_idx = len(groups) - i - 1
+        big = _BIG_UNITS[big_idx] if big_idx < len(_BIG_UNITS) else ""
+        result += seg + big
+    result = result.rstrip("零")
+    # Clean up: "一十" → "十" at start
+    if result.startswith("一十"):
+        result = result[1:]
+    return result or "零"
+
+
+def _normalize_numbers(text: str) -> str:
+    """Replace Arabic numerals with Chinese readings for ChatTTS compatibility."""
+    return re.sub(r"\d+", lambda m: _arabic_to_chinese(m.group()), text)
+
+
+def _apply_pronunciation(text: str, entries: dict) -> str:
+    """Apply pronunciation dictionary entries (simple key → value replacement)."""
+    for key, value in entries.items():
+        text = text.replace(key, value)
+    return text
 
 
 class ChatTTSEngine:
@@ -44,12 +115,14 @@ class ChatTTSEngine:
         model_path: Optional[str] = None,
         use_decoder: bool = True,
         sample_rate: int = 24000,
+        pronunciation_entries: Optional[dict] = None,
     ):
         self._speaker_seed = speaker_seed
         self._model_source = model_source
         self._model_path = model_path
         self._use_decoder = use_decoder
         self._sample_rate = sample_rate
+        self._pronunciation_entries = pronunciation_entries or {}
 
         self._chat: Optional["ChatTTS.Chat"] = None  # type: ignore
         self._loaded = False
@@ -136,6 +209,11 @@ class ChatTTSEngine:
         assert self._chat is not None
         assert self._spk_emb is not None
 
+        # 发音术语表替换 → 数字归一化 → ChatTTS 推理
+        if self._pronunciation_entries:
+            text = _apply_pronunciation(text, self._pronunciation_entries)
+        text = _normalize_numbers(text)
+
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
         try:
@@ -195,4 +273,5 @@ class ChatTTSEngineFactory:
             speaker_seed=getattr(config, "chattts_speaker_seed", None),
             model_source=getattr(config, "chattts_model_source", "local"),
             model_path=getattr(config, "chattts_model_path", None),
+            pronunciation_entries=getattr(config, "tts_pronunciation", {}),
         )

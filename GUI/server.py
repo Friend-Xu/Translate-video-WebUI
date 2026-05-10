@@ -343,6 +343,8 @@ def _load_yaml_defaults() -> dict:
         "apiType": trans.get("api_type", "deepseek"),
         "enableSemanticValidation": trans.get("semantic_check", True),
         "enableTermReplacement": trans.get("terms_dict", {}).get("enabled", True),
+        "activeGlossary": trans.get("terms_dict", {}).get("default_dict", "minecraft.json"),
+        "targetLang": trans.get("target_lang", "zh-CN"),
     }
 
 
@@ -464,6 +466,14 @@ def _sync_translate_config(target_lang: str = "") -> None:
         trans["translate"]["multi_agent"] = {}
     trans["translate"]["multi_agent"]["enabled"] = pipeline_cfg.get("multiAgentEnabled", False)
     trans["translate"]["multi_agent"]["mqm_threshold"] = pipeline_cfg.get("mqmThreshold", 0.6)
+
+    # Sync terms_dict
+    if "terms_dict" not in trans["translate"]:
+        trans["translate"]["terms_dict"] = {}
+    trans["translate"]["terms_dict"]["enabled"] = pipeline_cfg.get("enableTermReplacement", True)
+    if pipeline_cfg.get("activeGlossary"):
+        trans["translate"]["terms_dict"]["default_dict"] = pipeline_cfg["activeGlossary"]
+        trans["translate"]["terms_dict"]["dict_dir"] = "config/terms/"
 
     with open(translate_path, "w", encoding="utf-8") as f:
         yaml.dump(trans, f, allow_unicode=True, sort_keys=False, default_flow_style=False)

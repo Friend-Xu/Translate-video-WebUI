@@ -411,7 +411,7 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                 />
                 <FormControlLabel
                   control={<Checkbox checked={config.enableTermReplacement} onChange={e => onConfigChange('enableTermReplacement', e.target.checked)} />}
-                  label={<Box><Typography variant="body2">启用术语替换</Typography><Typography variant="caption" display="block">启用术语替换（如Minecraft专有名词）</Typography></Box>}
+                  label={<Box><Typography variant="body2">启用术语表</Typography><Typography variant="caption" display="block">按需注入术语到翻译 prompt（匹配到的术语才传递）</Typography></Box>}
                 />
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
                   <Box display="flex" justifyContent="space-between">
@@ -469,7 +469,12 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
                   <Box sx={{ mb: 0.5 }}>
                     <Typography variant="body2" fontWeight={500}>术语词典</Typography>
-                    <Typography variant="caption" color="text.secondary">管理专有名词的翻译映射，如 Creeper → 爬行者</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      当前词典: <Chip label={config.activeGlossary} size="small" sx={{ fontSize: '0.7rem' }} />
+                    </Typography>
+                    <Typography variant="caption" display="block" color="text.secondary">
+                      术语表按需注入翻译 prompt，只传递源文本中实际匹配的术语
+                    </Typography>
                   </Box>
                   <Button variant="outlined" size="small" fullWidth onClick={() => setGlossaryOpen(true)}>
                     编辑术语词典
