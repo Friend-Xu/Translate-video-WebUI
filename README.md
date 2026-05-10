@@ -47,14 +47,35 @@ pip install -r requirements.txt
 | 功能 | 说明 |
 |------|------|
 | 🎙️ **Whisper 字幕提取** | faster-whisper (CTranslate2) + Silero VAD + wav2vec2 强制对齐，~20ms 精度 |
-| 🌐 **智能翻译** | DeepSeek API 三级降级策略，语义验证 + 术语词典替换 |
-| 🗣️ **TTS 语音合成** | Edge TTS / ChatTTS 双引擎，自动语速调节 + 视频变速匹配 |
+| 🌐 **智能翻译** | 多 LLM 支持（DeepSeek/OpenAI），15 种目标语言，术语表按需注入，三级降级策略 |
+| 🗣️ **TTS 语音合成** | Edge TTS / ChatTTS 双引擎，目标语言自动匹配语音，自适应语速调节 |
+| 🎼 **Rubber Band 音频拉伸** | 工业级时域拉伸，ChatTTS 无感加速，保持音色自然不失真 |
 | 🎵 **背景音乐保留** | Demucs 人声/伴奏分离，保留 BGM + 响度补偿到原始水平 |
 | 🖥️ **WebUI 界面** | React + FastAPI，单视频 + 批处理模式，SSE 实时日志 |
 | 📝 **字幕校准** | 可视化字幕审核面板，手动修正翻译 + 保存修改 |
-| ⚡ **GPU 加速** | CUDA + float16 默认，whisper 比 CPU/small/int8 快 15-50 倍 |
-| 🔄 **断点续传** | ResumeManager 进度保存，中断后可恢复 |
-| ✅ **C2 缺陷修复** | OBS 录制视频 AAC 填充间隙自动检测与修复 |
+| ⚡ **GPU 加速** | CUDA + float16 默认，ChatTTS VRAM 感知自动调节模型池大小 |
+| 🔄 **断点续传** | Checkpoint 机制，中断后可恢复，源视频变更自动检测重跑 |
+| 🧹 **内存管理** | 流水线完成后自动释放 GPU/CPU 内存（10GB+），不残留显存占用 |
+
+## 为什么选择 Translate_video
+
+**对比其他视频翻译方案：**
+
+| 能力 | Translate_video | 其他工具 |
+|------|:--:|:--:|
+| 离线 TTS（ChatTTS） | ✅ VRAM 自适应 | ❌ 仅云端 API |
+| 目标语言自动适配 | ✅ 15 种语言自动选语音 | ⚠️ 手动指定 |
+| 音频时域拉伸 | ✅ Rubber Band 工业级 | ❌ 无/暴力变速 |
+| 术语表按需注入 | ✅ 只传命中术语 | ❌ 全量注入浪费 token |
+| GPU 内存管理 | ✅ 自动释放回收 | ❌ 残留占用 |
+| WebUI 面板 | ✅ 完整可视化 | ⚠️ 仅 CLI |
+
+**核心优势：**
+- 🆓 **离线可用** — ChatTTS 本地运行，不依赖云端 TTS API
+- 🎯 **精确对齐** — wav2vec2 词级时间戳 + Rubber Band 时域拉伸，字幕语音同步
+- 🌍 **多语言就绪** — 源语言自动检测 + 目标语言一键切换，语音/翻译全链路联动
+- 🧠 **智能翻译** — 术语按需注入（节省 90% token），Split-Brain / Multi-Agent 可选增强
+- 💪 **生产就绪** — 断点续传 + 内存管理 + 错误兜底，长时间运行不崩溃
 
 ---
 
@@ -76,8 +97,9 @@ graph LR
     C --> C3[术语替换<br/>YAML 词典]
 
     D --> D1[Edge / ChatTTS<br/>双引擎]
-    D --> D2[语速自适应<br/>±15% 视频变速]
-    D --> D3[Demucs<br/>BGM 保留]
+    D --> D2[目标语言自适应<br/>15 种语音]
+    D --> D3[RubberBand<br/>时域拉伸]
+    D --> D4[Demucs<br/>BGM 保留]
 
     E --> E1[dubbed.mp4<br/>双语字幕]
 ```
@@ -206,26 +228,31 @@ test_project/
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `api_key` | — | DeepSeek API Key（必填，也可设 `DEEPSEEK_API_KEY` 环境变量） |
+| `api_key` | — | API Key（必填，也可设环境变量） |
+| `api_type` | deepseek | API 类型 (`deepseek`/`openai`) |
 | `model` | deepseek-chat | 翻译模型 |
-| `source_lang` | ja | 源语言 |
+| `source_lang` | auto | 源语言（auto=自动检测） |
+| `target_lang` | zh-CN | 目标语言（ja/en/ko/fr/de...） |
 | `semantic_check` | true | 启用语义相似度核对 |
 | `semantic_threshold` | 0.65 | 语义相似度阈值 |
-| `terms_dict.enabled` | true | 启用术语词典替换 |
+| `terms_dict.enabled` | true | 启用术语表按需注入 |
+| `custom_prompt.enabled` | false | 启用自定义翻译 Prompt |
 | `max_group_size` | 8 | 批翻译每组最大条数 |
-| `max_retries` | 2 | 翻译失败重试次数 |
+| `concurrency.max_workers` | 8 | 翻译并发数 |
 
 ### TTS 配置 (`config/tts.yaml`)
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `voice` | zh-CN-XiaoxiaoNeural | Edge TTS 发音人 |
-| `base_speed` | 30 | TTS 基础语速 (+30%) |
-| `max_speed` | 70 | TTS 最大语速 (+70%) |
-| `speed_tolerance` | 0.15 | 语速容忍度 |
+| `engine_type` | edge | TTS 引擎 (`edge`/`chattts`) |
+| `voice` | zh-CN-XiaoxiaoNeural | Edge TTS 发音人（target_lang 自动覆盖） |
+| `target_lang` | — | 目标语言，自动匹配语音 |
+| `chattts_speaker_seed` | 2 | ChatTTS 音色种子 |
+| `chattts_workers` | 0 | ChatTTS 模型副本数 (0=VRAM 自动) |
+| `base_speed` | 40 | TTS 基础语速 (+40%) |
+| `max_speed` | 100 | TTS 最大语速 (+100%) |
 | `enable_caption` | true | 渲染字幕到视频 |
-| `video_codec` | libx264 | 视频编码器 |
-| `threading_workers` | 7 | TTS 并行线程数 |
+| `enable_resume` | true | 断点续传 |
 
 ### 字幕样式 (`config/caption.yaml`)
 
