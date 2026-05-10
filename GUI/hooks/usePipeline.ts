@@ -5,7 +5,7 @@ const API = '/api/pipeline'
 
 export function usePipeline() {
   const [status, setStatus] = useState<PipelineStatus>({
-    state: 'idle', progress: 0, currentStep: '就绪', jobId: null,
+    state: 'idle', progress: 0, currentStep: '就绪', jobId: null, detail: '',
   })
   const [logs, setLogs] = useState<LogEntry[]>([])
 
@@ -33,6 +33,7 @@ export function usePipeline() {
           ...prev,
           progress: data.progress,
           currentStep: data.current_step,
+          detail: data.detail || '',
         }))
         if (data.status === 'running') {
           setTimeout(poll, 2000)
@@ -44,7 +45,7 @@ export function usePipeline() {
 
   const startPipeline = useCallback(async (config: PipelineConfig) => {
     setLogs([])
-    setStatus({ state: 'running', progress: 5, currentStep: '启动中...', jobId: null })
+    setStatus({ state: 'running', progress: 5, currentStep: '启动中...', jobId: null, detail: '' })
 
     try {
       const res = await fetch(`${API}/run`, {
@@ -98,7 +99,7 @@ export function usePipeline() {
       pollStatus(job_id)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      setStatus({ state: 'failed', progress: 0, currentStep: '启动失败', jobId: null })
+      setStatus({ state: 'failed', progress: 0, currentStep: '启动失败', jobId: null, detail: '' })
       appendLog({ level: 'ERROR', message: msg, timestamp: new Date().toLocaleTimeString() })
     }
   }, [appendLog, pollStatus])

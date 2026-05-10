@@ -88,6 +88,12 @@ def main():
     json_path = os.path.join(out_dir, f"{video_name}.json")
     srt_path = os.path.join(out_dir, f"{video_name}.srt")
 
+    # ── 断点续传: 加载 workspace checkpoint ──
+    ws_dir = os.path.dirname(out_dir)  # out_dir is 01_extract/, ws_dir is {name}_project/
+    from pipeline.checkpoint import PipelineCheckpoint, _file_sha256
+    ck = PipelineCheckpoint.load(ws_dir)
+    ck.clean_tmp_files(out_dir)
+
     # ── 导入模块（延迟加载，避免 import 开销影响日志整洁）──
     from pipeline.utils import get_ffmpeg_exe, format_size, fmt_time
     from pipeline.video_info import get_video_info, diagnose_defect
@@ -108,6 +114,7 @@ def main():
     log_node(1, f"编码: {info.video_codec} / {info.audio_codec}")
     log_node(1, f"耗时: {time.time()-t0:.2f}s")
     d1 = time.time() - t0
+    ck.complete_node("N1"); ck.save()
 
     # ════════════════════════════════════════════════════════
     # NODE 1.5: 时长缺陷检测
@@ -149,6 +156,7 @@ def main():
             log_node("1.5", f"严重度: {diagnosis.severity} | 建议: {diagnosis.suggested_action}")
         log_node("1.5", f"耗时: {time.time()-t0:.2f}s")
         d15 = time.time() - t0
+    ck.complete_node("N1.5"); ck.save()
 
     # ════════════════════════════════════════════════════════
     # NODE 2: 音频提取 + aresample 修复
@@ -174,6 +182,7 @@ def main():
     log_node(2, f"WAV: {format_size(audio_size)}, 16000Hz, PCM16")
     log_node(2, f"耗时: {time.time()-t0:.1f}s")
     d2 = time.time() - t0
+    ck.complete_node("N2"); ck.save()
 
     # ════════════════════════════════════════════════════════
     # NODE 2.5: Demucs 人声分离（提取纯背景乐 + 人声）
@@ -229,6 +238,7 @@ def main():
             log_node("2.5", f"人声: {vocal_path} ({format_size(os.path.getsize(vocal_path))})")
     log_node("2.5", f"耗时: {time.time()-t0:.1f}s")
     d25 = time.time() - t0
+    ck.complete_node("N2.5"); ck.save()
 
     # ════════════════════════════════════════════════════════
     # NODE 3: VAD 分段 + faster-whisper 转录
@@ -284,6 +294,7 @@ def main():
     json_size = VADTranscriber.save_json(result, json_path)
     log_node(3, f"JSON: {json_path} ({format_size(json_size)})")
     d3 = time.time() - t0
+    ck.complete_node("N3"); ck.save()
 
     # ════════════════════════════════════════════════════════
     # NODE 4: JSON → SRT
@@ -308,6 +319,7 @@ def main():
     log_node(4, f"平均每条: {srt_chars/max(len(blocks),1):.1f} 字符")
     log_node(4, f"耗时: {time.time()-t0:.1f}s")
     d4 = time.time() - t0
+    ck.complete_node("N4"); ck.save()
 
     srt_size = os.path.getsize(srt_path)
 

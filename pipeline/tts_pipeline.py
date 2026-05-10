@@ -426,6 +426,18 @@ class TtsPipeline:
         # 设置 ResumeManager 总字幕数
         self._resume_manager.state.total_subs = len(subs_cn)
 
+        # ── 断点续传: 加载 checkpoint 并初始化进度追踪 ──
+        ws_dir = os.path.dirname(os.path.dirname(self.config.output_dir))
+        try:
+            from pipeline.checkpoint import PipelineCheckpoint
+            self._ck = PipelineCheckpoint.load(ws_dir)
+        except Exception:
+            self._ck = None
+
+        if self._ck is not None:
+            self._ck.update_extra("tts", segs_total=len(subs_cn), segs_done=0)
+            self._ck.save()
+
         logger.info(f"TTS Pipeline: {len(subs_cn)} 条字幕, 视频总长 {total_duration:.1f}s")
 
         # ── 音色克隆准备：提取人声 VAD 片段作为 Color_audio.WAV，然后提取 speaker embedding ──
@@ -592,6 +604,9 @@ class TtsPipeline:
                         result = future.result()
                         if result and result.get("success"):
                             processed += 1
+                            if self._ck is not None and processed % 10 == 0:
+                                self._ck.update_extra("tts", segs_done=processed)
+                                self._ck.save()
                         elif result and not result.get("success"):
                             errors += 1
                         else:
@@ -612,6 +627,11 @@ class TtsPipeline:
                                 pass
                         pbar.update(1)
                         pbar.set_postfix(ok=processed, err=errors, skip=skipped, refresh=False)
+
+            # Final checkpoint save
+            if self._ck is not None:
+                self._ck.update_extra("tts", segs_done=processed)
+                self._ck.save()
 
             pbar.close()
         video.close()
