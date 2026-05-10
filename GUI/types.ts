@@ -227,6 +227,7 @@ export interface SystemInfo {
   gpuVramMb: number
   recommendedConcurrency: number
   defaultVideoDir: string
+  chatttsWorkers: number
 }
 
 export interface VideoInfo {

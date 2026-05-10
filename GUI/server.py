@@ -1804,6 +1804,14 @@ async def system_info() -> dict:
     source_dir = os.path.join(PROJECT_ROOT, "source_file")
     default_video_dir = source_dir if os.path.isdir(source_dir) else str(PROJECT_ROOT)
 
+    # ChatTTS worker count based on VRAM
+    chattts_workers = 1
+    try:
+        from pipeline.tts_pipeline import calc_chattts_workers
+        chattts_workers = calc_chattts_workers()
+    except Exception:
+        pass
+
     return {
         "cpuCount": cpu_count,
         "hasGpu": has_gpu,
@@ -1811,6 +1819,7 @@ async def system_info() -> dict:
         "gpuVramMb": gpu_vram_mb,
         "recommendedConcurrency": recommended,
         "defaultVideoDir": default_video_dir,
+        "chatttsWorkers": chattts_workers,
     }
 
 

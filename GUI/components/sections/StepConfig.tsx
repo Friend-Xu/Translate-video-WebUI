@@ -14,6 +14,7 @@ import { PROVIDER_PRESETS } from '../../types'
 interface StepConfigProps {
   config: PipelineConfig
   onConfigChange: <K extends keyof PipelineConfig>(key: K, value: PipelineConfig[K]) => void
+  chatttsWorkers?: number
 }
 
 /** VRAM 需求估算 (MB per worker) */
@@ -23,7 +24,7 @@ const VRAM_PER_WORKER: Record<string, number> = {
   large: 6000,
 }
 
-function ChatTTSPanel({ config, onConfigChange }: StepConfigProps) {
+function ChatTTSPanel({ config, onConfigChange, chatttsWorkers }: StepConfigProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [modelReady, setModelReady] = useState(false)
@@ -241,9 +242,9 @@ function ChatTTSPanel({ config, onConfigChange }: StepConfigProps) {
       <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
         <Box display="flex" justifyContent="space-between">
           <Typography variant="body2" fontWeight={500}>TTS 线程数</Typography>
-          <Typography variant="body2" fontWeight={600} color="text.secondary">1</Typography>
+          <Typography variant="body2" fontWeight={600} color="text.secondary">{chatttsWorkers || 1}</Typography>
         </Box>
-        <Typography variant="caption">GPU 模型串行推理，不可调整</Typography>
+        <Typography variant="caption">GPU 模型池：每线程加载独立模型副本，VRAM 自适应</Typography>
       </Box>
     </>
   )
@@ -494,7 +495,7 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   <Typography variant="caption">选择用于语音合成的TTS引擎</Typography>
                 </Box>
                 {config.engine === 'chattts' && (
-                  <ChatTTSPanel config={config} onConfigChange={onConfigChange} />
+                  <ChatTTSPanel config={config} onConfigChange={onConfigChange} chatttsWorkers={sysInfo?.chatttsWorkers} />
                 )}
                 {config.engine === 'edge' && (
                   <>
