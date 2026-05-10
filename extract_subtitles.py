@@ -263,10 +263,10 @@ def main():
     # 3c: 转录 + 词级分组 + wav2vec2 对齐
     #   指定语言时同时启用 wav2vec2 对齐；自动检测时不启用（需手动确认语言）
     merged_batches = transcriber.merge_segments(vad_segments)
-    aligned = args.lang is not None and not args.skip_align
-    align_lang = None if args.skip_align else (args.align_lang or args.lang)
+    align_lang = args.align_lang or None
+    enable_align = not args.skip_align
     log_node(3, f"开始转录 ({vad_stats['vad_count']} 段 → 合并后 {len(merged_batches)} 批)...")
-    result = transcriber.transcribe_all(language=args.lang, align_language=align_lang)
+    result = transcriber.transcribe_all(language=args.lang, align_language=align_lang, enable_align=enable_align)
     st = result["stats"]
 
     log_node(3, f"语言: {result['language']} (置信度: {st['lang_probability']:.3f}), 耗时: {st['detect_time']:.1f}s")

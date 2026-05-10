@@ -232,6 +232,15 @@ class VADTranscriber:
 
     # ── wav2vec2 对齐 ────────────────────────────────────────────
 
+    # 强制 HF 路径的语言 → 对应 HF 模型名（绕过 torchaudio TorchScript，避免子进程 ACCESS_VIOLATION）
+    _HF_ALIGN_MODELS: dict = {
+        "en": "facebook/wav2vec2-base-960h",
+        "fr": "facebook/wav2vec2-base-960h",  # 法语暂无专用模型，用英语兜底
+        "de": "facebook/wav2vec2-base-960h",
+        "es": "facebook/wav2vec2-base-960h",
+        "it": "facebook/wav2vec2-base-960h",
+    }
+
     def _init_aligner(self, language: str = "ja"):
         """懒加载 whisperX 的 wav2vec2 对齐模型"""
         if self._align_model is not None:
@@ -240,72 +249,69 @@ class VADTranscriber:
         if not os.environ.get("HF_ENDPOINT"):
             os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
         from whisperx_local.alignment import load_align_model
-        local_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "models", "wav2vec2", language,
+        # 强制走 HF 路径，避免 torchaudio TorchScript 在子进程中触发 ACCESS_VIOLATION
+        model_name = self._HF_ALIGN_MODELS.get(language)
+        self._align_model, self._align_metadata = load_align_model(
+            language_code=language, device="cpu",
+            model_name=model_name,
         )
-        if os.path.isdir(local_path) and os.path.isfile(os.path.join(local_path, "config.json")):
-            os.environ.setdefault("HF_HUB_OFFLINE", "1")
-            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-            self._align_model, self._align_metadata = load_align_model(
-                language_code=language, device=self.device,
-                model_name=local_path,
-            )
-        else:
-            self._align_model, self._align_metadata = load_align_model(
-                language_code=language, device=self.device,
-            )
 
     def align_all(self, segments: List[dict], language: str = "ja") -> List[dict]:
-        """
-        用 wav2vec2 强制对齐精修词级时间戳。
+        logger = logging.getLogger(__name__)
+        logger.info("启动 wav2vec2 对齐子进程...")
+        import json, subprocess, sys, tempfile
 
-        Args:
-            segments: [{text, start, end}, ...] — faster-whisper 的初步结果
-            language: 语言代码
+        input_file = os.path.join(tempfile.gettempdir(), f"_align_input_{os.getpid()}.json")
+        output_file = os.path.join(tempfile.gettempdir(), f"_align_output_{os.getpid()}.json")
+        payload = {"segments": segments, "audio_path": self.audio_path, "language": language}
+        with open(input_file, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
 
-        Returns:
-            更新后的 segments，各 segment 含 "words" 字段（精准时间戳）
-        """
-        import torch
-        import soundfile as sf
-        import numpy as np
-        from whisperx_local.alignment import align
+        script = r"""
+import json, sys, os, gc
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+import torch
+import soundfile as sf
+import numpy as np
+from whisperx_local.alignment import load_align_model, align
 
-        self._init_aligner(language)
+input_file = sys.argv[1]
+output_file = sys.argv[2]
+with open(input_file, "r", encoding="utf-8") as f:
+    data = json.load(f)
 
-        # 加载完整音频（float32）
-        audio, sr = sf.read(self.audio_path)
-        if audio.dtype != np.float32:
-            audio = audio.astype(np.float32)
+model, metadata = load_align_model(language_code=data["language"], device="cpu")
+audio, sr = sf.read(data["audio_path"])
+if audio.dtype != np.float32:
+    audio = audio.astype(np.float32)
 
-        # align() 处理整段音频，按 segments 的 start/end 自动切割
-        aligned = align(
-            segments, self._align_model, self._align_metadata,
-            audio, device=self.device, return_char_alignments=False,
-        )
+result = align(data["segments"], model, metadata, audio, device="cpu", return_char_alignments=False)
+with open(output_file, "w", encoding="utf-8") as f:
+    json.dump(result, f, ensure_ascii=False)
+"""
 
-        del audio
-        gc.collect()
-
-        result = aligned.get("segments", segments)
-
-        # 检测对齐是否截断了尾部覆盖
-        # wav2vec2 无法对齐数字/符号字符，导致包含这些词的段尾部收缩
-        if segments and result:
-            input_end = max(s["end"] for s in segments)
-            aligned_end = max(s["end"] for s in result)
-            truncation = input_end - aligned_end
-            if truncation > 2.0:
-                logger = logging.getLogger(__name__)
-                logger.warning(
-                    "对齐截断了 %.1fs 的覆盖（输入 %.1fs → 输出 %.1fs），"
-                    "回退到原始 whisper 时间戳",
-                    truncation, input_end, aligned_end,
-                )
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", script, input_file, output_file],
+                capture_output=True, text=True, timeout=120,
+                cwd=os.path.dirname(os.path.abspath(__file__)) + "/..",
+            )
+            if result.returncode != 0:
+                logger.warning("对齐子进程失败 (rc=%d): %s", result.returncode, result.stderr[:300])
                 return segments
-
-        return result
+            with open(output_file, "r", encoding="utf-8") as f:
+                aligned = json.load(f)
+            return aligned.get("segments", segments)
+        except Exception as e:
+            logger.warning("对齐子进程异常: %s", e)
+            return segments
+        finally:
+            for f in (input_file, output_file):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
 
     # ── 段合并 ──────────────────────────────────────────────────
 
@@ -367,6 +373,7 @@ class VADTranscriber:
             word_timestamps=True,
             beam_size=2,
             vad_filter=False,
+            suppress_numerals=True,
         )
         for seg in segments:
             if seg.words:
@@ -464,7 +471,8 @@ class VADTranscriber:
     # ── 全流程 ──────────────────────────────────────────────────
 
     def transcribe_all(self, language: Optional[str] = None,
-                       align_language: Optional[str] = None) -> dict:
+                       align_language: Optional[str] = None,
+                       enable_align: bool = True) -> dict:
         """
         完整转录流程：加载模型 → 语言检测 → 合并段 → 并行/串行转录
         → 词级分组 → [可选] wav2vec2 强制对齐精修时间戳
@@ -500,10 +508,6 @@ class VADTranscriber:
             self._language = language
             lang_prob = -1
             detect_time = 0
-
-        # 自动启用 wav2vec2 对齐（检测到语言后自动使用）
-        if align_language is None and self._language:
-            align_language = self._language
 
         # 合并 VAD 段
         merged = self.merge_segments(self._vad_segments)
@@ -606,18 +610,24 @@ class VADTranscriber:
         group_time = time.time() - t0
 
         # wav2vec2 强制对齐（可选，不参与并行，确保对齐精度）
+        # enable_align=False 时强制跳过；align_language 为 None 时自动使用检测语言
+        if enable_align and align_language is None and self._language:
+            align_language = self._language
         align_time = 0
-        if align_language is not None:
+        if enable_align and align_language is not None:
             # 拆分长段：wav2vec2 DTW 对齐在 >15s 段上容易漂移
             segments = self._split_large_segments(segments, max_duration=15.0)
             logger = logging.getLogger(__name__)
-            logger.info(f"开始 wav2vec2 对齐 (lang={align_language}, {len(segments)} 段)...")
+            logger.info("=" * 72)
+            logger.info("  NODE 3.5: wav2vec2 强制对齐")
+            logger.info("=" * 72)
+            logger.info(f"语言: {align_language}, 段数: {len(segments)}")
             t0 = time.time()
             segments = self.align_all(segments, language=align_language)
             align_time = time.time() - t0
             logger.info(f"wav2vec2 对齐完成，耗时: {align_time:.1f}s")
 
-        # 清理模型池 — 排空队列，逐个 del 释放显存/内存
+        # 清理模型池（对齐完成后安全释放）
         if self._model_pool:
             logger = logging.getLogger(__name__)
             destroyed = 0
