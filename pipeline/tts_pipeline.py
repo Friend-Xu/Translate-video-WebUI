@@ -415,8 +415,8 @@ class TtsPipeline:
                 # 改用 Rubber Band 后处理加速音频，仍超时则视频变速兜底
                 if not engine_supports_rate:
                     segment_duration = (end - start) / 1000
+                    from pipeline.tts_timing import AdjustResult
                     if wav_time > segment_duration:
-                        from pipeline.tts_timing import AdjustResult
                         from pipeline.audio_stretch import stretch_audio, compute_stretch_rate
                         stretch_rate = compute_stretch_rate(wav_time, segment_duration)
                         if stretch_rate is not None and stretch_rate <= 1.5:
