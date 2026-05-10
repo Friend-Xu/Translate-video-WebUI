@@ -385,14 +385,18 @@ def reset_language(language: str) -> dict:
     return presets.get(language, {})
 
 
-def _sync_translate_config() -> None:
-    """Write pipeline settings (concurrency, etc.) from settings.json → translate.yaml."""
+def _sync_translate_config(target_lang: str = "") -> None:
+    """Write pipeline settings from settings.json → translate.yaml.
+
+    target_lang from the live RunRequest takes priority over auto-saved
+    settings to eliminate the 2-second debounce race condition.
+    """
     translate_path = PROJECT_ROOT / "config" / "translate.yaml"
     if not translate_path.exists():
         return
     settings = load_settings()
     pipeline_cfg = settings.get("pipeline", {})
-    if not pipeline_cfg:
+    if not pipeline_cfg and not target_lang:
         return
 
     with open(translate_path, "r", encoding="utf-8") as f:
@@ -404,7 +408,10 @@ def _sync_translate_config() -> None:
     # Sync source/target language
     if pipeline_cfg.get("lang"):
         trans["translate"]["source_lang"] = pipeline_cfg["lang"]
-    if pipeline_cfg.get("targetLang"):
+    # RunRequest value takes priority (live) over settings.json (stale)
+    if target_lang:
+        trans["translate"]["target_lang"] = target_lang
+    elif pipeline_cfg.get("targetLang"):
         trans["translate"]["target_lang"] = pipeline_cfg["targetLang"]
 
     # Sync concurrency setting
@@ -466,6 +473,7 @@ def _sync_translate_config() -> None:
 class RunRequest(BaseModel):
     video_path: str
     lang: str = "auto"
+    target_lang: str = "zh-CN"
     model: str = "turbo"
     device: str = "cuda"
     compute_type: str = "float16"
@@ -693,7 +701,7 @@ async def start_pipeline(req: RunRequest) -> RunResponse:
     _save_job(job)
 
     apply_subtitle_settings()
-    _sync_translate_config()
+    _sync_translate_config(target_lang=req.target_lang)
     args = _build_cli_args(req)
 
     asyncio.create_task(_run_job(job, args))

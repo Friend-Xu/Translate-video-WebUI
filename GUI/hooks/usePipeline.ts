@@ -54,6 +54,7 @@ export function usePipeline() {
         body: JSON.stringify({
           video_path: config.videoPath,
           lang: config.lang,
+          target_lang: config.targetLang,
           model: config.model,
           device: config.device,
           engine: config.engine,
