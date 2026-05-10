@@ -602,7 +602,7 @@ def _build_cli_args(req: RunRequest) -> list[str]:
         args.append("--skip-defect-check")
     if req.skip_demucs:
         args.append("--skip-demucs")
-    if req.voice_clone_engine and req.voice_clone_engine != "openvoice":
+    if req.voice_clone_engine and req.voice_clone_engine != "none":
         args.extend(["--voice-clone-engine", req.voice_clone_engine])
     if req.voice_clone_device and req.voice_clone_device != "auto":
         args.extend(["--voice-clone-device", req.voice_clone_device])

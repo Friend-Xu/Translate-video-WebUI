@@ -119,6 +119,50 @@ class TtsPipeline:
             return legacy
         return None
 
+    def _create_color_audio(self, vocals_path: str, video_path: str) -> str | None:
+        """Extract the highest-energy 10s segment from vocals for speaker embedding."""
+        import numpy as np
+        import soundfile as sf
+
+        target = os.path.dirname(video_path)
+        name = os.path.splitext(os.path.basename(video_path))[0]
+        color_dir = os.path.join(target, f"{name}_project", "03_tts")
+        color_path = os.path.join(color_dir, "Color_audio.WAV")
+
+        if os.path.isfile(color_path):
+            return color_path
+
+        try:
+            audio, sr = sf.read(vocals_path)
+            if audio.ndim > 1:
+                audio = audio.mean(axis=1)
+            total_s = len(audio) / sr
+            if total_s < 10:
+                os.makedirs(color_dir, exist_ok=True)
+                sf.write(color_path, audio, sr)
+                return color_path
+
+            # Sliding window RMS energy — pick the 10s window with most speech
+            window_s = int(10 * sr)
+            hop_s = int(1 * sr)
+            best_score = -1.0
+            best_start = 0
+            for i in range(0, len(audio) - window_s, hop_s):
+                chunk = audio[i:i + window_s]
+                rms = np.sqrt(np.mean(chunk ** 2))
+                if rms > best_score:
+                    best_score = rms
+                    best_start = i
+
+            best_end = min(best_start + window_s, len(audio))
+            os.makedirs(color_dir, exist_ok=True)
+            sf.write(color_path, audio[best_start:best_end], sr)
+            logger.info("Color_audio.WAV 已创建: %.1fs (vocals 最高能量段, RMS=%.4f)", (best_end - best_start) / sr, best_score)
+            return color_path
+        except Exception as e:
+            logger.warning("Color_audio.WAV 提取失败: %s，回退到完整 vocals", e)
+            return None
+
     # ── 默认组件工厂 ──────────────────────────────────
 
     def _default_engine(self):
@@ -198,7 +242,7 @@ class TtsPipeline:
             vram_limit_mb=self.config.voice_clone_vram_limit_mb,
             color_audio_path="./speakers/Color_audio.WAV",
             error_log_path=os.path.join(self.config.output_dir, "voice_clone_error_log.txt"),
-            model_dir=self.config.cosyvoice_model_path,
+            model_dir="./models/CosyVoice2-0.5B" if engine == "cosyvoice" else "./models",
             cosyvoice_mode=self.config.cosyvoice_mode,
             model_version=self.config.cosyvoice_model_version,
             cosyvoice_fp16=self.config.cosyvoice_fp16,
@@ -384,12 +428,14 @@ class TtsPipeline:
 
         logger.info(f"TTS Pipeline: {len(subs_cn)} 条字幕, 视频总长 {total_duration:.1f}s")
 
-        # ── 音色克隆准备：从 Demucs vocal 提取 speaker embedding ──
+        # ── 音色克隆准备：提取人声 VAD 片段作为 Color_audio.WAV，然后提取 speaker embedding ──
         if self.config.voice_clone_active:
             vocals = self._find_vocals(video_path)
             if vocals:
-                ok = self.voice_cloner.prepare(vocals)
-                logger.info("音色克隆: speaker embedding %s", "OK" if ok else "FAIL")
+                color = self._create_color_audio(vocals, video_path)
+                ref = color or vocals
+                ok = self.voice_cloner.prepare(ref)
+                logger.info("音色克隆: speaker embedding %s (ref=%s)", "OK" if ok else "FAIL", os.path.basename(ref))
             else:
                 logger.warning("音色克隆: 找不到 vocals.wav，跳过 prepare()")
 
