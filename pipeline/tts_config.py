@@ -26,8 +26,8 @@ class TTSConfig:
     voice: str = "zh-CN-XiaoxiaoNeural"
     """TTS 音色名称（EdgeTTS/Coqui 使用）"""
 
-    base_speed: int = 30
-    """TTS 基础语速: +30% (对应 edge-tts rate 参数, 实际值为 +30%)"""
+    base_speed: int = 40
+    """TTS 基础语速: +40% (对应 edge-tts rate 参数)"""
 
     max_speed: int = 100
     """TTS 最大语速: +100% (达到上限仍超视频时长时，减速视频兜底)"""
@@ -189,8 +189,8 @@ class TTSConfig:
     """是否启用字幕拆分优化（长字幕拆分为多段接力显示）"""
 
     # ── 断点续传 ──────────────────────────────────────────
-    enable_resume: bool = False
-    """是否启用断点续传（跳过已存在的输出视频段，默认关闭以全新运行）"""
+    enable_resume: bool = True
+    """是否启用断点续传（跳过已存在的输出视频段，默认开启）"""
 
     # ── 背景音乐 ──────────────────────────────────────────
     bgm_volume: float = 1.0

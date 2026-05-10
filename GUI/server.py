@@ -471,7 +471,7 @@ class RunRequest(BaseModel):
     compute_type: str = "float16"
     engine: str = "edge"
     voice: str = "zh-CN-XiaoxiaoNeural"
-    speech_rate: int = 30
+    speech_rate: int = 40
     max_speed: int = 100
     video_speed_min: float = 0.60
     video_speed_max: float = 2.00
@@ -504,7 +504,7 @@ class RunRequest(BaseModel):
     num_workers: int = 1
     tts_workers: int = 7
     skip_align: bool = False
-    align_lang: str = ""
+    align_lang: str = "ja"
 
 
 class RunResponse(BaseModel):
