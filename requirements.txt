@@ -28,6 +28,14 @@ httpx==0.28.1
 tqdm==4.67.3
 aiohttp==3.13.5
 
+# ChatTTS local TTS engine
+ChatTTS==0.2.5
+
+# Rubber Band time-stretching (requires rubberband CLI)
+# Windows: tools/rubberband/ pre-bundled
+# Linux: apt install rubberband-cli
+pyrubberband==0.4.0
+
 # CUDA (Windows, Python 3.12 → 3.10)
 # Manual install: download whl from https://download.pytorch.org/whl/cu124/
 torch==2.6.0+cu124
