@@ -110,3 +110,4 @@ __启动脚本.bat
 计划开发/
 .worktrees/
 GUI/graphify-out/
+.playwright-mcp/
