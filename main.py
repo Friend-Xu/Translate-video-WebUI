@@ -232,6 +232,7 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
                   backup_dir: str = "", skip_defect_check: bool = False,
                   skip_demucs: bool = False, skip_align: bool = False,
                   align_lang: str | None = None, num_workers: int = 1,
+                  force: bool = False,
                   checkpoint: PipelineCheckpoint | None = None) -> None:
     """步骤 1: 委托 extract_subtitles.py 完成全流程。
 
@@ -242,7 +243,7 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
     ws_dir = _workspace_dir(video)
     ck = checkpoint or PipelineCheckpoint.load(ws_dir)
 
-    if ck.is_step_done("extract"):
+    if ck.is_step_done("extract") and not force:
         print("\n[1/3] 字幕提取 — 已完成 (checkpoint)，跳过")
         return
 
@@ -777,7 +778,7 @@ def main():
                          backup_dir=args.backup_dir, skip_defect_check=args.skip_defect_check,
                          skip_demucs=args.skip_demucs, skip_align=args.skip_align,
                          align_lang=args.align_lang, num_workers=args.num_workers,
-                         checkpoint=ck)
+                         force=args.force, checkpoint=ck)
         else:
             print("[1/3] 字幕提取 — 已跳过 (--skip-extract)")
 
