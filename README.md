@@ -1,4 +1,4 @@
-[English](README.md) | [简体中文](README_CN.md)
+[English](README.md) | [简体中文](README_CN.md) | [WebUI](README_GUI.md)
 
 <div align="center">
 
@@ -190,6 +190,8 @@ Visit `http://localhost:5173`.
 | **Output Settings** | Caption style (font/color/stroke/position), video encoder |
 | **Subtitle Review** | Edit translations, mark issues, re-run TTS after save |
 | **Tools** | Config import/export/reset, external subtitle optimizer, batch manager |
+
+📖 **[Detailed WebUI Guide →](README_GUI.md)** (screenshots, features, FAQ)
 
 <details>
 <summary>WebUI Architecture</summary>

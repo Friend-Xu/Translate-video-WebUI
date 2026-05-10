@@ -1,3 +1,5 @@
+[English](README_GUI.md) | [简体中文](README_GUI_CN.md)
+
 # Translate_video — WebUI Guide
 
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react)](https://react.dev)
