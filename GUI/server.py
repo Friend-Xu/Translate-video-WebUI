@@ -2609,6 +2609,74 @@ async def stream_file(path: str, request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Media preflight — DASH-separated video/audio merge
+# ---------------------------------------------------------------------------
+
+class PreflightRequest(BaseModel):
+    video_path: str
+    audio_path: str = ""
+
+
+class MuxRequest(BaseModel):
+    video_path: str
+    audio_path: str
+
+
+class PreflightResponse(BaseModel):
+    video_path: str
+    has_audio: bool
+    video_duration: float
+    audio_duration: float
+    duration_match: bool
+    duration_diff_sec: float
+    defects: list[dict]
+    companion_audio: str
+    suggested_action: str
+
+
+class MuxResponse(BaseModel):
+    output_path: str
+    output_name: str
+    size_mb: float
+    success: bool
+
+
+@app.post("/api/media/analyze")
+async def media_analyze(req: PreflightRequest):
+    """Analyze video: audio stream presence, duration, defects, companion audio."""
+    if not req.video_path or not Path(req.video_path).is_file():
+        raise HTTPException(status_code=400, detail="视频文件不存在")
+
+    from pipeline.media_preflight import analyze as preflight_analyze
+    result = preflight_analyze(req.video_path, req.audio_path)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return PreflightResponse(**result)
+
+
+@app.post("/api/media/mux")
+async def media_mux(req: MuxRequest):
+    """Merge video-only MP4 with separate audio file using ffmpeg stream-copy."""
+    if not req.video_path or not Path(req.video_path).is_file():
+        raise HTTPException(status_code=400, detail="视频文件不存在")
+    if not req.audio_path or not Path(req.audio_path).is_file():
+        raise HTTPException(status_code=400, detail="音频文件不存在")
+
+    from pipeline.media_preflight import mux_video_audio
+    try:
+        output = mux_video_audio(req.video_path, req.audio_path)
+        sz = os.path.getsize(output)
+        return MuxResponse(
+            output_path=output,
+            output_name=os.path.basename(output),
+            size_mb=round(sz / 1024 / 1024, 1),
+            success=True,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
 # Static file serving (production build)
 # ---------------------------------------------------------------------------
 

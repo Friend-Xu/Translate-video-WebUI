@@ -3,6 +3,8 @@ import { Box, Typography, Card, Button, Stack } from '@mui/material'
 import UploadFileIcon from '@mui/icons-material/UploadFileRounded'
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHighRounded'
 import VideoLibraryIcon from '@mui/icons-material/VideoLibraryRounded'
+import MergeTypeIcon from '@mui/icons-material/MergeTypeRounded'
+import SettingsIcon from '@mui/icons-material/SettingsOutlined'
 import SettingsBackupRestoreIcon from '@mui/icons-material/SettingsBackupRestoreRounded'
 import SaveAltIcon from '@mui/icons-material/SaveAltRounded'
 import RateReviewIcon from '@mui/icons-material/RateReviewOutlined'
@@ -15,13 +17,15 @@ interface ToolbarProps {
   onOptimizeSubtitles: () => void
   onReviewSubtitles: () => void
   onExportVideo: () => void
+  onMediaMux: () => void
+  onOutputSettings: () => void
   onQuickConfig: () => void
   onSaveConfig: () => void
   onExportConfig: () => void
   onImportConfig: (file: File) => void
 }
 
-export function Toolbar({ onImportVideo, onOptimizeSubtitles, onReviewSubtitles, onExportVideo, onQuickConfig, onSaveConfig, onExportConfig, onImportConfig }: ToolbarProps) {
+export function Toolbar({ onImportVideo, onOptimizeSubtitles, onReviewSubtitles, onExportVideo, onMediaMux, onOutputSettings, onQuickConfig, onSaveConfig, onExportConfig, onImportConfig }: ToolbarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleImportClick = () => {
@@ -47,7 +51,9 @@ export function Toolbar({ onImportVideo, onOptimizeSubtitles, onReviewSubtitles,
               <Button variant="outlined" startIcon={<UploadFileIcon />} onClick={onImportVideo}>导入视频</Button>
               <Button variant="outlined" startIcon={<AutoFixHighIcon />} onClick={onOptimizeSubtitles}>优化外挂字幕</Button>
               <Button variant="outlined" startIcon={<RateReviewIcon />} onClick={onReviewSubtitles}>字幕校准</Button>
+              <Button variant="outlined" startIcon={<MergeTypeIcon />} onClick={onMediaMux}>合并音视频</Button>
               <Button variant="outlined" startIcon={<VideoLibraryIcon />} onClick={onExportVideo}>导出合成视频</Button>
+              <Button variant="outlined" startIcon={<SettingsIcon />} onClick={onOutputSettings}>输出设置</Button>
             </Stack>
           </Box>
           <Box>

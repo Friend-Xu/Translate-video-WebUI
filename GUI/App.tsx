@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { ThemeProvider, CssBaseline, Box, Alert, Snackbar, Typography } from '@mui/material'
+import { ThemeProvider, CssBaseline, Box, Alert, Snackbar, Typography, Dialog, DialogTitle, DialogContent } from '@mui/material'
 import CloudUploadOutlined from '@mui/icons-material/CloudUploadOutlined'
 import theme from './theme'
 import { Sidebar } from './components/Sidebar'
@@ -10,6 +10,7 @@ import { AdvancedSettings } from './components/sections/AdvancedSettings'
 import { Toolbar } from './components/sections/Toolbar'
 import { FilePickerDialog } from './components/FilePickerDialog'
 import { SubtitleOptimizerDialog } from './components/SubtitleOptimizerDialog'
+import { MediaMuxDialog } from './components/MediaMuxDialog'
 import { SubtitleReview } from './components/sections/SubtitleReview'
 import { KeepAliveSection } from './components/KeepAliveSection'
 import { useConfig } from './hooks/useConfig'
@@ -32,6 +33,8 @@ export default function App() {
 
   const [filePickerOpen, setFilePickerOpen] = useState(false)
   const [subtitleOptimizerOpen, setSubtitleOptimizerOpen] = useState(false)
+  const [mediaMuxOpen, setMediaMuxOpen] = useState(false)
+  const [outputSettingsOpen, setOutputSettingsOpen] = useState(false)
   const [batchFiles, setBatchFiles] = useState<string[]>([])
   const [snackbar, setSnackbar] = useState<{ open: boolean; msg: string; severity: 'success' | 'error' | 'info' }>({
     open: false, msg: '', severity: 'info',
@@ -322,11 +325,6 @@ export default function App() {
           <KeepAliveSection active={activeTab === '步骤配置'}>
             <StepConfig config={config} onConfigChange={updateConfig} />
           </KeepAliveSection>
-          <KeepAliveSection active={activeTab === '输出设置'}>
-            <Box sx={{ maxWidth: 600 }}>
-              <OutputSettings config={config} onConfigChange={updateConfig} showTitle={false} />
-            </Box>
-          </KeepAliveSection>
           <KeepAliveSection active={activeTab === '高级设置'}>
             <Box>
               <AdvancedSettings config={config} onConfigChange={updateConfig} showTitle={false} />
@@ -338,6 +336,8 @@ export default function App() {
               onOptimizeSubtitles={() => setSubtitleOptimizerOpen(true)}
               onReviewSubtitles={() => setActiveTab('字幕校准')}
               onExportVideo={() => showMsg('导出功能开发中', 'info')}
+              onMediaMux={() => setMediaMuxOpen(true)}
+              onOutputSettings={() => setOutputSettingsOpen(true)}
               onQuickConfig={resetConfig}
               onSaveConfig={handleSaveConfig}
               onExportConfig={handleExportConfig}
@@ -372,6 +372,20 @@ export default function App() {
         onClose={() => setSubtitleOptimizerOpen(false)}
         onSuccess={(msg) => showMsg(msg, 'success')}
       />
+
+      <MediaMuxDialog
+        open={mediaMuxOpen}
+        onClose={() => setMediaMuxOpen(false)}
+        onSuccess={(msg) => showMsg(msg, 'success')}
+        initialPath={config.defaultVideoDir}
+      />
+
+      <Dialog open={outputSettingsOpen} onClose={() => setOutputSettingsOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>输出设置</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <OutputSettings config={config} onConfigChange={updateConfig} showTitle={false} />
+        </DialogContent>
+      </Dialog>
 
       <Snackbar
         open={snackbar.open}
