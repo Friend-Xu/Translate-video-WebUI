@@ -63,6 +63,20 @@ Minecraft_dict/dict.json
 Minecraft_dict/output.txt
 Minecraft_dict/output.srt
 Minecraft_dict/术语模板-*.xlsx
+Minecraft_dict/vanilla_glossary.json
+Minecraft_dict/mod_glossary.json
+Minecraft_dict/mod_names.json
+
+# Derived glossary files (source: Minecraft_dict)
+config/terms/minecraft_mod.json
+config/terms/minecraft_mod_names.json
+
+# One-off data extraction tools
+tools/analyze_minecraft_dict.py
+tools/extract_minecraft_glossary.py
+tools/split_glossary.py
+tools/update_glossaries.py
+
 SwinIR/model_zoo/
 SwinIR/testsets/
 
