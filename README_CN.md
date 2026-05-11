@@ -32,7 +32,7 @@ python -m venv .venv && .venv\Scripts\activate
 pip install -r requirements.txt
 
 # 2. 运行流水线
-.venv\Scripts\python main.py source_file/test.mp4 --lang ja
+.venv\Scripts\python main.py source_file/test.mp4 --lang zh
 
 # 3. 查看输出
 # → source_file/test_project/04_output/dubbed.mp4
@@ -116,7 +116,7 @@ graph LR
 
 ```bash
 # GPU 默认（turbo + CUDA + float16）
-.venv\Scripts\python main.py source_file/test.mp4 --lang ja
+.venv\Scripts\python main.py source_file/test.mp4 --lang zh
 
 # 跳过 Demucs 人声分离（干净音频更快）
 .venv\Scripts\python main.py source_file/test.mp4 --lang en --skip-demucs
@@ -128,8 +128,8 @@ graph LR
 ### 仅字幕提取
 
 ```bash
-.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --lang ja
-.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --lang ja --num-workers 2  # 并发加速
+.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --lang zh
+.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --lang zh --num-workers 2  # 并发加速
 ```
 
 ### 仅翻译
@@ -148,7 +148,7 @@ graph LR
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--lang` | 自动检测 | 源语言 (`en`/`ja`/`zh`)，指定后启用 wav2vec2 对齐 |
+| `--lang` | 自动检测 | 源语言 (`zh`/`en`/`ja`)，指定后启用 wav2vec2 对齐 |
 | `--model` | turbo | whisper 模型 (`tiny`/`base`/`small`/`medium`/`turbo`/`large-v3`) |
 | `--device` | cuda | 计算设备 (`cuda`/`cpu`) |
 | `--compute-type` | float16 | 计算精度 (`float16`/`int8_float16`/`int8`/`float32`) |

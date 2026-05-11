@@ -65,8 +65,8 @@ NODE 4   Json_Convert_Srt    → JSON → SRT
 
 | Directory | Purpose |
 |-----------|---------|
-| `pipeline/` | VAD, transcription, TTS engines (edge/chattts), video merging, loudness compensation |
-| `SRT/` | Translation (DeepSeek API, 3-tier fallback), semantic verification, term replacement |
+| `pipeline/` | VAD, transcription, TTS engines (edge/chattts), RubberBand stretch, speed strategy, loudness, voice cloning (vc_*), caption rendering, video merging |
+| `SRT/` | Translation (DeepSeek/OpenAI API, 3-tier fallback), semantic verification, glossary injection, term replacement |
 | `whisperx_local/` | wav2vec2 forced alignment (~20ms precision) |
 | `GUI/` | FastAPI + React/TypeScript WebUI, Vite dev proxy to uvicorn |
 | `config/` | YAML configs: `translate.yaml` (gitignored), `tts.yaml`, `caption.yaml` |
@@ -128,6 +128,9 @@ Browser (localhost:5173) → Vite dev server → proxy /api/* → uvicorn (local
 - **python-multipart** — required by FastAPI `UploadFile`; installed in venv but not declared in requirements.
 - **Vite HMR** — frontend changes auto-reload at `localhost:5173`, but backend changes may need uvicorn restart (new endpoints are sometimes missed by `--reload`).
 - **dist/ staleness** — if accessing via port 8000 directly, rebuild with `npm run build` after frontend changes.
+- **Rubber Band** — `audio_stretch.py` needs `pyrubberband` pip package + `tools/rubberband/rubberband-3.3.0-gpl-executable-windows/` CLI binary. Used for ChatTTS time-stretching (engine doesn't support native rate control).
+- **Voice cloning** — refactored from `tts_openvoice.py` into `vc_base.py` (protocol), `vc_openvoice.py`, `vc_cosyvoice.py`, `vc_device.py` (GPU routing). OpenVoice still noop by default.
+- **Audio fade** — `tts_video.py` applies 10ms ffmpeg afade to all segment WAVs before writing, prevents clicks at concat boundaries.
 
 ## Project docs
 

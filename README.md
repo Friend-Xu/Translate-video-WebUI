@@ -32,7 +32,7 @@ python -m venv .venv && .venv\Scripts\activate
 pip install -r requirements.txt
 
 # 2. Run pipeline
-.venv\Scripts\python main.py source_file/test.mp4 --lang ja
+.venv\Scripts\python main.py source_file/test.mp4 --lang zh
 
 # 3. Output
 # → source_file/test_project/04_output/dubbed.mp4
@@ -116,7 +116,7 @@ Full architecture → [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
 ```bash
 # GPU default (turbo + CUDA + float16)
-.venv\Scripts\python main.py source_file/test.mp4 --lang ja
+.venv\Scripts\python main.py source_file/test.mp4 --lang zh
 
 # Skip Demucs (faster for clean audio)
 .venv\Scripts\python main.py source_file/test.mp4 --lang en --skip-demucs
@@ -128,8 +128,8 @@ Full architecture → [`ARCHITECTURE.md`](ARCHITECTURE.md)
 ### Extract Only
 
 ```bash
-.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --lang ja
-.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --lang ja --num-workers 2
+.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --lang zh
+.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --lang zh --num-workers 2
 ```
 
 ### Translate Only
@@ -148,7 +148,7 @@ Full architecture → [`ARCHITECTURE.md`](ARCHITECTURE.md)
 
 | Argument | Default | Description |
 |------|--------|------|
-| `--lang` | auto | Source language (`en`/`ja`/`zh`), enables wav2vec2 alignment |
+| `--lang` | auto | Source language (`zh`/`en`/`ja`), enables wav2vec2 alignment |
 | `--model` | turbo | Whisper model (`tiny`/`base`/`small`/`medium`/`turbo`/`large-v3`) |
 | `--device` | cuda | Compute device (`cuda`/`cpu`) |
 | `--compute-type` | float16 | Precision (`float16`/`int8_float16`/`int8`/`float32`) |

@@ -145,7 +145,7 @@
     │  │           加载 Wav2Vec2ForCTC (~8s/450MB)  │      │
     │  │           对每个 segment 执行 CTC 对齐      │      │
     │  │           输出帧级精度（~20ms）词级时间戳  │      │
-    │  │           启用: --lang ja 参数              │      │
+    │  │           启用: --lang zh 参数              │      │
     │  └────────────────────────────────────────────┘      │
     │          │                                           │
     │          ▼                                           │
@@ -175,7 +175,7 @@
     │  ● 对每个 segment 逐段运行 CTC 强制对齐               │
     │  ● 输出 ~20ms 精度的词级时间戳                       │
     │  ● 解决 faster-whisper 词级时间戳偏差和漂移           │
-    │  ● 启用: --lang ja（auto-detect 时不启用）           │
+    │  ● 启用: --lang zh（auto-detect 时不启用）           │
     │  ● 实现: transcriber.align_all()                      │
     │  ● 封装: SRT/Wav2Vec2Aligner.py                      │
     │                                                       │
@@ -513,7 +513,7 @@ pipeline/
 translate:
   api_key: '<your-deepseek-api-key>'
   model: deepseek-chat
-  source_lang: ja                  # 源语言
+  source_lang: zh                  # 源语言
   semantic_check: true             # 启用语义核对
   semantic_threshold: 0.65         # 相似度阈值
   temperature: 0.1                 # 翻译稳定度
@@ -623,4 +623,4 @@ Translate_video/models/
 
 5. **wav2vec2 对齐仅在指定 `--lang` 时启用**
    - auto-detect 语言时不启用（对齐需要明确语言代码）
-   - 若自动检测出日语后仍需对齐，需手动加 `--lang ja`
+   - 若自动检测出中文后仍需对齐，需手动加 `--lang zh`
