@@ -73,7 +73,8 @@ def atomic_write_json(target_path: str, data: dict) -> None:
             json.dump(data, f, indent=2, ensure_ascii=False, sort_keys=True)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp_name, target_path)
+        from pipeline.utils import safe_replace
+        safe_replace(tmp_name, target_path)
     except BaseException:
         if os.path.isfile(tmp_name):
             os.remove(tmp_name)

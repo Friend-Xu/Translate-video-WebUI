@@ -198,11 +198,14 @@ def main():
         if os.path.isfile(vocal_path):
             os.remove(vocal_path)
 
+    demucs_ok = False  # N2.5 是否成功完成（或有意跳过）
+
     if not os.path.isfile(instrumental_path):
         if args.skip_demucs:
             hr("NODE 2.5: 背景乐（已跳过 Demucs，不生成背景乐）")
             print(f"  [INFO] Demucs 已跳过 (--skip-demucs)，不生成背景音乐")
             log_node("2.5", "跳过 — 无背景乐")
+            demucs_ok = True
         else:
             hr("NODE 2.5: Demucs 人声分离")
             try:
@@ -220,19 +223,23 @@ def main():
 
                 instr_size = os.path.getsize(instrumental_path)
                 log_node("2.5", f"背景乐: {instrumental_path} ({format_size(instr_size)})")
+                demucs_ok = True
             except Exception as e:
-                # Demucs 失败时跳过背景乐分离，不生成假的 instrumental 文件
-                # 下游 TTS 管线检测到无背景乐后仅使用 TTS 音频，避免混入原始人声
+                import traceback
                 print(f"  [WARN] Demucs 失败 ({e})，跳过背景乐分离")
-                log_node("2.5", f"跳过: Demucs 失败 — 无背景乐")
+                print(f"  [DEBUG] 详细错误:\n{traceback.format_exc()}")
+                log_node("2.5", f"跳过: Demucs 失败 — {e}")
     else:
         instr_size = os.path.getsize(instrumental_path)
         log_node("2.5", f"已有背景乐 ({format_size(instr_size)})，跳过分离")
         if os.path.isfile(vocal_path):
             log_node("2.5", f"人声: {vocal_path} ({format_size(os.path.getsize(vocal_path))})")
+        demucs_ok = True
+
     log_node("2.5", f"耗时: {time.time()-t0:.1f}s")
     d25 = time.time() - t0
-    ck.complete_node("N2.5"); ck.save()
+    if demucs_ok:
+        ck.complete_node("N2.5"); ck.save()
 
     # ════════════════════════════════════════════════════════
     # NODE 3: VAD 分段 + faster-whisper 转录
@@ -303,7 +310,14 @@ def main():
     log_node(4, f"文本语言: {'日语' if detected_lang == 'ja' else '英语'}")
     log_node(4, f"输入: {st['segments_count']} segments")
 
-    srt_content = convert_json_to_srt(json_path)
+    try:
+        srt_content = convert_json_to_srt(json_path)
+    except Exception as e:
+        log_node(4, f"错误: SRT 转换失败 - {e}")
+        raise
+    if not srt_content or not srt_content.strip():
+        log_node(4, "错误: SRT 输出为空")
+        raise RuntimeError("convert_json_to_srt 返回空内容")
     with open(srt_path, "w", encoding="utf-8") as f:
         f.write(srt_content)
 

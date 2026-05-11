@@ -301,8 +301,13 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
     # 标准化文件名
     _rename_extract_files(extract_dir, name)
 
-    # Record output hashes for change detection
     ws = workspace_paths(video)
+
+    # 如果未跳过 Demucs 但没有产出 instrumental.wav，提前警告
+    if not skip_demucs and not os.path.isfile(ws["instrumental_wav"]):
+        print("[WARN] Demucs 背景乐分离未生成 instrumental.wav，后续 TTS 步骤将不使用背景音乐")
+
+    # Record output hashes for change detection
     file_map = {
         "source_srt": ws["source_srt"],
         "transcript_json": ws["transcript_json"],
@@ -473,9 +478,8 @@ def step_tts(
         if skip_demucs:
             print(f"\n[3/3] [INFO] Demucs 已跳过，不使用背景音乐")
         else:
-            print(f"\n[3/3] [X] 找不到伴奏文件: {ws['instrumental_wav']}")
-            print("   请先执行步骤 1（字幕提取会自动生成）")
-            sys.exit(1)
+            print()
+            print(f"[WARN] [3/3] 找不到伴奏文件: {ws['instrumental_wav']}，将不使用背景音乐继续合成（可加 --skip-demucs 消除此警告）")
 
     print(f"\n[3/3] TTS 语音合成 + 视频合并 ({engine})...")
     ck.start_step("tts")

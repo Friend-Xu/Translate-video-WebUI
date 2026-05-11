@@ -521,21 +521,44 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   </Box>
                 )}
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
-                  <Typography variant="body2" fontWeight={500}>术语词典</Typography>
+                  <Box display="flex" justifyContent="space-between" alignItems="center" mb={0.5}>
+                    <Typography variant="body2" fontWeight={500}>术语词典</Typography>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => {
+                        fetch('/api/glossary/dicts')
+                          .then(r => r.json())
+                          .then(d => setGlossaryDicts(d.dicts || []))
+                          .catch(() => {})
+                      }}
+                    >
+                      扫描加载
+                    </Button>
+                  </Box>
                   <Typography variant="caption" color="text.secondary" display="block" mb={0.5}>
                     选择本地术语表，按需注入翻译 prompt（仅源文本中实际出现的术语会被传递）
                   </Typography>
                   <Select
                     size="small"
                     fullWidth
+                    multiple
                     value={config.activeGlossary}
-                    onChange={e => onConfigChange('activeGlossary', e.target.value)}
+                    onChange={e => onConfigChange('activeGlossary', e.target.value as string[])}
+                    renderValue={(selected) => (
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                        {(selected as string[]).map((name: string) => (
+                          <Chip key={name} label={name.replace('.json', '')} size="small" variant="outlined" />
+                        ))}
+                      </Box>
+                    )}
                     sx={{ bgcolor: 'background.paper' }}
                   >
                     {glossaryDicts.length === 0 ? (
-                      <MenuItem value="" disabled>未找到术语表文件</MenuItem>
+                      <MenuItem value="" disabled>未找到术语表文件 — 点击"扫描加载"</MenuItem>
                     ) : glossaryDicts.map(d => (
                       <MenuItem key={d.name} value={d.name + '.json'}>
+                        <Checkbox checked={config.activeGlossary.includes(d.name + '.json')} size="small" />
                         {d.name} ({d.termCount}条) {d.description ? `— ${d.description}` : ''}
                       </MenuItem>
                     ))}

@@ -310,6 +310,17 @@ def _load_yaml(path: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
+def _parse_glossary_list(val) -> list[str]:
+    """Backward-compat: YAML 中 default_dict 可能是单个字符串或列表。"""
+    if val is None:
+        return ["minecraft.json"]
+    if isinstance(val, list):
+        return val
+    if isinstance(val, str):
+        return [val]
+    return ["minecraft.json"]
+
+
 def _load_yaml_defaults() -> dict:
     """Read config/tts.yaml and config/translate.yaml, map to frontend field names."""
     tts = _load_yaml(PROJECT_ROOT / "config" / "tts.yaml").get("tts", {})
@@ -346,7 +357,7 @@ def _load_yaml_defaults() -> dict:
         "apiType": trans.get("api_type", "deepseek"),
         "enableSemanticValidation": trans.get("semantic_check", True),
         "enableTermReplacement": trans.get("terms_dict", {}).get("enabled", True),
-        "activeGlossary": trans.get("terms_dict", {}).get("default_dict", "minecraft.json"),
+        "activeGlossary": _parse_glossary_list(trans.get("terms_dict", {}).get("default_dict", ["minecraft.json"])),
         "targetLang": trans.get("target_lang", "zh-CN"),
     }
 
@@ -474,8 +485,9 @@ def _sync_translate_config(target_lang: str = "") -> None:
     if "terms_dict" not in trans["translate"]:
         trans["translate"]["terms_dict"] = {}
     trans["translate"]["terms_dict"]["enabled"] = pipeline_cfg.get("enableTermReplacement", True)
-    if pipeline_cfg.get("activeGlossary"):
-        trans["translate"]["terms_dict"]["default_dict"] = pipeline_cfg["activeGlossary"]
+    active_glossary = pipeline_cfg.get("activeGlossary")
+    if active_glossary:
+        trans["translate"]["terms_dict"]["default_dict"] = active_glossary  # list or string
         trans["translate"]["terms_dict"]["dict_dir"] = "config/terms/"
 
     with open(translate_path, "w", encoding="utf-8") as f:

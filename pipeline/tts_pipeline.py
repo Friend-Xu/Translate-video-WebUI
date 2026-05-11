@@ -14,6 +14,7 @@ import concurrent.futures
 import json
 import os
 from tqdm import tqdm
+from pipeline.utils import safe_replace
 import sys
 import queue
 import threading
@@ -423,7 +424,7 @@ class TtsPipeline:
                             stretched_path = output_audio_path + ".stretched.wav"
                             try:
                                 new_dur = stretch_audio(output_audio_path, stretched_path, stretch_rate)
-                                os.replace(stretched_path, output_audio_path)
+                                safe_replace(stretched_path, output_audio_path)
                                 wav_time = new_dur
                                 wav_time_original = wav_time
                                 logger.debug(f"RubberBand stretch: rate={stretch_rate:.2f}, "

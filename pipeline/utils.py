@@ -31,6 +31,20 @@ def fmt_time(s: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
+def safe_replace(src: str, dst: str) -> None:
+    """原子替换文件，Windows PermissionError 兼容。
+
+    os.replace 在 Windows 上可能因杀毒软件/文件锁导致 PermissionError。
+    此函数在 PermissionError 时回退为先删目标文件再重试。
+    """
+    try:
+        os.replace(src, dst)
+    except PermissionError:
+        if os.path.isfile(dst):
+            os.remove(dst)
+        os.replace(src, dst)
+
+
 def fmt_timestamp(seconds: float) -> str:
     """秒数 → SRT 时间戳格式 HH:MM:SS,mmm"""
     h, r = divmod(int(seconds), 3600)

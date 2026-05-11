@@ -77,7 +77,7 @@ export interface PipelineConfig {
   customBatchPrompt: string
   customSinglePrompt: string
   splitBrainEnabled: boolean
-  activeGlossary: string
+  activeGlossary: string[]
   multiAgentEnabled: boolean
   mqmEnabled: boolean
   mqmThreshold: number
@@ -189,7 +189,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   customBatchPrompt: '',
   customSinglePrompt: '',
   splitBrainEnabled: false,
-  activeGlossary: 'minecraft.json',
+  activeGlossary: ['minecraft.json'],
   multiAgentEnabled: false,
   mqmEnabled: false,
   mqmThreshold: 0.6,

@@ -527,6 +527,7 @@ class EnglishProcessor:
             merged_end = current['end']
             j = i + 1
 
+            found_sentence = False
             while j < len(segments):
                 next_seg = segments[j]
                 gap = next_seg['start'] - merged_end
@@ -553,6 +554,7 @@ class EnglishProcessor:
                         'words': merged_words
                     })
                     i = j + 1
+                    found_sentence = True
                     break
 
                 j += 1
@@ -571,7 +573,16 @@ class EnglishProcessor:
                 i = j + 1 if j > i else i + 1
                 continue
 
-            # break 出来（找到了句末标点）→ 已处理，继续下一轮
+            if not found_sentence:
+                # gap 过大导致 break，当前段未提交，补句号
+                merged_words = list(current.get('words', []))
+                result.append({
+                    'text': merged_text.strip() + '.',
+                    'start': current['start'],
+                    'end': merged_end,
+                    'words': merged_words
+                })
+                i = j
             continue
 
         return result

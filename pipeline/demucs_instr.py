@@ -82,7 +82,7 @@ def _build_chunk_plan(total_duration: float) -> list[tuple[float, float, float]]
             keep_end = ext_end - ext_start
 
         plans.append((ext_start, ext_end, keep_start, keep_end))
-        pos = ext_start + _CHUNK_DURATION
+        pos += _CHUNK_DURATION
         is_first = False
 
         if ext_end >= total_duration:
@@ -171,6 +171,7 @@ def extract_instrumental(video_path: str, output_dir: str,
     import shutil
 
     name = os.path.splitext(os.path.basename(video_path))[0]
+    name = name.rstrip('. ')  # Windows 不允许目录名以 . 或空格结尾
     out_root = os.path.join(output_dir, model_name, name)
     instr_path = os.path.join(out_root, "no_vocals.wav")
 
@@ -179,7 +180,7 @@ def extract_instrumental(video_path: str, output_dir: str,
         return instr_path
 
     os.makedirs(out_root, exist_ok=True)
-    from pipeline.utils import get_ffmpeg_exe
+    from pipeline.utils import get_ffmpeg_exe, safe_replace
     ffmpeg = get_ffmpeg_exe()
 
     # ── Step 1: ffmpeg 提取音频 ──────────────────────
@@ -205,8 +206,10 @@ def extract_instrumental(video_path: str, output_dir: str,
         if not os.path.isfile(dst):
             shutil.copy2(src, dst)
             logger.info(f"checkpoint 已备份: {dst}")
-    model.cpu()
+    _device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model.to(_device)
     model.eval()
+    logger.info(f"推理设备: {_device}")
 
     source_names = model.sources
     sample_rate = model.samplerate
@@ -225,7 +228,7 @@ def extract_instrumental(video_path: str, output_dir: str,
 
         with torch.no_grad():
             sources = apply_model(
-                model, tensor, device='cpu',
+                model, tensor, device=_device,
                 shifts=1, split=True, overlap=0.25,
                 segment=_DEMUCS_SEGMENT, progress=True,
             )[0]
@@ -261,7 +264,7 @@ def extract_instrumental(video_path: str, output_dir: str,
                   f"{os.path.basename(chunk_raw)}")
             with torch.no_grad():
                 sources = apply_model(
-                    model, tensor, device='cpu',
+                    model, tensor, device=_device,
                     shifts=1, split=True, overlap=0.25,
                     segment=_DEMUCS_SEGMENT, progress=True,
                 )[0]
@@ -330,7 +333,7 @@ def extract_instrumental(video_path: str, output_dir: str,
         if abs(gain_db) > 0.1:
             normalized = instr_path + ".normalized.wav"
             apply_gain_to_wav(instr_path, normalized, gain_db)
-            os.replace(normalized, instr_path)
+            safe_replace(normalized, instr_path)
             logger.info(f"BGM 响度已补偿: {gain_db:+.1f} dB")
 
     del model

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pipeline.utils import safe_replace
 from typing import Optional, Tuple, Callable
 
 from pipeline.logger import get_logger
@@ -166,7 +167,7 @@ class VideoSegmenter:
         if result.returncode != 0:
             err = result.stderr.strip()[-200:] if result.stderr else "unknown error"
             raise RuntimeError(f"ffmpeg afade 失败: {err}")
-        os.replace(tmp, wav_path)
+        safe_replace(tmp, wav_path)
 
     def _export_audio_to_wav(self, audio_clip, temp_dir: str = None) -> str:
         """将 AudioFileClip 导出为临时 PCM WAV，返回路径。

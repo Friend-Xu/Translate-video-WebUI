@@ -773,8 +773,11 @@ class SRTTranslator:
         # 加载术语表到内存（用于按需注入 prompt）
         self._glossary: Dict[str, str] = {}
         if self.term_enabled:
-            from SRT.glossary_injector import load_glossary
-            self._glossary = load_glossary(self.term_dict_dir, self.term_dict_name)
+            from SRT.glossary_injector import load_glossary, load_glossaries
+            if isinstance(self.term_dict_name, list):
+                self._glossary = load_glossaries(self.term_dict_dir, self.term_dict_name)
+            else:
+                self._glossary = load_glossary(self.term_dict_dir, self.term_dict_name)
         # 自定义 prompt 配置
         prompt_cfg = self.config.get("custom_prompt", {})
         self.custom_prompt_enabled = prompt_cfg.get("enabled", False)

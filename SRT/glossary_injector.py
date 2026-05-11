@@ -21,6 +21,15 @@ def load_glossary(dict_dir: str, dict_name: str) -> Dict[str, str]:
     return data.get("terms", {})
 
 
+def load_glossaries(dict_dir: str, dict_names: list[str]) -> Dict[str, str]:
+    """加载并合并多个术语表，后面的覆盖前面的同名术语。"""
+    merged: Dict[str, str] = {}
+    for name in dict_names:
+        terms = load_glossary(dict_dir, name)
+        merged.update(terms)
+    return merged
+
+
 def scan_matches(text: str, glossary: Dict[str, str]) -> Dict[str, str]:
     """扫描单段文本，返回命中的术语 {源术语: 目标译名}。
 
