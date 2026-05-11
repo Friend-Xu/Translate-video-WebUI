@@ -2625,11 +2625,15 @@ class MuxRequest(BaseModel):
 class PreflightResponse(BaseModel):
     video_path: str
     has_audio: bool
-    video_duration: float
-    audio_duration: float
+    video_container_duration: float
+    video_decoded_duration: float
+    video_internal_drift: float = 0.0
+    audio_container_duration: float
+    audio_decoded_duration: float
+    audio_internal_drift: float = 0.0
     duration_match: bool
     duration_diff_sec: float
-    defects: list[dict]
+    defects: list[dict] = []
     companion_audio: str
     suggested_action: str
 

@@ -27,8 +27,12 @@ interface Defect {
 interface AnalysisResult {
   video_path: string
   has_audio: boolean
-  video_duration: number
-  audio_duration: number
+  video_container_duration: number
+  video_decoded_duration: number
+  video_internal_drift: number
+  audio_container_duration: number
+  audio_decoded_duration: number
+  audio_internal_drift: number
   duration_match: boolean
   duration_diff_sec: number
   defects: Defect[]
@@ -51,7 +55,7 @@ interface MediaMuxDialogProps {
   initialPath?: string
 }
 
-const AUDIO_EXT = ['.mp3', '.m4a', '.wav', '.opus', '.aac', '.ogg', '.flac', '.wma']
+const AUDIO_EXT = ['.mp3', '.m4a', '.wav', '.opus', '.aac', '.ogg', '.flac', '.wma', '.webm']
 const VIDEO_EXT = ['.mp4']
 
 function fmtDuration(sec: number): string {
@@ -116,8 +120,10 @@ export function MediaMuxDialog({ open, onClose, onSuccess, initialPath }: MediaM
       if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }))
         setResult({
-          video_path: videoPath, has_audio: false, video_duration: 0,
-          audio_duration: 0, duration_match: true, duration_diff_sec: 0,
+          video_path: videoPath, has_audio: false, video_container_duration: 0,
+          video_decoded_duration: 0, video_internal_drift: 0,
+          audio_container_duration: 0, audio_decoded_duration: 0, audio_internal_drift: 0,
+          duration_match: true, duration_diff_sec: 0,
           defects: [], companion_audio: '', suggested_action: 'error',
           error: (err as any).detail || '分析失败',
         })
@@ -144,8 +150,10 @@ export function MediaMuxDialog({ open, onClose, onSuccess, initialPath }: MediaM
       }
     } catch (e: any) {
       setResult({
-        video_path: videoPath, has_audio: false, video_duration: 0,
-        audio_duration: 0, duration_match: true, duration_diff_sec: 0,
+        video_path: videoPath, has_audio: false, video_container_duration: 0,
+        video_decoded_duration: 0, video_internal_drift: 0,
+        audio_container_duration: 0, audio_decoded_duration: 0, audio_internal_drift: 0,
+        duration_match: true, duration_diff_sec: 0,
         defects: [], companion_audio: '', suggested_action: 'error',
         error: e.message || '分析请求失败',
       })
@@ -285,13 +293,21 @@ export function MediaMuxDialog({ open, onClose, onSuccess, initialPath }: MediaM
                   </Stack>
 
                   <Box sx={{ ml: 3.5 }}>
-                    <Typography variant="caption" color="text.secondary">
-                      视频时长: {fmtDuration(result.video_duration)}
-                      {result.audio_duration > 0 && `  |  音频时长: ${fmtDuration(result.audio_duration)}`}
-                    </Typography>
+                    <Stack spacing={0.5}>
+                      <Typography variant="caption" color="text.secondary">
+                        视频 容器: {fmtDuration(result.video_container_duration)} | 解码: {fmtDuration(result.video_decoded_duration)}
+                        {result.video_internal_drift > 0.05 && ` (偏差 ${result.video_internal_drift.toFixed(1)}s)`}
+                      </Typography>
+                      {result.audio_container_duration > 0 && (
+                        <Typography variant="caption" color="text.secondary">
+                          音频 容器: {fmtDuration(result.audio_container_duration)} | 解码: {fmtDuration(result.audio_decoded_duration)}
+                          {result.audio_internal_drift > 0.05 && ` (偏差 ${result.audio_internal_drift.toFixed(1)}s)`}
+                        </Typography>
+                      )}
+                    </Stack>
                   </Box>
 
-                  {result.audio_duration > 0 && (
+                  {result.audio_container_duration > 0 && (
                     <Stack direction="row" spacing={1} alignItems="center">
                       {result.duration_match ? (
                         <CheckCircleIcon color="success" sx={{ fontSize: 18 }} />
@@ -300,8 +316,8 @@ export function MediaMuxDialog({ open, onClose, onSuccess, initialPath }: MediaM
                       )}
                       <Typography variant="body2">
                         {result.duration_match
-                          ? `时长一致 (差 ${result.duration_diff_sec.toFixed(1)}s)`
-                          : `时长偏差 ${result.duration_diff_sec.toFixed(1)}s — 可能存在同步问题`
+                          ? `对比一致 (解码差 ${result.duration_diff_sec.toFixed(1)}s)`
+                          : `对比偏差 ${result.duration_diff_sec.toFixed(1)}s — 可能存在同步问题`
                         }
                       </Typography>
                     </Stack>

@@ -23,7 +23,7 @@ from pipeline.logger import get_logger
 
 logger = get_logger(__name__)
 
-AUDIO_EXTENSIONS = {".mp3", ".m4a", ".wav", ".opus", ".aac", ".ogg", ".flac", ".wma"}
+AUDIO_EXTENSIONS = {".mp3", ".m4a", ".wav", ".opus", ".aac", ".ogg", ".flac", ".wma", ".webm"}
 
 
 @dataclass
@@ -69,12 +69,40 @@ def check_audio_stream(video_path: str) -> bool:
 
 
 def get_media_duration(file_path: str) -> float:
-    """Get duration of a media file in seconds via ffmpeg."""
+    """Get container duration (CD) of a media file in seconds via ffmpeg -i."""
     ffmpeg = _get_ffmpeg()
     result = subprocess.run(
         [ffmpeg, "-i", file_path], capture_output=True, text=True,
     )
     return _parse_duration(result.stderr)
+
+
+def get_decoded_duration(file_path: str) -> float:
+    """Get decoded audio duration (ADD) by actually decoding the file.
+
+    Runs ffmpeg to decode every audio frame and measures the real sample count,
+    avoiding container-metadata bias.
+    """
+    ffmpeg = _get_ffmpeg()
+    result = subprocess.run(
+        [ffmpeg, "-i", file_path, "-f", "null", "-"],
+        capture_output=True, text=True, timeout=120,
+    )
+    for line in result.stderr.split("\n"):
+        if "time=" in line:
+            # Last "time=HH:MM:SS.XX" line has the final decoded timestamp
+            pass
+    # Parse all time= hits and take the last one
+    times = []
+    for line in result.stderr.split("\n"):
+        if "time=" in line:
+            ts = line.split("time=")[1].split()[0]
+            try:
+                hh, mm, ss = ts.split(":")
+                times.append(float(hh) * 3600 + float(mm) * 60 + float(ss))
+            except (ValueError, TypeError):
+                pass
+    return times[-1] if times else 0.0
 
 
 def find_companion_audio(video_path: str) -> str:
@@ -176,24 +204,33 @@ def analyze(video_path: str, audio_path: str = "") -> dict:
         return {"error": f"视频文件不存在: {video_path}"}
 
     has_audio = check_audio_stream(video_path)
-    video_duration = get_media_duration(video_path)
+    video_cd = get_media_duration(video_path)
+    video_add = get_decoded_duration(video_path)
 
     # Find companion audio
     companion = audio_path if (audio_path and os.path.isfile(audio_path)) else ""
     if not companion:
         companion = find_companion_audio(video_path)
 
-    # Duration comparison
-    audio_duration = 0.0
+    # Duration comparison (container vs decoded for both files)
+    audio_cd = 0.0
+    audio_add = 0.0
     duration_diff = 0.0
     duration_match = True
     if companion:
-        audio_duration = get_media_duration(companion)
-        duration_diff = abs(video_duration - audio_duration) if (video_duration > 0 and audio_duration > 0) else 0.0
-        duration_match = duration_diff < 3.0  # within 3s is acceptable
+        audio_cd = get_media_duration(companion)
+        audio_add = get_decoded_duration(companion)
+        cd_diff = abs(video_cd - audio_cd) if (video_cd > 0 and audio_cd > 0) else 0.0
+        add_diff = abs(video_add - audio_add) if (video_add > 0 and audio_add > 0) else 0.0
+        # Prefer decoded comparison when both are available; fallback to container
+        if video_add > 0 and audio_add > 0:
+            duration_diff = add_diff
+        else:
+            duration_diff = cd_diff
+        duration_match = duration_diff < 3.0
 
-    # Defect check
-    defects = check_defects(video_path)
+    # Defect check (skip C2 when no audio stream — expected for DASH)
+    defects = check_defects(video_path) if has_audio else []
 
     # Suggested action
     if has_audio:
@@ -206,8 +243,12 @@ def analyze(video_path: str, audio_path: str = "") -> dict:
     return {
         "video_path": video_path,
         "has_audio": has_audio,
-        "video_duration": round(video_duration, 2),
-        "audio_duration": round(audio_duration, 2),
+        "video_container_duration": round(video_cd, 2),
+        "video_decoded_duration": round(video_add, 2),
+        "video_internal_drift": round(abs(video_cd - video_add), 2) if (video_cd > 0 and video_add > 0) else 0.0,
+        "audio_container_duration": round(audio_cd, 2),
+        "audio_decoded_duration": round(audio_add, 2),
+        "audio_internal_drift": round(abs(audio_cd - audio_add), 2) if (audio_cd > 0 and audio_add > 0) else 0.0,
         "duration_match": duration_match,
         "duration_diff_sec": round(duration_diff, 2),
         "defects": defects,
@@ -218,6 +259,9 @@ def analyze(video_path: str, audio_path: str = "") -> dict:
 
 def mux_video_audio(video_path: str, audio_path: str, output_path: str = "") -> str:
     """Merge video and audio using ffmpeg stream-copy.
+
+    Uses aresample to align audio timeline with video container duration,
+    avoiding content truncation (no -shortest). Video stream is copied losslessly.
 
     Args:
         video_path: Video-only MP4 file.
@@ -236,6 +280,8 @@ def mux_video_audio(video_path: str, audio_path: str, output_path: str = "") -> 
         stem = os.path.splitext(video_path)[0]
         output_path = f"{stem}_muxed.mp4"
 
+    video_duration = get_media_duration(video_path)
+
     ffmpeg = _get_ffmpeg()
     cmd = [
         ffmpeg, "-y",
@@ -243,11 +289,13 @@ def mux_video_audio(video_path: str, audio_path: str, output_path: str = "") -> 
         "-i", audio_path,
         "-c:v", "copy",
         "-c:a", "aac",
-        "-shortest",
+        "-af", "aresample=async=1:first_pts=0",
         "-map", "0:v:0",
         "-map", "1:a:0",
-        output_path,
     ]
+    if video_duration > 0:
+        cmd.extend(["-t", str(video_duration)])
+    cmd.append(output_path)
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
         err = result.stderr.strip()[-400:] if result.stderr else "unknown error"
