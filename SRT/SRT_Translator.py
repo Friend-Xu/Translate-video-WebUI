@@ -757,7 +757,7 @@ class SRTTranslator:
         self.log = TranslationLog()
         # 语义核对配置
         self.semantic_check = self.config.get("semantic_check", False)
-        self.semantic_threshold = self.config.get("semantic_threshold", 0.65)
+        self.semantic_threshold = self.config.get("semantic_threshold", 0.70)
         self._verifier = None
         # 并发配置
         conc_cfg = self.config.get("concurrency", {})
@@ -1027,8 +1027,8 @@ class SRTTranslator:
                     "method": "batch",
                     "duration": round(time.time() - t0, 2),
                 })
-            # 语义核对 + 自动重新翻译（目前仅日语生效）
-            if self.semantic_check and self.source_lang == "ja":
+            # 语义核对 + 自动重新翻译（跨语言模型，支持 50+ 语言）
+            if self.semantic_check:
                 for sub in group:
                     source = originals.get(sub.index, "")
                     if source:

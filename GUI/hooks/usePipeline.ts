@@ -88,7 +88,7 @@ export function usePipeline() {
           chattts_speaker_seed: config.chatttsSpeakerSeed,
           chattts_model_source: config.chatttsModelSource,
           chattts_model_path: config.chatttsModelPath,
-          voice_clone_engine: config.voiceCloneEngine,
+          voice_clone_engine: config.enableVoiceClone ? config.voiceCloneEngine : 'none',
           voice_clone_device: config.voiceCloneDevice,
           voice_clone_concurrency: config.voiceCloneConcurrency,
         }),

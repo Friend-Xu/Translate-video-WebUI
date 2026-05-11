@@ -153,28 +153,33 @@ export function PipelinePanel({
       <CardContent>
         <Typography variant="subtitle2" gutterBottom>步骤控制</Typography>
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(4, auto)', columnGap: 1, mb: 2, alignItems: 'start' }}>
-          {/* Row 1: 4 main toggles */}
-          <FormControlLabel
-            control={<Checkbox size="small" checked={config.enableDefectCheck} onChange={e => onConfigChange('enableDefectCheck', e.target.checked)} disabled={isRunning} />}
-            label={<Typography variant="body2">启用音频缺陷检测</Typography>}
-          />
-          <FormControlLabel
-            control={<Checkbox size="small" checked={config.enableExtract} onChange={e => onConfigChange('enableExtract', e.target.checked)} disabled={isRunning} />}
-            label={<Typography variant="body2">启用字幕提取</Typography>}
-          />
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, auto)', columnGap: 1, mb: 2, alignItems: 'start' }}>
+          {/* Column 1: 字幕提取 + 音频缺陷检测（子功能） */}
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+            <FormControlLabel
+              control={<Checkbox size="small" checked={config.enableExtract} onChange={e => onConfigChange('enableExtract', e.target.checked)} disabled={isRunning} />}
+              label={<Typography variant="body2">启用字幕提取</Typography>}
+            />
+            <Box sx={{ display: 'flex', alignItems: 'center', position: 'relative', height: 32 }}>
+              <Box sx={{ position: 'relative', width: 22, height: 32, flexShrink: 0 }}>
+                <Box sx={{ position: 'absolute', left: 11, top: -4, height: 20, width: 2, bgcolor: 'primary.main' }} />
+                <Box sx={{ position: 'absolute', left: 11, top: 14, width: 10, height: 2, bgcolor: 'primary.main' }} />
+              </Box>
+              <FormControlLabel
+                control={<Checkbox size="small" checked={config.enableDefectCheck} onChange={e => onConfigChange('enableDefectCheck', e.target.checked)} disabled={isRunning || !config.enableExtract} />}
+                label={<Typography variant="body2" sx={{ color: !config.enableExtract ? 'text.disabled' : undefined }}>启用音频缺陷检测</Typography>}
+              />
+            </Box>
+          </Box>
+          {/* Column 2: 翻译 + 翻译完成后先校验（子功能） */}
           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
             <FormControlLabel
               control={<Checkbox size="small" checked={config.enableTranslate} onChange={e => onConfigChange('enableTranslate', e.target.checked)} disabled={isRunning} />}
               label={<Typography variant="body2">启用翻译</Typography>}
             />
-            {/* Row 2: tree connector + sub-option */}
             <Box sx={{ display: 'flex', alignItems: 'center', position: 'relative', height: 32 }}>
-              {/* L-shaped connector: vertical line from parent down, horizontal line to the right */}
               <Box sx={{ position: 'relative', width: 22, height: 32, flexShrink: 0 }}>
-                {/* vertical line — extends upward to connect to parent checkbox */}
                 <Box sx={{ position: 'absolute', left: 11, top: -4, height: 20, width: 2, bgcolor: 'primary.main' }} />
-                {/* horizontal line — connects from vertical to the right */}
                 <Box sx={{ position: 'absolute', left: 11, top: 14, width: 10, height: 2, bgcolor: 'primary.main' }} />
               </Box>
               <FormControlLabel
@@ -183,10 +188,23 @@ export function PipelinePanel({
               />
             </Box>
           </Box>
-          <FormControlLabel
-            control={<Checkbox size="small" checked={config.enableTTS} onChange={e => onConfigChange('enableTTS', e.target.checked)} disabled={isRunning} />}
-            label={<Typography variant="body2">启用TTS合成</Typography>}
-          />
+          {/* Column 3: TTS + 声音克隆（子功能） */}
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+            <FormControlLabel
+              control={<Checkbox size="small" checked={config.enableTTS} onChange={e => onConfigChange('enableTTS', e.target.checked)} disabled={isRunning} />}
+              label={<Typography variant="body2">启用TTS合成</Typography>}
+            />
+            <Box sx={{ display: 'flex', alignItems: 'center', position: 'relative', height: 32 }}>
+              <Box sx={{ position: 'relative', width: 22, height: 32, flexShrink: 0 }}>
+                <Box sx={{ position: 'absolute', left: 11, top: -4, height: 20, width: 2, bgcolor: 'primary.main' }} />
+                <Box sx={{ position: 'absolute', left: 11, top: 14, width: 10, height: 2, bgcolor: 'primary.main' }} />
+              </Box>
+              <FormControlLabel
+                control={<Checkbox size="small" checked={config.enableVoiceClone} onChange={e => onConfigChange('enableVoiceClone', e.target.checked)} disabled={isRunning || !config.enableTTS} />}
+                label={<Typography variant="body2" sx={{ color: !config.enableTTS ? 'text.disabled' : undefined }}>启用声音克隆</Typography>}
+              />
+            </Box>
+          </Box>
         </Box>
 
         <Divider sx={{ mb: 2 }} />
