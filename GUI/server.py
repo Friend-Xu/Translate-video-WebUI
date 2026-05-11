@@ -54,6 +54,8 @@ if os.name == "nt":
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     except Exception:
         pass
+    # 抑制 IocpProactor 创建的 DEBUG 日志刷屏（Python 3.10 已知行为）
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
 
 # ---------------------------------------------------------------------------
 # Logging setup: file + console
