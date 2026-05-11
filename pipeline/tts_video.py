@@ -150,6 +150,24 @@ class VideoSegmenter:
             err = result.stderr.strip()[-500:] if result.stderr else "unknown error"
             raise RuntimeError(f"ffmpeg amix 失败: {err}")
 
+    @staticmethod
+    def _ffmpeg_fade_wav(wav_path: str, fade_duration: float = 0.01) -> None:
+        """Apply short fade-in/out to a WAV file to prevent clicks at boundaries."""
+        import subprocess
+        from pipeline.utils import get_ffmpeg_exe
+        tmp = wav_path + ".fade.wav"
+        sec = f"{fade_duration:.4f}"
+        result = subprocess.run(
+            [get_ffmpeg_exe(), "-y", "-i", wav_path,
+             "-af", f"afade=t=in:d={sec},afade=t=out:st=999999:d={sec}",
+             "-acodec", "pcm_s16le", tmp],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            err = result.stderr.strip()[-200:] if result.stderr else "unknown error"
+            raise RuntimeError(f"ffmpeg afade 失败: {err}")
+        os.replace(tmp, wav_path)
+
     def _export_audio_to_wav(self, audio_clip, temp_dir: str = None) -> str:
         """将 AudioFileClip 导出为临时 PCM WAV，返回路径。
 
@@ -223,8 +241,17 @@ class VideoSegmenter:
         bgm_gain_db = 20.0 * math.log10(self.bgm_volume) if self.bgm_volume > 0.001 else -70.0
 
         if audio_instrumental is None:
-            # 无背景乐：直接使用 TTS 音频，跳过混音
-            slow_down_clip = slow_down_clip.with_audio(tts_audio.subclipped(0, tts_dur))
+            # 无背景乐：导出 TTS 音频为 WAV → 淡入淡出 → 加载
+            temp_tts = os.path.join(
+                tempfile.gettempdir(), f"_tv_tts_{start}_{end}.wav"
+            )
+            tts_audio.subclipped(0, tts_dur).write_audiofile(
+                temp_tts, codec="pcm_s16le", logger=None
+            )
+            self._ffmpeg_fade_wav(temp_tts)
+            mixed_audio = AudioFileClip(temp_tts)
+            slow_down_clip = slow_down_clip.with_audio(mixed_audio)
+            mixed_wav = temp_tts  # 后续统一清理
         elif self.clone_color and self.voice_cloner_callback:
             try:
                 openvoice_output_dir = os.path.join(
@@ -266,6 +293,10 @@ class VideoSegmenter:
                 output_duration=tts_dur,
                 bgm_gain_db=bgm_gain_db,
             )
+
+        # 淡入淡出: 消除段间拼接爆破音
+        if os.path.isfile(mixed_wav) and os.path.getsize(mixed_wav) > 0:
+            self._ffmpeg_fade_wav(mixed_wav)
 
         # 加载混合音频
         if os.path.isfile(mixed_wav) and os.path.getsize(mixed_wav) > 0:
