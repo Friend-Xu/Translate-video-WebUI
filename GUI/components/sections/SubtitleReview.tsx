@@ -1201,8 +1201,13 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
                             </>
                           )}
                         </Box>
+                        {entry.semanticFlagged.originalText && (
+                          <Typography variant="caption" color="error.light" sx={{ display: 'block', mt: 0.5 }}>
+                            原译: {entry.semanticFlagged.originalText}
+                          </Typography>
+                        )}
                         {entry.semanticFlagged.retriedText && (
-                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                          <Typography variant="caption" color="success.light" sx={{ display: 'block', mt: 0.5 }}>
                             重翻: {entry.semanticFlagged.retriedText}
                           </Typography>
                         )}

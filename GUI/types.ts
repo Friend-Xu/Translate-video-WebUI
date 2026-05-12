@@ -221,6 +221,7 @@ export interface SubtitleEntry {
     improvement?: number
     retriedSimilarity?: number
     retriedText?: string
+    originalText?: string
   } | null
 }
 

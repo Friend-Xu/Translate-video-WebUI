@@ -1468,6 +1468,7 @@ async def review_load(req: ReviewLoadRequest) -> dict:
                 "improvement": sf_data.get("improvement"),
                 "retriedSimilarity": sf_data.get("new_similarity"),
                 "retriedText": sf_data.get("new_translated", ""),
+                "originalText": sf_data.get("translated", ""),
             }
 
         entries.append({
