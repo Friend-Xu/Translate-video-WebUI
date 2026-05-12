@@ -68,3 +68,52 @@ def collect_glossary_for_group(
     for src, tgt in all_matched.items():
         lines.append(f"  {src} → {tgt}")
     return "\n".join(lines), all_matched
+
+
+class GlossaryInjector:
+    """术语表注入器 — 预缓存排序键、转义键，消除 per-call 80MB 临时分配。
+
+    原 scan_matches() 每次调用重建 sorted_terms + escaped_terms（218K 条目 = ~80MB）。
+    改为构造时一次性缓存，之后 scan() / collect_for_group() 直接复用，0 额外分配。
+    """
+
+    def __init__(self, glossary: Dict[str, str]):
+        self.glossary = glossary
+        self._sorted_terms: List[str] = sorted(glossary.keys(), key=len, reverse=True)
+        self._escaped_terms: Dict[str, str] = {t: re.escape(t) for t in self._sorted_terms}
+
+    def scan(self, text: str) -> Dict[str, str]:
+        """扫描单段文本，返回命中的术语 {源术语: 目标译名}。
+
+        按术语长度降序匹配（长术语优先于短术语），使用单词边界避免子串误匹配。
+        """
+        matched: Dict[str, str] = {}
+        covered_ranges: List[Tuple[int, int]] = []
+
+        for term in self._sorted_terms:
+            pattern = r"\b" + self._escaped_terms[term] + r"\b"
+            for match in re.finditer(pattern, text, re.IGNORECASE):
+                start, end = match.start(), match.end()
+                if any(cs <= start < ce or cs < end <= ce for cs, ce in covered_ranges):
+                    continue
+                matched[term] = self.glossary[term]
+                covered_ranges.append((start, end))
+
+        return matched
+
+    def collect_for_group(
+        self, texts: List[str]
+    ) -> Tuple[str, Dict[str, str]]:
+        """扫描一组字幕文本，返回 (prompt 注入字符串, 命中术语 dict)。"""
+        all_matched: Dict[str, str] = {}
+        for text in texts:
+            hits = self.scan(text)
+            all_matched.update(hits)
+
+        if not all_matched:
+            return "", {}
+
+        lines = ["术语对照（请严格使用以下译名）："]
+        for src, tgt in all_matched.items():
+            lines.append(f"  {src} → {tgt}")
+        return "\n".join(lines), all_matched
