@@ -63,6 +63,7 @@ export function usePipeline() {
           skip_tts: !config.enableTTS,
           skip_defect_check: !config.enableDefectCheck,
           skip_demucs: !config.enableDemucs,
+          skip_semantic_validation: !config.enableSemanticValidation,
           force: config.forceRetry,
           num_workers: config.numWorkers,
           tts_workers: config.ttsWorkers,

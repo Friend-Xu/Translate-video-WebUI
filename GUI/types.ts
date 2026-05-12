@@ -26,7 +26,6 @@ export interface PipelineConfig {
   apiTopP: number
   enableSemanticValidation: boolean
   enableTermReplacement: boolean
-  enableAudioExtract: boolean
   enableDemucs: boolean
   enableSubtitleOverlay: boolean
   enableVideoMerge: boolean
@@ -138,7 +137,6 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   apiTopP: 0.9,
   enableSemanticValidation: true,
   enableTermReplacement: true,
-  enableAudioExtract: true,
   enableDemucs: true,
   enableSubtitleOverlay: true,
   enableVideoMerge: true,

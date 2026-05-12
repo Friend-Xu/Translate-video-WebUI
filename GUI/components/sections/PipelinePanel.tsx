@@ -171,7 +171,7 @@ export function PipelinePanel({
               />
             </Box>
           </Box>
-          {/* Column 2: 翻译 + 翻译完成后先校验（子功能） */}
+          {/* Column 2: 翻译 + 子功能 */}
           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
             <FormControlLabel
               control={<Checkbox size="small" checked={config.enableTranslate} onChange={e => onConfigChange('enableTranslate', e.target.checked)} disabled={isRunning} />}
@@ -179,11 +179,31 @@ export function PipelinePanel({
             />
             <Box sx={{ display: 'flex', alignItems: 'center', position: 'relative', height: 32 }}>
               <Box sx={{ position: 'relative', width: 22, height: 32, flexShrink: 0 }}>
+                <Box sx={{ position: 'absolute', left: 11, top: -4, height: 36, width: 2, bgcolor: 'primary.main' }} />
+                <Box sx={{ position: 'absolute', left: 11, top: 14, width: 10, height: 2, bgcolor: 'primary.main' }} />
+              </Box>
+              <FormControlLabel
+                control={<Checkbox size="small" checked={config.enableSemanticValidation} onChange={e => onConfigChange('enableSemanticValidation', e.target.checked)} disabled={isRunning || !config.enableTranslate} />}
+                label={<Typography variant="body2" sx={{ color: !config.enableTranslate ? 'text.disabled' : undefined }}>启用语义校验</Typography>}
+              />
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', position: 'relative', height: 32 }}>
+              <Box sx={{ position: 'relative', width: 22, height: 32, flexShrink: 0 }}>
+                <Box sx={{ position: 'absolute', left: 11, top: 0, height: 32, width: 2, bgcolor: 'primary.main' }} />
+                <Box sx={{ position: 'absolute', left: 11, top: 14, width: 10, height: 2, bgcolor: 'primary.main' }} />
+              </Box>
+              <FormControlLabel
+                control={<Checkbox size="small" checked={config.enableTermReplacement} onChange={e => onConfigChange('enableTermReplacement', e.target.checked)} disabled={isRunning || !config.enableTranslate} />}
+                label={<Typography variant="body2" sx={{ color: !config.enableTranslate ? 'text.disabled' : undefined }}>启用术语表</Typography>}
+              />
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', position: 'relative', height: 32 }}>
+              <Box sx={{ position: 'relative', width: 22, height: 32, flexShrink: 0 }}>
                 <Box sx={{ position: 'absolute', left: 11, top: -4, height: 20, width: 2, bgcolor: 'primary.main' }} />
                 <Box sx={{ position: 'absolute', left: 11, top: 14, width: 10, height: 2, bgcolor: 'primary.main' }} />
               </Box>
               <FormControlLabel
-                control={<Checkbox size="small" checked={!config.enableTTS} onChange={e => onConfigChange('enableTTS', !e.target.checked)} disabled={isRunning || !config.enableTranslate} />}
+                control={<Checkbox size="small" checked={config.enableSemanticValidation} onChange={e => onConfigChange('enableSemanticValidation', e.target.checked)} disabled={isRunning || !config.enableTranslate} />}
                 label={<Typography variant="body2" sx={{ color: !config.enableTranslate ? 'text.disabled' : undefined }}>翻译完成后先校验</Typography>}
               />
             </Box>

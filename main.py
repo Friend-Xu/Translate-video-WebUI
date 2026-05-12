@@ -336,7 +336,8 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
 
 
 def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
-                   checkpoint: PipelineCheckpoint | None = None) -> str:
+                   checkpoint: PipelineCheckpoint | None = None,
+                   skip_semantic_validation: bool = False) -> str:
     """步骤 2: 翻译 + 术语替换。
 
     输出到工作目录 02_translate/machine.srt。
@@ -374,6 +375,8 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
     from SRT.SRT_Translator import SRTTranslator
 
     translator = SRTTranslator()
+    if skip_semantic_validation:
+        translator.semantic_check = False
     auto_srt, pending = translator.translate(srt_path)
 
     if pending:
@@ -715,6 +718,8 @@ def main():
                         help="wav2vec2 对齐语言（默认跟随 --lang）")
     parser.add_argument("--num-workers", type=int, default=1,
                         help="whisper 并发 worker 数 (1=串行, 2~4=并行)")
+    parser.add_argument("--skip-semantic-validation", action="store_true",
+                        help="翻译完成后跳过语义校验")
     parser.add_argument("--skip-translate", action="store_true",
                         help="跳过翻译")
     parser.add_argument("--skip-tts", action="store_true",
@@ -827,7 +832,8 @@ def main():
         srt_translated = srt_source
         if not args.skip_translate:
             srt_translated = step_translate(video, srt_source, force=args.force, backup_dir=args.backup_dir,
-                                              checkpoint=ck)
+                                              checkpoint=ck,
+                                              skip_semantic_validation=args.skip_semantic_validation)
         else:
             print("[2/3] 翻译 — 已跳过 (--skip-translate)")
             existing = guess_translated_srt(video)

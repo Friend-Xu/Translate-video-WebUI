@@ -363,10 +363,6 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   <Typography variant="caption">选择计算精度</Typography>
                 </Box>
                 <FormControlLabel
-                  control={<Checkbox checked={config.enableAudioExtract} onChange={e => onConfigChange('enableAudioExtract', e.target.checked)} />}
-                  label={<Typography variant="body2">启用音频提取 (提取音频并修复采样率)</Typography>}
-                />
-                <FormControlLabel
                   control={<Checkbox checked={config.enableDemucs} onChange={e => onConfigChange('enableDemucs', e.target.checked)} />}
                   label={<Box><Typography variant="body2">启用 Demucs 人声/背景音分离</Typography><Typography variant="caption" display="block">关闭时使用完整音轨作为背景乐，跳过 AI 分离</Typography></Box>}
                 />
@@ -459,14 +455,6 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   </Typography>
                 </Box>
 
-                <FormControlLabel
-                  control={<Checkbox checked={config.enableSemanticValidation} onChange={e => onConfigChange('enableSemanticValidation', e.target.checked)} />}
-                  label={<Box><Typography variant="body2">启用语义校验</Typography><Typography variant="caption" display="block">确保翻译一致性</Typography></Box>}
-                />
-                <FormControlLabel
-                  control={<Checkbox checked={config.enableTermReplacement} onChange={e => onConfigChange('enableTermReplacement', e.target.checked)} />}
-                  label={<Box><Typography variant="body2">启用术语表</Typography><Typography variant="caption" display="block">按需注入术语到翻译 prompt（匹配到的术语才传递）</Typography></Box>}
-                />
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
                   <Box display="flex" justifyContent="space-between">
                     <Typography variant="body2" fontWeight={500}>并发数</Typography>

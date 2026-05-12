@@ -519,6 +519,7 @@ class RunRequest(BaseModel):
     skip_tts: bool = False
     skip_defect_check: bool = False
     skip_demucs: bool = False
+    skip_semantic_validation: bool = False
     force: bool = False
     caption_font: str = ""
     caption_font_size_mode: str = "adaptive"
@@ -648,6 +649,8 @@ def _build_cli_args(req: RunRequest) -> list[str]:
         args.append("--skip-defect-check")
     if req.skip_demucs:
         args.append("--skip-demucs")
+    if req.skip_semantic_validation:
+        args.append("--skip-semantic-validation")
     if req.voice_clone_engine and req.voice_clone_engine != "none":
         args.extend(["--voice-clone-engine", req.voice_clone_engine])
     if req.voice_clone_device and req.voice_clone_device != "auto":
