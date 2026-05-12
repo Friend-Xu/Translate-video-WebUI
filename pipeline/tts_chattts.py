@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import random
 import re
+import threading
 from typing import List, Optional
 
 import numpy as np
@@ -23,6 +24,11 @@ import numpy as np
 from pipeline.logger import get_logger
 
 logger = get_logger(__name__)
+
+# 保护 ChatTTS 模型加载 + spk_emb 生成的全局锁
+# _load_model() 修改 PyTorch/CUDA 状态，_ensure_spk_emb() 修改 np.random 全局状态
+# 多线程并发调用会导致 C 级堆损坏 (STATUS_HEAP_CORRUPTION 0xC0000374)
+_LOAD_LOCK = threading.Lock()
 
 _DIGIT_MAP = {"0": "零", "1": "一", "2": "二", "3": "三", "4": "四",
               "5": "五", "6": "六", "7": "七", "8": "八", "9": "九"}
@@ -145,49 +151,72 @@ class ChatTTSEngine:
         self._spk_emb = None
 
     def _load_model(self) -> None:
-        """懒加载 ChatTTS 模型（不含 speaker 初始化）。"""
+        """懒加载 ChatTTS 模型（不含 speaker 初始化）。
+
+        使用全局锁串行化加载：多线程并发 load() 会触发 PyTorch/CUDA
+        C 扩展竞争，在 Windows 上导致堆损坏 (STATUS_HEAP_CORRUPTION)。
+        """
         if self._loaded and self._chat is not None:
             return
 
-        from pipeline.model_manager import ModelManager
+        with _LOAD_LOCK:
+            if self._loaded and self._chat is not None:
+                return
 
-        import ChatTTS
-        from ChatTTS import Chat
+            from pipeline.model_manager import ModelManager
 
-        chat = Chat()
-        load_kwargs = {"source": self._model_source, "compile": False}
+            import ChatTTS
+            from ChatTTS import Chat
 
-        if self._model_source == "custom" and self._model_path:
-            load_kwargs["custom_path"] = self._model_path
-        elif self._model_source == "local":
-            # local: 使用 models/ChatTTS/（ModelManager 管理的目录）
-            status = ModelManager.check("chattts")
-            if status.exists:
-                load_kwargs["custom_path"] = status.path
+            chat = Chat()
+            load_kwargs = {"source": self._model_source, "compile": False}
 
-        chat.load(**load_kwargs)
-        self._chat = chat
-        self._loaded = True
-        logger.info("ChatTTS 模型加载完成")
+            if self._model_source == "custom" and self._model_path:
+                load_kwargs["custom_path"] = self._model_path
+            elif self._model_source == "local":
+                status = ModelManager.check("chattts")
+                if status.exists:
+                    load_kwargs["custom_path"] = status.path
+
+            chat.load(**load_kwargs)
+            self._chat = chat
+            self._loaded = True
+            logger.info("ChatTTS 模型加载完成")
 
     def _ensure_spk_emb(self):
         """生成并缓存说话人嵌入。首次调用时执行。
 
         指定 seed → np.random.seed() 固定 → 确定性音色
         seed=None → 系统随机 seed → 随机但同视频一致的音色
+
+        使用全局锁：np.random.seed() 修改全局 numpy 随机状态，
+        多线程并发调用会导致竞态条件。
         """
         if self._spk_emb is not None:
             return
         assert self._chat is not None
 
-        if self._speaker_seed is not None:
-            np.random.seed(self._speaker_seed)
-        else:
-            # 随机生成 seed 并保存，确保前端能获取到种子值
-            self._speaker_seed = random.randint(0, 2 ** 31 - 1)
-            np.random.seed(self._speaker_seed)
+        with _LOAD_LOCK:
+            if self._spk_emb is not None:
+                return
 
-        self._spk_emb = self._chat.sample_random_speaker()
+            if self._speaker_seed is not None:
+                np.random.seed(self._speaker_seed)
+            else:
+                self._speaker_seed = random.randint(0, 2 ** 31 - 1)
+                np.random.seed(self._speaker_seed)
+
+            self._spk_emb = self._chat.sample_random_speaker()
+
+    def warmup(self) -> None:
+        """预加载模型并生成说话人嵌入（线程安全，主线程调用）。
+
+        在 TtsPipeline 线程池创建前调用，避免多线程并发
+        _load_model() 导致的 C 级堆损坏。
+        """
+        self._load_model()
+        self._ensure_spk_emb()
+        logger.info("ChatTTS 引擎预热完成")
 
     def synthesize(
         self,

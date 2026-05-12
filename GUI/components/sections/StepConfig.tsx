@@ -79,6 +79,13 @@ function ChatTTSPanel({ config, onConfigChange, chatttsWorkers }: StepConfigProp
 
   useEffect(() => { checkModel() }, [])
 
+  // 模型就绪后，如果有种子但无预览音频，自动生成（重启恢复 / 引擎切回）
+  useEffect(() => {
+    if (modelCheckDone && modelReady && config.chatttsSpeakerSeed != null && !config.chatttsPreviewAudio) {
+      doGacha()
+    }
+  }, [modelCheckDone, modelReady])
+
   const doGacha = async () => {
     setLoading(true)
     setError('')
@@ -244,11 +251,10 @@ function ChatTTSPanel({ config, onConfigChange, chatttsWorkers }: StepConfigProp
           size="small"
           fullWidth
           value={config.chatttsModelSource}
-          onChange={e => onConfigChange('chatttsModelSource', e.target.value as 'local' | 'huggingface' | 'custom')}
+          onChange={e => onConfigChange('chatttsModelSource', e.target.value as 'local' | 'custom')}
           sx={{ bgcolor: 'background.paper', mt: 0.5 }}
         >
-          <MenuItem value="local">local (models/chattts)</MenuItem>
-          <MenuItem value="huggingface">huggingface (通过 models/hf_cache/)</MenuItem>
+          <MenuItem value="local">local (models/ChatTTS/)</MenuItem>
           <MenuItem value="custom">custom (自定义路径)</MenuItem>
         </Select>
         <Typography variant="caption">模型统一存储在 models/ 目录下</Typography>
@@ -366,16 +372,6 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   control={<Checkbox checked={config.enableDemucs} onChange={e => onConfigChange('enableDemucs', e.target.checked)} />}
                   label={<Box><Typography variant="body2">启用 Demucs 人声/背景音分离</Typography><Typography variant="caption" display="block">关闭时使用完整音轨作为背景乐，跳过 AI 分离</Typography></Box>}
                 />
-
-                <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
-                  <FormControlLabel
-                    control={<Checkbox checked={config.enableAlignment} onChange={e => onConfigChange('enableAlignment', e.target.checked)} />}
-                    label={<Typography variant="body2" fontWeight={500}>启用 wav2vec2 强制对齐</Typography>}
-                  />
-                  <Typography variant="caption" sx={{ ml: 4, display: 'block', color: 'text.secondary' }}>
-                    对齐语言跟随源语言（{config.lang === 'ja' ? '日语' : config.lang === 'en' ? '英语' : config.lang === 'zh' ? '中文' : config.lang === 'auto' ? '自动检测' : config.lang}）
-                  </Typography>
-                </Box>
 
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
                   <Box display="flex" justifyContent="space-between">

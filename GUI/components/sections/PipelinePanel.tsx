@@ -154,7 +154,7 @@ export function PipelinePanel({
         <Typography variant="subtitle2" gutterBottom>步骤控制</Typography>
 
         <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(3, auto)', columnGap: 1, mb: 2, alignItems: 'start' }}>
-          {/* Column 1: 字幕提取 + 音频缺陷检测（子功能） */}
+          {/* Column 1: 字幕提取 + 子功能 */}
           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
             <FormControlLabel
               control={<Checkbox size="small" checked={config.enableExtract} onChange={e => onConfigChange('enableExtract', e.target.checked)} disabled={isRunning} />}
@@ -162,12 +162,22 @@ export function PipelinePanel({
             />
             <Box sx={{ display: 'flex', alignItems: 'center', position: 'relative', height: 32 }}>
               <Box sx={{ position: 'relative', width: 22, height: 32, flexShrink: 0 }}>
-                <Box sx={{ position: 'absolute', left: 11, top: -4, height: 20, width: 2, bgcolor: 'primary.main' }} />
+                <Box sx={{ position: 'absolute', left: 11, top: -4, height: 36, width: 2, bgcolor: 'primary.main' }} />
                 <Box sx={{ position: 'absolute', left: 11, top: 14, width: 10, height: 2, bgcolor: 'primary.main' }} />
               </Box>
               <FormControlLabel
                 control={<Checkbox size="small" checked={config.enableDefectCheck} onChange={e => onConfigChange('enableDefectCheck', e.target.checked)} disabled={isRunning || !config.enableExtract} />}
                 label={<Typography variant="body2" sx={{ color: !config.enableExtract ? 'text.disabled' : undefined }}>启用音频缺陷检测</Typography>}
+              />
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', position: 'relative', height: 32 }}>
+              <Box sx={{ position: 'relative', width: 22, height: 32, flexShrink: 0 }}>
+                <Box sx={{ position: 'absolute', left: 11, top: -4, height: 20, width: 2, bgcolor: 'primary.main' }} />
+                <Box sx={{ position: 'absolute', left: 11, top: 14, width: 10, height: 2, bgcolor: 'primary.main' }} />
+              </Box>
+              <FormControlLabel
+                control={<Checkbox size="small" checked={config.enableAlignment} onChange={e => onConfigChange('enableAlignment', e.target.checked)} disabled={isRunning || !config.enableExtract} />}
+                label={<Typography variant="body2" sx={{ color: !config.enableExtract ? 'text.disabled' : undefined }}>启用 wav2vec2 强制对齐</Typography>}
               />
             </Box>
           </Box>
@@ -203,7 +213,7 @@ export function PipelinePanel({
                 <Box sx={{ position: 'absolute', left: 11, top: 14, width: 10, height: 2, bgcolor: 'primary.main' }} />
               </Box>
               <FormControlLabel
-                control={<Checkbox size="small" checked={config.enableSemanticValidation} onChange={e => onConfigChange('enableSemanticValidation', e.target.checked)} disabled={isRunning || !config.enableTranslate} />}
+                control={<Checkbox size="small" checked={config.enableReviewAfterTranslate} onChange={e => onConfigChange('enableReviewAfterTranslate', e.target.checked)} disabled={isRunning || !config.enableTranslate} />}
                 label={<Typography variant="body2" sx={{ color: !config.enableTranslate ? 'text.disabled' : undefined }}>翻译完成后先校验</Typography>}
               />
             </Box>

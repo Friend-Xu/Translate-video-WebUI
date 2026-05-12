@@ -7,7 +7,7 @@ export interface PipelineConfig {
   computeType: 'int8' | 'float32' | 'float16' | 'int8_float16'
   engine: 'edge' | 'chattts'
   chatttsSpeakerSeed: number | null
-  chatttsModelSource: 'local' | 'huggingface' | 'custom'
+  chatttsModelSource: 'local' | 'custom'
   chatttsModelPath: string
   chatttsPreviewAudio: string
   chatttsPreviewSeed: number | null
@@ -26,6 +26,7 @@ export interface PipelineConfig {
   apiTopP: number
   enableSemanticValidation: boolean
   enableTermReplacement: boolean
+  enableReviewAfterTranslate: boolean
   enableDemucs: boolean
   enableSubtitleOverlay: boolean
   enableVideoMerge: boolean
@@ -137,6 +138,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   apiTopP: 0.9,
   enableSemanticValidation: true,
   enableTermReplacement: true,
+  enableReviewAfterTranslate: true,
   enableDemucs: true,
   enableSubtitleOverlay: true,
   enableVideoMerge: true,

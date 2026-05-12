@@ -66,7 +66,7 @@ class TTSConfig:
     每个 worker 加载独立模型副本（~2.37 GB VRAM），可并行处理多条字幕。"""
 
     chattts_model_source: str = "local"
-    """ChatTTS 模型来源: local | huggingface | custom"""
+    """ChatTTS 模型来源: local | custom"""
 
     chattts_model_path: Optional[str] = None
     """ChatTTS 自定义模型路径（source=custom 时使用）"""

@@ -114,6 +114,7 @@ class TtsPipeline:
             self._engine_pool = queue.Queue(maxsize=n_workers)
             for _ in range(n_workers):
                 engine = self._default_engine()
+                engine.warmup()  # 主线程串行预热，避免多线程并发加载模型
                 self._engine_pool.put(engine)
             logger.info(f"ChatTTS 模型池: {n_workers} 副本 (VRAM ≈ {n_workers * _CHATTS_MODEL_SIZE_GB:.1f} GB, 上限 {max_workers})")
             self.engine = None  # 池模式下无单例引擎
