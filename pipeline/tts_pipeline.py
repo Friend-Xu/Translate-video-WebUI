@@ -99,27 +99,22 @@ class TtsPipeline:
         self.caption = caption_renderer or self._default_caption()
         self.video_seg = video_segmenter or self._default_video()
 
-        # ── 引擎池 ────────────────────────────────────────
-        # EdgeTTS: 云端 API，单引擎足够（无本地资源限制）
-        # ChatTTS: 每个 worker 加载独立模型副本 → Queue 池
+        # ── 引擎 ────────────────────────────────────────────
+        # ChatTTS: PyTorch/CUDA 操作非线程安全，多副本并发推理
+        # 已知在 Windows 上导致 STATUS_HEAP_CORRUPTION (0xC0000374)。
+        # 使用单引擎 + 单工作线程消除并发 CUDA 访问。
         self._engine_pool: queue.Queue | None = None
         if tts_engine is not None:
             self.engine = tts_engine
+            n_workers = config.threading_workers
         elif config.engine_type in ("chattts", "coqui"):
-            max_workers = calc_chattts_workers()
-            if config.chattts_workers > 0:
-                n_workers = min(config.chattts_workers, max_workers)
-            else:
-                n_workers = max_workers
-            self._engine_pool = queue.Queue(maxsize=n_workers)
-            for _ in range(n_workers):
-                engine = self._default_engine()
-                engine.warmup()  # 主线程串行预热，避免多线程并发加载模型
-                self._engine_pool.put(engine)
-            logger.info(f"ChatTTS 模型池: {n_workers} 副本 (VRAM ≈ {n_workers * _CHATTS_MODEL_SIZE_GB:.1f} GB, 上限 {max_workers})")
-            self.engine = None  # 池模式下无单例引擎
+            n_workers = 1
+            self.engine = self._default_engine()
+            self.engine.warmup()
+            logger.info("ChatTTS 单引擎模式（并发安全）")
         else:
             self.engine = self._default_engine()
+            n_workers = config.threading_workers
 
         # ── 断点续传 ──────────────────────────────────────
         video_out = os.path.join(config.output_dir, "video")
@@ -143,9 +138,7 @@ class TtsPipeline:
         self._subs_list: list = []
         self._queue_list: list = []
 
-        self._executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=n_workers if self._engine_pool else config.threading_workers
-        )
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=n_workers)
 
     def _borrow_engine(self):
         """从池中借用一个引擎实例（阻塞直到有可用）。"""

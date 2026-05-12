@@ -25,10 +25,12 @@ from pipeline.logger import get_logger
 
 logger = get_logger(__name__)
 
-# 保护 ChatTTS 模型加载 + spk_emb 生成的全局锁
-# _load_model() 修改 PyTorch/CUDA 状态，_ensure_spk_emb() 修改 np.random 全局状态
-# 多线程并发调用会导致 C 级堆损坏 (STATUS_HEAP_CORRUPTION 0xC0000374)
-_LOAD_LOCK = threading.Lock()
+# ChatTTS 全局锁：保护模型加载、spk_emb 生成、以及推理调用。
+# _load_model() / _ensure_spk_emb() 修改 PyTorch/CUDA/np.random 全局状态，
+# _chat.infer() 也涉及非线程安全的 CUDA 算子。
+# 多线程并发任意 ChatTTS 操作（包括不同 Chat 实例）均可能在 Windows 上
+# 导致 C 级堆损坏 (STATUS_HEAP_CORRUPTION 0xC0000374)。
+_CHATTS_LOCK = threading.Lock()
 
 _DIGIT_MAP = {"0": "零", "1": "一", "2": "二", "3": "三", "4": "四",
               "5": "五", "6": "六", "7": "七", "8": "八", "9": "九"}
@@ -159,7 +161,7 @@ class ChatTTSEngine:
         if self._loaded and self._chat is not None:
             return
 
-        with _LOAD_LOCK:
+        with _CHATTS_LOCK:
             if self._loaded and self._chat is not None:
                 return
 
@@ -196,7 +198,7 @@ class ChatTTSEngine:
             return
         assert self._chat is not None
 
-        with _LOAD_LOCK:
+        with _CHATTS_LOCK:
             if self._spk_emb is not None:
                 return
 
@@ -209,10 +211,10 @@ class ChatTTSEngine:
             self._spk_emb = self._chat.sample_random_speaker()
 
     def warmup(self) -> None:
-        """预加载模型并生成说话人嵌入（线程安全，主线程调用）。
+        """预加载模型并生成说话人嵌入（主线程调用）。
 
-        在 TtsPipeline 线程池创建前调用，避免多线程并发
-        _load_model() 导致的 C 级堆损坏。
+        必须在 TtsPipeline 线程池创建前调用，避免多线程并发
+        ChatTTS PyTorch/CUDA 操作导致 C 级堆损坏。
         """
         self._load_model()
         self._ensure_spk_emb()
@@ -250,14 +252,15 @@ class ChatTTSEngine:
             params_infer_code = Chat.InferCodeParams()
             params_infer_code.spk_emb = self._spk_emb
 
-            wavs = self._chat.infer(
-                text,
-                skip_refine_text=False,
-                use_decoder=self._use_decoder,
-                do_text_normalization=True,
-                split_text=False,
-                params_infer_code=params_infer_code,
-            )
+            with _CHATTS_LOCK:
+                wavs = self._chat.infer(
+                    text,
+                    skip_refine_text=False,
+                    use_decoder=self._use_decoder,
+                    do_text_normalization=True,
+                    split_text=False,
+                    params_infer_code=params_infer_code,
+                )
 
             if not wavs or len(wavs) == 0:
                 raise RuntimeError("ChatTTS 推理返回空结果")

@@ -15,6 +15,7 @@ TranslationVerifier.py — 翻译语义核对模块
 import os
 import time
 import logging
+import threading
 import numpy as np
 from typing import List, Tuple, Optional
 
@@ -39,29 +40,33 @@ class CrossLingualScorer:
         self.model_name = model_name
         self.model = None
         self._load_time = 0.0
+        self._load_lock = threading.Lock()
 
     def _load(self):
-        """延迟加载模型"""
+        """延迟加载模型（双检锁，防止多线程并发加载 470MB 模型）"""
         if self.model is not None:
             return
-        if not os.environ.get("HF_ENDPOINT"):
-            os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-        local_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "models", "sentence-transformers", "paraphrase-multilingual-MiniLM-L12-v2",
-        )
-        if os.path.isdir(local_path):
-            os.environ.setdefault("HF_HUB_OFFLINE", "1")
-            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-            model_path = local_path
-        else:
-            model_path = self.model_name
-        t0 = time.time()
-        logger.info(f"加载跨语言语义模型: {model_path}")
-        from sentence_transformers import SentenceTransformer
-        self.model = SentenceTransformer(model_path)
-        self._load_time = time.time() - t0
-        logger.info(f"  加载完成，耗时: {self._load_time:.1f}s")
+        with self._load_lock:
+            if self.model is not None:
+                return
+            if not os.environ.get("HF_ENDPOINT"):
+                os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+            local_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "models", "sentence-transformers", "paraphrase-multilingual-MiniLM-L12-v2",
+            )
+            if os.path.isdir(local_path):
+                os.environ.setdefault("HF_HUB_OFFLINE", "1")
+                os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+                model_path = local_path
+            else:
+                model_path = self.model_name
+            t0 = time.time()
+            logger.info(f"加载跨语言语义模型: {model_path}")
+            from sentence_transformers import SentenceTransformer
+            self.model = SentenceTransformer(model_path)
+            self._load_time = time.time() - t0
+            logger.info(f"  加载完成，耗时: {self._load_time:.1f}s")
 
     def similarity(self, text_a: str, text_b: str) -> float:
         """计算跨语言语义相似度 (0.0 ~ 1.0)"""
