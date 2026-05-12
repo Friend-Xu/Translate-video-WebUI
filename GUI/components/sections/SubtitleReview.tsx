@@ -638,11 +638,11 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
   // ── Video ──
 
   const seekToEntry = useCallback((entry: SubtitleEntry) => {
+    setCurrentEntryIndex(entry.index)
     const video = videoRef.current
     if (!video) return
     const offset = preRollEnabled ? PRE_ROLL_MS / 1000 : 0
     video.currentTime = Math.max(0, entry.startMs / 1000 - offset)
-    setCurrentEntryIndex(entry.index)
     video.play().catch(() => {})
   }, [preRollEnabled])
 
