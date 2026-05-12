@@ -1066,78 +1066,6 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
                 </Button>
               </Card>
 
-              {/* Current entry info */}
-              {currentEntryIndex !== null && (() => {
-                const entry = entries.find(e => e.index === currentEntryIndex)
-                if (!entry) return null
-                const cps = getCPS(entry)
-                const limit = getCPSLimit('zh')
-                return (
-                  <Card sx={{ p: 1.5 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                      <Chip label={`#${entry.index}`} size="small" color="primary" variant="outlined" />
-                      <Typography variant="caption" color="text.secondary">
-                        {entry.start} → {entry.end} ({getDuration(entry).toFixed(1)}s)
-                      </Typography>
-                      <Chip label={`CPS ${cps.toFixed(1)}`} size="small"
-                        color={cps > limit ? 'error' : cps > limit * 0.85 ? 'warning' : 'default'}
-                        variant="outlined" sx={{ height: 20, fontSize: '0.65rem' }} />
-                      {entry.similarity != null && (
-                        <Chip label={`相似度 ${(entry.similarity * 100).toFixed(0)}%`} size="small"
-                          color={entry.issues.some(i => i.type === 'low_similarity') ? 'warning' : 'success'}
-                          variant="outlined" sx={{ height: 20, fontSize: '0.65rem' }} />
-                      )}
-                      <Box sx={{ flexGrow: 1 }} />
-                      <Button size="small" variant="text" onClick={() => handleStartEdit(entry)}
-                        sx={{ minWidth: 0, fontSize: '0.75rem' }}>编辑 (Enter)</Button>
-                    </Box>
-                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', mt: 0.5 }}>{entry.sourceText}</Typography>
-                    <Typography variant="body2" color="primary" sx={{ whiteSpace: 'pre-wrap', mt: 0.5 }}>
-                      {entry.translatedText || '(空)'}
-                    </Typography>
-                    {entry.semanticFlagged && (
-                      <Box sx={{ mt: 0.5, p: 1, bgcolor: 'warning.main' + '14', borderRadius: 1, border: '1px solid', borderColor: 'warning.main' + '33' }}>
-                        <Typography variant="caption" fontWeight={600} color="warning.main">
-                          语义校验详情 {entry.semanticFlagged.kept === 'second' ? '(采用重翻)' : '(保留原译)'}
-                        </Typography>
-                        <Box sx={{ display: 'flex', gap: 1, mt: 0.5, flexWrap: 'wrap' }}>
-                          <Chip label={`原译 ${(entry.semanticFlagged.similarity * 100).toFixed(0)}%`} size="small"
-                            color={entry.semanticFlagged.kept === 'first' ? 'success' : 'error'}
-                            variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
-                          {entry.semanticFlagged.retried && entry.semanticFlagged.retriedSimilarity != null && (
-                            <>
-                              <Typography variant="caption" sx={{ lineHeight: '18px' }}>→</Typography>
-                              <Chip label={`重翻 ${(entry.semanticFlagged.retriedSimilarity * 100).toFixed(0)}%`} size="small"
-                                color={entry.semanticFlagged.kept === 'second' ? 'success' : 'error'}
-                                variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
-                              {entry.semanticFlagged.improvement != null && (
-                                <Chip label={`${entry.semanticFlagged.improvement > 0 ? '+' : ''}${(entry.semanticFlagged.improvement * 100).toFixed(0)}%`} size="small"
-                                  color={entry.semanticFlagged.improvement > 0 ? 'success' : 'error'}
-                                  sx={{ height: 18, fontSize: '0.6rem' }} />
-                              )}
-                            </>
-                          )}
-                        </Box>
-                        {entry.semanticFlagged.retriedText && (
-                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                            重翻: {entry.semanticFlagged.retriedText}
-                          </Typography>
-                        )}
-                      </Box>
-                    )}
-                    {entry.issues.length > 0 && (
-                      <Box sx={{ mt: 0.5 }}>
-                        {entry.issues.map((issue, i) => (
-                          <Chip key={i} label={issue.message} size="small"
-                            color={issue.severity === 'error' ? 'error' : 'warning'}
-                            sx={{ mr: 0.5, mb: 0.5, fontSize: '0.7rem' }} />
-                        ))}
-                      </Box>
-                    )}
-                  </Card>
-                )
-              })()}
-
               {/* Shortcuts reference */}
               <Card sx={{ p: 1 }}>
                 <Typography variant="caption" color="text.secondary">
@@ -1214,6 +1142,79 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
                   </Button>
                 </Box>
               </Card>
+
+              {/* Current entry info */}
+              {currentEntryIndex !== null && (() => {
+                const entry = entries.find(e => e.index === currentEntryIndex)
+                if (!entry) return null
+                const cps = getCPS(entry)
+                const limit = getCPSLimit('zh')
+                return (
+                  <Card sx={{ p: 1.5 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                      <Chip label={`#${entry.index}`} size="small" color="primary" variant="outlined" />
+                      <Typography variant="caption" color="text.secondary">
+                        {entry.start} → {entry.end} ({getDuration(entry).toFixed(1)}s)
+                      </Typography>
+                      <Chip label={`CPS ${cps.toFixed(1)}`} size="small"
+                        color={cps > limit ? 'error' : cps > limit * 0.85 ? 'warning' : 'default'}
+                        variant="outlined" sx={{ height: 20, fontSize: '0.65rem' }} />
+                      {entry.similarity != null && (
+                        <Chip label={`相似度 ${(entry.similarity * 100).toFixed(0)}%`} size="small"
+                          color={entry.issues.some(i => i.type === 'low_similarity') ? 'warning' : 'success'}
+                          variant="outlined" sx={{ height: 20, fontSize: '0.65rem' }} />
+                      )}
+                      <Box sx={{ flexGrow: 1 }} />
+                      <Button size="small" variant="text" onClick={() => handleStartEdit(entry)}
+                        sx={{ minWidth: 0, fontSize: '0.75rem' }}>编辑 (Enter)</Button>
+                    </Box>
+                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', mt: 0.5 }}>{entry.sourceText}</Typography>
+                    <Typography variant="body2" color="primary" sx={{ whiteSpace: 'pre-wrap', mt: 0.5 }}>
+                      {entry.translatedText || '(空)'}
+                    </Typography>
+                    {entry.semanticFlagged && (
+                      <Box sx={{ mt: 0.5, p: 1, bgcolor: 'warning.main' + '14', borderRadius: 1, border: '1px solid', borderColor: 'warning.main' + '33' }}>
+                        <Typography variant="caption" fontWeight={600} color="warning.main">
+                          语义校验详情 {entry.semanticFlagged.kept === 'second' ? '(采用重翻)' : '(保留原译)'}
+                        </Typography>
+                        <Box sx={{ display: 'flex', gap: 1, mt: 0.5, flexWrap: 'wrap' }}>
+                          <Chip label={`原译 ${(entry.semanticFlagged.similarity * 100).toFixed(0)}%`} size="small"
+                            color={entry.semanticFlagged.kept === 'first' ? 'success' : 'error'}
+                            variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+                          {entry.semanticFlagged.retried && entry.semanticFlagged.retriedSimilarity != null && (
+                            <>
+                              <Typography variant="caption" sx={{ lineHeight: '18px' }}>→</Typography>
+                              <Chip label={`重翻 ${(entry.semanticFlagged.retriedSimilarity * 100).toFixed(0)}%`} size="small"
+                                color={entry.semanticFlagged.kept === 'second' ? 'success' : 'error'}
+                                variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+                              {entry.semanticFlagged.improvement != null && (
+                                <Chip label={`${entry.semanticFlagged.improvement > 0 ? '+' : ''}${(entry.semanticFlagged.improvement * 100).toFixed(0)}%`} size="small"
+                                  color={entry.semanticFlagged.improvement > 0 ? 'success' : 'error'}
+                                  sx={{ height: 18, fontSize: '0.6rem' }} />
+                              )}
+                            </>
+                          )}
+                        </Box>
+                        {entry.semanticFlagged.retriedText && (
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                            重翻: {entry.semanticFlagged.retriedText}
+                          </Typography>
+                        )}
+                      </Box>
+                    )}
+                    {entry.issues.length > 0 && (
+                      <Box sx={{ mt: 0.5 }}>
+                        {entry.issues.map((issue, i) => (
+                          <Chip key={i} label={issue.message} size="small"
+                            color={issue.severity === 'error' ? 'error' : 'warning'}
+                            sx={{ mr: 0.5, mb: 0.5, fontSize: '0.7rem' }} />
+                        ))}
+                      </Box>
+                    )}
+                  </Card>
+                )
+              })()}
+
             </Box>
           </Box>
         </Box>
