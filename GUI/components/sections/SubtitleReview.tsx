@@ -1095,6 +1095,36 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
                     <Typography variant="body2" color="primary" sx={{ whiteSpace: 'pre-wrap', mt: 0.5 }}>
                       {entry.translatedText || '(空)'}
                     </Typography>
+                    {entry.semanticFlagged && (
+                      <Box sx={{ mt: 0.5, p: 1, bgcolor: 'warning.main' + '14', borderRadius: 1, border: '1px solid', borderColor: 'warning.main' + '33' }}>
+                        <Typography variant="caption" fontWeight={600} color="warning.main">
+                          语义校验详情 {entry.semanticFlagged.kept === 'second' ? '(采用重翻)' : '(保留原译)'}
+                        </Typography>
+                        <Box sx={{ display: 'flex', gap: 1, mt: 0.5, flexWrap: 'wrap' }}>
+                          <Chip label={`原译 ${(entry.semanticFlagged.similarity * 100).toFixed(0)}%`} size="small"
+                            color={entry.semanticFlagged.kept === 'first' ? 'success' : 'error'}
+                            variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+                          {entry.semanticFlagged.retried && entry.semanticFlagged.retriedSimilarity != null && (
+                            <>
+                              <Typography variant="caption" sx={{ lineHeight: '18px' }}>→</Typography>
+                              <Chip label={`重翻 ${(entry.semanticFlagged.retriedSimilarity * 100).toFixed(0)}%`} size="small"
+                                color={entry.semanticFlagged.kept === 'second' ? 'success' : 'error'}
+                                variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+                              {entry.semanticFlagged.improvement != null && (
+                                <Chip label={`${entry.semanticFlagged.improvement > 0 ? '+' : ''}${(entry.semanticFlagged.improvement * 100).toFixed(0)}%`} size="small"
+                                  color={entry.semanticFlagged.improvement > 0 ? 'success' : 'error'}
+                                  sx={{ height: 18, fontSize: '0.6rem' }} />
+                              )}
+                            </>
+                          )}
+                        </Box>
+                        {entry.semanticFlagged.retriedText && (
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                            重翻: {entry.semanticFlagged.retriedText}
+                          </Typography>
+                        )}
+                      </Box>
+                    )}
                     {entry.issues.length > 0 && (
                       <Box sx={{ mt: 0.5 }}>
                         {entry.issues.map((issue, i) => (

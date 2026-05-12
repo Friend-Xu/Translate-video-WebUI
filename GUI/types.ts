@@ -214,6 +214,14 @@ export interface SubtitleEntry {
   reviewStatus: 'pending' | 'approved' | 'modified'
   issues: SubtitleIssue[]
   similarity?: number
+  semanticFlagged?: {
+    similarity: number
+    retried: boolean
+    kept: string
+    improvement?: number
+    retriedSimilarity?: number
+    retriedText?: string
+  } | null
 }
 
 export interface ReviewSession {

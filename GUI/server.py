@@ -1394,6 +1394,19 @@ async def review_load(req: ReviewLoadRequest) -> dict:
         except Exception:
             pass
 
+    # 读取语义校验标记文件
+    semantic_flagged_map: dict[int, dict] = {}
+    if req.workspace:
+        sf_path = os.path.join(req.workspace, "01_extract", "source-translate-semantic-flagged.json")
+        if os.path.isfile(sf_path):
+            try:
+                with open(sf_path, "r", encoding="utf-8") as f:
+                    sf_data = json.load(f)
+                for item in sf_data.get("flagged", []):
+                    semantic_flagged_map[item["index"]] = item
+            except Exception:
+                pass
+
     # 从 translate.yaml 读取语义阈值
     semantic_threshold = 0.65
     try:
@@ -1429,6 +1442,19 @@ async def review_load(req: ReviewLoadRequest) -> dict:
             })
             low_similarity_count += 1
 
+        # 语义校验详情（来自 translate-semantic-flagged.json）
+        sf_data = semantic_flagged_map.get(src.index)
+        semantic_flagged = None
+        if sf_data:
+            semantic_flagged = {
+                "similarity": sf_data.get("similarity"),
+                "retried": sf_data.get("retried", False),
+                "kept": sf_data.get("kept", "first"),
+                "improvement": sf_data.get("improvement"),
+                "retriedSimilarity": sf_data.get("new_similarity"),
+                "retriedText": sf_data.get("new_translated", ""),
+            }
+
         entries.append({
             "index": src.index,
             "start": str(src.start),
@@ -1440,6 +1466,7 @@ async def review_load(req: ReviewLoadRequest) -> dict:
             "reviewStatus": "pending",
             "issues": issues,
             "similarity": sim,
+            "semanticFlagged": semantic_flagged,
         })
 
     _run_qa_checks(entries, lang)
