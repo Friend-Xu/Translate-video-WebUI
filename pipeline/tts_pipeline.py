@@ -375,24 +375,21 @@ class TtsPipeline:
         text_eng: str,
         start: int,
         end: int,
-        current_video,
-        instrumental_audio,
+        video_path: str,
+        video_end: int,
+        instrumental_path: str | None = None,
         subs_next=None,
         caption_groups: list = None,
     ) -> Optional[dict]:
         """处理单条字幕：TTS → 时序对齐 → 视频段。
 
-        Args:
-            text_zh: 中文字幕
-            text_eng: 英文字幕
-            start: 字幕开始毫秒
-            end: 字幕结束毫秒
-            current_video: 视频剪辑片段
-            instrumental_audio: 背景音乐片段
-            subs_next: 下一条字幕 (start_ms, end_ms, text)
+        VideoFileClip/AudioFileClip 在 worker 线程内按需创建并释放，
+        避免 Phase 1 预创建 137 个 clip 全部驻留内存导致 OOM。
 
-        Returns:
-            成功返回结果字典，跳过返回 None，失败返回含 error 字段的字典
+        Args:
+            video_path: 原视频路径（在 worker 内按需创建 clip）
+            video_end: 视频段截止毫秒
+            instrumental_path: 背景音乐 WAV 路径（None 表示无背景乐）
         """
         key = (start, end)
 
@@ -400,7 +397,14 @@ class TtsPipeline:
             self.config.output_dir, "audio", f"audio_{start}_{end}.wav"
         )
 
+        current_video = None
+        instrumental_audio = None
         try:
+            from moviepy import VideoFileClip, AudioFileClip
+
+            current_video = VideoFileClip(video_path).subclipped(start / 1000, video_end / 1000)
+            if instrumental_path:
+                instrumental_audio = AudioFileClip(instrumental_path)
             os.makedirs(os.path.dirname(output_audio_path), exist_ok=True)
 
             # 1. TTS 合成（借用引擎，同一字幕段复用同一引擎处理对齐重试）
@@ -507,6 +511,19 @@ class TtsPipeline:
             error_msg = f"未预期的错误 ({type(e).__name__}): {e}"
             self._log_subtitle_error(start, end, text_zh, error_msg)
             return {"start": start, "end": end, "text_zh": text_zh, "error": error_msg, "success": False}
+
+        finally:
+            # 释放 worker 线程内创建的 clip 资源
+            if current_video is not None:
+                try:
+                    current_video.close()
+                except Exception:
+                    pass
+            if instrumental_audio is not None:
+                try:
+                    instrumental_audio.close()
+                except Exception:
+                    pass
 
     def _log_subtitle_error(self, start: int, end: int, text: str, error: str):
         """记录单条字幕的处理错误（线程安全）。"""
@@ -663,7 +680,7 @@ class TtsPipeline:
 
             pbar = tqdm(total=total, desc="🎤 TTS 转写", unit="条", ncols=80)
 
-            # Phase 1: 准备所有任务参数（主线程）
+            # Phase 1: 准备所有任务参数（主线程，仅轻量计算，不预创建 clip）
             tasks = []
             for i, (start, end, text_cn) in enumerate(subs_translated):
                 # 安全检查：跳过无效时间戳
@@ -690,22 +707,19 @@ class TtsPipeline:
                 subs_next = subs_translated[i + 1] if i + 1 < len(subs_translated) else None
                 subs_next_tuple = (subs_next[0], subs_next[1], subs_next[2]) if subs_next else None
 
-                # 裁剪视频段（独立 VideoFileClip，线程安全）
-                # 不能用 video.subclipped() → 共享 reader 多线程冲突
+                # 计算 video_end（不再预创建 VideoFileClip，由 worker 线程内按需创建）
                 video_end = subs_next[0] if subs_next else end
-                current_video = VideoFileClip(video_path).subclipped(start / 1000, video_end / 1000)
 
-                # 背景乐段同步扩展
+                # 提取背景乐 WAV 片段（仅文件提取，AudioFileClip 由 worker 内创建）
                 instr_seg_path = _extract_instrumental_segment(start, video_end)
-                instrumental_segment = AudioFileClip(instr_seg_path) if instr_seg_path else None
 
                 tasks.append({
                     "text_cn": text_cn,
                     "text_en": text_en,
                     "start": start,
                     "end": end,
-                    "current_video": current_video,
-                    "instrumental_segment": instrumental_segment,
+                    "video_end": video_end,
+                    "instr_seg_path": instr_seg_path,
                     "subs_next": subs_next_tuple,
                     "caption_groups": caption_groups[i] if caption_groups else None,
                 })
@@ -718,7 +732,9 @@ class TtsPipeline:
                         self._process_single_subtitle,
                         task["text_cn"], task["text_en"],
                         task["start"], task["end"],
-                        task["current_video"], task["instrumental_segment"],
+                        video_path,
+                        task["video_end"],
+                        instrumental_path=task["instr_seg_path"],
                         subs_next=task["subs_next"],
                         caption_groups=task["caption_groups"],
                     )
@@ -743,16 +759,7 @@ class TtsPipeline:
                         errors += 1
                         tqdm.write(f"  [ERROR] 字幕 [{start}-{end}] 线程异常: {e}")
                     finally:
-                        # 清理视频/音频资源
-                        try:
-                            task["current_video"].close()
-                        except Exception:
-                            pass
-                        if task["instrumental_segment"] is not None:
-                            try:
-                                task["instrumental_segment"].close()
-                            except Exception:
-                                pass
+                        # clip 资源已由 _process_single_subtitle 的 finally 块释放
                         pbar.update(1)
                         pbar.set_postfix(ok=processed, err=errors, skip=skipped, refresh=False)
 

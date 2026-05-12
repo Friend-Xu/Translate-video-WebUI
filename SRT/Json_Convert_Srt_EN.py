@@ -292,12 +292,17 @@ class EnglishProcessor:
         状态变量:
           word_count: 当前累积片段的总单词数
           current_text[]: 当前字幕的文本片段列表
+          current_words[]: 累积段落的单词级时间戳列表
+                          修复前仅保存 current_start/current_end，分裂累积段落时
+                          所有碎片共享同一时间戳。现在保留完整 word list，每个碎片
+                          分配正确的起始/结束时间戳。
 
         切分触发: word_count + 新段单词数 > max_chars (最大单词数)
         切分优先级: _find_split_point_words 控制
         """
         processed = []
         current_text = []
+        current_words = []  # 累积段的单词级时间戳保留
         current_start = None
         current_end = None
         word_count = 0
@@ -311,15 +316,18 @@ class EnglishProcessor:
             if current_start is None:
                 current_start = start
                 current_end = end
+                current_words = []
 
             # ── 溢出：需要切分 ──
             if word_count + seg_words > self.max_chars:
                 # 拼接当前累积 + 新段
                 full_text = " ".join(current_text) + " " + text
                 words = full_text.split()
-                accumulated_count = word_count  # 已累积单词数
                 seg_words_list = seg.get("words", [])  # 本段单词级时间戳
                 self._interpolate_word_timestamps(seg_words_list, start, end)
+
+                # 合并 word list: 累积段 + 当前段，按索引直接取时间戳
+                combined_words = list(current_words) + list(seg_words_list)
 
                 consumed = 0
                 # 迭代切分：除最后一块外全部提交
@@ -335,7 +343,7 @@ class EnglishProcessor:
                             break
 
                     if split_word_idx is not None:
-                        chunk_words = words[consumed:split_word_idx + 1]
+                        chunk_words_list = words[consumed:split_word_idx + 1]
                     else:
                         # ── 阶段 2: 无标点 → punctuate-all 补标点后找 ──
                         window_text = " ".join(words[consumed:lookahead_end])
@@ -345,30 +353,28 @@ class EnglishProcessor:
                             punct_found = False
                             for ri, rw in enumerate(rwords):
                                 if rw and (self.is_sentence_ender(rw[-1]) or self.is_comma_punctuation(rw[-1])):
-                                    chunk_words = words[consumed:consumed + ri + 1]
+                                    chunk_words_list = words[consumed:consumed + ri + 1]
                                     punct_found = True
                                     break
                             if not punct_found:
-                                chunk_words = words[consumed:lookahead_end]
+                                chunk_words_list = words[consumed:lookahead_end]
                         else:
-                            chunk_words = words[consumed:lookahead_end]
+                            chunk_words_list = words[consumed:lookahead_end]
 
-                    chunk_text = " ".join(chunk_words)
-                    chunk_size = len(chunk_words)
+                    chunk_text = " ".join(chunk_words_list)
+                    chunk_size = len(chunk_words_list)
 
-                    # 时间戳：优先单词级（策略三），其次段边界
-                    if consumed < accumulated_count:
+                    # 时间戳：按索引从 combined_words 取（不再区分累积/当前段）
+                    first_word_idx = consumed
+                    last_word_idx = consumed + chunk_size - 1
+                    if first_word_idx < len(combined_words):
+                        chunk_start = combined_words[first_word_idx].get('start', current_start)
+                    else:
                         chunk_start = current_start
+                    if last_word_idx < len(combined_words):
+                        chunk_end = combined_words[last_word_idx].get('end', current_end)
                     else:
-                        seg_idx = consumed - accumulated_count
-                        chunk_start = seg_words_list[seg_idx].get('start', start) if seg_idx < len(seg_words_list) else start
-
-                    last_idx = consumed + chunk_size - 1
-                    if last_idx < accumulated_count:
                         chunk_end = current_end
-                    else:
-                        seg_last_idx = last_idx - accumulated_count
-                        chunk_end = seg_words_list[seg_last_idx].get('end', end) if seg_last_idx < len(seg_words_list) else (current_end if current_end is not None else end)
 
                     if chunk_end - chunk_start < self.min_duration:
                         chunk_end = chunk_start + self.min_duration
@@ -382,20 +388,21 @@ class EnglishProcessor:
                     consumed += chunk_size
 
                 # 最后一块（≤ max_chars）→ 放回 current_text，保持跨段累积
-                remaining_words = words[consumed:]
-                second_part = " ".join(remaining_words) if remaining_words else ""
+                remaining_words_list = words[consumed:]
+                second_part = " ".join(remaining_words_list) if remaining_words_list else ""
 
                 current_text = [second_part] if second_part else []
                 word_count = len(second_part.split()) if second_part else 0
 
-                # 尾段时间戳：优先从剩余单词的时间戳取
-                if remaining_words and seg_words_list:
-                    ridx = consumed - accumulated_count
-                    if 0 <= ridx < len(seg_words_list):
-                        current_start = seg_words_list[ridx].get('start', start)
-                    rend_idx = (consumed + len(remaining_words) - 1) - accumulated_count
-                    if 0 <= rend_idx < len(seg_words_list):
-                        current_end = seg_words_list[rend_idx].get('end', end)
+                # 保留剩余 word list 子集，支撑后续累积的正确时间戳
+                if consumed < len(combined_words):
+                    current_words = list(combined_words[consumed:])
+                else:
+                    current_words = []
+
+                if current_words:
+                    current_start = current_words[0].get('start', start)
+                    current_end = current_words[-1].get('end', end)
                 else:
                     current_start = start
                     current_end = end
@@ -405,6 +412,10 @@ class EnglishProcessor:
                 current_text.append(text)
                 word_count += seg_words
                 current_end = end
+                # 保留当前段 word list（支撑未来溢出分裂）
+                seg_words_list = seg.get("words", [])
+                if seg_words_list:
+                    current_words.extend(seg_words_list)
 
                 # 句子结束标点 → 立即提交
                 if text and self.is_sentence_ender(text[-1]):
@@ -418,6 +429,7 @@ class EnglishProcessor:
                     })
 
                     current_text = []
+                    current_words = []
                     current_start = None
                     current_end = None
                     word_count = 0
