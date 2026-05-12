@@ -1084,7 +1084,7 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
                         variant="outlined" sx={{ height: 20, fontSize: '0.65rem' }} />
                       {entry.similarity != null && (
                         <Chip label={`相似度 ${(entry.similarity * 100).toFixed(0)}%`} size="small"
-                          color={entry.similarity < 0.65 ? 'warning' : 'success'}
+                          color={entry.issues.some(i => i.type === 'low_similarity') ? 'warning' : 'success'}
                           variant="outlined" sx={{ height: 20, fontSize: '0.65rem' }} />
                       )}
                       <Box sx={{ flexGrow: 1 }} />

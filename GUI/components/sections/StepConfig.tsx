@@ -98,6 +98,7 @@ function ChatTTSPanel({ config, onConfigChange, chatttsWorkers }: StepConfigProp
           seed: config.chatttsSpeakerSeed,
           model_source: config.chatttsModelSource,
           model_path: config.chatttsModelPath,
+          spk_emb: config.chatttsSpkEmb || '',
         }),
       })
       if (!res.ok) {
@@ -108,6 +109,9 @@ function ChatTTSPanel({ config, onConfigChange, chatttsWorkers }: StepConfigProp
       onConfigChange('chatttsPreviewAudio', data.audio_base64)
       onConfigChange('chatttsPreviewSeed', data.seed)
       onConfigChange('chatttsSpeakerSeed', data.seed)
+      if (data.spk_emb) {
+        onConfigChange('chatttsSpkEmb', data.spk_emb)
+      }
     } catch (e: any) {
       console.error('ChatTTS preview failed:', e)
       setError(e?.message || '预览失败')
@@ -191,6 +195,7 @@ function ChatTTSPanel({ config, onConfigChange, chatttsWorkers }: StepConfigProp
                   onConfigChange('chatttsSpeakerSeed', v === '' ? null : Number(v))
                   onConfigChange('chatttsPreviewAudio', '')
                   onConfigChange('chatttsPreviewSeed', null)
+                  onConfigChange('chatttsSpkEmb', '')
                   setError('')
                 }}
                 placeholder="留空随机"
@@ -215,6 +220,7 @@ function ChatTTSPanel({ config, onConfigChange, chatttsWorkers }: StepConfigProp
                   onConfigChange('chatttsSpeakerSeed', null)
                   onConfigChange('chatttsPreviewAudio', '')
                   onConfigChange('chatttsPreviewSeed', null)
+                  onConfigChange('chatttsSpkEmb', '')
                   setError('')
                 }}
                 sx={{ flexShrink: 0 }}

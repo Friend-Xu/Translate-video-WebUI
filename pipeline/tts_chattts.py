@@ -107,13 +107,17 @@ class ChatTTSEngine:
     """ChatTTS 离线 TTS 引擎。
 
     模型懒加载：第一次 synthesize 调用时加载，之后复用。
-    spk_emb 缓存：首次合成时生成说话人嵌入，后续段落复用，
-    确保同一视频所有字幕段落音色一致。
+    spk_emb 缓存：可传入预存的 spk_emb 直接复用音色，跳过随机生成。
+    未提供则根据 speaker_seed 生成，确保同一视频所有字幕段落音色一致。
 
     用法:
         engine = ChatTTSEngine(speaker_seed=42)
         engine.synthesize("你好", "output.wav")
         engine.reset_speaker(seed=None)  # 随机换音色
+
+        # 持久化复用音色
+        emb = engine.spk_emb           # 保存到配置
+        engine2 = ChatTTSEngine(spk_emb=emb)  # 下次直接用
     """
 
     def __init__(
@@ -124,6 +128,7 @@ class ChatTTSEngine:
         use_decoder: bool = True,
         sample_rate: int = 24000,
         pronunciation_entries: Optional[dict] = None,
+        spk_emb: Optional[str] = None,
     ):
         self._speaker_seed = speaker_seed
         self._model_source = model_source
@@ -134,7 +139,7 @@ class ChatTTSEngine:
 
         self._chat: Optional["ChatTTS.Chat"] = None  # type: ignore
         self._loaded = False
-        self._spk_emb = None  # 缓存的说话人嵌入
+        self._spk_emb = spk_emb  # 预存的说话人嵌入（持久化恢复）
 
     @property
     def model_loaded(self) -> bool:
@@ -143,6 +148,11 @@ class ChatTTSEngine:
     @property
     def speaker_seed(self) -> Optional[int]:
         return self._speaker_seed
+
+    @property
+    def spk_emb(self) -> Optional[str]:
+        """缓存的说话人嵌入字符串，可持久化到配置以跨会话复用音色。"""
+        return self._spk_emb
 
     def reset_speaker(self, seed: Optional[int] = None) -> None:
         """更换说话人：清除缓存嵌入并重新生成。

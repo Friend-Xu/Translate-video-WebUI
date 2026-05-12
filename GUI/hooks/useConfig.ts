@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { PipelineConfig, DEFAULT_CONFIG } from '../types'
 
-const TRANSIENT_KEYS = new Set(['videoPath', 'outputPath', 'forceRetry', 'defaultVideoDir', 'chatttsPreviewAudio', 'chatttsPreviewSeed'])
+const TRANSIENT_KEYS = new Set(['videoPath', 'outputPath', 'forceRetry', 'defaultVideoDir'])
 
 function stripTransient(config: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}

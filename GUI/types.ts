@@ -11,6 +11,7 @@ export interface PipelineConfig {
   chatttsModelPath: string
   chatttsPreviewAudio: string
   chatttsPreviewSeed: number | null
+  chatttsSpkEmb: string
   voice: string
   speechRate: number
   maxSpeed: number
@@ -123,6 +124,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   chatttsModelPath: '',
   chatttsPreviewAudio: '',
   chatttsPreviewSeed: null,
+  chatttsSpkEmb: '',
   voice: 'zh-CN-XiaoxiaoNeural',
   speechRate: 40,
   maxSpeed: 100,

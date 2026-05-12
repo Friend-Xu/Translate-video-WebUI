@@ -1381,12 +1381,26 @@ async def review_load(req: ReviewLoadRequest) -> dict:
             with open(translate_log, "r", encoding="utf-8") as f:
                 log_data = json.load(f)
             for detail in log_data.get("details", []):
+                # 新格式：per-index similarities 映射
+                sims = detail.get("similarities")
+                if sims and isinstance(sims, dict):
+                    for idx_str, score in sims.items():
+                        similarity_map[int(idx_str)] = score
+                # 旧格式兼容：单个 similarity + indices 列表
                 sim = detail.get("similarity")
                 for idx in detail.get("indices", []):
-                    if sim is not None:
+                    if sim is not None and idx not in similarity_map:
                         similarity_map[idx] = sim
         except Exception:
             pass
+
+    # 从 translate.yaml 读取语义阈值
+    semantic_threshold = 0.65
+    try:
+        trans_cfg = _load_yaml(PROJECT_ROOT / "config" / "translate.yaml").get("translate", {})
+        semantic_threshold = trans_cfg.get("semantic_threshold", 0.65)
+    except Exception:
+        pass
 
     lang = "zh"
     sample = " ".join(sub.text for sub in src_subs[:20])
@@ -1407,7 +1421,7 @@ async def review_load(req: ReviewLoadRequest) -> dict:
 
         issues: list[dict] = []
         sim = similarity_map.get(src.index)
-        if sim is not None and sim < 0.65:
+        if sim is not None and sim < semantic_threshold:
             issues.append({
                 "type": "low_similarity",
                 "message": f"语义相似度低 ({sim:.2f})",
@@ -1654,6 +1668,7 @@ class ChatTTSPreviewRequest(BaseModel):
     text: str = "这是一个ChatTTS语音合成测试案例。"
     model_source: str = "local"
     model_path: str = ""
+    spk_emb: str = ""  # 预存的说话人嵌入，非空时跳过随机生成直接复用
 
 
 # 模块级 ChatTTS 引擎缓存：多次抽卡复用同一模型实例，避免反复加载 2.37GB
@@ -1663,7 +1678,10 @@ _chattts_engine_config = None  # (model_source, model_path)
 
 @app.post("/api/tts/preview-chattts")
 async def preview_chattts_voice(req: ChatTTSPreviewRequest) -> dict:
-    """抽卡预览 ChatTTS 音色。引擎仅首次加载，后续抽卡只换 seed。"""
+    """抽卡预览 ChatTTS 音色。引擎仅首次加载，后续抽卡只换 seed。
+
+    传入 spk_emb 时直接复用已有音色，跳过随机生成，确保重启后音色一致。
+    """
     global _chattts_engine, _chattts_engine_config
 
     import base64
@@ -1672,8 +1690,19 @@ async def preview_chattts_voice(req: ChatTTSPreviewRequest) -> dict:
 
     config_key = (req.model_source, req.model_path or "")
 
-    # 首次加载或模型来源变更时重新创建引擎
-    if _chattts_engine is None or _chattts_engine_config != config_key:
+    # 有预存 spk_emb → 直接复用，跳过随机生成
+    if req.spk_emb:
+        if _chattts_engine is None:
+            _chattts_engine = ChatTTSEngine(
+                speaker_seed=req.seed,
+                model_source=req.model_source,
+                model_path=req.model_path or None,
+                spk_emb=req.spk_emb,
+            )
+            _chattts_engine_config = config_key
+        elif not _chattts_engine.spk_emb:
+            _chattts_engine.reset_speaker(req.seed)
+    elif _chattts_engine is None or _chattts_engine_config != config_key:
         _chattts_engine = ChatTTSEngine(
             speaker_seed=req.seed,
             model_source=req.model_source,
@@ -1681,7 +1710,6 @@ async def preview_chattts_voice(req: ChatTTSPreviewRequest) -> dict:
         )
         _chattts_engine_config = config_key
     else:
-        # 复用已加载的模型，只换说话人
         _chattts_engine.reset_speaker(req.seed)
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
@@ -1693,6 +1721,7 @@ async def preview_chattts_voice(req: ChatTTSPreviewRequest) -> dict:
             audio_b64 = base64.b64encode(f.read()).decode("ascii")
         return {
             "seed": _chattts_engine.speaker_seed,
+            "spk_emb": _chattts_engine.spk_emb or "",
             "audio_base64": audio_b64,
             "duration": round(duration, 2),
             "text": req.text,

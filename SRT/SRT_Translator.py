@@ -38,6 +38,7 @@ import json
 import time
 import logging
 import threading
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Tuple, Optional, Dict
 from dataclasses import dataclass, field
@@ -755,6 +756,10 @@ class SRTTranslator:
             min_interval=self.config.get("rate_limit", {}).get("min_interval_seconds", 0.5),
         )
         self.log = TranslationLog()
+        # 翻译 I/O 日志：记录每次 LLM 调用的完整输入输出
+        self._io_log: List[dict] = []
+        # 语义校验未通过记录：记录被语义模型判定低质的条目
+        self._semantic_flagged: List[dict] = []
         # 语义核对配置
         self.semantic_check = self.config.get("semantic_check", False)
         self.semantic_threshold = self.config.get("semantic_threshold", 0.70)
@@ -887,6 +892,30 @@ class SRTTranslator:
         self.log.details.sort(key=lambda d: d.get("group", 0))
 
         # 输出待人工翻译
+        # 写入翻译 I/O 日志（诊断用）
+        if self._io_log:
+            io_path = f"{base}-translate-io-log.json"
+            with open(io_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "video": self.log.video,
+                    "model": self.config.get("model", ""),
+                    "source_lang": self.source_lang,
+                    "target_lang": self.target_lang,
+                    "records": self._io_log,
+                }, f, ensure_ascii=False, indent=2)
+            logger.info(f"翻译 I/O 日志已保存: {io_path}")
+
+        # 写入语义校验未通过记录（人工对比用）
+        if self._semantic_flagged:
+            sf_path = f"{base}-translate-semantic-flagged.json"
+            with open(sf_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "video": self.log.video,
+                    "threshold": self.semantic_threshold,
+                    "flagged": self._semantic_flagged,
+                }, f, ensure_ascii=False, indent=2)
+            logger.info(f"语义校验标记已保存: {sf_path} ({len(self._semantic_flagged)} 条)")
+
         if pending_groups:
             pending_path = f"{base}-pending.txt"
             write_pending_file(pending_groups, pending_path)
@@ -1021,23 +1050,36 @@ class SRTTranslator:
         t0 = time.time()
         success = self._try_batch_translate(group, retry=False)
         if success:
-            with self._log_lock:
-                self.log.success += 1
-                self.log.details.append({
-                    "group": group_index,
-                    "status": "success",
-                    "method": "batch",
-                    "duration": round(time.time() - t0, 2),
-                })
             # 语义核对 + 自动重新翻译（跨语言模型，支持 50+ 语言）
+            similarities = {}
             if self.semantic_check:
                 for sub in group:
                     source = originals.get(sub.index, "")
                     if source:
+                        # 记录验证前的相似度
+                        verifier = self._get_verifier()
+                        if verifier:
+                            try:
+                                r = verifier.verify(source, sub.text)
+                                similarities[sub.index] = r["similarity"]
+                            except Exception:
+                                pass
                         best = self._verify_and_refine(
                             source, sub.text, sub.index, group
                         )
                         sub.text = best
+            with self._log_lock:
+                self.log.success += 1
+                detail = {
+                    "group": group_index,
+                    "status": "success",
+                    "method": "batch",
+                    "duration": round(time.time() - t0, 2),
+                    "indices": indices,
+                }
+                if similarities:
+                    detail["similarities"] = similarities
+                self.log.details.append(detail)
             return True
 
         # 第2次：重试（加粗警告）
@@ -1053,6 +1095,7 @@ class SRTTranslator:
                         "status": "retry_success",
                         "method": "batch",
                         "duration": round(time.time() - t0, 2),
+                        "indices": indices,
                     })
                 return True
 
@@ -1069,6 +1112,7 @@ class SRTTranslator:
                         "status": "single_fallback",
                         "method": "single",
                         "duration": round(time.time() - t0, 2),
+                        "indices": indices,
                     })
                 return True
 
@@ -1080,6 +1124,7 @@ class SRTTranslator:
                     "group": group_index,
                     "status": "manual",
                     "reason": "format_mismatch_after_all_attempts",
+                    "indices": indices,
                 })
             return False
 
@@ -1107,10 +1152,31 @@ class SRTTranslator:
             if gloss_str:
                 prompt = gloss_str + "\n\n" + prompt
 
+        t0 = time.time()
         try:
             self.rate_limiter.acquire()
             raw = self.api.translate(prompt, system_prompt=system)
+            elapsed = time.time() - t0
             success, mapping, reason = validate_format(group, raw, self.fmt)
+
+            # 记录翻译 I/O 日志
+            self._io_log.append({
+                "type": "batch",
+                "group_indices": [sub.index for sub in group],
+                "retry": retry,
+                "input": {
+                    "system_prompt": system,
+                    "user_prompt": prompt,
+                    "source_texts": {sub.index: sub.text for sub in group},
+                },
+                "output": {
+                    "raw": raw,
+                    "parsed": mapping if success else {},
+                    "validation_error": "" if success else reason,
+                },
+                "duration": round(elapsed, 2),
+                "timestamp": datetime.now().isoformat(),
+            })
 
             if success:
                 for sub in group:
@@ -1145,8 +1211,28 @@ class SRTTranslator:
 
             try:
                 self.rate_limiter.acquire()
+                t0 = time.time()
                 raw = self.api.translate(prompt, system_prompt=system)
+                elapsed = time.time() - t0
                 translated = raw.strip().strip('"').strip("'")
+
+                # 记录翻译 I/O 日志
+                self._io_log.append({
+                    "type": "single",
+                    "group_indices": [sub.index],
+                    "input": {
+                        "system_prompt": system,
+                        "user_prompt": prompt,
+                        "source_text": sub.text,
+                    },
+                    "output": {
+                        "raw": raw,
+                        "parsed": {sub.index: translated} if translated else {},
+                        "empty": not bool(translated),
+                    },
+                    "duration": round(elapsed, 2),
+                    "timestamp": datetime.now().isoformat(),
+                })
 
                 if translated:
                     sub.text = translated
@@ -1177,9 +1263,9 @@ class SRTTranslator:
                            sub_index: int, group: List) -> str:
         """
         语义核对 + 自动重新翻译
-        
+
         当一条翻译被标记为低质时，自动用上下文重新翻译并比较两版质量。
-        返回相似度更高的版本。
+        返回相似度更高的版本，同时记录不通过的条目供人工对比。
         """
         verifier = self._get_verifier()
         if verifier is None:
@@ -1221,11 +1307,37 @@ class SRTTranslator:
 
             # 调用 API
             self.rate_limiter.acquire()
+            t0 = time.time()
             raw = self.api.translate(prompt, system_prompt=system_msg)
+            elapsed = time.time() - t0
             new_translation = raw.strip().strip('"').strip("'")
 
+            # 记录重翻 I/O 日志
+            self._io_log.append({
+                "type": "semantic_retry",
+                "group_indices": [sub_index],
+                "input": {
+                    "system_prompt": system_msg,
+                    "user_prompt": prompt,
+                    "source_text": source_text,
+                },
+                "output": {"raw": raw, "parsed": {sub_index: new_translation} if new_translation else {}},
+                "duration": round(elapsed, 2),
+                "timestamp": datetime.now().isoformat(),
+            })
+
             if not new_translation:
-                logger.warning(f"  索引 {sub_index}: 重新翻译返回空，保留原译")
+                self._semantic_flagged.append({
+                    "index": sub_index,
+                    "source": source_text,
+                    "translated": translated_text,
+                    "similarity": flagged_sim,
+                    "retried": True,
+                    "new_translated": "",
+                    "new_similarity": None,
+                    "kept": "first",
+                    "reason": "re-translation returned empty",
+                })
                 return translated_text
 
             # 对比两版相似度
@@ -1237,12 +1349,34 @@ class SRTTranslator:
                               f"({flagged_sim:.2f}→{new_sim:.2f}, +{improvement:.2f})")
                 if new_sim < self.semantic_threshold:
                     logger.warning(f"  ⚠ 索引 {sub_index}: 两次均低于阈值，建议人工复核")
+                self._semantic_flagged.append({
+                    "index": sub_index,
+                    "source": source_text,
+                    "translated": translated_text,
+                    "similarity": flagged_sim,
+                    "retried": True,
+                    "new_translated": new_translation,
+                    "new_similarity": new_sim,
+                    "kept": "second",
+                    "improvement": round(improvement, 4),
+                })
                 return new_translation
             else:
                 logger.warning(f"  - 索引 {sub_index}: 重新翻译未改善 "
                               f"({flagged_sim:.2f}→{new_sim:.2f})，保留原译")
                 if flagged_sim < self.semantic_threshold:
                     logger.warning(f"  ⚠ 索引 {sub_index}: 两次均低于阈值，建议人工复核")
+                self._semantic_flagged.append({
+                    "index": sub_index,
+                    "source": source_text,
+                    "translated": translated_text,
+                    "similarity": flagged_sim,
+                    "retried": True,
+                    "new_translated": new_translation,
+                    "new_similarity": new_sim,
+                    "kept": "first",
+                    "improvement": round(new_sim - flagged_sim, 4),
+                })
                 return translated_text
 
         except Exception as e:

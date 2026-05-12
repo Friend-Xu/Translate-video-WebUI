@@ -100,9 +100,9 @@ class TtsPipeline:
         self.video_seg = video_segmenter or self._default_video()
 
         # ── 引擎 ────────────────────────────────────────────
-        # ChatTTS: PyTorch/CUDA 操作非线程安全，多副本并发推理
+        # ChatTTS: PyTorch/CUDA 操作非线程安全，多实例并发推理
         # 已知在 Windows 上导致 STATUS_HEAP_CORRUPTION (0xC0000374)。
-        # 使用单引擎 + 单工作线程消除并发 CUDA 访问。
+        # 使用单引擎 + _CHATTS_LOCK 串行化推理，消除并发 CUDA 访问。
         self._engine_pool: queue.Queue | None = None
         if tts_engine is not None:
             self.engine = tts_engine
