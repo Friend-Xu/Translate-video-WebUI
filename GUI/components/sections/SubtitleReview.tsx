@@ -1202,13 +1202,17 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
                           )}
                         </Box>
                         {entry.semanticFlagged.originalText && (
-                          <Typography variant="caption" color="error.light" sx={{ display: 'block', mt: 0.5 }}>
-                            原译: {entry.semanticFlagged.originalText}
+                          <Typography variant="caption"
+                            color={entry.semanticFlagged.kept === 'first' ? 'success.light' : 'error.light'}
+                            sx={{ display: 'block', mt: 0.5 }}>
+                            原译{entry.semanticFlagged.kept === 'first' ? '(已采用)' : '(已丢弃)'}: {entry.semanticFlagged.originalText}
                           </Typography>
                         )}
                         {entry.semanticFlagged.retriedText && (
-                          <Typography variant="caption" color="success.light" sx={{ display: 'block', mt: 0.5 }}>
-                            重翻: {entry.semanticFlagged.retriedText}
+                          <Typography variant="caption"
+                            color={entry.semanticFlagged.kept === 'second' ? 'success.light' : 'error.light'}
+                            sx={{ display: 'block', mt: 0.5 }}>
+                            重翻{entry.semanticFlagged.kept === 'second' ? '(已采用)' : '(已丢弃)'}: {entry.semanticFlagged.retriedText}
                           </Typography>
                         )}
                       </Box>
