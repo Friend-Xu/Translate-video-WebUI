@@ -765,19 +765,21 @@ class SRTTranslator:
         self.max_workers = conc_cfg.get("max_workers", 3)
         # 线程安全锁
         self._log_lock = threading.Lock()
+        self._verifier_lock = threading.Lock()
         # 术语替换配置
         term_cfg = self.config.get("terms_dict", {})
         self.term_enabled = term_cfg.get("enabled", False)
         self.term_dict_dir = term_cfg.get("dict_dir", "config/terms/")
         self.term_dict_name = term_cfg.get("default_dict", "minecraft.json")
-        # 加载术语表到内存（用于按需注入 prompt）
-        self._glossary: Dict[str, str] = {}
+        # 加载术语表到内存（用于按需注入 prompt），使用预缓存注入器避免 per-call 80MB 分配
+        self._glossary_injector: "GlossaryInjector | None" = None
         if self.term_enabled:
-            from SRT.glossary_injector import load_glossary, load_glossaries
+            from SRT.glossary_injector import load_glossary, load_glossaries, GlossaryInjector
             if isinstance(self.term_dict_name, list):
-                self._glossary = load_glossaries(self.term_dict_dir, self.term_dict_name)
+                raw_glossary = load_glossaries(self.term_dict_dir, self.term_dict_name)
             else:
-                self._glossary = load_glossary(self.term_dict_dir, self.term_dict_name)
+                raw_glossary = load_glossary(self.term_dict_dir, self.term_dict_name)
+            self._glossary_injector = GlossaryInjector(raw_glossary) if raw_glossary else None
         # 自定义 prompt 配置
         prompt_cfg = self.config.get("custom_prompt", {})
         self.custom_prompt_enabled = prompt_cfg.get("enabled", False)
@@ -1099,10 +1101,9 @@ class SRTTranslator:
         )
 
         # 术语表按需注入：只注入源文本中实际出现的术语
-        if self._glossary:
-            from SRT.glossary_injector import collect_glossary_for_group
+        if self._glossary_injector:
             src_texts = [sub.text for sub in group]
-            gloss_str, matched = collect_glossary_for_group(src_texts, self._glossary)
+            gloss_str, matched = self._glossary_injector.collect_for_group(src_texts)
             if gloss_str:
                 prompt = gloss_str + "\n\n" + prompt
 
@@ -1158,16 +1159,18 @@ class SRTTranslator:
         return success_count == len(group)
 
     def _get_verifier(self):
-        """延迟加载语义核验器"""
+        """延迟加载语义核验器（双检锁，防止并发重复加载 470MB 模型）"""
         if self._verifier is None and self.semantic_check:
-            try:
-                VerifierCls = _lazy_import_verifier()
-                self._verifier = VerifierCls(
-                    threshold=self.semantic_threshold,
-                )
-            except Exception as e:
-                logger.warning(f"语义核验器加载失败，已跳过: {e}")
-                self._verifier = False  # 标记失败，不再重试
+            with self._verifier_lock:
+                if self._verifier is None and self.semantic_check:
+                    try:
+                        VerifierCls = _lazy_import_verifier()
+                        self._verifier = VerifierCls(
+                            threshold=self.semantic_threshold,
+                        )
+                    except Exception as e:
+                        logger.warning(f"语义核验器加载失败，已跳过: {e}")
+                        self._verifier = False  # 标记失败，不再重试
         return self._verifier if self._verifier else None
 
     def _verify_and_refine(self, source_text: str, translated_text: str,
