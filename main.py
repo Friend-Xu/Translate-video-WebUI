@@ -405,10 +405,23 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
         return auto_srt
 
     print(f"  [OK] 翻译 + 术语替换完成: {output}")
+
+    # 将翻译日志统一移到 02_translate/ 目录
+    _translate_dir = os.path.dirname(output)
+    _src_base = os.path.splitext(srt_path)[0]
+    for _log_suffix in ["-translate-log.json", "-translate-io-log.json", "-translate-semantic-flagged.json"]:
+        _log_src = _src_base + _log_suffix
+        _log_dst = os.path.join(_translate_dir, os.path.basename(_log_src))
+        if os.path.isfile(_log_src) and _log_src != _log_dst:
+            import shutil as _shutil
+            _shutil.move(_log_src, _log_dst)
+
     _manifest_set_step(video, "translate", "completed")
     _manifest_set_files(video, {
         "machine_srt": "02_translate/machine.srt",
-        "translate_log": "02_translate/translate-log.json",
+        "translate_log": "02_translate/source-translate-log.json",
+        "translate_io_log": "02_translate/source-translate-io-log.json",
+        "translate_semantic_flagged": "02_translate/source-translate-semantic-flagged.json",
     })
     if backup_dir:
         backup_step("02_translate", [output], backup_dir)

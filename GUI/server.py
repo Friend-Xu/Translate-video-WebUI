@@ -1351,16 +1351,24 @@ async def review_load(req: ReviewLoadRequest) -> dict:
         with open(manifest_path, "r", encoding="utf-8") as f:
             manifest = json.load(f)
         ws = req.workspace
-        src = manifest.get("files", {}).get("source_srt", "01_extract/source.srt")
-        tr = manifest.get("files", {}).get("reviewed_srt") or manifest.get("files", {}).get("machine_srt", "02_translate/machine.srt")
-        log = manifest.get("files", {}).get("translate_log", "02_translate/translate-log.json")
+        files = manifest.get("files", {})
+        src = files.get("source_srt", "01_extract/source.srt")
+        tr = files.get("reviewed_srt") or files.get("machine_srt", "02_translate/machine.srt")
+        log = files.get("translate_log", "02_translate/source-translate-log.json")
+        sf_rel = files.get("translate_semantic_flagged", "02_translate/source-translate-semantic-flagged.json")
         source = Path(os.path.join(ws, src))
         translated = Path(os.path.join(ws, tr))
         translate_log = os.path.join(ws, log)
+        semantic_flagged_json = os.path.join(ws, sf_rel)
     else:
         source = Path(req.source_srt)
         translated = Path(req.translated_srt)
         translate_log = req.translate_log
+        # 手动加载时从源字幕路径推导 workspace
+        semantic_flagged_json = os.path.join(
+            os.path.dirname(os.path.dirname(str(source))),
+            "02_translate", "source-translate-semantic-flagged.json",
+        )
 
     if not source.is_file():
         raise HTTPException(status_code=400, detail=f"原文字幕不存在: {source}")
@@ -1376,36 +1384,43 @@ async def review_load(req: ReviewLoadRequest) -> dict:
 
     # Read translate-log.json for semantic check scores
     similarity_map: dict[int, float] = {}
-    if translate_log and os.path.isfile(translate_log):
-        try:
-            with open(translate_log, "r", encoding="utf-8") as f:
-                log_data = json.load(f)
-            for detail in log_data.get("details", []):
-                # 新格式：per-index similarities 映射
-                sims = detail.get("similarities")
-                if sims and isinstance(sims, dict):
-                    for idx_str, score in sims.items():
-                        similarity_map[int(idx_str)] = score
-                # 旧格式兼容：单个 similarity + indices 列表
-                sim = detail.get("similarity")
-                for idx in detail.get("indices", []):
-                    if sim is not None and idx not in similarity_map:
-                        similarity_map[idx] = sim
-        except Exception:
-            pass
+    if translate_log:
+        if not os.path.isfile(translate_log):
+            # 兼容旧目录：文件可能在 01_extract/ 而非 02_translate/
+            translate_log = os.path.join(os.path.dirname(translate_log), "..", "01_extract",
+                                         os.path.basename(translate_log))
+        if os.path.isfile(translate_log):
+            try:
+                with open(translate_log, "r", encoding="utf-8") as f:
+                    log_data = json.load(f)
+                for detail in log_data.get("details", []):
+                    # 新格式：per-index similarities 映射
+                    sims = detail.get("similarities")
+                    if sims and isinstance(sims, dict):
+                        for idx_str, score in sims.items():
+                            similarity_map[int(idx_str)] = score
+                    # 旧格式兼容：单个 similarity + indices 列表
+                    sim = detail.get("similarity")
+                    for idx in detail.get("indices", []):
+                        if sim is not None and idx not in similarity_map:
+                            similarity_map[idx] = sim
+            except Exception:
+                pass
 
     # 读取语义校验标记文件
     semantic_flagged_map: dict[int, dict] = {}
-    if req.workspace:
-        sf_path = os.path.join(req.workspace, "01_extract", "source-translate-semantic-flagged.json")
-        if os.path.isfile(sf_path):
-            try:
-                with open(sf_path, "r", encoding="utf-8") as f:
-                    sf_data = json.load(f)
-                for item in sf_data.get("flagged", []):
-                    semantic_flagged_map[item["index"]] = item
-            except Exception:
-                pass
+    if not os.path.isfile(semantic_flagged_json):
+        # 兼容旧目录：文件可能在 01_extract/ 而非 02_translate/
+        semantic_flagged_json = os.path.join(os.path.dirname(semantic_flagged_json), "..", "01_extract",
+                                             os.path.basename(semantic_flagged_json))
+    if os.path.isfile(semantic_flagged_json):
+        try:
+            with open(semantic_flagged_json, "r", encoding="utf-8") as f:
+                sf_data = json.load(f)
+            for item in sf_data.get("flagged", []):
+                semantic_flagged_map[item["index"]] = item
+        except Exception:
+            pass
 
     # 从 translate.yaml 读取语义阈值
     semantic_threshold = 0.65
