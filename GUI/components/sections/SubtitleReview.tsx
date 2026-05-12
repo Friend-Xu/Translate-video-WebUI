@@ -244,7 +244,7 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
   const [sessionMeta, setSessionMeta] = useState<{
     videoPath: string; sourceSrtPath: string; translatedSrtPath: string
   } | null>(null)
-  const [filterMode, setFilterMode] = useState<'all' | 'pending' | 'flagged'>('all')
+  const [filterMode, setFilterMode] = useState<'all' | 'pending' | 'flagged' | 'semantic'>('all')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -293,6 +293,7 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
     let result = entries
     if (filterMode === 'pending') result = result.filter(e => e.reviewStatus === 'pending')
     else if (filterMode === 'flagged') result = result.filter(e => e.issues.length > 0)
+    else if (filterMode === 'semantic') result = result.filter(e => e.semanticFlagged != null)
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase()
       result = result.filter(e =>
@@ -304,6 +305,7 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
   }, [entries, filterMode, searchQuery])
 
   const approvedCount = useMemo(() => entries.filter(e => e.reviewStatus === 'approved').length, [entries])
+  const semanticCount = useMemo(() => entries.filter(e => e.semanticFlagged != null).length, [entries])
   const modifiedCount = useMemo(() => entries.filter(e => e.reviewStatus === 'modified').length, [entries])
   const flaggedCount = useMemo(() => entries.filter(e => e.issues.length > 0).length, [entries])
   const totalCount = entries.length
@@ -732,18 +734,18 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
   }, [currentEntryIndex])
 
   const goToNextFlagged = useCallback(() => {
-    const flagged = entriesRef.current.filter(e => e.issues.length > 0)
-    if (flagged.length === 0) return
-    const currentIdx = flagged.findIndex(e => e.index === currentEntryIndex)
-    const next = flagged[(currentIdx + 1) % flagged.length]
+    const targets = entriesRef.current.filter(e => e.issues.length > 0 || e.semanticFlagged != null)
+    if (targets.length === 0) return
+    const currentIdx = targets.findIndex(e => e.index === currentEntryIndex)
+    const next = targets[(currentIdx + 1) % targets.length]
     seekToEntry(next)
   }, [currentEntryIndex, seekToEntry])
 
   const goToPrevFlagged = useCallback(() => {
-    const flagged = entriesRef.current.filter(e => e.issues.length > 0)
-    if (flagged.length === 0) return
-    const currentIdx = flagged.findIndex(e => e.index === currentEntryIndex)
-    const prev = flagged[(currentIdx - 1 + flagged.length) % flagged.length]
+    const targets = entriesRef.current.filter(e => e.issues.length > 0 || e.semanticFlagged != null)
+    if (targets.length === 0) return
+    const currentIdx = targets.findIndex(e => e.index === currentEntryIndex)
+    const prev = targets[(currentIdx - 1 + targets.length) % targets.length]
     seekToEntry(prev)
   }, [currentEntryIndex, seekToEntry])
 
@@ -814,6 +816,7 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
       if (e.key === '1') { e.preventDefault(); setFilterMode('all'); return }
       if (e.key === '2') { e.preventDefault(); setFilterMode('pending'); return }
       if (e.key === '3') { e.preventDefault(); setFilterMode('flagged'); return }
+      if (e.key === '4') { e.preventDefault(); setFilterMode('semantic'); return }
 
       if (e.key === 'Escape') {
         setSelectedIndices(new Set())
@@ -911,13 +914,16 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
           <ToggleButtonGroup size="small" value={filterMode} exclusive
             onChange={(_, v) => v && setFilterMode(v)}>
             <ToggleButton value="all" sx={{ px: 1.5 }}>
-              全部<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>1</Box>
+              全部<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>{entries.length}</Box>
             </ToggleButton>
             <ToggleButton value="pending" sx={{ px: 1.5 }}>
-              待审<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>2</Box>
+              待审<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>{entries.filter(e => e.reviewStatus === 'pending').length}</Box>
             </ToggleButton>
             <ToggleButton value="flagged" sx={{ px: 1.5 }}>
-              标记<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>3</Box>
+              标记<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>{flaggedCount}</Box>
+            </ToggleButton>
+            <ToggleButton value="semantic" sx={{ px: 1.5 }}>
+              语义<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>{semanticCount}</Box>
             </ToggleButton>
           </ToggleButtonGroup>
 
@@ -1070,7 +1076,7 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
               <Card sx={{ p: 1 }}>
                 <Typography variant="caption" color="text.secondary">
                   <strong>快捷键:</strong> Space 播放 | JKL 快退/暂停/快进 | ↑↓ 导航 | Enter 编辑 | Tab 播放当前段 |
-                  Ctrl+Z/Y 撤销/重做 | Ctrl+S 保存 | Ctrl+F 搜索 | [ ] 跳转标记 | 1/2/3 筛选 | Esc 取消
+                  Ctrl+Z/Y 撤销/重做 | Ctrl+S 保存 | Ctrl+F 搜索 | [ ] 跳转标记 | 1/2/3/4 筛选 | Esc 取消
                 </Typography>
               </Card>
 
