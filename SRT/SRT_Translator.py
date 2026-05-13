@@ -31,6 +31,7 @@ Json_Convert_Srt.py 中使用 fugashi + ipadic 进行日语分词，
 依赖: pip install fugashi ipadic
 """
 
+import hashlib
 import os
 import sys
 import re
@@ -144,6 +145,10 @@ def load_config(config_path: Optional[str] = None) -> dict:
     if api_key:
         cfg["translate"]["api_key"] = api_key
     return cfg.get("translate", cfg)
+
+
+def _prompt_hash(system: str, user: str) -> str:
+    return hashlib.sha256((system + "\x00" + user).encode("utf-8")).hexdigest()[:12]
 
 
 # ── 速率限制器 ────────────────────────────────────
@@ -758,8 +763,9 @@ class SRTTranslator:
         self.log = TranslationLog()
         # 翻译 I/O 日志：记录每次 LLM 调用的完整输入输出
         self._io_log: List[dict] = []
-        # 语义校验未通过记录：记录被语义模型判定低质的条目
         self._semantic_flagged: List[dict] = []
+        self._prompt_templates: dict = {}
+        self._prompt_version: int = 1
         # 语义核对配置
         self.semantic_check = self.config.get("semantic_check", False)
         self.semantic_threshold = self.config.get("semantic_threshold", 0.70)
@@ -915,6 +921,9 @@ class SRTTranslator:
                     "flagged": self._semantic_flagged,
                 }, f, ensure_ascii=False, indent=2)
             logger.info(f"语义校验标记已保存: {sf_path} ({len(self._semantic_flagged)} 条)")
+
+        # 写入 Prompt 清单
+        self._write_prompt_manifest(base)
 
         if pending_groups:
             pending_path = f"{base}-pending.txt"
@@ -1164,6 +1173,8 @@ class SRTTranslator:
                 "type": "batch",
                 "group_indices": [sub.index for sub in group],
                 "retry": retry,
+                "prompt_step": "retry" if retry else "batch",
+                "prompt_hash": _prompt_hash(system, prompt),
                 "input": {
                     "system_prompt": system,
                     "user_prompt": prompt,
@@ -1220,6 +1231,8 @@ class SRTTranslator:
                 self._io_log.append({
                     "type": "single",
                     "group_indices": [sub.index],
+                    "prompt_step": "single",
+                    "prompt_hash": _prompt_hash(system, prompt),
                     "input": {
                         "system_prompt": system,
                         "user_prompt": prompt,
@@ -1299,11 +1312,17 @@ class SRTTranslator:
                 "注意：这不是逐句工作，要结合上下文准确理解含义。"
                 "输出只有译文本身，不要添加任何说明。"
             )
-            prompt_parts = list(context_parts)  # 加入上下文
-            prompt_parts.append(f"")
+            prompt_parts = list(context_parts)
+            prompt_parts.append("")
             prompt_parts.append(f"原文：{source_text}")
-            prompt_parts.append(f"译文：")
+            prompt_parts.append("译文：")
             prompt = "\n".join(prompt_parts)
+
+            # 术语表注入（与批量翻译保持一致）
+            if self._glossary_injector:
+                gloss_str, matched = self._glossary_injector.collect_for_group([source_text])
+                if gloss_str:
+                    prompt = gloss_str + "\n\n" + prompt
 
             # 调用 API
             self.rate_limiter.acquire()
@@ -1316,6 +1335,8 @@ class SRTTranslator:
             self._io_log.append({
                 "type": "semantic_retry",
                 "group_indices": [sub_index],
+                "prompt_step": "semantic_retry",
+                "prompt_hash": _prompt_hash(system_msg, prompt),
                 "input": {
                     "system_prompt": system_msg,
                     "user_prompt": prompt,
@@ -1382,6 +1403,28 @@ class SRTTranslator:
         except Exception as e:
             logger.warning(f"  语义核对异常 (索引 {sub_index}): {e}")
             return translated_text
+
+    def _write_prompt_manifest(self, base: str):
+        """Write prompt_manifest.json for prompt chain visualization."""
+        manifest = {
+            "version": self._prompt_version,
+            "generated_at": datetime.now().isoformat(),
+            "source_lang": self.source_lang,
+            "target_lang": self.target_lang,
+            "templates": {},
+            "config_snapshot": {
+                "semantic_threshold": self.semantic_threshold,
+                "temperature": self.config.get("temperature", 0.1),
+                "model": self.config.get("model", ""),
+                "custom_prompt_enabled": self.custom_prompt_enabled,
+            },
+        }
+        for h, tpl in self._prompt_templates.items():
+            manifest["templates"][h] = tpl
+        manifest_path = f"{base}-prompt-manifest.json"
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2)
+        logger.info(f"Prompt 清单已保存: {manifest_path}")
 
     def _get_context_subs(self, sub_index: int, group: List) -> Tuple[List, List]:
         """获取某条字幕的上下文（前后各最多 2 条）"""

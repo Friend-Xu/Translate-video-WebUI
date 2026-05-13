@@ -203,6 +203,24 @@ export interface SubtitleIssue {
   severity: 'warning' | 'error'
 }
 
+export interface DimensionScore {
+  value: number
+  threshold: number
+  flagged: boolean
+  confidence: number
+  label: string
+  detail?: string
+}
+
+export interface QualityScores {
+  semantic: DimensionScore
+  naturalness: DimensionScore
+  structural: DimensionScore
+  mqm?: DimensionScore
+}
+
+export type QualityTier = 'pass' | 'glance' | 'review' | 'critical'
+
 export interface SubtitleEntry {
   index: number
   start: string
@@ -223,6 +241,9 @@ export interface SubtitleEntry {
     retriedText?: string
     originalText?: string
   } | null
+  quality?: QualityScores
+  tier?: QualityTier
+  tierReason?: string
 }
 
 export interface ReviewSession {
@@ -230,7 +251,20 @@ export interface ReviewSession {
   sourceSrtPath: string
   translatedSrtPath: string
   entries: SubtitleEntry[]
-  filterMode: 'all' | 'pending' | 'flagged'
+  filterMode: 'all' | 'pending' | 'flagged' | 'semantic' | 'review_critical'
+  qualitySummary?: {
+    total: number
+    tier_pass: number
+    tier_glance: number
+    tier_review: number
+    tier_critical: number
+    naturalness_baseline_ppl: number
+  }
+  promptManifest?: {
+    version: number
+    templates: Record<string, { template: string; is_custom: boolean }>
+    config_snapshot: Record<string, unknown>
+  }
 }
 
 export interface SystemInfo {

@@ -217,6 +217,19 @@ const SubtitleRowMemo = React.memo(function SubtitleRow({
       <TableCell align="center"
         onClick={e => { e.stopPropagation(); onToggleStatus(entry) }}
         sx={{ cursor: 'pointer' }}>
+        {entry.tier === 'critical' ? (
+          <Tooltip title={`质量: ${entry.tierReason || '严重'}`}>
+            <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: 'error.main', display: 'inline-block' }} />
+          </Tooltip>
+        ) : entry.tier === 'review' ? (
+          <Tooltip title={`质量: ${entry.tierReason || '需审核'}`}>
+            <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: 'warning.main', display: 'inline-block' }} />
+          </Tooltip>
+        ) : entry.tier === 'glance' ? (
+          <Tooltip title={`质量: ${entry.tierReason || '扫一眼'}`}>
+            <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: 'text.secondary', display: 'inline-block' }} />
+          </Tooltip>
+        ) : null}
         {entry.issues.some(i => i.severity === 'error') ? (
           <Tooltip title={entry.issues.map(i => i.message).join('\n')}>
             <ErrorIcon color="error" fontSize="small" />
@@ -244,7 +257,7 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
   const [sessionMeta, setSessionMeta] = useState<{
     videoPath: string; sourceSrtPath: string; translatedSrtPath: string
   } | null>(null)
-  const [filterMode, setFilterMode] = useState<'all' | 'pending' | 'flagged' | 'semantic'>('all')
+  const [filterMode, setFilterMode] = useState<'all' | 'pending' | 'flagged' | 'semantic' | 'review_critical'>('all')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -294,6 +307,7 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
     if (filterMode === 'pending') result = result.filter(e => e.reviewStatus === 'pending')
     else if (filterMode === 'flagged') result = result.filter(e => e.issues.length > 0)
     else if (filterMode === 'semantic') result = result.filter(e => e.semanticFlagged != null)
+    else if (filterMode === 'review_critical') result = result.filter(e => e.tier === 'review' || e.tier === 'critical')
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase()
       result = result.filter(e =>
@@ -308,6 +322,7 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
   const semanticCount = useMemo(() => entries.filter(e => e.semanticFlagged != null).length, [entries])
   const modifiedCount = useMemo(() => entries.filter(e => e.reviewStatus === 'modified').length, [entries])
   const flaggedCount = useMemo(() => entries.filter(e => e.issues.length > 0).length, [entries])
+  const reviewCritCount = useMemo(() => entries.filter(e => e.tier === 'review' || e.tier === 'critical').length, [entries])
   const totalCount = entries.length
 
   const showToast = useCallback((msg: string) => {
@@ -925,6 +940,11 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
             <ToggleButton value="semantic" sx={{ px: 1.5 }}>
               语义<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>{semanticCount}</Box>
             </ToggleButton>
+            {reviewCritCount > 0 && (
+              <ToggleButton value="review_critical" sx={{ px: 1.5 }} color="error">
+                质量<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>{reviewCritCount}</Box>
+              </ToggleButton>
+            )}
           </ToggleButtonGroup>
 
           <Button size="small" variant="outlined" onClick={handleApproveAll} disabled={!sessionMeta}>全部批准</Button>

@@ -1356,19 +1356,25 @@ async def review_load(req: ReviewLoadRequest) -> dict:
         tr = files.get("reviewed_srt") or files.get("machine_srt", "02_translate/machine.srt")
         log = files.get("translate_log", "02_translate/source-translate-log.json")
         sf_rel = files.get("translate_semantic_flagged", "02_translate/source-translate-semantic-flagged.json")
+        qr_rel = files.get("quality_report", "02_translate/quality_report.json")
+        pm_rel = files.get("prompt_manifest", "02_translate/source-prompt-manifest.json")
         source = Path(os.path.join(ws, src))
         translated = Path(os.path.join(ws, tr))
         translate_log = os.path.join(ws, log)
         semantic_flagged_json = os.path.join(ws, sf_rel)
+        quality_report_json = os.path.join(ws, qr_rel)
+        prompt_manifest_json = os.path.join(ws, pm_rel)
     else:
         source = Path(req.source_srt)
         translated = Path(req.translated_srt)
         translate_log = req.translate_log
         # 手动加载时从源字幕路径推导 workspace
+        _ws_derived = os.path.dirname(os.path.dirname(str(source)))
         semantic_flagged_json = os.path.join(
-            os.path.dirname(os.path.dirname(str(source))),
-            "02_translate", "source-translate-semantic-flagged.json",
+            _ws_derived, "02_translate", "source-translate-semantic-flagged.json",
         )
+        quality_report_json = os.path.join(_ws_derived, "02_translate", "quality_report.json")
+        prompt_manifest_json = os.path.join(_ws_derived, "02_translate", "source-prompt-manifest.json")
 
     if not source.is_file():
         raise HTTPException(status_code=400, detail=f"原文字幕不存在: {source}")
@@ -1422,6 +1428,28 @@ async def review_load(req: ReviewLoadRequest) -> dict:
         except Exception:
             pass
 
+    # 读取质量报告 (quality_report.json，可选)
+    quality_map: dict[int, dict] = {}
+    quality_summary = None
+    if os.path.isfile(quality_report_json):
+        try:
+            with open(quality_report_json, "r", encoding="utf-8") as f:
+                qr = json.load(f)
+            for entry in qr.get("entries", []):
+                quality_map[entry["index"]] = entry
+            quality_summary = qr.get("summary")
+        except Exception:
+            pass
+
+    # 读取 Prompt 清单 (prompt_manifest.json，可选)
+    prompt_manifest = None
+    if os.path.isfile(prompt_manifest_json):
+        try:
+            with open(prompt_manifest_json, "r", encoding="utf-8") as f:
+                prompt_manifest = json.load(f)
+        except Exception:
+            pass
+
     # 从 translate.yaml 读取语义阈值
     semantic_threshold = 0.65
     try:
@@ -1471,6 +1499,9 @@ async def review_load(req: ReviewLoadRequest) -> dict:
                 "originalText": sf_data.get("translated", ""),
             }
 
+        # 质量评分 (from quality_report.json)
+        quality = quality_map.get(src.index)
+
         entries.append({
             "index": src.index,
             "start": str(src.start),
@@ -1483,6 +1514,9 @@ async def review_load(req: ReviewLoadRequest) -> dict:
             "issues": issues,
             "similarity": sim,
             "semanticFlagged": semantic_flagged,
+            "quality": quality.get("scores") if quality else None,
+            "tier": quality.get("tier") if quality else None,
+            "tierReason": quality.get("tierReason") if quality else None,
         })
 
     _run_qa_checks(entries, lang)
@@ -1497,13 +1531,17 @@ async def review_load(req: ReviewLoadRequest) -> dict:
     if not video_path:
         video_path = _detect_video_in_dir(str(source))
 
-    return {
+    response = {
         "videoPath": video_path,
         "sourceSrtPath": str(source),
         "translatedSrtPath": str(translated),
         "entries": entries,
         "stats": {"total": len(entries), "lowSimilarity": low_similarity_count},
+        "qualitySummary": quality_summary,
     }
+    if prompt_manifest:
+        response["promptManifest"] = prompt_manifest
+    return response
 
 
 class ReviewSaveRequest(BaseModel):

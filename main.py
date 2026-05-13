@@ -409,7 +409,8 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
     # 将翻译日志统一移到 02_translate/ 目录
     _translate_dir = os.path.dirname(output)
     _src_base = os.path.splitext(srt_path)[0]
-    for _log_suffix in ["-translate-log.json", "-translate-io-log.json", "-translate-semantic-flagged.json"]:
+    for _log_suffix in ["-translate-log.json", "-translate-io-log.json",
+                        "-translate-semantic-flagged.json", "-prompt-manifest.json"]:
         _log_src = _src_base + _log_suffix
         _log_dst = os.path.join(_translate_dir, os.path.basename(_log_src))
         if os.path.isfile(_log_src) and _log_src != _log_dst:
@@ -422,10 +423,45 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
         "translate_log": "02_translate/source-translate-log.json",
         "translate_io_log": "02_translate/source-translate-io-log.json",
         "translate_semantic_flagged": "02_translate/source-translate-semantic-flagged.json",
+        "prompt_manifest": "02_translate/source-prompt-manifest.json",
     })
     if backup_dir:
         backup_step("02_translate", [output], backup_dir)
+
+    # 多维翻译质量评估 (step 2.5)
+    try:
+        from pipeline.quality_assessor import QualityAssessor
+        ws = workspace_paths(video)
+        if ws:
+            qa_cfg = _load_translate_cfg_field("quality_assessment", {})
+            if qa_cfg.get("enabled", True):
+                assessor = QualityAssessor(
+                    ws_dir=ws["workspace"],
+                    semantic_threshold=qa_cfg.get("dimensions", {}).get("semantic", {}).get("threshold", 0.70),
+                    naturalness_threshold=qa_cfg.get("dimensions", {}).get("naturalness", {}).get("threshold", 3.0),
+                    naturalness_enabled=qa_cfg.get("dimensions", {}).get("naturalness", {}).get("enabled", True),
+                    source_lang=lang,
+                )
+                assessor.run()
+                _manifest_set_files(video, {
+                    "quality_report": "02_translate/quality_report.json",
+                })
+    except Exception as e:
+        print(f"  [WARN] QualityAssessor 运行失败 (non-fatal): {e}")
+
     return output
+
+
+def _load_translate_cfg_field(field: str, default=None):
+    """从 translate.yaml 读取单个配置字段"""
+    import yaml as _yaml
+    cfg_path = os.path.join(os.path.dirname(__file__), "config", "translate.yaml")
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = _yaml.safe_load(f)
+        return cfg.get("translate", {}).get(field, default)
+    except Exception:
+        return default
 
 
 def step_tts(
