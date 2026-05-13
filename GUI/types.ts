@@ -26,6 +26,7 @@ export interface PipelineConfig {
   apiTemperature: number
   apiTopP: number
   enableSemanticValidation: boolean
+  enableNaturalnessCheck: boolean
   enableTermReplacement: boolean
   enableReviewAfterTranslate: boolean
   enableDemucs: boolean
@@ -141,6 +142,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   apiTemperature: 0.1,
   apiTopP: 0.9,
   enableSemanticValidation: true,
+  enableNaturalnessCheck: true,
   enableTermReplacement: true,
   enableReviewAfterTranslate: true,
   enableDemucs: true,

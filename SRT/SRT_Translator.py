@@ -1096,8 +1096,9 @@ class SRTTranslator:
                         # ≥ 0.70 → 候选进入 Phase 2 (PPL 自然度检查)
                         ppl_candidates.append((sub, source))
 
-                # Phase 2: PPL 自然度检查 (MiniLM ≥ 0.70 的条目)
-                if ppl_candidates:
+                # Phase 2: PPL 自然度检查 (MiniLM ≥ 0.70 + naturalness_check + 中/英文)
+                _ppl_langs = ("zh-CN", "en")
+                if ppl_candidates and self.naturalness_check and self.target_lang in _ppl_langs:
                     ppl_eval = self._get_ppl_evaluator()
                     if ppl_eval:
                         texts = [s.text for s, _ in ppl_candidates]

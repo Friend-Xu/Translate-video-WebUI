@@ -337,7 +337,8 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
 
 def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
                    checkpoint: PipelineCheckpoint | None = None,
-                   skip_semantic_validation: bool = False) -> str:
+                   skip_semantic_validation: bool = False,
+                   skip_naturalness_check: bool = False) -> str:
     """步骤 2: 翻译 + 术语替换。
 
     输出到工作目录 02_translate/machine.srt。
@@ -377,6 +378,8 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
     translator = SRTTranslator()
     if skip_semantic_validation:
         translator.semantic_check = False
+    if skip_naturalness_check:
+        translator.naturalness_check = False
     auto_srt, pending = translator.translate(srt_path)
 
     if pending:
@@ -440,7 +443,7 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
                     semantic_threshold=qa_cfg.get("dimensions", {}).get("semantic", {}).get("threshold", 0.70),
                     naturalness_threshold=qa_cfg.get("dimensions", {}).get("naturalness", {}).get("threshold", 3.0),
                     naturalness_enabled=qa_cfg.get("dimensions", {}).get("naturalness", {}).get("enabled", True),
-                    source_lang=lang,
+                    source_lang=_load_translate_cfg_field("source_lang", "auto"),
                 )
                 assessor.run()
                 _manifest_set_files(video, {
@@ -769,6 +772,8 @@ def main():
                         help="whisper 并发 worker 数 (1=串行, 2~4=并行)")
     parser.add_argument("--skip-semantic-validation", action="store_true",
                         help="翻译完成后跳过语义校验")
+    parser.add_argument("--skip-naturalness-check", action="store_true",
+                        help="翻译完成后跳过自然度检查 (PPL)")
     parser.add_argument("--skip-translate", action="store_true",
                         help="跳过翻译")
     parser.add_argument("--skip-tts", action="store_true",
@@ -882,7 +887,8 @@ def main():
         if not args.skip_translate:
             srt_translated = step_translate(video, srt_source, force=args.force, backup_dir=args.backup_dir,
                                               checkpoint=ck,
-                                              skip_semantic_validation=args.skip_semantic_validation)
+                                              skip_semantic_validation=args.skip_semantic_validation,
+                                              skip_naturalness_check=args.skip_naturalness_check)
         else:
             print("[2/3] 翻译 — 已跳过 (--skip-translate)")
             existing = guess_translated_srt(video)

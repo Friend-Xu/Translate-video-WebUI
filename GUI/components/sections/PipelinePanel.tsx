@@ -194,7 +194,25 @@ export function PipelinePanel({
               </Box>
               <FormControlLabel
                 control={<Checkbox size="small" checked={config.enableSemanticValidation} onChange={e => onConfigChange('enableSemanticValidation', e.target.checked)} disabled={isRunning || !config.enableTranslate} />}
-                label={<Typography variant="body2" sx={{ color: !config.enableTranslate ? 'text.disabled' : undefined }}>启用语义校验</Typography>}
+                label={<Typography variant="body2" sx={{ color: !config.enableTranslate ? 'text.disabled' : undefined }}>启用语义校验 (MiniLM)</Typography>}
+              />
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', position: 'relative', height: 32 }}>
+              <Box sx={{ position: 'relative', width: 22, height: 32, flexShrink: 0 }}>
+                <Box sx={{ position: 'absolute', left: 11, top: 0, height: 32, width: 2, bgcolor: 'primary.main' }} />
+                <Box sx={{ position: 'absolute', left: 11, top: 14, width: 10, height: 2, bgcolor: 'primary.main' }} />
+              </Box>
+              <FormControlLabel
+                control={<Checkbox size="small"
+                  checked={config.enableNaturalnessCheck && (config.targetLang === 'zh-CN' || config.targetLang === 'en')}
+                  onChange={e => onConfigChange('enableNaturalnessCheck', e.target.checked)}
+                  disabled={isRunning || !config.enableTranslate || !config.enableSemanticValidation || (config.targetLang !== 'zh-CN' && config.targetLang !== 'en')}
+                />}
+                label={
+                  <Typography variant="body2" sx={{ color: (!config.enableTranslate || !config.enableSemanticValidation || (config.targetLang !== 'zh-CN' && config.targetLang !== 'en')) ? 'text.disabled' : undefined }}>
+                    启用自然度检查 (PPL) {config.targetLang !== 'zh-CN' && config.targetLang !== 'en' ? '— 仅中文/英文有效' : ''}
+                  </Typography>
+                }
               />
             </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', position: 'relative', height: 32 }}>

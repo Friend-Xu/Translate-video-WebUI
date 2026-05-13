@@ -64,6 +64,7 @@ export function usePipeline() {
           skip_defect_check: !config.enableDefectCheck,
           skip_demucs: !config.enableDemucs,
           skip_semantic_validation: !config.enableSemanticValidation,
+          skip_naturalness_check: !config.enableNaturalnessCheck,
           force: config.forceRetry,
           num_workers: config.numWorkers,
           tts_workers: config.ttsWorkers,

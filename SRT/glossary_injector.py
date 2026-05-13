@@ -11,6 +11,17 @@ import re
 from typing import Dict, List, Tuple
 
 
+def _is_valid_glossary_term(term: str) -> bool:
+    stripped = term.strip()
+    if not stripped:
+        return False
+    if "§" in stripped:
+        return False
+    if " " not in stripped:
+        return False
+    return True
+
+
 def load_glossary(dict_dir: str, dict_name: str) -> Dict[str, str]:
     """加载术语表 JSON 文件，返回 {源术语: 目标译名} 映射。"""
     path = os.path.join(dict_dir, dict_name)
@@ -18,7 +29,9 @@ def load_glossary(dict_dir: str, dict_name: str) -> Dict[str, str]:
         return {}
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    return data.get("terms", {})
+    raw = data.get("terms", {})
+    filtered = {k: v for k, v in raw.items() if _is_valid_glossary_term(k)}
+    return filtered
 
 
 def load_glossaries(dict_dir: str, dict_names: list[str]) -> Dict[str, str]:

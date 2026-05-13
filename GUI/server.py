@@ -356,6 +356,7 @@ def _load_yaml_defaults() -> dict:
         "apiKey": trans.get("api_key", ""),
         "apiType": trans.get("api_type", "deepseek"),
         "enableSemanticValidation": trans.get("semantic_check", True),
+        "enableNaturalnessCheck": trans.get("quality_assessment", {}).get("dimensions", {}).get("naturalness", {}).get("enabled", True),
         "enableTermReplacement": trans.get("terms_dict", {}).get("enabled", True),
         "activeGlossary": _parse_glossary_list(trans.get("terms_dict", {}).get("default_dict", ["minecraft.json"])),
         "targetLang": trans.get("target_lang", "zh-CN"),
@@ -486,6 +487,12 @@ def _sync_translate_config(target_lang: str = "") -> None:
     trans["translate"]["multi_agent"]["enabled"] = pipeline_cfg.get("multiAgentEnabled", False)
     trans["translate"]["multi_agent"]["mqm_threshold"] = pipeline_cfg.get("mqmThreshold", 0.6)
 
+    # Sync naturalness check
+    if pipeline_cfg.get("enableNaturalnessCheck") is not None:
+        if "quality_assessment" not in trans["translate"]:
+            trans["translate"]["quality_assessment"] = {"dimensions": {"naturalness": {}}}
+        trans["translate"]["quality_assessment"]["dimensions"]["naturalness"]["enabled"] = pipeline_cfg["enableNaturalnessCheck"]
+
     # Sync terms_dict
     if "terms_dict" not in trans["translate"]:
         trans["translate"]["terms_dict"] = {}
@@ -525,6 +532,7 @@ class RunRequest(BaseModel):
     skip_defect_check: bool = False
     skip_demucs: bool = False
     skip_semantic_validation: bool = False
+    skip_naturalness_check: bool = False
     force: bool = False
     caption_font: str = ""
     caption_font_size_mode: str = "adaptive"
@@ -656,6 +664,8 @@ def _build_cli_args(req: RunRequest) -> list[str]:
         args.append("--skip-demucs")
     if req.skip_semantic_validation:
         args.append("--skip-semantic-validation")
+    if req.skip_naturalness_check:
+        args.append("--skip-naturalness-check")
     if req.voice_clone_engine and req.voice_clone_engine != "none":
         args.extend(["--voice-clone-engine", req.voice_clone_engine])
     if req.voice_clone_device and req.voice_clone_device != "auto":
