@@ -770,6 +770,12 @@ class SRTTranslator:
         self.semantic_check = self.config.get("semantic_check", False)
         self.semantic_threshold = self.config.get("semantic_threshold", 0.70)
         self._verifier = None
+        # 自然度 (PPL) 检查配置
+        self.naturalness_check = self.config.get("quality_assessment", {}).get(
+            "dimensions", {}).get("naturalness", {}).get("enabled", True)
+        self.naturalness_threshold = self.config.get("quality_assessment", {}).get(
+            "dimensions", {}).get("naturalness", {}).get("threshold", 3.0)
+        self._ppl_evaluator = None
         # 并发配置
         conc_cfg = self.config.get("concurrency", {})
         self.concurrent_enabled = conc_cfg.get("enabled", False)
@@ -797,6 +803,8 @@ class SRTTranslator:
         self.custom_system_prompt = prompt_cfg.get("system_prompt", "")
         self.custom_batch_prompt = prompt_cfg.get("batch_prompt", "")
         self.custom_single_prompt = prompt_cfg.get("single_prompt", "")
+        self.custom_semantic_retry_prompt = prompt_cfg.get("semantic_retry_prompt", "")
+        self.custom_naturalness_retry_prompt = prompt_cfg.get("naturalness_retry_prompt", "")
         # 目标语言：优先从配置读取，否则从 source_lang 推断
         target_cfg = self.config.get("target_lang", "")
         if target_cfg and target_cfg != "auto":
@@ -1059,24 +1067,64 @@ class SRTTranslator:
         t0 = time.time()
         success = self._try_batch_translate(group, retry=False)
         if success:
-            # 语义核对 + 自动重新翻译（跨语言模型，支持 50+ 语言）
+            # 语义核对 + 自动重新翻译 + 自然度检查
             similarities = {}
             if self.semantic_check:
+                # Phase 1: MiniLM 语义验证
+                ppl_candidates = []  # (sub, source) pairs that pass semantic check
                 for sub in group:
                     source = originals.get(sub.index, "")
-                    if source:
-                        # 记录验证前的相似度
-                        verifier = self._get_verifier()
-                        if verifier:
-                            try:
-                                r = verifier.verify(source, sub.text)
-                                similarities[sub.index] = r["similarity"]
-                            except Exception:
-                                pass
-                        best = self._verify_and_refine(
-                            source, sub.text, sub.index, group
-                        )
+                    if not source:
+                        continue
+                    verifier = self._get_verifier()
+                    sim = None
+                    if verifier:
+                        try:
+                            r = verifier.verify(source, sub.text)
+                            sim = r["similarity"]
+                            similarities[sub.index] = sim
+                        except Exception:
+                            pass
+
+                    if sim is not None and sim < self.semantic_threshold:
+                        # < 0.70 → RefineContrast 语义重翻
+                        best = self._verify_and_refine(source, sub.text, sub.index, group)
                         sub.text = best
+                    elif sim is None:
+                        pass  # verifier unavailable, skip
+                    else:
+                        # ≥ 0.70 → 候选进入 Phase 2 (PPL 自然度检查)
+                        ppl_candidates.append((sub, source))
+
+                # Phase 2: PPL 自然度检查 (MiniLM ≥ 0.70 的条目)
+                if ppl_candidates:
+                    ppl_eval = self._get_ppl_evaluator()
+                    if ppl_eval:
+                        texts = [s.text for s, _ in ppl_candidates]
+                        try:
+                            ppls = ppl_eval.batch_perplexity(texts)
+                            # 自适应基线：取 PPL 最低的 30% 的中位数
+                            valid_ppls = [p for p in ppls if p > 0]
+                            if len(valid_ppls) >= 5:
+                                valid_ppls.sort()
+                                baseline = valid_ppls[len(valid_ppls) // 3]
+                            else:
+                                baseline = min(valid_ppls) if valid_ppls else 60.0
+
+                            for i, (sub, source) in enumerate(ppl_candidates):
+                                ppl = ppls[i]
+                                if ppl > 0 and baseline > 0 and (ppl / baseline) > self.naturalness_threshold:
+                                    logger.warning(
+                                        f"  ⚠ 索引 {sub.index} PPL 偏高 ({ppl:.0f}/{baseline:.0f}="
+                                        f"{ppl/baseline:.1f}x)，自然度重翻..."
+                                    )
+                                    refined = self._refine_naturalness(
+                                        source, sub.text, sub.index, group
+                                    )
+                                    if refined and refined != sub.text:
+                                        sub.text = refined
+                        except Exception as e:
+                            logger.warning(f"PPL 批量推理失败: {e}")
             with self._log_lock:
                 self.log.success += 1
                 detail = {
@@ -1272,13 +1320,29 @@ class SRTTranslator:
                         self._verifier = False  # 标记失败，不再重试
         return self._verifier if self._verifier else None
 
+    def _get_ppl_evaluator(self):
+        """延迟加载 PPL 评估器"""
+        if self._ppl_evaluator is None and self.naturalness_check:
+            try:
+                from pipeline.ppl_evaluator import PPLEvaluator
+                self._ppl_evaluator = PPLEvaluator()
+            except Exception as e:
+                logger.warning(f"PPLEvaluator 加载失败: {e}")
+                self._ppl_evaluator = False
+        return self._ppl_evaluator if self._ppl_evaluator else None
+
+    def _get_lang_labels(self) -> tuple:
+        """返回 (源语言标签, 目标语言标签) 用于 prompt 构建"""
+        src = _LANG_LABELS.get(self.source_lang, self.source_lang)
+        tgt = _LANG_LABELS.get(self.target_lang, self.target_lang)
+        return src, tgt
+
     def _verify_and_refine(self, source_text: str, translated_text: str,
                            sub_index: int, group: List) -> str:
         """
-        语义核对 + 自动重新翻译
+        语义核对 + RefineContrast 重新翻译 (MiniLM < threshold)
 
-        当一条翻译被标记为低质时，自动用上下文重新翻译并比较两版质量。
-        返回相似度更高的版本，同时记录不通过的条目供人工对比。
+        用旧译文做对比锚点，引导 LLM 生成不同的表达。
         """
         verifier = self._get_verifier()
         if verifier is None:
@@ -1287,15 +1351,15 @@ class SRTTranslator:
         try:
             result = verifier.verify(source_text, translated_text)
             if not result["flagged"]:
-                return translated_text  # 质量不错，不折腾
+                return translated_text
 
             flagged_sim = result["similarity"]
-            logger.warning(f"  ⚠ 索引 {sub_index} 疑似低质 (相似度: {flagged_sim:.2f})，尝试重新翻译...")
+            logger.warning(f"  ⚠ 索引 {sub_index} 语义相似度低 ({flagged_sim:.2f})，RefineContrast 重翻...")
 
-            # 获取上下文相邻字幕
+            src_label, tgt_label = self._get_lang_labels()
+
+            # 获取上下文
             prev_subs, next_subs = self._get_context_subs(sub_index, group)
-
-            # 构建上下文，作为 system 信息注入
             context_parts = []
             if prev_subs:
                 ctx = " ".join(s.text.strip() for s in prev_subs if s.text.strip())
@@ -1306,25 +1370,29 @@ class SRTTranslator:
                 if ctx:
                     context_parts.append(f"下文：{ctx}")
 
-            # 构建重翻 prompt（单条，含原文和上下文）
-            system_msg = (
-                "你是专业翻译。请将以下日语字幕翻译成简体中文。"
-                "注意：这不是逐句工作，要结合上下文准确理解含义。"
-                "输出只有译文本身，不要添加任何说明。"
-            )
+            # RefineContrast: 使用自定义 prompt 或系统默认
+            if self.custom_prompt_enabled and self.custom_semantic_retry_prompt:
+                system_msg = self.custom_semantic_retry_prompt.replace(
+                    "{source_lang}", src_label
+                ).replace("{target_lang}", tgt_label)
+            else:
+                system_msg = (
+                    f"你是专业翻译。请将以下{src_label}字幕翻译成{tgt_label}。"
+                    "请结合上下文理解原文含义，用自然流畅的语言准确表达。"
+                    "输出只有译文本身，不要添加任何说明。"
+                )
             prompt_parts = list(context_parts)
             prompt_parts.append("")
             prompt_parts.append(f"原文：{source_text}")
-            prompt_parts.append("译文：")
+            prompt_parts.append(f"旧译文（请避免）：{translated_text}")
+            prompt_parts.append(f"新译文：")
             prompt = "\n".join(prompt_parts)
 
-            # 术语表注入（与批量翻译保持一致）
             if self._glossary_injector:
                 gloss_str, matched = self._glossary_injector.collect_for_group([source_text])
                 if gloss_str:
                     prompt = gloss_str + "\n\n" + prompt
 
-            # 调用 API
             self.rate_limiter.acquire()
             t0 = time.time()
             raw = self.api.translate(prompt, system_prompt=system_msg)
@@ -1425,6 +1493,88 @@ class SRTTranslator:
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(manifest, f, ensure_ascii=False, indent=2)
         logger.info(f"Prompt 清单已保存: {manifest_path}")
+
+    def _refine_naturalness(self, source_text: str, translated_text: str,
+                            sub_index: int, group: List) -> Optional[str]:
+        """
+        自然度重翻 (PPL 偏高 → RefineContrast 自然中文)
+
+        与语义重翻不同：这里侧重用更地道的目标语言重新表达，而非纠正语义错误。
+        """
+        src_label, tgt_label = self._get_lang_labels()
+        prev_subs, next_subs = self._get_context_subs(sub_index, group)
+
+        context_parts = []
+        if prev_subs:
+            ctx = " ".join(s.text.strip() for s in prev_subs if s.text.strip())
+            if ctx:
+                context_parts.append(f"前文：{ctx}")
+        if next_subs:
+            ctx = " ".join(s.text.strip() for s in next_subs if s.text.strip())
+            if ctx:
+                context_parts.append(f"下文：{ctx}")
+
+        if self.custom_prompt_enabled and self.custom_naturalness_retry_prompt:
+            system_msg = self.custom_naturalness_retry_prompt.replace(
+                "{source_lang}", src_label
+            ).replace("{target_lang}", tgt_label)
+        else:
+            system_msg = (
+                f"你是专业翻译。请将以下{src_label}字幕重新翻译成更自然、更地道的{tgt_label}。"
+                "用日常交流的口吻表达，避免翻译腔（直译/逐字翻译）。"
+                "输出只有译文本身，不要添加任何说明。"
+            )
+        prompt_parts = list(context_parts)
+        prompt_parts.append("")
+        prompt_parts.append(f"原文：{source_text}")
+        prompt_parts.append(f"旧译文（请避免）：{translated_text}")
+        prompt_parts.append(f"新译文：")
+        prompt = "\n".join(prompt_parts)
+
+        if self._glossary_injector:
+            gloss_str, matched = self._glossary_injector.collect_for_group([source_text])
+            if gloss_str:
+                prompt = gloss_str + "\n\n" + prompt
+
+        try:
+            self.rate_limiter.acquire()
+            t0 = time.time()
+            raw = self.api.translate(prompt, system_prompt=system_msg)
+            elapsed = time.time() - t0
+            refined = raw.strip().strip('"').strip("'")
+
+            self._io_log.append({
+                "type": "naturalness_retry",
+                "group_indices": [sub_index],
+                "prompt_step": "naturalness_retry",
+                "prompt_hash": _prompt_hash(system_msg, prompt),
+                "input": {
+                    "system_prompt": system_msg,
+                    "user_prompt": prompt,
+                    "source_text": source_text,
+                },
+                "output": {"raw": raw, "parsed": {sub_index: refined} if refined else {}},
+                "duration": round(elapsed, 2),
+                "timestamp": datetime.now().isoformat(),
+            })
+
+            if refined:
+                self._semantic_flagged.append({
+                    "index": sub_index,
+                    "source": source_text,
+                    "translated": translated_text,
+                    "similarity": None,
+                    "retried": True,
+                    "new_translated": refined,
+                    "new_similarity": None,
+                    "kept": "second",
+                    "improvement": 0,
+                    "reason": "naturalness_retry",
+                })
+            return refined
+        except Exception as e:
+            logger.warning(f"  自然度重翻异常 (索引 {sub_index}): {e}")
+            return None
 
     def _get_context_subs(self, sub_index: int, group: List) -> Tuple[List, List]:
         """获取某条字幕的上下文（前后各最多 2 条）"""

@@ -459,7 +459,7 @@ def _sync_translate_config(target_lang: str = "") -> None:
     if pipeline_cfg.get("maxTokens"):
         trans["translate"]["max_tokens"] = pipeline_cfg["maxTokens"]
 
-    # Sync custom prompt
+    # Sync custom prompt (multi-level)
     if pipeline_cfg.get("customPromptEnabled"):
         if "custom_prompt" not in trans["translate"]:
             trans["translate"]["custom_prompt"] = {}
@@ -467,8 +467,13 @@ def _sync_translate_config(target_lang: str = "") -> None:
         trans["translate"]["custom_prompt"]["system_prompt"] = pipeline_cfg.get("customSystemPrompt", "")
         trans["translate"]["custom_prompt"]["batch_prompt"] = pipeline_cfg.get("customBatchPrompt", "")
         trans["translate"]["custom_prompt"]["single_prompt"] = pipeline_cfg.get("customSinglePrompt", "")
+        trans["translate"]["custom_prompt"]["semantic_retry_prompt"] = pipeline_cfg.get("customSemanticRetryPrompt", "")
+        trans["translate"]["custom_prompt"]["naturalness_retry_prompt"] = pipeline_cfg.get("customNaturalnessRetryPrompt", "")
     else:
-        trans["translate"]["custom_prompt"] = {"enabled": False, "system_prompt": "", "batch_prompt": "", "single_prompt": ""}
+        trans["translate"]["custom_prompt"] = {
+            "enabled": False, "system_prompt": "", "batch_prompt": "",
+            "single_prompt": "", "semantic_retry_prompt": "", "naturalness_retry_prompt": "",
+        }
 
     # Sync split-brain
     if "split_brain" not in trans["translate"]:

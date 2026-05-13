@@ -77,6 +77,8 @@ export interface PipelineConfig {
   customSystemPrompt: string
   customBatchPrompt: string
   customSinglePrompt: string
+  customSemanticRetryPrompt: string
+  customNaturalnessRetryPrompt: string
   splitBrainEnabled: boolean
   activeGlossary: string[]
   multiAgentEnabled: boolean
@@ -190,6 +192,8 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   customSystemPrompt: '',
   customBatchPrompt: '',
   customSinglePrompt: '',
+  customSemanticRetryPrompt: '',
+  customNaturalnessRetryPrompt: '',
   splitBrainEnabled: false,
   activeGlossary: ['minecraft.json'],
   multiAgentEnabled: false,

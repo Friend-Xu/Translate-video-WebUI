@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   Button, TextField, Box, Typography, Chip, Paper, Divider,
-  FormControlLabel, Switch,
+  FormControlLabel, Switch, Tabs, Tab,
 } from '@mui/material'
 import type { PipelineConfig } from '../types'
 
@@ -35,15 +35,30 @@ interface Props {
   onConfigChange: <K extends keyof PipelineConfig>(key: K, value: PipelineConfig[K]) => void
 }
 
+const PROMPT_LEVELS = [
+  { key: 'system' as const, label: '批量翻译', desc: '首发翻译，所有字幕的第一版翻译', trigger: '每条字幕的首次翻译', icon: '📦' },
+  { key: 'semantic_retry' as const, label: '语义重翻', desc: 'MiniLM 相似度 < 0.70 时触发', trigger: '语义相似度低于阈值', icon: '🔍' },
+  { key: 'naturalness_retry' as const, label: '自然度重翻', desc: 'PPL 自然度比率 > 3.0 时触发', trigger: '翻译腔（直译/不自然）', icon: '💬' },
+] as const
+
 export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Props) {
   const [localEnabled, setLocalEnabled] = useState(config.customPromptEnabled)
-  const [localPrompt, setLocalPrompt] = useState(config.customSystemPrompt)
+  const [tabIndex, setTabIndex] = useState(0)
   const textFieldRef = useRef<HTMLTextAreaElement>(null)
+
+  const configKeyMap: Record<string, keyof PipelineConfig> = {
+    'system': 'customSystemPrompt',
+    'semantic_retry': 'customSemanticRetryPrompt',
+    'naturalness_retry': 'customNaturalnessRetryPrompt',
+  }
+  const level = PROMPT_LEVELS[tabIndex]
+  const configKey = configKeyMap[level.key]
+  const localPrompt = config[configKey] as string
 
   useEffect(() => {
     if (open) {
       setLocalEnabled(config.customPromptEnabled)
-      setLocalPrompt(config.customSystemPrompt)
+      setTabIndex(0)
     }
   }, [open])
 
@@ -55,18 +70,16 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Pr
 
   const handleSave = () => {
     onConfigChange('customPromptEnabled', localEnabled)
-    onConfigChange('customSystemPrompt', localPrompt)
     onClose()
-  }
-
-  const handleReset = () => {
-    setLocalPrompt('')
   }
 
   const handleClose = () => {
     setLocalEnabled(config.customPromptEnabled)
-    setLocalPrompt(config.customSystemPrompt)
     onClose()
+  }
+
+  const updatePrompt = (text: string) => {
+    onConfigChange(configKey, text)
   }
 
   const insertVariable = (key: string) => {
@@ -75,7 +88,7 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Pr
     const start = el.selectionStart ?? localPrompt.length
     const end = el.selectionEnd ?? localPrompt.length
     const newText = localPrompt.slice(0, start) + key + localPrompt.slice(end)
-    setLocalPrompt(newText)
+    updatePrompt(newText)
     setTimeout(() => {
       el.focus()
       el.setSelectionRange(start + key.length, start + key.length)
@@ -83,7 +96,7 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Pr
   }
 
   const applyPreset = (prompt: string) => {
-    setLocalPrompt(prompt)
+    updatePrompt(prompt)
   }
 
   const systemSuffix =
@@ -95,47 +108,53 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Pr
 
   const preview = localEnabled && localPrompt
     ? localPrompt + systemSuffix
-    : localEnabled
-      ? systemSuffix.trim()
-      : '使用系统默认提示词'
+    : '使用系统默认提示词'
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
-      <DialogTitle sx={{ pb: 0 }}>自定义 System Prompt</DialogTitle>
+      <DialogTitle sx={{ pb: 0 }}>自定义 System Prompt（多级翻译）</DialogTitle>
 
       <DialogContent sx={{ pt: 2 }}>
-        <Paper variant="outlined" sx={{ p: 1.5, mb: 2, bgcolor: 'action.hover', display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Typography variant="body2" fontWeight={500} color="text.secondary" sx={{ flexShrink: 0 }}>
-            翻译方向:
-          </Typography>
-          <Chip label={LANG_LABELS[config.lang] || config.lang || '自动'} size="small" color="primary" variant="outlined" />
-          <Typography variant="body2" color="text.secondary">→</Typography>
-          <Chip label={LANG_LABELS[config.targetLang] || config.targetLang} size="small" color="primary" variant="outlined" />
-          <Typography variant="caption" color="text.disabled" sx={{ ml: 'auto' }}>
-            通过主面板源语言/目标语言设置
-          </Typography>
-        </Paper>
-
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
           <FormControlLabel
             control={<Switch checked={localEnabled} onChange={e => setLocalEnabled(e.target.checked)} />}
             label={<Typography variant="body2" fontWeight={500}>启用自定义提示词</Typography>}
           />
-          <Button size="small" color="warning" variant="outlined" onClick={handleReset}>
-            恢复默认
+          <Button size="small" color="warning" variant="outlined"
+            onClick={() => updatePrompt('')}>
+            恢复当前级别默认
           </Button>
         </Box>
 
         {!localEnabled && (
           <Paper variant="outlined" sx={{ p: 2, mb: 2, bgcolor: 'grey.50' }}>
             <Typography variant="body2" color="text.secondary">
-              当前使用系统默认提示词。开启后可自定义翻译风格指令，格式要求由系统自动追加。
+              当前使用系统默认提示词。开启后可自定义三级翻译提示词，格式要求由系统自动追加。
             </Typography>
           </Paper>
         )}
 
         {localEnabled && (
           <>
+            <Tabs value={tabIndex} onChange={(_, v) => setTabIndex(v)} sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}>
+              {PROMPT_LEVELS.map((l, i) => (
+                <Tab key={l.key} label={
+                  <Box sx={{ textAlign: 'left' }}>
+                    <Typography variant="body2">{l.label}</Typography>
+                    <Typography variant="caption" color={tabIndex === i ? 'primary' : 'text.disabled'} fontSize="0.65rem">
+                      {l.trigger}
+                    </Typography>
+                  </Box>
+                } />
+              ))}
+            </Tabs>
+
+            <Paper variant="outlined" sx={{ p: 1.5, mb: 2, bgcolor: 'action.hover' }}>
+              <Typography variant="body2" color="text.secondary">
+                <strong>{level.label}</strong>: {level.desc}
+              </Typography>
+            </Paper>
+
             <Box sx={{ mb: 2 }}>
               <Typography variant="caption" color="text.secondary" gutterBottom display="block">
                 风格预设
@@ -174,26 +193,26 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Pr
             </Box>
 
             <TextField
-              label="自定义翻译指令（风格 / 语气 / 角色）"
+              label={`${level.label} Prompt`}
               multiline
               minRows={5}
               maxRows={10}
               fullWidth
               size="small"
               value={localPrompt}
-              onChange={e => setLocalPrompt(e.target.value)}
-              placeholder={`你是专业${LANG_LABELS[config.lang] || config.lang || '自动'}字幕翻译。请用口语化风格翻译成${LANG_LABELS[config.targetLang] || config.targetLang}。`}
+              onChange={e => updatePrompt(e.target.value)}
+              placeholder={`你是专业翻译。请将字幕翻译成${LANG_LABELS[config.targetLang] || config.targetLang}。`}
               inputRef={textFieldRef}
-              helperText="上方变量点击即可插入。格式规则由系统自动追加。"
+              helperText="上方变量点击即可插入。格式规则由系统自动追加。留空使用系统默认。"
             />
 
             <Divider sx={{ my: 2 }} />
 
             <Box>
               <Typography variant="caption" color="text.secondary" fontWeight={600} gutterBottom display="block">
-                实际发送的完整 Prompt 预览
+                {level.label} — 实际发送的完整 Prompt 预览
               </Typography>
-              <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50', maxHeight: 200, overflow: 'auto' }}>
+              <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50', maxHeight: 150, overflow: 'auto' }}>
                 <Typography variant="caption" sx={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '0.75rem' }}>
                   {preview}
                 </Typography>
