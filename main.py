@@ -903,6 +903,16 @@ def main():
                 print(f"  使用已有翻译: {os.path.basename(existing)}")
 
         # ── 步骤 3: TTS ──
+        # 翻译环节是纯 CPU 操作，但 TTS 需要大量 GPU 显存。
+        # 提前释放 PyTorch CUDA 缓存池碎片，确保 ChatTTS 模型加载时有充足连续显存。
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        import gc; gc.collect()
+
         if not args.skip_tts:
             step_tts(
                 video,

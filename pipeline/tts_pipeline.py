@@ -361,7 +361,7 @@ class TtsPipeline:
             "-t", f"{duration:.3f}",
             "-acodec", "pcm_s16le",
             output_path,
-        ], capture_output=True, check=True)
+        ], capture_output=True, check=True, timeout=30)
 
     def _process_single_subtitle(
         self,
@@ -614,7 +614,7 @@ class TtsPipeline:
                      "-to", str(seg_end_ms / 1000),
                      "-acodec", "pcm_s16le",
                      seg_path],
-                    capture_output=True, check=True,
+                    capture_output=True, check=True, timeout=60,
                 )
             return seg_path
 

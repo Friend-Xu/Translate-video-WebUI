@@ -299,6 +299,12 @@ class ChatTTSEngine:
             sf.write(output_path, audio_data, self._sample_rate)
             duration = float(len(audio_data) / self._sample_rate)
             del audio_data
+            # 每次推理后立即释放 CUDA 缓存碎片，防止逐段累积导致 OOM
+            try:
+                import torch
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
             return duration
 
         except Exception as e:

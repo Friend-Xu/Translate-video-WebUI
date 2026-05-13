@@ -138,7 +138,7 @@ class VideoMerger:
         cmd.append(output_path)
 
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         except FileNotFoundError:
             logger.warning(f"ffmpeg 不可用: {ffmpeg}")
             # 清理 manifest

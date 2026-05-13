@@ -747,15 +747,12 @@ async def start_pipeline(req: RunRequest) -> RunResponse:
     # 释放 ChatTTS 预览缓存，归还 GPU 显存给流水线
     global _chattts_engine, _chattts_engine_config
     if _chattts_engine is not None:
-        _chattts_engine = None
-        _chattts_engine_config = None
-        import gc; gc.collect()
         try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            _chattts_engine.cleanup()
         except Exception:
             pass
+        _chattts_engine = None
+        _chattts_engine_config = None
 
     video = Path(req.video_path)
     if not video.is_file():

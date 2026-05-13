@@ -146,7 +146,7 @@ class VideoSegmenter:
             cmd.extend(["-t", f"{output_duration:.6f}"])
         cmd.append(output_path)
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         if result.returncode != 0:
             err = result.stderr.strip()[-500:] if result.stderr else "unknown error"
             raise RuntimeError(f"ffmpeg amix 失败: {err}")
@@ -162,7 +162,7 @@ class VideoSegmenter:
             [get_ffmpeg_exe(), "-y", "-i", wav_path,
              "-af", f"afade=t=in:d={sec},afade=t=out:st=999999:d={sec}",
              "-acodec", "pcm_s16le", tmp],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
             err = result.stderr.strip()[-200:] if result.stderr else "unknown error"
@@ -411,7 +411,7 @@ class VideoSegmenter:
                 "-i", f"anullsrc=r=44100:cl=mono",
                 "-t", f"{dur_s:.3f}",
                 "-acodec", "pcm_s16le", silence_path,
-            ], capture_output=True, check=True)
+            ], capture_output=True, check=True, timeout=30)
             return AudioFileClip(silence_path)
 
         first_start, _, _ = subs[0]
