@@ -342,11 +342,23 @@ class VideoSegmenter:
             logger=None,
         )
 
-        # 清理临时文件
-        if 'mixed_audio' in locals():
+        # 清理：关闭所有中间 clip（防 Windows ffmpeg 句柄泄漏 / 僵尸进程）
+        # MoviePy 的 __del__ 在 Windows 上不可靠，必须显式 close。
+        # slow_down_clip 在此函数内经过多次 with_* 变换，每次变换
+        # 创建新 clip 而旧 clip 成为孤儿；关闭最终 clip 触发级联清理。
+        try:
+            slow_down_clip.close()
+        except Exception:
+            pass
+        try:
             mixed_audio.close()
+        except Exception:
+            pass
         if os.path.isfile(mixed_wav):
-            os.remove(mixed_wav)
+            try:
+                os.remove(mixed_wav)
+            except OSError:
+                pass
 
     def current_video_to_file(
         self,

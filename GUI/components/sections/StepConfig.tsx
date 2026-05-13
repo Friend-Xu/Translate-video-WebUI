@@ -61,6 +61,21 @@ function ChatTTSPanel({ config, onConfigChange, chatttsWorkers }: StepConfigProp
   const [downloadPct, setDownloadPct] = useState(0)
   const [downloadGb, setDownloadGb] = useState(0)
   const [downloadTotalGb, setDownloadTotalGb] = useState(2.37)
+  const [speakers, setSpeakers] = useState<{ id: string; name: string; pt_file: string }[]>([])
+
+  // 加载预设音色列表
+  const fetchSpeakers = async () => {
+    try {
+      const res = await fetch('/api/tts/speakers')
+      if (res.ok) setSpeakers(await res.json())
+    } catch { /* API 不可用 */ }
+  }
+  useEffect(() => { fetchSpeakers() }, [])
+
+  // 当前选中的音色 ID（预设 id 或 "custom"）
+  const selectedSpeakerId = config.chatttsSpeakerPt
+    ? (speakers.find(s => config.chatttsSpeakerPt.endsWith(s.pt_file))?.id || 'custom')
+    : 'custom'
 
   // 检查模型状态
   const checkModel = async () => {
@@ -79,12 +94,42 @@ function ChatTTSPanel({ config, onConfigChange, chatttsWorkers }: StepConfigProp
 
   useEffect(() => { checkModel() }, [])
 
-  // 模型就绪后，如果有种子但无预览音频，自动生成（重启恢复 / 引擎切回）
+  // PT 预设音色：启动时从服务端缓存静默加载试听，无需 GPU
   useEffect(() => {
-    if (modelCheckDone && modelReady && config.chatttsSpeakerSeed != null && !config.chatttsPreviewAudio) {
-      doGacha()
+    if (modelCheckDone && modelReady && !config.chatttsPreviewAudio && config.chatttsSpeakerPt) {
+      doPreviewSpeaker(config.chatttsSpeakerPt)
     }
   }, [modelCheckDone, modelReady])
+
+  const doPreviewSpeaker = async (ptPath: string) => {
+    setLoading(true)
+    setError('')
+    onConfigChange('chatttsPreviewAudio', '')
+    try {
+      const res = await fetch('/api/tts/preview-chattts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          speaker_pt: ptPath,
+          model_source: config.chatttsModelSource,
+          model_path: config.chatttsModelPath,
+        }),
+      })
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.detail || `服务器错误 (${res.status})`)
+      }
+      const data = await res.json()
+      onConfigChange('chatttsPreviewAudio', data.audio_base64)
+      onConfigChange('chatttsPreviewSeed', data.seed)
+      if (data.spk_emb) onConfigChange('chatttsSpkEmb', data.spk_emb)
+    } catch (e: any) {
+      console.error('ChatTTS preview failed:', e)
+      setError(e?.message || '预览失败')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const doGacha = async () => {
     setLoading(true)
@@ -185,50 +230,82 @@ function ChatTTSPanel({ config, onConfigChange, chatttsWorkers }: StepConfigProp
           </Box>
         ) : (
           <>
-            <Stack direction="row" spacing={1} sx={{ mt: 0.5 }}>
-              <TextField
-                size="small"
-                type="number"
-                value={config.chatttsSpeakerSeed ?? ''}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                  const v = e.target.value
-                  onConfigChange('chatttsSpeakerSeed', v === '' ? null : Number(v))
+            <Select
+              size="small"
+              fullWidth
+              value={selectedSpeakerId}
+              onChange={e => {
+                const v = e.target.value
+                if (v === 'custom') {
+                  onConfigChange('chatttsSpeakerPt', '')
                   onConfigChange('chatttsPreviewAudio', '')
                   onConfigChange('chatttsPreviewSeed', null)
                   onConfigChange('chatttsSpkEmb', '')
-                  setError('')
-                }}
-                placeholder="留空随机"
-                inputProps={{ min: 0, max: 99999, style: { width: 80 } }}
-                sx={{ bgcolor: 'background.paper', width: 100 }}
-              />
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={doGacha}
-                disabled={loading}
-                sx={{ flexShrink: 0 }}
-              >
-                {loading ? <CircularProgress size={16} sx={{ mr: 0.5 }} /> : null}
-                抽卡试听
-              </Button>
-              <Button
-                variant="text"
-                size="small"
-                color="error"
-                onClick={() => {
+                } else {
+                  const speaker = speakers.find(s => s.id === v)
+                  const ptPath = speaker ? `models/chattts_speakers/${speaker.pt_file}` : ''
+                  onConfigChange('chatttsSpeakerPt', ptPath)
                   onConfigChange('chatttsSpeakerSeed', null)
                   onConfigChange('chatttsPreviewAudio', '')
                   onConfigChange('chatttsPreviewSeed', null)
                   onConfigChange('chatttsSpkEmb', '')
-                  setError('')
-                }}
-                sx={{ flexShrink: 0 }}
-              >
-                随机
-              </Button>
-            </Stack>
-            <Typography variant="caption">输入种子固定音色，或点"抽卡试听"随机预览，点"随机"每次运行不同音色</Typography>
+                  // 预告音色
+                  if (ptPath) doPreviewSpeaker(ptPath)
+                }
+                setError('')
+              }}
+              sx={{ bgcolor: 'background.paper', mt: 0.5 }}
+            >
+              {speakers.map(s => (
+                <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>
+              ))}
+              <MenuItem value="custom">自定义 (抽卡/随机)</MenuItem>
+            </Select>
+            {selectedSpeakerId === 'custom' && (
+              <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                <TextField
+                  size="small"
+                  type="number"
+                  value={config.chatttsSpeakerSeed ?? ''}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                    const v = e.target.value
+                    onConfigChange('chatttsSpeakerSeed', v === '' ? null : Number(v))
+                    onConfigChange('chatttsPreviewAudio', '')
+                    onConfigChange('chatttsPreviewSeed', null)
+                    onConfigChange('chatttsSpkEmb', '')
+                    setError('')
+                  }}
+                  placeholder="种子(留空随机)"
+                  inputProps={{ min: 0, max: 99999, style: { width: 80 } }}
+                  sx={{ bgcolor: 'background.paper', width: 120 }}
+                />
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={doGacha}
+                  disabled={loading}
+                  sx={{ flexShrink: 0 }}
+                >
+                  {loading ? <CircularProgress size={16} sx={{ mr: 0.5 }} /> : null}
+                  抽卡试听
+                </Button>
+                <Button
+                  variant="text"
+                  size="small"
+                  color="error"
+                  onClick={() => {
+                    onConfigChange('chatttsSpeakerSeed', null)
+                    onConfigChange('chatttsPreviewAudio', '')
+                    onConfigChange('chatttsPreviewSeed', null)
+                    onConfigChange('chatttsSpkEmb', '')
+                    setError('')
+                  }}
+                  sx={{ flexShrink: 0 }}
+                >
+                  随机
+                </Button>
+              </Stack>
+            )}
           </>
         )}
       </Box>
@@ -240,12 +317,13 @@ function ChatTTSPanel({ config, onConfigChange, chatttsWorkers }: StepConfigProp
       {config.chatttsPreviewAudio && (
         <Box>
           <Typography variant="body2" fontWeight={500}>
-            试听样本 {config.chatttsPreviewSeed != null ? `(种子: ${config.chatttsPreviewSeed})` : ''}
+            试听样本 {config.chatttsSpeakerPt
+              ? `(${speakers.find(s => config.chatttsSpeakerPt.endsWith(s.pt_file))?.name || '预设音色'})`
+              : config.chatttsPreviewSeed != null ? `(种子: ${config.chatttsPreviewSeed})` : ''}
           </Typography>
           {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
           <audio
             controls
-            autoPlay
             src={`data:audio/wav;base64,${config.chatttsPreviewAudio}`}
             style={{ width: '100%', marginTop: 4 }}
           />

@@ -258,6 +258,7 @@ class TtsPipeline:
                 speaker_seed=self.config.chattts_speaker_seed,
                 model_source=self.config.chattts_model_source,
                 model_path=self.config.chattts_model_path,
+                speaker_pt=self.config.chattts_speaker_pt,
             )
         return EdgeTTSEngine(
             voice=self.config.voice,
@@ -741,6 +742,15 @@ class TtsPipeline:
                         result = future.result()
                         if result and result.get("success"):
                             processed += 1
+                            # 每 10 条释放一次 CUDA 缓存，防碎片化累积导致 OOM
+                            if processed % 10 == 0:
+                                try:
+                                    import torch
+                                    torch.cuda.empty_cache()
+                                except Exception:
+                                    pass
+                                import gc
+                                gc.collect()
                             if self._ck is not None and processed % 10 == 0:
                                 self._ck.update_extra("tts", segs_done=processed)
                                 self._ck.save()

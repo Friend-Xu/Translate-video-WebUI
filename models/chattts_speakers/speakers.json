@@ -1,0 +1,68 @@
+[
+  {
+    "id": "seed_1",
+    "name": "男声-磁性青年",
+    "gender": "男",
+    "age": "青年",
+    "features": "磁性, 读书, 普通",
+    "rank_long": 91.8,
+    "rank_multi": 85.7,
+    "rank_single": 87.3,
+    "pt_file": "seed_1.pt"
+  },
+  {
+    "id": "seed_402",
+    "name": "男声-沉稳青年",
+    "gender": "男",
+    "age": "青年/中年",
+    "features": "稳定, 自然",
+    "rank_long": 92.2,
+    "rank_multi": 90.3,
+    "rank_single": 88.9,
+    "pt_file": "seed_402.pt"
+  },
+  {
+    "id": "seed_813",
+    "name": "男声-清爽青年",
+    "gender": "男",
+    "age": "青年",
+    "features": "均衡, 清晰",
+    "rank_long": 92.1,
+    "rank_multi": 88.3,
+    "rank_single": 90.3,
+    "pt_file": "seed_813.pt"
+  },
+  {
+    "id": "seed_729",
+    "name": "女声-成熟女性",
+    "gender": "女",
+    "age": "青年",
+    "features": "成熟, 知性",
+    "rank_long": 92.3,
+    "rank_multi": 88.5,
+    "rank_single": 89.3,
+    "pt_file": "seed_729.pt"
+  },
+  {
+    "id": "seed_1746",
+    "name": "女声-知性女性",
+    "gender": "女",
+    "age": "青年/中年",
+    "features": "知性, 时尚, 成熟",
+    "rank_long": 91.9,
+    "rank_multi": 86.3,
+    "rank_single": 91.0,
+    "pt_file": "seed_1746.pt"
+  },
+  {
+    "id": "seed_2166",
+    "name": "女声-清亮青年",
+    "gender": "女",
+    "age": "青年",
+    "features": "清亮, 高稳定性",
+    "rank_long": 93.6,
+    "rank_multi": 88.0,
+    "rank_single": 89.1,
+    "pt_file": "seed_2166.pt"
+  }
+]

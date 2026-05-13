@@ -71,6 +71,10 @@ class TTSConfig:
     chattts_model_path: Optional[str] = None
     """ChatTTS 自定义模型路径（source=custom 时使用）"""
 
+    chattts_speaker_pt: Optional[str] = None
+    """ChatTTS 预设音色 .pt 文件路径。优先级高于 chattts_speaker_seed。
+    从 ChatTTS_Speaker 榜单挑选的高稳定性音色，直接 torch.load() 加载 spk_emb。"""
+
     tts_pronunciation: dict = field(default_factory=dict)
     """ChatTTS 发音术语表 {原文: 替换后文本}，优先于自动数字转换"""
 

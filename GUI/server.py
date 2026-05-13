@@ -159,6 +159,7 @@ class Job:
 
     def append_log(self, line: str) -> None:
         self.logs.append(line)
+        self.logs = self.logs[-500:]  # 防止内存无限增长（与 BatchSession 一致）
         # Parse step hints from stdout for progress
         lower = line.lower()
         if "[1/3]" in line or "字幕提取" in line:
@@ -329,6 +330,7 @@ def _load_yaml_defaults() -> dict:
     return {
         "engine": tts.get("engine_type", "edge"),
         "chatttsSpeakerSeed": tts.get("chattts_speaker_seed", 2),
+        "chatttsSpeakerPt": tts.get("chattts_speaker_pt") or "",
         "chatttsModelSource": tts.get("chattts_model_source", "local"),
         "chatttsModelPath": tts.get("chattts_model_path") or "",
         "voice": tts.get("voice", "zh-CN-XiaoxiaoNeural"),
@@ -519,6 +521,7 @@ class RunRequest(BaseModel):
     compute_type: str = "float16"
     engine: str = "edge"
     chattts_speaker_seed: Optional[int] = 2
+    chattts_speaker_pt: str = ""
     chattts_model_source: str = "local"
     chattts_model_path: str = ""
     voice: str = "zh-CN-XiaoxiaoNeural"
@@ -615,6 +618,7 @@ def _write_tts_runtime_config(req: RunRequest) -> str:
         "tts": {
             "engine_type": req.engine,
             "chattts_speaker_seed": req.chattts_speaker_seed,
+            "chattts_speaker_pt": req.chattts_speaker_pt or None,
             "chattts_model_source": req.chattts_model_source,
             "chattts_model_path": req.chattts_model_path or None,
             "chattts_workers": req.chattts_workers,
@@ -1756,6 +1760,21 @@ async def download_model_stream(model_id: str, req: Request):
 
 
 # ---------------------------------------------------------------------------
+# ChatTTS preset speakers
+# ---------------------------------------------------------------------------
+
+@app.get("/api/tts/speakers")
+async def list_chattts_speakers() -> list[dict]:
+    """列出预设 ChatTTS 音色（来自 ChatTTS_Speaker 排行榜）。"""
+    import json
+    speakers_path = PROJECT_ROOT / "models" / "chattts_speakers" / "speakers.json"
+    if not speakers_path.is_file():
+        return []
+    with open(speakers_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+# ---------------------------------------------------------------------------
 # ChatTTS voice preview (gacha)
 # ---------------------------------------------------------------------------
 
@@ -1765,6 +1784,7 @@ class ChatTTSPreviewRequest(BaseModel):
     model_source: str = "local"
     model_path: str = ""
     spk_emb: str = ""  # 预存的说话人嵌入，非空时跳过随机生成直接复用
+    speaker_pt: str = ""  # 预设音色 .pt 文件路径，优先级最高
 
 
 # 模块级 ChatTTS 引擎缓存：多次抽卡复用同一模型实例，避免反复加载 2.37GB
@@ -1774,37 +1794,54 @@ _chattts_engine_config = None  # (model_source, model_path)
 
 @app.post("/api/tts/preview-chattts")
 async def preview_chattts_voice(req: ChatTTSPreviewRequest) -> dict:
-    """抽卡预览 ChatTTS 音色。引擎仅首次加载，后续抽卡只换 seed。
+    """抽卡预览 ChatTTS 音色。
 
-    传入 spk_emb 时直接复用已有音色，跳过随机生成，确保重启后音色一致。
+    PT 预设音色：首次合成后缓存 WAV，后续直接读缓存（无需 GPU）。
+    自定义抽卡：每次随机生成，用后释放 VRAM。
     """
     global _chattts_engine, _chattts_engine_config
 
     import base64
     import tempfile
+    import shutil
     from pipeline.tts_chattts import ChatTTSEngine
 
-    config_key = (req.model_source, req.model_path or "")
+    config_key = (req.model_source, req.model_path or "", req.speaker_pt or "")
 
-    # 有预存 spk_emb → 直接复用，跳过随机生成
-    if req.spk_emb:
-        if _chattts_engine is None:
-            _chattts_engine = ChatTTSEngine(
-                speaker_seed=req.seed,
-                model_source=req.model_source,
-                model_path=req.model_path or None,
-                spk_emb=req.spk_emb,
-            )
-            _chattts_engine_config = config_key
-        elif not _chattts_engine.spk_emb:
-            _chattts_engine.reset_speaker(req.seed)
-    elif _chattts_engine is None or _chattts_engine_config != config_key:
+    # ── PT 预设音色：缓存命中直接返回，无需 GPU ──
+    cache_path = ""
+    if req.speaker_pt:
+        cache_path = req.speaker_pt.replace(".pt", "_preview.wav")
+        if os.path.isfile(cache_path):
+            with open(cache_path, "rb") as f:
+                audio_b64 = base64.b64encode(f.read()).decode("ascii")
+            return {
+                "seed": None,
+                "spk_emb": "",
+                "audio_base64": audio_b64,
+                "duration": round(float(len(base64.b64decode(audio_b64))) / 48000, 2),
+                "text": req.text,
+                "cached": True,
+            }
+
+    if _chattts_engine is not None and _chattts_engine_config != config_key:
+        _chattts_engine.cleanup()
+        _chattts_engine = None
+
+    if _chattts_engine is None:
         _chattts_engine = ChatTTSEngine(
             speaker_seed=req.seed,
             model_source=req.model_source,
             model_path=req.model_path or None,
+            spk_emb=req.spk_emb or None,
+            speaker_pt=req.speaker_pt or None,
         )
         _chattts_engine_config = config_key
+    elif req.speaker_pt:
+        pass  # PT 模式无需换 seed
+    elif req.spk_emb:
+        if not _chattts_engine.spk_emb:
+            _chattts_engine.reset_speaker(req.seed)
     else:
         _chattts_engine.reset_speaker(req.seed)
 
@@ -1813,11 +1850,19 @@ async def preview_chattts_voice(req: ChatTTSPreviewRequest) -> dict:
 
     try:
         duration = _chattts_engine.synthesize(req.text, tmp_path)
+
+        # PT 预设 → 缓存 WAV 供后续复用
+        if cache_path:
+            shutil.copy2(tmp_path, cache_path)
+
         with open(tmp_path, "rb") as f:
             audio_b64 = base64.b64encode(f.read()).decode("ascii")
+        spk_emb_val = _chattts_engine.spk_emb
+        if spk_emb_val is not None and not isinstance(spk_emb_val, str):
+            spk_emb_val = ""  # tensor 不能 JSON 序列化
         return {
             "seed": _chattts_engine.speaker_seed,
-            "spk_emb": _chattts_engine.spk_emb or "",
+            "spk_emb": spk_emb_val or "",
             "audio_base64": audio_b64,
             "duration": round(duration, 2),
             "text": req.text,
@@ -1827,6 +1872,11 @@ async def preview_chattts_voice(req: ChatTTSPreviewRequest) -> dict:
             os.unlink(tmp_path)
         except OSError:
             pass
+        # PT 预设音色：合成后立即释放 VRAM（缓存 WAV 供后续直接用）
+        if cache_path and _chattts_engine is not None:
+            _chattts_engine.cleanup()
+            _chattts_engine = None
+            _chattts_engine_config = None
 
 
 @app.post("/api/tts/release-chattts")

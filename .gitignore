@@ -19,6 +19,7 @@ __pycache__/
 
 # Model cache (very large, download separately)
 models/
+!models/chattts_speakers/  # 预设音色元数据 + PT 嵌入（~4KB/个）
 Model/
 
 # Test/sample videos and outputs

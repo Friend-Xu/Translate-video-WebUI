@@ -7,6 +7,7 @@ export interface PipelineConfig {
   computeType: 'int8' | 'float32' | 'float16' | 'int8_float16'
   engine: 'edge' | 'chattts'
   chatttsSpeakerSeed: number | null
+  chatttsSpeakerPt: string
   chatttsModelSource: 'local' | 'custom'
   chatttsModelPath: string
   chatttsPreviewAudio: string
@@ -123,6 +124,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   computeType: 'float16',
   engine: 'edge',
   chatttsSpeakerSeed: 2,
+  chatttsSpeakerPt: '',
   chatttsModelSource: 'local',
   chatttsModelPath: '',
   chatttsPreviewAudio: '',
@@ -271,6 +273,18 @@ export interface ReviewSession {
     templates: Record<string, { template: string; is_custom: boolean }>
     config_snapshot: Record<string, unknown>
   }
+}
+
+export interface ChatTTSSpeaker {
+  id: string
+  name: string
+  gender: string
+  age: string
+  features: string
+  rank_long: number
+  rank_multi: number
+  rank_single: number
+  pt_file: string
 }
 
 export interface SystemInfo {

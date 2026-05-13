@@ -129,6 +129,7 @@ class ChatTTSEngine:
         sample_rate: int = 24000,
         pronunciation_entries: Optional[dict] = None,
         spk_emb: Optional[str] = None,
+        speaker_pt: Optional[str] = None,
     ):
         self._speaker_seed = speaker_seed
         self._model_source = model_source
@@ -139,7 +140,14 @@ class ChatTTSEngine:
 
         self._chat: Optional["ChatTTS.Chat"] = None  # type: ignore
         self._loaded = False
-        self._spk_emb = spk_emb  # 预存的说话人嵌入（持久化恢复）
+
+        # PT 文件加载 > 预存 spk_emb > seed 随机生成
+        if speaker_pt and os.path.isfile(speaker_pt):
+            import torch
+            self._spk_emb = torch.load(speaker_pt, map_location="cpu", weights_only=True)
+            logger.info("从 PT 文件加载音色: %s", speaker_pt)
+        else:
+            self._spk_emb = spk_emb  # 预存的说话人嵌入（持久化恢复）
 
     @property
     def model_loaded(self) -> bool:
@@ -259,8 +267,15 @@ class ChatTTSEngine:
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
         try:
-            params_infer_code = Chat.InferCodeParams()
-            params_infer_code.spk_emb = self._spk_emb
+            params_infer_code = Chat.InferCodeParams(
+                spk_emb=self._spk_emb,
+                temperature=0.3,
+                top_P=0.7,
+                top_K=20,
+            )
+            params_refine_text = Chat.RefineTextParams(
+                prompt="[oral_0][break_5]",
+            )
 
             with _CHATTS_LOCK:
                 wavs = self._chat.infer(
@@ -270,14 +285,21 @@ class ChatTTSEngine:
                     do_text_normalization=True,
                     split_text=False,
                     params_infer_code=params_infer_code,
+                    params_refine_text=params_refine_text,
                 )
 
             if not wavs or len(wavs) == 0:
                 raise RuntimeError("ChatTTS 推理返回空结果")
 
-            audio_data = wavs[0]
+            wav = wavs[0]
+            if hasattr(wav, "detach"):
+                wav = wav.detach().cpu().numpy()
+            audio_data = np.asarray(wav, dtype=np.float32).copy()
+            del wavs, wav
             sf.write(output_path, audio_data, self._sample_rate)
-            return float(len(audio_data) / self._sample_rate)
+            duration = float(len(audio_data) / self._sample_rate)
+            del audio_data
+            return duration
 
         except Exception as e:
             raise RuntimeError(f"ChatTTS 合成失败: {e}") from e
@@ -320,4 +342,5 @@ class ChatTTSEngineFactory:
             model_source=getattr(config, "chattts_model_source", "local"),
             model_path=getattr(config, "chattts_model_path", None),
             pronunciation_entries=getattr(config, "tts_pronunciation", {}),
+            speaker_pt=getattr(config, "chattts_speaker_pt", None),
         )

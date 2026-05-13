@@ -25,6 +25,12 @@ import subprocess
 import sys
 import time
 
+# 防 CUDA 碎片化：PyTorch 2.0+ expandable segments 允许内存段动态伸缩，
+# 配合 max_split_size_mb 防止大块被切碎后无法归还。
+# 必须在 torch 首次导入前设置（ChatTTS / pipeline 模块内懒加载 torch）。
+if os.environ.get("PYTORCH_CUDA_ALLOC_CONF") is None:
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:128"
+
 # Windows GBK terminal fix
 if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", write_through=True)
