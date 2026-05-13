@@ -397,7 +397,7 @@ def build_system_prompt(source_lang: str, fmt: str = "numbered_list", retry: boo
     parts = [
         base,
         "要求：",
-        "1. 保持口语化风格，上下文连贯",
+        "1. 准确传达原文含义，上下文连贯",
         "2. " + fmt_rules,
     ]
 

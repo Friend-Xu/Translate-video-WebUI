@@ -99,6 +99,24 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Pr
     updatePrompt(prompt)
   }
 
+  const srcLabel = LANG_LABELS[config.lang] || config.lang || '自动'
+  const tgtLabel = LANG_LABELS[config.targetLang] || config.targetLang
+
+  const RUNTIME_CONTEXT_HINT =
+    '\n\n【运行时动态注入】\n' +
+    '前文：<上一条字幕原文>\n' +
+    '下文：<下一条字幕原文>\n' +
+    '\n' +
+    '原文：<当前待翻译字幕>\n' +
+    '旧译文（请避免）：<第一版译文>  ← 仅重翻时有\n' +
+    '新译文：'
+
+  const SYSTEM_DEFAULTS: Record<string, string> = {
+    'system': `你是专业${srcLabel}字幕翻译。请将以下${srcLabel}逐条翻译为${tgtLabel}。\n\n要求：\n1. 准确传达原文含义，上下文连贯\n2. 输出格式必须严格为 <index> 译文（如 <1> 大家好）\n   编号数量和顺序必须与输入完全一致\n   每条独立成行，不要合并\n   不要添加任何额外说明或标注\n\n【运行时】\n待翻译：\n<1> <第一条字幕原文>\n<2> <第二条字幕原文>\n...\n\n翻译：`,
+    'semantic_retry': `你是专业翻译。请将以下${srcLabel}字幕翻译成${tgtLabel}。\n请结合上下文理解原文含义，用自然流畅的语言准确表达。\n输出只有译文本身，不要添加任何说明。${RUNTIME_CONTEXT_HINT}`,
+    'naturalness_retry': `你是专业翻译。请将以下${srcLabel}字幕重新翻译成更自然、更地道的${tgtLabel}。\n用日常交流的口吻表达，避免翻译腔（直译/逐字翻译）。\n输出只有译文本身，不要添加任何说明。${RUNTIME_CONTEXT_HINT}`,
+  }
+
   const systemSuffix =
     '\n\n【以下为系统强制格式要求，必须严格遵守】\n' +
     '输出格式必须严格为 <index> 译文（如 <1> 大家好）\n' +
@@ -106,9 +124,9 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Pr
     '每条独立成行，不要合并\n' +
     '不要添加任何额外说明或标注'
 
-  const preview = localEnabled && localPrompt
+  const preview = localPrompt
     ? localPrompt + systemSuffix
-    : '使用系统默认提示词'
+    : SYSTEM_DEFAULTS[level.key]
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
@@ -127,11 +145,16 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Pr
         </Box>
 
         {!localEnabled && (
-          <Paper variant="outlined" sx={{ p: 2, mb: 2, bgcolor: 'grey.50' }}>
-            <Typography variant="body2" color="text.secondary">
-              当前使用系统默认提示词。开启后可自定义三级翻译提示词，格式要求由系统自动追加。
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="caption" color="text.secondary" fontWeight={600} gutterBottom display="block">
+              系统默认 Prompt（当前未启用自定义）
             </Typography>
-          </Paper>
+            <Paper variant="outlined" sx={{ p: 2, bgcolor: 'grey.50', maxHeight: 150, overflow: 'auto' }}>
+              <Typography variant="caption" sx={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                {preview}
+              </Typography>
+            </Paper>
+          </Box>
         )}
 
         {localEnabled && (
