@@ -56,17 +56,24 @@ class CosyVoiceTTSEngine:
         engine.cleanup()
     """
 
+    _VERSION_PATH_MAP = {
+        "v2": "./models/CosyVoice2-0.5B",
+        "v3": "./models/CosyVoice3-0.5B",
+    }
+
     def __init__(
         self,
         model_version: str = "v3",
-        model_path: str = "./models/CosyVoice2-0.5B",
+        model_path: str = "",
         prompt_audio: Optional[str] = None,
         prompt_text: Optional[str] = None,
         fp16: bool = True,
         default_speed: float = 1.0,
     ):
         self._model_version = model_version
-        self._model_path = model_path
+        self._model_path = model_path or self._VERSION_PATH_MAP.get(
+            model_version, "./models/CosyVoice2-0.5B"
+        )
         self._prompt_audio_path: Optional[str] = prompt_audio
         self._prompt_text: Optional[str] = prompt_text
         self._fp16 = fp16

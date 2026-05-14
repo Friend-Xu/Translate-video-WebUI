@@ -82,8 +82,9 @@ class TTSConfig:
     cosyvoice_tts_model_version: str = "v3"
     """CosyVoice TTS 模型版本: v2 | v3"""
 
-    cosyvoice_tts_model_path: str = "./models/CosyVoice2-0.5B"
-    """CosyVoice TTS 模型 checkpoint 路径"""
+    cosyvoice_tts_model_path: str = ""
+    """CosyVoice TTS 模型 checkpoint 路径。留空时按版本自动选择:
+    v2 → ./models/CosyVoice2-0.5B, v3 → ./models/CosyVoice3-0.5B"""
 
     cosyvoice_tts_prompt_audio: Optional[str] = None
     """CosyVoice TTS 参考说话人音频路径 (zero-shot prompt, <=30s)"""

@@ -94,7 +94,9 @@ export default function CosyVoiceTTSPanel({ config, onConfigChange }: Props) {
           size="small" fullWidth
           value={config.cosyvoiceTtsModelPath}
           onChange={(e) => onConfigChange("cosyvoiceTtsModelPath", e.target.value)}
-          placeholder="./models/CosyVoice2-0.5B"
+          placeholder={config.cosyvoiceTtsModelVersion === "v3"
+            ? "./models/CosyVoice3-0.5B"
+            : "./models/CosyVoice2-0.5B"}
           sx={{ mt: 0.5 }}
         />
         {modelExists === false && (
