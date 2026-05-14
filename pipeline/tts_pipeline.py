@@ -325,10 +325,17 @@ class TtsPipeline:
         """根据 config.voice_clone_engine 创建 VoiceCloner。
 
         向后兼容：enable_openvoice=False 时，即使 voice_clone_engine 默认为 "openvoice" 也禁用。
+
+        特殊处理：当 TTS 引擎本身已使用 CosyVoice 时，跳过 voice cloner。
+        CosyVoiceTTSEngine 的 inference_zero_shot() 自带零样本声音合成，
+        不需要额外走 CosyVoiceCloner.inference_vc() 做后处理音色转换。
         """
         engine = self.config.voice_clone_engine
 
         if not self.config.voice_clone_active:
+            return NoopVoiceCloner()
+
+        if engine == "cosyvoice" and self.config.engine_type == "cosyvoice":
             return NoopVoiceCloner()
 
         vc_config = VoiceCloneConfig(

@@ -71,71 +71,29 @@ import torchaudio
 from .vc_base import VoiceCloneConfig
 from .vc_device import detect_vram_mb
 
-# ── ensure CosyVoice is importable (runs once at module init) ────────
-# Windows TxF (error 6714): git-managed directories can accumulate NTFS
-# transaction state from interrupted operations.  Python's importlib scans
-# every directory on sys.path, triggering the TxF error for ANY process
-# that touches the contaminated tree.
-#
-# Workaround: copy the entire cosyvoice package AND third-party Matcha-TTS
-# to a clean temp directory at module init.  Only the temp paths are added
-# to sys.path, completely isolating the git tree from importlib.
-_cosyvoice_src = os.path.normpath(
+# ── ensure CosyVoice is importable ────────────────────────────────────
+# CosyVoice 源码（models/CosyVoice/cosyvoice/）为只读 git clone，
+# 不存在运行时修改自身文件的场景。直接添加源路径到 sys.path，
+# 不做任何 temp 复制。
+_cosyvoice_root = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "models", "CosyVoice")
 )
-_temp_cosyvoice = os.path.join(tempfile.gettempdir(), "CosyVoice-py")
-_src_cosyvoice_pkg = os.path.join(_cosyvoice_src, "cosyvoice")
-_src_matcha = os.path.join(_cosyvoice_src, "third_party", "Matcha-TTS")
-
-def _copytree_if_newer(src: str, dst: str) -> bool:
-    """Copy src → dst once.  Returns True if dst exists after (re-)copy."""
-    if os.path.isdir(dst):
-        # Directory exists — validate it by checking for a sentinel file.
-        # If the sentinel is missing the previous copy was interrupted.
-        if os.path.isfile(os.path.join(dst, "cosyvoice", "cli", "cosyvoice.py")):
-            return True
-        try:
-            shutil.rmtree(dst)
-        except OSError:
-            pass
-    if os.path.isdir(src):
-        try:
-            shutil.copytree(src, dst)
-        except OSError:
-            pass
-    return os.path.isdir(dst)
-
-_ok_pkg = _copytree_if_newer(_src_cosyvoice_pkg,
-                              os.path.join(_temp_cosyvoice, "cosyvoice"))
-_temp_matcha = os.path.join(tempfile.gettempdir(), "Matcha-TTS-py")
-_ok_matcha = os.path.isdir(_temp_matcha)
-if not _ok_matcha and os.path.isdir(_src_matcha):
-    try:
-        shutil.copytree(_src_matcha, _temp_matcha)
-        _ok_matcha = True
-    except OSError:
-        pass
-if not _ok_matcha:
-    _temp_matcha = _src_matcha  # fall back to source (last resort)
-
-# Add ONLY temp paths to sys.path — never the git-managed source
-for _p in (_temp_cosyvoice, _temp_matcha):
+_matcha_root = os.path.join(_cosyvoice_root, "third_party", "Matcha-TTS")
+for _p in (_cosyvoice_root, _matcha_root):
     if os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, _p)
 
-# Pre-import CosyVoice at module init (imported immediately to avoid
-# Windows TxF issues during lazy _load_model() inside thread pools)
 CosyVoice2 = None
 CosyVoice3 = None
 try:
     from cosyvoice.cli.cosyvoice import CosyVoice2 as _CV2  # type: ignore[import-untyped]
     CosyVoice2 = _CV2
-except (ImportError, OSError):
+except ImportError:
     pass
 try:
     from cosyvoice.cli.cosyvoice import CosyVoice3 as _CV3  # type: ignore[import-untyped]
     CosyVoice3 = _CV3
-except (ImportError, OSError):
+except ImportError:
     pass
 
 
@@ -188,11 +146,7 @@ class CosyVoiceCloner:
 
         # --- speaker-embedding cache ---------------------------------------
         self._se_cache_dir: str = os.path.abspath(config.se_cache_dir)
-        try:
-            os.makedirs(self._se_cache_dir, exist_ok=True)
-        except OSError:
-            self._se_cache_dir = os.path.join(tempfile.gettempdir(), ".cosyvoice_se_cache")
-            os.makedirs(self._se_cache_dir, exist_ok=True)
+        os.makedirs(self._se_cache_dir, exist_ok=True)
 
         # --- local-mode flags (ignored in Docker mode) ---------------------
         self._fp16: bool = config.cosyvoice_fp16
