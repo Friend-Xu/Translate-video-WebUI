@@ -351,6 +351,13 @@ def _load_yaml_defaults() -> dict:
         "concurrency": trans.get("concurrency", {}).get("max_workers", tts.get("threading_workers", 3)),
         "ttsWorkers": tts.get("threading_workers", 7),
         "chatttsWorkers": tts.get("chattts_workers", 0),  # 0 = VRAM自动
+        "cosyvoiceTtsModelVersion": tts.get("cosyvoice_tts_model_version", "v3"),
+        "cosyvoiceTtsModelPath": tts.get("cosyvoice_tts_model_path", ""),
+        "cosyvoiceTtsPromptAudio": tts.get("cosyvoice_tts_prompt_audio", ""),
+        "cosyvoiceTtsPromptText": tts.get("cosyvoice_tts_prompt_text", ""),
+        "cosyvoiceTtsFp16": tts.get("cosyvoice_tts_fp16", True),
+        "cosyvoiceTtsWorkers": tts.get("cosyvoice_tts_workers", 0),
+        "cosyvoiceTtsSpeed": tts.get("cosyvoice_tts_speed", 1.0),
         "enableCheckpoint": tts.get("enable_resume", False),
         "captionFont": tts.get("caption_font", ""),
         "videoCodec": tts.get("video_codec", "libx264"),
@@ -560,6 +567,14 @@ class RunRequest(BaseModel):
     num_workers: int = 1
     tts_workers: int = 7
     chattts_workers: int = 0  # 0 = VRAM自动
+    # CosyVoice TTS fields
+    cosyvoice_tts_model_version: str = "v3"
+    cosyvoice_tts_model_path: str = ""
+    cosyvoice_tts_prompt_audio: str = ""
+    cosyvoice_tts_prompt_text: str = ""
+    cosyvoice_tts_fp16: bool = True
+    cosyvoice_tts_workers: int = 0
+    cosyvoice_tts_speed: float = 1.0
     skip_align: bool = False
     align_lang: str = "ja"
 
@@ -633,6 +648,14 @@ def _write_tts_runtime_config(req: RunRequest) -> str:
             "voice_clone_engine": req.voice_clone_engine,
             "voice_clone_device": req.voice_clone_device,
             "voice_clone_concurrency": req.voice_clone_concurrency,
+            "cosyvoice_tts_model_version": req.cosyvoice_tts_model_version,
+            "cosyvoice_tts_model_path": req.cosyvoice_tts_model_path or None,
+            "cosyvoice_tts_prompt_audio": req.cosyvoice_tts_prompt_audio or None,
+            "cosyvoice_tts_prompt_text": req.cosyvoice_tts_prompt_text or None,
+            "cosyvoice_tts_fp16": req.cosyvoice_tts_fp16,
+            "cosyvoice_tts_workers": req.cosyvoice_tts_workers,
+            "cosyvoice_tts_speed": req.cosyvoice_tts_speed,
+            # Voice clone (existing — keep for backward compat)
             "cosyvoice_mode": req.cosyvoice_mode,
             "cosyvoice_model_version": req.cosyvoice_model_version,
         }
@@ -674,6 +697,16 @@ def _build_cli_args(req: RunRequest) -> list[str]:
         args.extend(["--voice-clone-engine", req.voice_clone_engine])
     if req.voice_clone_device and req.voice_clone_device != "auto":
         args.extend(["--voice-clone-device", req.voice_clone_device])
+    # CosyVoice TTS args
+    if req.engine == "cosyvoice":
+        if req.cosyvoice_tts_model_version:
+            args.extend(["--cosyvoice-tts-model-version", req.cosyvoice_tts_model_version])
+        if req.cosyvoice_tts_model_path:
+            args.extend(["--cosyvoice-tts-model-path", req.cosyvoice_tts_model_path])
+        if req.cosyvoice_tts_prompt_audio:
+            args.extend(["--cosyvoice-tts-prompt-audio", req.cosyvoice_tts_prompt_audio])
+        if req.cosyvoice_tts_prompt_text:
+            args.extend(["--cosyvoice-tts-prompt-text", req.cosyvoice_tts_prompt_text])
     if req.force:
         args.append("--force")
     if req.num_workers > 1:

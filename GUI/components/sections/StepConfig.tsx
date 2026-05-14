@@ -38,6 +38,7 @@ const TARGET_LANG_TO_VOICE: Record<string, string> = {
   ru: 'ru-RU-SvetlanaNeural',
 }
 import { PROVIDER_PRESETS } from '../../types'
+import CosyVoiceTTSPanel from './CosyVoiceTTSPanel'
 
 interface StepConfigProps {
   config: PipelineConfig
@@ -648,11 +649,15 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   <Select size="small" fullWidth value={config.engine} onChange={e => onConfigChange('engine', e.target.value as PipelineConfig['engine'])} sx={{ bgcolor: 'background.paper', mt: 0.5 }}>
                     <MenuItem value="edge">edge</MenuItem>
                     <MenuItem value="chattts">chattts</MenuItem>
+                    <MenuItem value="cosyvoice">cosyvoice</MenuItem>
                   </Select>
                   <Typography variant="caption">选择用于语音合成的TTS引擎</Typography>
                 </Box>
                 {config.engine === 'chattts' && (
                   <ChatTTSPanel config={config} onConfigChange={onConfigChange} chatttsWorkers={sysInfo?.chatttsWorkers} />
+                )}
+                {config.engine === 'cosyvoice' && (
+                  <CosyVoiceTTSPanel config={config} onConfigChange={onConfigChange} />
                 )}
                 {config.engine === 'edge' && (
                   <>

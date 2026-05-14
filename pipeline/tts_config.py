@@ -42,7 +42,7 @@ class TTSConfig:
 
     # ── TTS 引擎配置 ──────────────────────────────────────
     engine_type: str = "edge"
-    """TTS 引擎类型: edge | chattts | coqui | azure"""
+    """TTS 引擎类型: edge | chattts | cosyvoice | coqui | azure"""
 
     voice: str = "zh-CN-XiaoxiaoNeural"
     """TTS 音色名称（EdgeTTS/Coqui 使用）"""
@@ -77,6 +77,28 @@ class TTSConfig:
 
     tts_pronunciation: dict = field(default_factory=dict)
     """ChatTTS 发音术语表 {原文: 替换后文本}，优先于自动数字转换"""
+
+    # ── CosyVoice TTS 专用参数 ─────────────────────────────
+    cosyvoice_tts_model_version: str = "v3"
+    """CosyVoice TTS 模型版本: v2 | v3"""
+
+    cosyvoice_tts_model_path: str = "./models/CosyVoice2-0.5B"
+    """CosyVoice TTS 模型 checkpoint 路径"""
+
+    cosyvoice_tts_prompt_audio: Optional[str] = None
+    """CosyVoice TTS 参考说话人音频路径 (zero-shot prompt, <=30s)"""
+
+    cosyvoice_tts_prompt_text: Optional[str] = None
+    """CosyVoice TTS 参考音频的文字转录内容"""
+
+    cosyvoice_tts_fp16: bool = True
+    """CosyVoice TTS 是否启用 FP16 推理"""
+
+    cosyvoice_tts_workers: int = 0
+    """CosyVoice TTS 模型副本数（0=自动，当前强制为 1 串行安全）"""
+
+    cosyvoice_tts_speed: float = 1.0
+    """CosyVoice TTS 默认语速因子 (0.5~2.0, 1.0=原速)"""
 
     # ── 速度策略 ────────────────────────────────────────
     speed_mode: str = "per_segment"
@@ -299,7 +321,7 @@ class TTSConfig:
         elif self.enable_openvoice and self.voice_clone_engine == "none":
             self.enable_openvoice = False  # 显式禁用优先
 
-        if self.engine_type not in ("edge", "chattts"):
+        if self.engine_type not in ("edge", "chattts", "cosyvoice"):
             raise ValueError(f"不支持的 TTS 引擎类型: {self.engine_type}")
         if self.voice_clone_engine not in ("openvoice", "cosyvoice", "none"):
             raise ValueError(f"不支持的音色克隆引擎: {self.voice_clone_engine}")

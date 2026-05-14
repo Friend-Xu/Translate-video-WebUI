@@ -107,11 +107,11 @@ class TtsPipeline:
         if tts_engine is not None:
             self.engine = tts_engine
             n_workers = config.threading_workers
-        elif config.engine_type in ("chattts", "coqui"):
+        elif config.engine_type in ("chattts", "coqui", "cosyvoice"):
             n_workers = 1
             self.engine = self._default_engine()
             self.engine.warmup()
-            logger.info("ChatTTS 单引擎模式（并发安全）")
+            logger.info("%s 单引擎模式（并发安全）", config.engine_type)
         else:
             self.engine = self._default_engine()
             n_workers = config.threading_workers
@@ -259,6 +259,16 @@ class TtsPipeline:
                 model_source=self.config.chattts_model_source,
                 model_path=self.config.chattts_model_path,
                 speaker_pt=self.config.chattts_speaker_pt,
+            )
+        if self.config.engine_type == "cosyvoice":
+            from pipeline.tts_cosyvoice import CosyVoiceTTSEngine
+            return CosyVoiceTTSEngine(
+                model_version=self.config.cosyvoice_tts_model_version,
+                model_path=self.config.cosyvoice_tts_model_path,
+                prompt_audio=self.config.cosyvoice_tts_prompt_audio,
+                prompt_text=self.config.cosyvoice_tts_prompt_text,
+                fp16=self.config.cosyvoice_tts_fp16,
+                default_speed=self.config.cosyvoice_tts_speed,
             )
         return EdgeTTSEngine(
             voice=self.config.voice,

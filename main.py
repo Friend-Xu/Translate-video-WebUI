@@ -504,10 +504,14 @@ def step_tts(
     cosyvoice_mode: str | None = None,
     cosyvoice_model_version: str | None = None,
     cosyvoice_model_path: str | None = None,
+    cosyvoice_tts_model_version: str | None = None,
+    cosyvoice_tts_model_path: str | None = None,
+    cosyvoice_tts_prompt_audio: str | None = None,
+    cosyvoice_tts_prompt_text: str | None = None,
 ) -> None:
     """步骤 3: TTS 合成 + 视频合并（新管线 TtsPipeline）
 
-    支持 edge / chattts 引擎，GPU 编码自动检测，
+    支持 edge / chattts / cosyvoice 引擎，GPU 编码自动检测，
     自动合并视频段输出最终文件。
     """
     ws = workspace_paths(video)
@@ -585,6 +589,14 @@ def step_tts(
         cfg.cosyvoice_model_version = cosyvoice_model_version
     if cosyvoice_model_path is not None:
         cfg.cosyvoice_model_path = cosyvoice_model_path
+    if cosyvoice_tts_model_version is not None:
+        cfg.cosyvoice_tts_model_version = cosyvoice_tts_model_version
+    if cosyvoice_tts_model_path is not None:
+        cfg.cosyvoice_tts_model_path = cosyvoice_tts_model_path
+    if cosyvoice_tts_prompt_audio is not None:
+        cfg.cosyvoice_tts_prompt_audio = cosyvoice_tts_prompt_audio
+    if cosyvoice_tts_prompt_text is not None:
+        cfg.cosyvoice_tts_prompt_text = cosyvoice_tts_prompt_text
 
     # ── 字幕配置: CaptionConfig 文件 > 单独 CLI args（后者覆盖） ──
     if caption_config_path and os.path.isfile(caption_config_path):
@@ -741,7 +753,7 @@ def main():
                         help="计算设备 (cuda/cpu)")
     parser.add_argument("--compute-type", default="float16",
                         help="计算精度 (float16/int8_float16/int8/float32)")
-    parser.add_argument("--engine", default="edge", choices=["edge", "chattts"],
+    parser.add_argument("--engine", default="edge", choices=["edge", "chattts", "cosyvoice"],
                         help="TTS 引擎 (默认 edge)")
     parser.add_argument("--config", help="TTS YAML 配置文件路径")
     parser.add_argument("--caption-config", default=None,
@@ -764,6 +776,15 @@ def main():
                         help="CosyVoice 模型版本 (v2/v3)")
     parser.add_argument("--cosyvoice-model-path", default=None,
                         help="CosyVoice 模型 checkpoint 路径")
+    parser.add_argument("--cosyvoice-tts-model-version", default=None,
+                        choices=["v2", "v3"],
+                        help="CosyVoice TTS 模型版本 (v2/v3)")
+    parser.add_argument("--cosyvoice-tts-model-path", default=None,
+                        help="CosyVoice TTS 模型 checkpoint 路径")
+    parser.add_argument("--cosyvoice-tts-prompt-audio", default=None,
+                        help="CosyVoice TTS 参考说话人音频路径")
+    parser.add_argument("--cosyvoice-tts-prompt-text", default=None,
+                        help="CosyVoice TTS 参考音频转录文本")
     parser.add_argument("--skip-extract", action="store_true",
                         help="跳过字幕提取")
     parser.add_argument("--skip-defect-check", action="store_true",
@@ -945,6 +966,10 @@ def main():
                 cosyvoice_mode=args.cosyvoice_mode,
                 cosyvoice_model_version=args.cosyvoice_model_version,
                 cosyvoice_model_path=args.cosyvoice_model_path,
+                cosyvoice_tts_model_version=args.cosyvoice_tts_model_version,
+                cosyvoice_tts_model_path=args.cosyvoice_tts_model_path,
+                cosyvoice_tts_prompt_audio=args.cosyvoice_tts_prompt_audio,
+                cosyvoice_tts_prompt_text=args.cosyvoice_tts_prompt_text,
             )
         else:
             print("[3/3] TTS 合成 — 已跳过 (--skip-tts)")
