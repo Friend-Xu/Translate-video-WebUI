@@ -84,6 +84,17 @@ if not os.path.isdir(_temp_matcha) and os.path.isdir(_src_matcha):
         shutil.copytree(_src_matcha, _temp_matcha)
     except Exception:
         pass
+# Validate temp copy: TxF error 6714 means previous copytree left a corrupt
+# directory. Delete it and fall back to source; next startup will retry.
+if os.path.isdir(_temp_matcha):
+    try:
+        os.listdir(_temp_matcha)
+    except OSError:
+        logger.warning("Matcha-TTS temp copy corrupted (TxF), deleting and using source")
+        try:
+            shutil.rmtree(_temp_matcha)
+        except OSError:
+            pass
 _matcha_root = _temp_matcha if os.path.isdir(_temp_matcha) else _src_matcha
 for _p in (_cosyvoice_root, _matcha_root):
     if os.path.isdir(_p) and _p not in sys.path:
