@@ -11,6 +11,7 @@ import RateReviewIcon from '@mui/icons-material/RateReviewOutlined'
 import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined'
 import FileOpenOutlinedIcon from '@mui/icons-material/FileOpenOutlined'
 import { SectionHeader } from '../SectionHeader'
+import ModelManagerPanel from './ModelManagerPanel'
 
 interface ToolbarProps {
   onImportVideo: () => void
@@ -67,6 +68,11 @@ export function Toolbar({ onImportVideo, onOptimizeSubtitles, onReviewSubtitles,
           </Box>
         </Box>
       </Card>
+
+      <Box sx={{ mt: 3 }}>
+        <ModelManagerPanel />
+      </Box>
+
       <input
         ref={fileInputRef}
         type="file"

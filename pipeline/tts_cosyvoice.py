@@ -269,10 +269,34 @@ class CosyVoiceTTSEngine:
             elif CosyVoice2 is not None:
                 self._model = CosyVoice2(self._model_path, fp16=self._fp16)
             else:
-                raise ImportError(
-                    "CosyVoice 模型未安装。请克隆 FunAudioLLM/CosyVoice 仓库"
-                    "并安装其依赖到 models/CosyVoice/。"
+                # 区分失败原因
+                cv_src = os.path.isdir(
+                    os.path.join(
+                        os.path.dirname(__file__), "..", "models", "CosyVoice",
+                        "cosyvoice", "cli",
+                    )
                 )
+                cv_w = os.path.isfile(
+                    os.path.join(self._model_path, f"cosyvoice{self._model_version}.yaml")
+                )
+                if not cv_src:
+                    hint = (
+                        "CosyVoice 源代码未找到。请克隆仓库:\n"
+                        "  git clone https://github.com/FunAudioLLM/CosyVoice.git models/CosyVoice"
+                    )
+                elif not cv_w:
+                    hint = (
+                        f"CosyVoice {self._model_version} 模型权重未下载。\n"
+                        f"目录 {self._model_path} 中缺少 cosyvoice{self._model_version}.yaml。\n"
+                        f"请在 WebUI 模型管理面板下载，或手动从 HuggingFace 下载:\n"
+                        f"  https://huggingface.co/FunAudioLLM/CosyVoice{self._model_version.capitalize()}-0.5B"
+                    )
+                else:
+                    hint = (
+                        "CosyVoice 导入失败，请查看上方 warning 日志中的详细错误。\n"
+                        "常见原因: Python > 3.10、依赖缺失、TxF WinError 6714"
+                    )
+                raise ImportError(hint)
 
             self._loaded = True
             logger.info(

@@ -34,7 +34,6 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import AsyncIterator, Optional
 
@@ -42,44 +41,26 @@ import yaml
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
 import pysrt
 
 # Windows asyncio subprocess 兼容修复
-# uvicorn reload 模式下可能丢失 ProactorEventLoop 策略
 if os.name == "nt":
     try:
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     except Exception:
         pass
-    # 抑制 IocpProactor 创建的 DEBUG 日志刷屏（Python 3.10 已知行为）
-    logging.getLogger("asyncio").setLevel(logging.WARNING)
 
-# ---------------------------------------------------------------------------
-# Logging setup: file + console
-# ---------------------------------------------------------------------------
+# ── 系统级日志 ──────────────────────────────────────────────────
 LOG_DIR = Path(__file__).resolve().parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 
-LOG_FORMAT = logging.Formatter(
-    "[%(asctime)s] [%(levelname)-5s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-
-_file_handler = RotatingFileHandler(
-    LOG_DIR / "server.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8",
-)
-_file_handler.setFormatter(LOG_FORMAT)
-_file_handler.setLevel(logging.DEBUG)
-
-_console_handler = logging.StreamHandler(sys.stdout)
-_console_handler.setFormatter(LOG_FORMAT)
-_console_handler.setLevel(logging.INFO)
-
-logging.basicConfig(level=logging.DEBUG, handlers=[_file_handler, _console_handler])
-logger = logging.getLogger("server")
+from pipeline.logging_setup import setup_logging, get_logger
+setup_logging(log_dir=LOG_DIR)
+logger = get_logger("server")
 
 
 class SSELogHandler(logging.Handler):
@@ -108,6 +89,16 @@ class SSELogHandler(logging.Handler):
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
 MAIN_SCRIPT = PROJECT_ROOT / "main.py"
+
+
+def _rel_path(abs_path: str, root: Path = PROJECT_ROOT) -> str:
+    """将绝对路径转为相对于项目根目录的路径。"""
+    try:
+        p = Path(abs_path)
+        rp = p.relative_to(root)
+        return str(rp)
+    except (ValueError, TypeError):
+        return abs_path
 DIST_DIR = Path(__file__).resolve().parent / "dist"
 JOBS_DIR = Path(__file__).resolve().parent / "jobs"
 BATCHES_DIR = Path(__file__).resolve().parent / "batches"
@@ -125,19 +116,59 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+async def _reapply_logging():
+    """uvicorn 启动时会重置日志配置，重新应用系统级日志。"""
+    setup_logging(log_dir=LOG_DIR)
+    logger.info("系统日志已就绪")
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Log every API request with method, path, status, and duration."""
+    """记录每个请求：method, path, status, duration。异常时打印完整堆栈。"""
     start = time.perf_counter()
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        elapsed = (time.perf_counter() - start) * 1000
+        logger.exception(
+            "%s %s -> 500 (%.0fms) [未处理异常]",
+            request.method, request.url.path, elapsed,
+        )
+        raise
     elapsed = (time.perf_counter() - start) * 1000
-    logger.info(
-        "%s %s -> %d (%.0fms)",
+    level = logging.WARNING if response.status_code >= 400 else logging.INFO
+    logger.log(
+        level, "%s %s -> %d (%.0fms)",
         request.method, request.url.path, response.status_code, elapsed,
     )
-    if response.status_code >= 400:
-        logger.warning("  Request failed with status %d", response.status_code)
     return response
+
+
+# ── 全局异常处理器 ──────────────────────────────────────────────
+
+@app.exception_handler(HTTPException)
+async def _http_exc_handler(request: Request, exc: HTTPException):
+    logger.warning(
+        "HTTP %d: %s %s",
+        exc.status_code, request.method, request.url.path,
+    )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.detail, "code": f"HTTP_{exc.status_code}"},
+    )
+
+
+@app.exception_handler(Exception)
+async def _global_exc_handler(request: Request, exc: Exception):
+    logger.critical(
+        "未处理异常: %s %s — %s: %s",
+        request.method, request.url.path, type(exc).__name__, exc,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"error": "内部服务器错误", "code": "INTERNAL_ERROR"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1735,19 +1766,65 @@ async def preview_prompt(req: PreviewPromptRequest) -> dict:
 
 @app.get("/api/models")
 async def list_models() -> dict:
-    """列出所有已知模型及其下载状态。"""
+    """列出所有已知模型及其下载状态，含环境适配评估。"""
     from pipeline.model_manager import ModelManager
+    from pipeline.env_detect import detect_env, assess_model_fit
+
+    env = detect_env()
     models = []
     for s in ModelManager.list_all():
+        fit = assess_model_fit(env, s.vram_gb)
+        # 相对路径
+        try:
+            rel = str(Path(s.path).relative_to(PROJECT_ROOT)) if s.path else ""
+        except (ValueError, TypeError):
+            rel = s.path
         models.append({
-            "id": s.id,
-            "name": s.name,
-            "exists": s.exists,
-            "path": s.path,
-            "size_gb": s.size_gb,
-            "size_mb": s.size_mb,
+            "id": s.id, "name": s.name,
+            "function": s.function, "category": s.category,
+            "exists": s.exists, "partial": s.partial,
+            "path": s.path, "rel_path": rel,
+            "size_gb": s.size_gb, "size_mb": s.size_mb,
+            "vram_gb": s.vram_gb, "downloadable": s.downloadable,
+            "fit_level": fit["level"], "fit_label": fit["label"], "fit_color": fit["color"],
         })
-    return {"models": models}
+    return {"models": models, "env": {
+        "gpu_name": env.gpu_name,
+        "vram_total_gb": env.vram_total_gb,
+        "vram_free_gb": env.vram_free_gb,
+        "cpu_cores": env.cpu_cores,
+        "ram_total_gb": env.ram_total_gb,
+        "ram_available_gb": env.ram_available_gb,
+        "cuda_version": env.cuda_version,
+        "pytorch_version": env.pytorch_version,
+        "python_version": env.python_version,
+        "os_name": env.os_name,
+        "has_gpu": env.has_gpu,
+    }}
+
+
+@app.get("/api/env")
+async def get_env_info() -> dict:
+    """返回当前运行环境信息。"""
+    from pipeline.env_detect import detect_env
+    env = detect_env()
+    return {
+        "gpu_name": env.gpu_name,
+        "vram_total_gb": env.vram_total_gb,
+        "vram_free_gb": env.vram_free_gb,
+        "cpu_cores": env.cpu_cores,
+        "ram_total_gb": env.ram_total_gb,
+        "ram_available_gb": env.ram_available_gb,
+        "cuda_version": env.cuda_version,
+        "pytorch_version": env.pytorch_version,
+        "python_version": env.python_version,
+        "os_name": env.os_name,
+        "has_gpu": env.has_gpu,
+    }
+
+
+# 活跃下载的取消令牌
+_download_cancels: dict[str, "threading.Event"] = {}
 
 
 @app.get("/api/models/download/{model_id}")
@@ -1755,8 +1832,18 @@ async def download_model_stream(model_id: str, req: Request):
     """SSE 流式下载模型，推送实时进度。"""
     from pipeline.model_manager import ModelManager
 
-    if model_id != "chattts":
-        raise HTTPException(400, "仅支持 chattts 模型下载")
+    status = ModelManager.check(model_id)
+    if not status.downloadable:
+        raise HTTPException(400, f"模型 {model_id} 不支持在线下载，请手动安装")
+
+    # 如果已有同名下载在进行中，先取消旧的
+    old = _download_cancels.pop(model_id, None)
+    if old:
+        old.set()
+
+    import threading
+    cancel_evt = threading.Event()
+    _download_cancels[model_id] = cancel_evt
 
     async def event_stream():
         import json
@@ -1770,23 +1857,40 @@ async def download_model_stream(model_id: str, req: Request):
 
         def do_download():
             try:
-                path = ModelManager.download_chattts(progress_callback=on_progress)
+                path = ModelManager.download_model(model_id, progress_callback=on_progress, cancel_event=cancel_evt)
                 q.put({"status": "completed", "path": path})
+            except ModelManager.CancelledError:
+                q.put({"status": "cancelled", "message": "下载已取消"})
             except Exception as e:
                 q.put({"status": "error", "message": str(e)})
+            finally:
+                _download_cancels.pop(model_id, None)
             q.put(None)
 
-        import threading
         t = threading.Thread(target=do_download, daemon=True)
         t.start()
 
-        while True:
-            item = q.get()
-            if item is None:
-                break
-            yield f"data: {json.dumps(item)}\n\n"
+        try:
+            while True:
+                item = q.get()
+                if item is None:
+                    break
+                yield f"data: {json.dumps(item)}\n\n"
+        finally:
+            # 客户端断开连接 → 自动取消下载
+            cancel_evt.set()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.post("/api/models/download/{model_id}/cancel")
+async def cancel_download(model_id: str) -> dict:
+    """取消正在进行的模型下载。"""
+    evt = _download_cancels.pop(model_id, None)
+    if evt is None:
+        raise HTTPException(404, f"没有正在进行的下载: {model_id}")
+    evt.set()
+    return {"ok": True, "message": f"已发送取消信号: {model_id}"}
 
 
 # ---------------------------------------------------------------------------
@@ -2674,6 +2778,19 @@ async def open_folder(video_path: str = "") -> dict:
     return {"ok": True, "opened": folder}
 
 
+@app.post("/api/files/open-path")
+async def open_path(body: dict) -> dict:
+    """在 Windows 资源管理器中打开指定路径（文件或目录）。"""
+    path = body.get("path", "")
+    if not path:
+        raise HTTPException(status_code=400, detail="Missing path")
+    full = path if os.path.isabs(path) else os.path.join(PROJECT_ROOT, path)
+    if not os.path.exists(full):
+        raise HTTPException(status_code=404, detail=f"Path not found: {full}")
+    os.startfile(full)
+    return {"ok": True, "opened": full}
+
+
 @app.get("/api/files/browse")
 async def browse_files(path: str = "") -> dict:
     """List directory contents for the file picker."""
@@ -2935,4 +3052,14 @@ Close this window to stop the server.
     logger.info("ImageMagick: %s", "available" if magick_available else "MISSING")
 
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run(
+        app, host="127.0.0.1", port=8000, reload=True,
+        # 禁止 uvicorn 覆盖系统日志配置
+        log_config={
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {},
+            "handlers": {},
+            "loggers": {},
+        },
+    )

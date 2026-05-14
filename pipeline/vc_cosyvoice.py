@@ -72,27 +72,105 @@ from .vc_base import VoiceCloneConfig
 from .vc_device import detect_vram_mb
 
 # ── ensure CosyVoice is importable (runs once at module init) ────────
+# We CANNOT add CosyVoice to sys.path — Windows TxF error 6714 will fire
+# when importlib._fill_cache scans the absolute path.
+# Instead, we register a sys.meta_path finder that resolves cosyvoice/matcha
+# imports without ever scanning sys.path.  This is cleaner than pre-registering
+# empty shell packages in sys.modules (which broke pydoc.locate / hyperpyyaml
+# !name: tag resolution because the module code was never executed).
+import importlib.abc
+import importlib.machinery
+import importlib.util
+
 _cosyvoice_root = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "models", "CosyVoice")
 )
 _matcha_root = os.path.join(_cosyvoice_root, "third_party", "Matcha-TTS")
-for _p in (_cosyvoice_root, _matcha_root):
-    if os.path.isdir(_p) and _p not in sys.path:
-        sys.path.insert(0, _p)
 
-# Pre-import CosyVoice at module init (avoid Windows TxF in thread pools)
+
+def _make_spec(fullname: str, file_path: str, *, is_package: bool):
+    """Create a ModuleSpec for a source file, bypassing sys.path scanning."""
+    loader = importlib.machinery.SourceFileLoader(fullname, file_path)
+    return importlib.machinery.ModuleSpec(
+        fullname, loader, origin=file_path, is_package=is_package
+    )
+
+
+class _CosyVoiceFinder(importlib.abc.MetaPathFinder):
+    """sys.meta_path finder for cosyvoice / matcha — no sys.path needed."""
+
+    def find_spec(self, fullname, path, target=None):
+        # --- cosyvoice -------------------------------------------------------
+        if fullname == "cosyvoice":
+            init = os.path.join(_cosyvoice_root, "cosyvoice", "__init__.py")
+            if os.path.isfile(init):
+                return _make_spec(fullname, init, is_package=True)
+            return None
+
+        if fullname.startswith("cosyvoice."):
+            rel = fullname[len("cosyvoice.") :].replace(".", os.sep)
+            base = os.path.join(_cosyvoice_root, "cosyvoice")
+            pkg_init = os.path.join(base, rel, "__init__.py")
+            if os.path.isfile(pkg_init):
+                return _make_spec(fullname, pkg_init, is_package=True)
+            mod_path = os.path.join(base, rel + ".py")
+            if os.path.isfile(mod_path):
+                return _make_spec(fullname, mod_path, is_package=False)
+            return None
+
+        # --- matcha ----------------------------------------------------------
+        if fullname == "matcha":
+            init = os.path.join(_matcha_root, "matcha", "__init__.py")
+            if os.path.isfile(init):
+                return _make_spec(fullname, init, is_package=True)
+            return None
+
+        if fullname.startswith("matcha."):
+            rel = fullname[len("matcha.") :].replace(".", os.sep)
+            base = os.path.join(_matcha_root, "matcha")
+            pkg_init = os.path.join(base, rel, "__init__.py")
+            if os.path.isfile(pkg_init):
+                return _make_spec(fullname, pkg_init, is_package=True)
+            mod_path = os.path.join(base, rel + ".py")
+            if os.path.isfile(mod_path):
+                return _make_spec(fullname, mod_path, is_package=False)
+            return None
+
+        return None
+
+
+sys.meta_path.insert(0, _CosyVoiceFinder())
+
+# Preload pyarrow/pandas/sklearn BEFORE CosyVoice import.
+# CosyVoice → transformers → sklearn → pandas → pyarrow.
+# If pyarrow is imported for the first time during this chain, its C
+# extension initialization triggers importlib._fill_cache which scans
+# every absolute path on sys.path, hitting WinError 6714.
+# Preloading puts them in sys.modules so the chain is a no-op.
+for _mod in ("pyarrow", "pandas", "sklearn"):
+    try:
+        importlib.import_module(_mod)
+    except ImportError:
+        pass
+
 CosyVoice2 = None
 CosyVoice3 = None
 try:
     from cosyvoice.cli.cosyvoice import CosyVoice2 as _CV2  # type: ignore[import-untyped]
     CosyVoice2 = _CV2
-except ImportError:
-    pass
+except Exception:
+    import logging
+    logging.getLogger(__name__).warning(
+        "CosyVoice2 导入失败，v2 TTS/VC 不可用", exc_info=True
+    )
 try:
     from cosyvoice.cli.cosyvoice import CosyVoice3 as _CV3  # type: ignore[import-untyped]
     CosyVoice3 = _CV3
-except ImportError:
-    pass
+except Exception:
+    import logging
+    logging.getLogger(__name__).warning(
+        "CosyVoice3 导入失败，v3 TTS/VC 不可用", exc_info=True
+    )
 
 
 # ---------------------------------------------------------------------------

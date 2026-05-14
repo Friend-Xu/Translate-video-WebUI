@@ -16,9 +16,22 @@ backend_log = open(os.path.join(LOG_DIR, "server.log"), "w", encoding="utf-8")
 backend = subprocess.Popen(
     [sys.executable, "-m", "uvicorn", "GUI.server:app", "--host", "127.0.0.1", "--port", "8000"],
     cwd=ROOT,
-    stdout=backend_log,
-    stderr=backend_log,
+    stdout=backend_log,       # uvicorn 内部日志 → 文件
+    stderr=subprocess.PIPE,   # 系统日志 → 管道，实时输出到终端
 )
+
+# 将 stderr 管道实时输出到终端
+import threading
+
+def _pipe_stderr():
+    try:
+        for line in iter(backend.stderr.readline, b""):
+            print(line.decode("utf-8", errors="replace"), end="", flush=True)
+    except Exception:
+        pass
+
+_thread = threading.Thread(target=_pipe_stderr, daemon=True)
+_thread.start()
 
 frontend = subprocess.Popen(
     ["cmd", "/c", "npm run dev -- --clearScreen=false"],

@@ -345,7 +345,13 @@ class TtsPipeline:
             vram_limit_mb=self.config.voice_clone_vram_limit_mb,
             color_audio_path="./speakers/Color_audio.WAV",
             error_log_path=os.path.join(self.config.output_dir, "voice_clone_error_log.txt"),
-            model_dir="./models/CosyVoice2-0.5B" if engine == "cosyvoice" else "./models",
+            model_dir=(
+                "./models/CosyVoice3-0.5B"
+                if engine == "cosyvoice" and self.config.cosyvoice_model_version == "v3"
+                else "./models/CosyVoice2-0.5B"
+                if engine == "cosyvoice"
+                else "./models"
+            ),
             cosyvoice_mode=self.config.cosyvoice_mode,
             model_version=self.config.cosyvoice_model_version,
             cosyvoice_fp16=self.config.cosyvoice_fp16,

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import {
   Box, Typography, Select, MenuItem, TextField, Slider,
   FormControlLabel, Switch, Button, Alert,
+  CircularProgress, Stack, LinearProgress,
 } from "@mui/material";
 import type { PipelineConfig } from "../../types";
 
@@ -14,16 +15,73 @@ export default function CosyVoiceTTSPanel({ config, onConfigChange }: Props) {
   const [modelExists, setModelExists] = useState<boolean | null>(null);
   const [previewAudio, setPreviewAudio] = useState<string>("");
   const [previewing, setPreviewing] = useState(false);
+  // 下载状态
+  const [downloading, setDownloading] = useState(false);
+  const [downloadPct, setDownloadPct] = useState(0);
+  const [downloadGb, setDownloadGb] = useState(0);
+  const [downloadTotalGb, setDownloadTotalGb] = useState(0);
+  const [downloadError, setDownloadError] = useState("");
 
   useEffect(() => {
     fetch("/api/models")
       .then((r) => r.json())
       .then((data: { models?: Array<{ id: string; exists: boolean }> }) => {
-        const cv = (data.models || []).find((m) => m.id === "cosyvoice");
+        const cv = (data.models || []).find(
+          (m) => m.id === "cosyvoice3" || m.id === "cosyvoice"
+        );
         setModelExists(cv ? cv.exists : null);
       })
       .catch(() => setModelExists(null));
   }, []);
+
+  // 版本切换时重置模型检测状态
+  useEffect(() => {
+    fetch("/api/models")
+      .then((r) => r.json())
+      .then((data: { models?: Array<{ id: string; exists: boolean }> }) => {
+        const cv = (data.models || []).find(
+          (m) => m.id === "cosyvoice3" || m.id === "cosyvoice"
+        );
+        setModelExists(cv ? cv.exists : null);
+      })
+      .catch(() => setModelExists(null));
+  }, [config.cosyvoiceTtsModelVersion]);
+
+  const modelDownloadId = config.cosyvoiceTtsModelVersion === "v3" ? "cosyvoice3" : "cosyvoice";
+
+  const startDownload = () => {
+    setDownloading(true);
+    setDownloadPct(0);
+    setDownloadGb(0);
+    setDownloadTotalGb(0);
+    setDownloadError("");
+    const es = new EventSource(`/api/models/download/${modelDownloadId}`);
+    es.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.status === "downloading") {
+          setDownloadPct(msg.progress);
+          setDownloadGb(msg.downloaded_gb);
+          setDownloadTotalGb(msg.total_gb);
+        } else if (msg.status === "completed") {
+          setDownloading(false);
+          setModelExists(true);
+          es.close();
+        } else if (msg.status === "error") {
+          setDownloadError(msg.message || "下载失败");
+          setDownloading(false);
+          es.close();
+        }
+      } catch { /* ignore parse errors */ }
+    };
+    es.onerror = () => {
+      if (downloading) {
+        setDownloadError("下载连接中断，请重试");
+        setDownloading(false);
+      }
+      es.close();
+    };
+  };
 
   const handleExtractVocals = async () => {
     if (!config.videoPath) return;
@@ -99,9 +157,41 @@ export default function CosyVoiceTTSPanel({ config, onConfigChange }: Props) {
             : "./models/CosyVoice2-0.5B"}
           sx={{ mt: 0.5 }}
         />
-        {modelExists === false && (
-          <Alert severity="warning" sx={{ mt: 0.5 }}>
-            未检测到 CosyVoice 模型，请下载模型到 models/ 目录
+
+        {modelExists === false && !downloading && (
+          <Alert
+            severity="warning"
+            sx={{ mt: 0.5 }}
+            action={
+              <Button
+                size="small" color="warning" variant="outlined"
+                onClick={startDownload}
+              >
+                下载
+              </Button>
+            }
+          >
+            未检测到 CosyVoice {config.cosyvoiceTtsModelVersion} 模型权重
+          </Alert>
+        )}
+
+        {downloading && (
+          <Box sx={{ mt: 0.5 }}>
+            <Stack spacing={1}>
+              <Box display="flex" alignItems="center" gap={1}>
+                <CircularProgress size={16} />
+                <Typography variant="body2">
+                  下载中 {downloadPct}% ({downloadGb.toFixed(1)}/{downloadTotalGb.toFixed(1)} GB)
+                </Typography>
+              </Box>
+              <LinearProgress variant="determinate" value={downloadPct} />
+            </Stack>
+          </Box>
+        )}
+
+        {downloadError && (
+          <Alert severity="error" sx={{ mt: 0.5 }}>
+            {downloadError}
           </Alert>
         )}
       </Box>

@@ -38,8 +38,13 @@ if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
 
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, PROJECT_ROOT)
-sys.path.insert(0, os.path.join(PROJECT_ROOT, "pipeline"))
+
+# Python 把脚本目录作为绝对路径加入 sys.path[0]。
+# 后续 import 链中的 pyarrow C 扩展会触发 importlib._fill_cache 扫描
+# sys.path 上的绝对路径，在 D: 盘上碰到 WinError 6714。
+# 将 sys.path[0] 替换为空字符串（CWD，相对路径），功能等价但安全。
+if sys.path and os.path.isabs(sys.path[0]):
+    sys.path[0] = ""
 
 
 from pipeline.checkpoint import PipelineCheckpoint, StepState

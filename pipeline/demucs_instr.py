@@ -36,10 +36,8 @@ _CHUNK_OVERLAP = 10       # 段间重叠秒数（首尾各 trim 一半）
 
 
 def _ensure_torch_home():
-    models_root = os.path.join(PROJECT_ROOT, "models")
-    os.environ.setdefault("TORCH_HOME", models_root)
-    os.makedirs(os.path.join(models_root, "hub", "checkpoints"), exist_ok=True)
-    os.makedirs(_DEMUCS_LOCAL_DIR, exist_ok=True)
+    os.environ.setdefault("TORCH_HOME", _DEMUCS_LOCAL_DIR)
+    os.makedirs(os.path.join(_DEMUCS_LOCAL_DIR, "hub", "checkpoints"), exist_ok=True)
 
 
 def _get_audio_duration(wav_path: str) -> float:
@@ -200,12 +198,6 @@ def extract_instrumental(video_path: str, output_dir: str,
     from demucs.apply import apply_model
     model = pretrained.get_model(model_name)
 
-    hub_ckpt_dir = os.path.join(os.environ["TORCH_HOME"], "hub", "checkpoints")
-    for src in __import__("glob").glob(os.path.join(hub_ckpt_dir, f"{model_name}*")):
-        dst = os.path.join(_DEMUCS_LOCAL_DIR, os.path.basename(src))
-        if not os.path.isfile(dst):
-            shutil.copy2(src, dst)
-            logger.info(f"checkpoint 已备份: {dst}")
     _device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model.to(_device)
     model.eval()
