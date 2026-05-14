@@ -71,10 +71,7 @@ import torchaudio
 from .vc_base import VoiceCloneConfig
 from .vc_device import detect_vram_mb
 
-# ── ensure CosyVoice is importable ────────────────────────────────────
-# CosyVoice 源码（models/CosyVoice/cosyvoice/）为只读 git clone，
-# 不存在运行时修改自身文件的场景。直接添加源路径到 sys.path，
-# 不做任何 temp 复制。
+# ── ensure CosyVoice is importable (runs once at module init) ────────
 _cosyvoice_root = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "models", "CosyVoice")
 )
@@ -83,6 +80,7 @@ for _p in (_cosyvoice_root, _matcha_root):
     if os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, _p)
 
+# Pre-import CosyVoice at module init (avoid Windows TxF in thread pools)
 CosyVoice2 = None
 CosyVoice3 = None
 try:

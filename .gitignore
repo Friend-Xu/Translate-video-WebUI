@@ -128,3 +128,5 @@ GUI/graphify-out/
 .playwright-mcp/
 tools/rubberband/
 bash.exe.stackdump
+models/CosyVoice/third_party/Matcha-TTS
+models/CosyVoice/third_party/Matcha-TTS.bak
