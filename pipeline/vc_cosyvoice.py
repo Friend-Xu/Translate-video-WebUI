@@ -84,17 +84,6 @@ if not os.path.isdir(_temp_matcha) and os.path.isdir(_src_matcha):
         shutil.copytree(_src_matcha, _temp_matcha)
     except Exception:
         pass
-# Validate temp copy: TxF error 6714 means previous copytree left a corrupt
-# directory. Delete it and fall back to source; next startup will retry.
-if os.path.isdir(_temp_matcha):
-    try:
-        os.listdir(_temp_matcha)
-    except OSError:
-        logger.warning("Matcha-TTS temp copy corrupted (TxF), deleting and using source")
-        try:
-            shutil.rmtree(_temp_matcha)
-        except OSError:
-            pass
 _matcha_root = _temp_matcha if os.path.isdir(_temp_matcha) else _src_matcha
 for _p in (_cosyvoice_root, _matcha_root):
     if os.path.isdir(_p) and _p not in sys.path:
@@ -107,12 +96,28 @@ CosyVoice3 = None
 try:
     from cosyvoice.cli.cosyvoice import CosyVoice2 as _CV2  # type: ignore[import-untyped]
     CosyVoice2 = _CV2
-except ImportError:
-    pass
+except (ImportError, OSError) as e:
+    if isinstance(e, OSError) and getattr(e, 'winerror', None) == 6714:
+        logger.warning("Matcha-TTS temp copy corrupted (TxF 6714), falling back to source")
+        if _matcha_root in sys.path:
+            sys.path.remove(_matcha_root)
+        try:
+            shutil.rmtree(_temp_matcha)
+        except OSError:
+            pass
+        # Re-add source if not already there
+        if os.path.isdir(_src_matcha) and _src_matcha not in sys.path:
+            sys.path.insert(0, _src_matcha)
+        # Retry import with source path
+        try:
+            from cosyvoice.cli.cosyvoice import CosyVoice2 as _CV2
+            CosyVoice2 = _CV2
+        except (ImportError, OSError):
+            pass
 try:
     from cosyvoice.cli.cosyvoice import CosyVoice3 as _CV3  # type: ignore[import-untyped]
     CosyVoice3 = _CV3
-except ImportError:
+except (ImportError, OSError):
     pass
 
 

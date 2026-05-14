@@ -64,6 +64,14 @@ class ModelManager:
             size_gb=2.37,
             description="离线中文 TTS 语音合成模型",
         ),
+        "cosyvoice": ModelEntry(
+            id="cosyvoice",
+            name="CosyVoice 2.0 (FunAudioLLM/CosyVoice)",
+            repo_id="",
+            check_dir=MODELS_DIR / "CosyVoice2-0.5B",
+            size_gb=2.5,
+            description="离线 zero-shot TTS 语音合成 + 声音克隆模型",
+        ),
     }
 
     @classmethod

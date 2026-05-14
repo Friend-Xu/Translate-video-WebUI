@@ -18,8 +18,9 @@ export default function CosyVoiceTTSPanel({ config, onConfigChange }: Props) {
   useEffect(() => {
     fetch("/api/models")
       .then((r) => r.json())
-      .then((data: { cosyvoice?: boolean }) => {
-        setModelExists(!!data.cosyvoice);
+      .then((data: { models?: Array<{ id: string; exists: boolean }> }) => {
+        const cv = (data.models || []).find((m) => m.id === "cosyvoice");
+        setModelExists(cv ? cv.exists : null);
       })
       .catch(() => setModelExists(null));
   }, []);
