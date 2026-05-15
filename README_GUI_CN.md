@@ -58,8 +58,8 @@ SSE 流式日志，每步计时显示。实时查看流水线各阶段的执行�
 ### GPU 自动检测
 启动时检测 NVIDIA GPU 和 VRAM 容量。自动选择硬件编码器（NVENC）并计算 ChatTTS 最优模型副本数。
 
-### 双 TTS 引擎
-Edge TTS（云端，快速）和 ChatTTS（本地，离线）自由切换。根据目标语言自动匹配语音 — 支持 15 种语言。
+### 三 TTS 引擎
+Edge TTS（云端，快速）、ChatTTS（本地，离线）和 CosyVoice（本地，零样本语音克隆）自由切换。根据目标语言自动匹配语音 — 支持 15 种语言。
 
 ### 配置持久化
 所有设置保存到 YAML 文件。支持配置导出/导入，便于跨机器共享。一键恢复默认。
@@ -97,6 +97,7 @@ GUI/
 ├── components/
 │   ├── sections/
 │   │   ├── MainPanel.tsx        # 拖拽、开始按钮、日志
+│   │   ├── CosyVoiceTTSPanel.tsx # CosyVoice 引擎配置
 │   │   ├── StepConfig.tsx       # 三步流水线配置
 │   │   ├── OutputSettings.tsx   # 字幕样式 & 视频编码
 │   │   ├── BatchPanel.tsx       # 多视频批量模式

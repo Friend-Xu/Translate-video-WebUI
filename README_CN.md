@@ -50,7 +50,8 @@ pip install -r requirements.txt
 |------|------|
 | 🎙️ **Whisper 字幕提取** | faster-whisper (CTranslate2) + Silero VAD + wav2vec2 强制对齐，~20ms 精度 |
 | 🌐 **智能翻译** | 多 LLM 支持（DeepSeek/OpenAI），15 种目标语言，术语表按需注入，三级降级策略 |
-| 🗣️ **TTS 语音合成** | Edge TTS / ChatTTS 双引擎，目标语言自动匹配语音，自适应语速调节 |
+| 🗣️ **TTS 语音合成** | Edge TTS / ChatTTS / CosyVoice 三引擎，目标语言自动匹配语音，自适应语速调节 |
+| 🎤 **CosyVoice TTS** | 离线零样本语音合成，subprocess 隔离免 PyTorch 版本冲突，v2/v3 双版本，自动数字规范化 |
 | 🎼 **Rubber Band 音频拉伸** | 工业级时域拉伸，ChatTTS 无感加速，保持音色自然不失真 |
 | 🎵 **背景音乐保留** | Demucs 人声/伴奏分离，保留 BGM + 响度补偿到原始水平 |
 | 🖥️ **WebUI 界面** | React + FastAPI，单视频 + 批处理模式，SSE 实时日志 |
@@ -65,7 +66,7 @@ pip install -r requirements.txt
 
 | 能力 | Translate_video | 其他工具 |
 |------|:--:|:--:|
-| 离线 TTS（ChatTTS） | ✅ VRAM 自适应 | ❌ 仅云端 API |
+| 离线 TTS（ChatTTS / CosyVoice） | ✅ VRAM 自适应 + 零样本 | ❌ 仅云端 API |
 | 目标语言自动适配 | ✅ 15 种语言自动选语音 | ⚠️ 手动指定 |
 | 音频时域拉伸 | ✅ Rubber Band 工业级 | ❌ 无/暴力变速 |
 | 术语表按需注入 | ✅ 只传命中术语 | ❌ 全量注入浪费 token |
@@ -73,7 +74,7 @@ pip install -r requirements.txt
 | WebUI 面板 | ✅ 完整可视化 | ⚠️ 仅 CLI |
 
 **核心优势：**
-- 🆓 **离线可用** — ChatTTS 本地运行，不依赖云端 TTS API
+- 🆓 **离线可用** — ChatTTS & CosyVoice 本地运行，不依赖云端 TTS API
 - 🎯 **精确对齐** — wav2vec2 词级时间戳 + Rubber Band 时域拉伸，字幕语音同步
 - 🌍 **多语言就绪** — 源语言自动检测 + 目标语言一键切换，语音/翻译全链路联动
 - 🧠 **智能翻译** — 术语按需注入（节省 90% token），Split-Brain / Multi-Agent 可选增强
@@ -98,7 +99,7 @@ graph LR
     C --> C2[语义验证<br/>阈值 0.65]
     C --> C3[术语替换<br/>YAML 词典]
 
-    D --> D1[Edge / ChatTTS<br/>双引擎]
+    D --> D1[Edge / ChatTTS / CosyVoice<br/>三引擎]
     D --> D2[目标语言自适应<br/>15 种语音]
     D --> D3[RubberBand<br/>时域拉伸]
     D --> D4[Demucs<br/>BGM 保留]
@@ -152,7 +153,10 @@ graph LR
 | `--model` | turbo | whisper 模型 (`tiny`/`base`/`small`/`medium`/`turbo`/`large-v3`) |
 | `--device` | cuda | 计算设备 (`cuda`/`cpu`) |
 | `--compute-type` | float16 | 计算精度 (`float16`/`int8_float16`/`int8`/`float32`) |
-| `--engine` | edge | TTS 引擎 (`edge`/`chattts`) |
+| `--engine` | edge | TTS 引擎 (`edge`/`chattts`/`cosyvoice`) |
+| `--cosyvoice-tts-model-version` | v2 | CosyVoice 模型版本 (`v2`/`v3`) |
+| `--cosyvoice-tts-lang` | — | TTS 目标语言 (`zh`/`en`/`ja`/`ko`/`yue`) |
+| `--cosyvoice-tts-mode` | cross_lingual | 合成模式（固定 `cross_lingual`） |
 | `--num-workers` | 1 | whisper 并发数 (2~4 需充足 VRAM) |
 | `--skip-extract` / `--skip-translate` / `--skip-tts` | — | 跳过指定步骤 |
 | `--skip-demucs` | — | 跳过人声分离 |
@@ -248,7 +252,10 @@ test_project/
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `engine_type` | edge | TTS 引擎 (`edge`/`chattts`) |
+| `engine_type` | edge | TTS 引擎 (`edge`/`chattts`/`cosyvoice`) |
+| `cosyvoice_tts_model_version` | v2 | CosyVoice 模型 (`v2`/`v3`) |
+| `cosyvoice_tts_lang` | — | 目标语言 (`zh`/`en`/`ja`/`ko`/`yue`) |
+| `cosyvoice_tts_mode` | cross_lingual | 合成模式（已验证最优） |
 | `voice` | zh-CN-XiaoxiaoNeural | Edge TTS 发音人（target_lang 自动覆盖） |
 | `target_lang` | — | 目标语言，自动匹配语音 |
 | `chattts_speaker_seed` | 2 | ChatTTS 音色种子 |

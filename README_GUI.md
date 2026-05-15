@@ -58,8 +58,8 @@ SSE streaming logs with per-step timing. See exactly what's happening at each pi
 ### GPU Auto-Detection
 Detects NVIDIA GPU + VRAM capacity on startup. Automatically selects hardware encoder (NVENC) and calculates optimal ChatTTS worker count.
 
-### Dual TTS Engine
-Switch between Edge TTS (cloud, fast) and ChatTTS (local, offline). Voice auto-selected based on target language — 15 languages supported.
+### Triple TTS Engine
+Switch between Edge TTS (cloud, fast), ChatTTS (local, offline), and CosyVoice (local, zero-shot voice cloning). Voice auto-selected based on target language — 15 languages supported.
 
 ### Config Persistence
 All settings saved to YAML. Export/import configs to share between machines. Reset to defaults anytime.
@@ -97,6 +97,7 @@ GUI/
 ├── components/
 │   ├── sections/
 │   │   ├── MainPanel.tsx        # Drag-drop, start button, logs
+│   │   ├── CosyVoiceTTSPanel.tsx # CosyVoice engine config
 │   │   ├── StepConfig.tsx       # 3-step pipeline configuration
 │   │   ├── OutputSettings.tsx   # Caption style & video encoder
 │   │   ├── BatchPanel.tsx       # Multi-video batch mode

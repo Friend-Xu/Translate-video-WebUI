@@ -50,7 +50,8 @@ Models download automatically to `models/` on first run.
 |------|------|
 | 🎙️ **Whisper Extraction** | faster-whisper (CTranslate2) + Silero VAD + wav2vec2 alignment, ~20ms precision |
 | 🌐 **Smart Translation** | Multi-LLM (DeepSeek/OpenAI), 15 target languages, on-demand glossary injection, 3-tier fallback |
-| 🗣️ **TTS Synthesis** | Edge TTS / ChatTTS dual engine, auto voice selection by target language, adaptive speed |
+| 🗣️ **TTS Synthesis** | Edge TTS / ChatTTS / CosyVoice triple engine, auto voice selection by target language, adaptive speed |
+| 🎤 **CosyVoice TTS** | Offline zero-shot voice cloning TTS, subprocess isolation (no PyTorch conflicts), v2/v3 dual versions, auto number normalization |
 | 🎼 **Rubber Band Stretch** | Industrial-grade time-stretching, natural-sounding ChatTTS speed adjustment |
 | 🎵 **BGM Preservation** | Demucs vocal/instrumental separation, retains background music with loudness compensation |
 | 🖥️ **WebUI Panel** | React + FastAPI, single video + batch mode, SSE real-time logs |
@@ -65,7 +66,7 @@ Models download automatically to `models/` on first run.
 
 | Capability | Translate_video | Others |
 |------|:--:|:--:|
-| Offline TTS (ChatTTS) | ✅ VRAM-adaptive | ❌ Cloud API only |
+| Offline TTS (ChatTTS / CosyVoice) | ✅ VRAM-adaptive + zero-shot | ❌ Cloud API only |
 | Auto language → voice | ✅ 15 languages | ⚠️ Manual |
 | Audio time-stretching | ✅ Rubber Band | ❌ None / crude speed change |
 | Glossary on-demand | ✅ Hit terms only | ❌ All terms injected (token waste) |
@@ -73,7 +74,7 @@ Models download automatically to `models/` on first run.
 | WebUI | ✅ Full visual panel | ⚠️ CLI only |
 
 **Key advantages:**
-- 🆓 **Offline Ready** — ChatTTS runs locally, no cloud TTS API dependency
+- 🆓 **Offline Ready** — ChatTTS & CosyVoice run locally, no cloud TTS API dependency
 - 🎯 **Precise Alignment** — wav2vec2 word-level timestamps + Rubber Band stretching, perfectly synced
 - 🌍 **Multilingual** — Auto source detection + one-click target switch, voice & translation linked
 - 🧠 **Smart Translation** — On-demand glossary (saves 90% tokens), optional Split-Brain / Multi-Agent
@@ -98,7 +99,7 @@ graph LR
     C --> C2[Semantic Check<br/>Threshold 0.65]
     C --> C3[Glossary<br/>On-demand Injection]
 
-    D --> D1[Edge / ChatTTS<br/>Dual Engine]
+    D --> D1[Edge / ChatTTS / CosyVoice<br/>Triple Engine]
     D --> D2[Auto Voice<br/>15 Languages]
     D --> D3[RubberBand<br/>Time-stretch]
     D --> D4[Demucs<br/>BGM Preserve]
@@ -152,7 +153,10 @@ Full architecture → [`ARCHITECTURE.md`](ARCHITECTURE.md)
 | `--model` | turbo | Whisper model (`tiny`/`base`/`small`/`medium`/`turbo`/`large-v3`) |
 | `--device` | cuda | Compute device (`cuda`/`cpu`) |
 | `--compute-type` | float16 | Precision (`float16`/`int8_float16`/`int8`/`float32`) |
-| `--engine` | edge | TTS engine (`edge`/`chattts`) |
+| `--engine` | edge | TTS engine (`edge`/`chattts`/`cosyvoice`) |
+| `--cosyvoice-tts-model-version` | v2 | CosyVoice model version (`v2`/`v3`) |
+| `--cosyvoice-tts-lang` | — | Target language for TTS (`zh`/`en`/`ja`/`ko`/`yue`) |
+| `--cosyvoice-tts-mode` | cross_lingual | Synthesis mode (fixed `cross_lingual`) |
 | `--num-workers` | 1 | Whisper concurrency (2~4 for more VRAM) |
 | `--skip-extract` / `--skip-translate` / `--skip-tts` | — | Skip steps |
 | `--skip-demucs` | — | Skip vocal separation |
@@ -245,7 +249,10 @@ test_project/
 
 | Parameter | Default | Description |
 |------|--------|------|
-| `engine_type` | edge | TTS engine (`edge`/`chattts`) |
+| `engine_type` | edge | TTS engine (`edge`/`chattts`/`cosyvoice`) |
+| `cosyvoice_tts_model_version` | v2 | CosyVoice model (`v2`/`v3`) |
+| `cosyvoice_tts_lang` | — | Target language (`zh`/`en`/`ja`/`ko`/`yue`) |
+| `cosyvoice_tts_mode` | cross_lingual | Synthesis mode (cross_lingual verified best) |
 | `voice` | zh-CN-XiaoxiaoNeural | Edge TTS voice (auto-overridden by target_lang) |
 | `target_lang` | — | Target language, auto voice selection |
 | `chattts_speaker_seed` | 2 | ChatTTS voice seed |
