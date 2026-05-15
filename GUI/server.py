@@ -123,6 +123,17 @@ async def _reapply_logging():
     logger.info("系统日志已就绪")
 
 
+# 不需要记录日志的高频轮询/流式路径（前缀匹配）
+_SKIP_LOG_PREFIXES = (
+    "/api/system/info",
+    "/api/pipeline/",  # status 轮询 + logs SSE
+)
+
+
+def _should_skip_log(path: str) -> bool:
+    return path.startswith(_SKIP_LOG_PREFIXES)
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """记录每个请求：method, path, status, duration。异常时打印完整堆栈。"""
@@ -138,10 +149,11 @@ async def log_requests(request: Request, call_next):
         raise
     elapsed = (time.perf_counter() - start) * 1000
     level = logging.WARNING if response.status_code >= 400 else logging.INFO
-    logger.log(
-        level, "%s %s -> %d (%.0fms)",
-        request.method, request.url.path, response.status_code, elapsed,
-    )
+    if not _should_skip_log(request.url.path) or level >= logging.WARNING:
+        logger.log(
+            level, "%s %s -> %d (%.0fms)",
+            request.method, request.url.path, response.status_code, elapsed,
+        )
     return response
 
 
@@ -382,13 +394,15 @@ def _load_yaml_defaults() -> dict:
         "concurrency": trans.get("concurrency", {}).get("max_workers", tts.get("threading_workers", 3)),
         "ttsWorkers": tts.get("threading_workers", 7),
         "chatttsWorkers": tts.get("chattts_workers", 0),  # 0 = VRAM自动
-        "cosyvoiceTtsModelVersion": tts.get("cosyvoice_tts_model_version", "v3"),
+        "cosyvoiceTtsModelVersion": tts.get("cosyvoice_tts_model_version", "v2"),
         "cosyvoiceTtsModelPath": tts.get("cosyvoice_tts_model_path", ""),
         "cosyvoiceTtsPromptAudio": tts.get("cosyvoice_tts_prompt_audio", ""),
         "cosyvoiceTtsPromptText": tts.get("cosyvoice_tts_prompt_text", ""),
         "cosyvoiceTtsFp16": tts.get("cosyvoice_tts_fp16", True),
         "cosyvoiceTtsWorkers": tts.get("cosyvoice_tts_workers", 0),
         "cosyvoiceTtsSpeed": tts.get("cosyvoice_tts_speed", 1.0),
+        "cosyvoiceTtsMode": tts.get("cosyvoice_tts_mode", "auto"),
+        "cosyvoiceTtsLang": tts.get("cosyvoice_tts_lang", ""),
         "enableCheckpoint": tts.get("enable_resume", False),
         "captionFont": tts.get("caption_font", ""),
         "videoCodec": tts.get("video_codec", "libx264"),
@@ -599,13 +613,15 @@ class RunRequest(BaseModel):
     tts_workers: int = 7
     chattts_workers: int = 0  # 0 = VRAM自动
     # CosyVoice TTS fields
-    cosyvoice_tts_model_version: str = "v3"
+    cosyvoice_tts_model_version: str = "v2"
     cosyvoice_tts_model_path: str = ""
     cosyvoice_tts_prompt_audio: str = ""
     cosyvoice_tts_prompt_text: str = ""
     cosyvoice_tts_fp16: bool = True
     cosyvoice_tts_workers: int = 0
     cosyvoice_tts_speed: float = 1.0
+    cosyvoice_tts_mode: str = "auto"
+    cosyvoice_tts_lang: str = ""
     skip_align: bool = False
     align_lang: str = "ja"
 
@@ -686,6 +702,8 @@ def _write_tts_runtime_config(req: RunRequest) -> str:
             "cosyvoice_tts_fp16": req.cosyvoice_tts_fp16,
             "cosyvoice_tts_workers": req.cosyvoice_tts_workers,
             "cosyvoice_tts_speed": req.cosyvoice_tts_speed,
+            "cosyvoice_tts_mode": req.cosyvoice_tts_mode,
+            "cosyvoice_tts_lang": req.cosyvoice_tts_lang,
             # Voice clone (existing — keep for backward compat)
             "cosyvoice_mode": req.cosyvoice_mode,
             "cosyvoice_model_version": req.cosyvoice_model_version,
@@ -738,6 +756,10 @@ def _build_cli_args(req: RunRequest) -> list[str]:
             args.extend(["--cosyvoice-tts-prompt-audio", req.cosyvoice_tts_prompt_audio])
         if req.cosyvoice_tts_prompt_text:
             args.extend(["--cosyvoice-tts-prompt-text", req.cosyvoice_tts_prompt_text])
+        if req.cosyvoice_tts_mode and req.cosyvoice_tts_mode != "auto":
+            args.extend(["--cosyvoice-tts-mode", req.cosyvoice_tts_mode])
+        if req.cosyvoice_tts_lang:
+            args.extend(["--cosyvoice-tts-lang", req.cosyvoice_tts_lang])
     if req.force:
         args.append("--force")
     if req.num_workers > 1:

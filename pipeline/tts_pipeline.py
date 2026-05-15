@@ -13,6 +13,7 @@ import asyncio
 import concurrent.futures
 import json
 import os
+import re
 from tqdm import tqdm
 from pipeline.utils import safe_replace
 import sys
@@ -21,6 +22,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Tuple
 
+from pipeline.model_manager import ModelManager
 from pipeline.tts_config import TTSConfig
 from pipeline.tts_edge import EdgeTTSEngine
 from pipeline.tts_timing import TimingAdjuster, AdjustResult
@@ -269,6 +271,8 @@ class TtsPipeline:
                 prompt_text=self.config.cosyvoice_tts_prompt_text,
                 fp16=self.config.cosyvoice_tts_fp16,
                 default_speed=self.config.cosyvoice_tts_speed,
+                tts_mode=self.config.cosyvoice_tts_mode,
+                lang=self.config.cosyvoice_tts_lang or self.config.target_lang,
             )
         return EdgeTTSEngine(
             voice=self.config.voice,
@@ -321,6 +325,128 @@ class TtsPipeline:
             position=self.config.caption_position or "bottom",
         )
 
+    def _find_source_srt(self, video_path: str) -> str | None:
+        """Derive source.srt path from the workspace convention."""
+        target = os.path.dirname(video_path)
+        name = os.path.splitext(os.path.basename(video_path))[0]
+        srt_path = os.path.join(target, f"{name}_project", "01_extract", "source.srt")
+        if os.path.isfile(srt_path):
+            return srt_path
+        return None
+
+    def _create_zero_shot_prompt(
+        self, video_path: str, vocals_path: str, prompt_duration_min: float = 8.0,
+        prompt_duration_max: float = 15.0,
+    ) -> tuple | None:
+        """从 source.srt 中选最佳字幕作为 zero_shot prompt。
+
+        选择策略：
+        1. 时长在 prompt_duration_min ~ prompt_duration_max 之间
+        2. 文本长度 >= 8 字符（过滤过短/仅标点）
+        3. 优选文本最长的条目（信息量最大）
+        4. 用对应时间戳从 vocals.wav 截取 prompt_audio
+
+        Returns:
+            (prompt_audio_path, prompt_text) 或 None（无合适条目）
+        """
+        srt_path = self._find_source_srt(video_path)
+        if not srt_path:
+            logger.debug("_create_zero_shot_prompt: source.srt 不存在")
+            return None
+
+        # 解析 SRT
+        try:
+            with open(srt_path, "r", encoding="utf-8-sig") as f:
+                content = f.read()
+        except Exception:
+            return None
+
+        srt_blocks = re.split(r"\n\n+", content.strip())
+        candidates = []
+
+        for block in srt_blocks:
+            lines = block.strip().split("\n")
+            if len(lines) < 3:
+                continue
+            # lines[1] = "00:01:23,456 --> 00:01:28,789"
+            m = re.match(
+                r"(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*"
+                r"(\d{2}):(\d{2}):(\d{2}),(\d{3})",
+                lines[1],
+            )
+            if not m:
+                continue
+            start_s = (
+                int(m.group(1)) * 3600 + int(m.group(2)) * 60
+                + int(m.group(3)) + int(m.group(4)) / 1000
+            )
+            end_s = (
+                int(m.group(5)) * 3600 + int(m.group(6)) * 60
+                + int(m.group(7)) + int(m.group(8)) / 1000
+            )
+            duration = end_s - start_s
+            if duration < prompt_duration_min or duration > prompt_duration_max:
+                continue
+
+            text = "\n".join(lines[2:]).strip()
+            # 过滤过短、无实际文字内容的条目
+            text_clean = re.sub(r"[^\w一-鿿぀-ゟ゠-ヿ"
+                                r"가-힯]", "", text)
+            if len(text_clean) < 8:
+                continue
+
+            candidates.append({
+                "start": start_s,
+                "end": end_s,
+                "duration": duration,
+                "text": text,
+                "text_len": len(text_clean),
+            })
+
+        if not candidates:
+            logger.debug("_create_zero_shot_prompt: 无合适字幕（时长 %s~%ss）",
+                         prompt_duration_min, prompt_duration_max)
+            return None
+
+        # 选文本最长的条目
+        best = max(candidates, key=lambda c: c["text_len"])
+        logger.info(
+            "zero_shot prompt: 选中字幕 "
+            "[%.1f-%.1fs, %.1fs] \"%s\"",
+            best["start"], best["end"], best["duration"], best["text"],
+        )
+
+        # 用 ffmpeg 截取参考音频
+        import subprocess
+        color_dir = os.path.join(
+            os.path.dirname(video_path),
+            os.path.splitext(os.path.basename(video_path))[0] + "_project",
+            "03_tts",
+        )
+        os.makedirs(color_dir, exist_ok=True)
+        prompt_wav = os.path.join(color_dir, "zero_shot_prompt.wav")
+
+        if not os.path.isfile(prompt_wav):
+            try:
+                subprocess.run(
+                    [
+                        "ffmpeg", "-y",
+                        "-i", vocals_path,
+                        "-ss", str(best["start"]),
+                        "-to", str(best["end"]),
+                        "-acodec", "pcm_s16le",
+                        "-ar", "16000",
+                        "-ac", "1",
+                        prompt_wav,
+                    ],
+                    capture_output=True, check=True, timeout=30,
+                )
+            except Exception as e:
+                logger.warning("ffmpeg 截取 zero_shot prompt 失败: %s", e)
+                return None
+
+        return (prompt_wav, best["text"])
+
     def _default_voice_cloner(self):
         """根据 config.voice_clone_engine 创建 VoiceCloner。
 
@@ -335,7 +461,8 @@ class TtsPipeline:
         if not self.config.voice_clone_active:
             return NoopVoiceCloner()
 
-        if engine == "cosyvoice" and self.config.engine_type == "cosyvoice":
+        if self.config.engine_type == "cosyvoice":
+            logger.info("TTS 引擎为 CosyVoice，自带 zero_shot 音色克隆，跳过独立 voice cloner")
             return NoopVoiceCloner()
 
         vc_config = VoiceCloneConfig(
@@ -346,9 +473,9 @@ class TtsPipeline:
             color_audio_path="./speakers/Color_audio.WAV",
             error_log_path=os.path.join(self.config.output_dir, "voice_clone_error_log.txt"),
             model_dir=(
-                "./models/CosyVoice3-0.5B"
-                if engine == "cosyvoice" and self.config.cosyvoice_model_version == "v3"
-                else "./models/CosyVoice2-0.5B"
+                str(ModelManager.get_path(
+                    "cosyvoice3" if self.config.cosyvoice_model_version == "v3" else "cosyvoice"
+                ))
                 if engine == "cosyvoice"
                 else "./models"
             ),
@@ -608,6 +735,88 @@ class TtsPipeline:
                 logger.info("音色克隆: speaker embedding %s (ref=%s)", "OK" if ok else "FAIL", os.path.basename(ref))
             else:
                 logger.warning("音色克隆: 找不到 vocals.wav，跳过 prepare()")
+
+        # ── CosyVoice TTS 自动参考音频（用户未手动配置时） ──
+        if (
+            self.config.engine_type == "cosyvoice"
+            and not self.config.cosyvoice_tts_prompt_audio
+        ):
+            vocals = self._find_vocals(video_path)
+            if vocals:
+                prompt_set = False
+                # 1. auto / zero_shot 模式：尝试 SRT 精确匹配 prompt
+                #    但仅在同语言时使用（跨语言 zero_shot 会导致 LLM 语言混淆/口吃）
+                if self.config.cosyvoice_tts_mode in ("auto", "zero_shot"):
+                    skip_zs = False
+                    target_lang = self.config.cosyvoice_tts_lang or self.config.target_lang
+                    if target_lang and target_lang != "auto":
+                        sr = self._create_zero_shot_prompt(video_path, vocals)
+                        if sr is not None:
+                            prompt_audio, prompt_text = sr
+                            # 检测 prompt 文本语种 vs 目标语种
+                            prompt_is_cjk = bool(
+                                re.search(r"[一-鿿぀-ゟ゠-ヿ가-힯]",
+                                          prompt_text)
+                            )
+                            target_is_cjk = target_lang[:2] in ("zh", "ja", "ko") or target_lang[:3] == "yue"
+                            if prompt_is_cjk == target_is_cjk:
+                                self.engine.reset_speaker(
+                                    prompt_audio=prompt_audio, prompt_text=prompt_text
+                                )
+                                logger.info(
+                                    "CosyVoice TTS: SRT zero_shot prompt (%.1fs) \"%s\"",
+                                    os.path.getsize(prompt_audio) / (16000 * 2),
+                                    prompt_text[:50],
+                                )
+                                prompt_set = True
+                            else:
+                                logger.info(
+                                    "CosyVoice TTS: 检测到跨语言 (prompt≠目标), "
+                                    "自动切换 cross_lingual"
+                                )
+                                self.engine._tts_mode = "cross_lingual"
+                                # 跨语言：SRT prompt 音频作为参考，但不启用 zero_shot
+                                self.engine.reset_speaker(
+                                    prompt_audio=prompt_audio
+                                )
+                                self.engine._tts_mode = "cross_lingual"
+                                prompt_set = True
+                        else:
+                            logger.warning(
+                                "CosyVoice TTS: SRT 无合适字幕，降级到 cross_lingual"
+                            )
+                            self.engine._tts_mode = "cross_lingual"
+                    else:
+                        # 无目标语言信息，无法判断，尝试 zero_shot
+                        sr = self._create_zero_shot_prompt(video_path, vocals)
+                        if sr is not None:
+                            prompt_audio, prompt_text = sr
+                            self.engine.reset_speaker(
+                                prompt_audio=prompt_audio, prompt_text=prompt_text
+                            )
+                            logger.info(
+                                "CosyVoice TTS: SRT zero_shot prompt (%.1fs) \"%s\"",
+                                os.path.getsize(prompt_audio) / (16000 * 2),
+                                prompt_text[:50],
+                            )
+                            prompt_set = True
+                        else:
+                            logger.warning(
+                                "CosyVoice TTS: SRT 无合适字幕，降级到 cross_lingual"
+                            )
+                            self.engine._tts_mode = "cross_lingual"
+
+                # 2. cross_lingual 模式或 zero_shot 降级：只需参考音频
+                if not prompt_set:
+                    color = self._create_color_audio(vocals, video_path)
+                    ref = color or vocals
+                    self.engine.reset_speaker(prompt_audio=ref)
+                    logger.info(
+                        "CosyVoice TTS: %s 模式，参考音频 %s",
+                        self.engine._tts_mode, os.path.basename(ref),
+                    )
+            else:
+                logger.warning("CosyVoice TTS: 未配置参考音频且找不到 vocals.wav")
 
         # ── 字幕渲染优化（可选） ───────────────────────
         caption_groups = None

@@ -20,6 +20,8 @@ export interface PipelineConfig {
   cosyvoiceTtsFp16: boolean
   cosyvoiceTtsWorkers: number
   cosyvoiceTtsSpeed: number
+  cosyvoiceTtsMode: 'auto' | 'zero_shot' | 'cross_lingual'
+  cosyvoiceTtsLang: string
   voice: string
   speechRate: number
   maxSpeed: number
@@ -137,13 +139,15 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   chatttsPreviewAudio: '',
   chatttsPreviewSeed: null,
   chatttsSpkEmb: '',
-  cosyvoiceTtsModelVersion: 'v3',
+  cosyvoiceTtsModelVersion: 'v2',
   cosyvoiceTtsModelPath: '',
   cosyvoiceTtsPromptAudio: '',
   cosyvoiceTtsPromptText: '',
   cosyvoiceTtsFp16: true,
   cosyvoiceTtsWorkers: 0,
   cosyvoiceTtsSpeed: 1.0,
+  cosyvoiceTtsMode: 'auto',
+  cosyvoiceTtsLang: '',
   voice: 'zh-CN-XiaoxiaoNeural',
   speechRate: 40,
   maxSpeed: 100,

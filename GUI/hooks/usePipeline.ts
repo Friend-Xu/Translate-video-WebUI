@@ -98,6 +98,8 @@ export function usePipeline() {
           cosyvoice_tts_fp16: config.cosyvoiceTtsFp16,
           cosyvoice_tts_workers: config.cosyvoiceTtsWorkers,
           cosyvoice_tts_speed: config.cosyvoiceTtsSpeed,
+          cosyvoice_tts_mode: config.cosyvoiceTtsMode,
+          cosyvoice_tts_lang: config.cosyvoiceTtsLang,
           voice_clone_engine: config.enableVoiceClone ? config.voiceCloneEngine : 'none',
           voice_clone_device: config.voiceCloneDevice,
           voice_clone_concurrency: config.voiceCloneConcurrency,

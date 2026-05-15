@@ -47,7 +47,7 @@ export default function CosyVoiceTTSPanel({ config, onConfigChange }: Props) {
       .catch(() => setModelExists(null));
   }, [config.cosyvoiceTtsModelVersion]);
 
-  const modelDownloadId = config.cosyvoiceTtsModelVersion === "v3" ? "cosyvoice3" : "cosyvoice";
+  const modelDownloadId = config.cosyvoiceTtsModelVersion === "v2" ? "cosyvoice" : "cosyvoice3";
 
   const startDownload = () => {
     setDownloading(true);
@@ -141,8 +141,8 @@ export default function CosyVoiceTTSPanel({ config, onConfigChange }: Props) {
           onChange={(e) => onConfigChange("cosyvoiceTtsModelVersion", e.target.value)}
           sx={{ mt: 0.5 }}
         >
-          <MenuItem value="v3">CosyVoice 3.0 (推荐)</MenuItem>
-          <MenuItem value="v2">CosyVoice 2.0</MenuItem>
+          <MenuItem value="v2">CosyVoice 2.0 (推荐，cross_lingual 稳定)</MenuItem>
+          <MenuItem value="v3">CosyVoice 3.0 (实验性)</MenuItem>
         </Select>
       </Box>
 
@@ -152,9 +152,9 @@ export default function CosyVoiceTTSPanel({ config, onConfigChange }: Props) {
           size="small" fullWidth
           value={config.cosyvoiceTtsModelPath}
           onChange={(e) => onConfigChange("cosyvoiceTtsModelPath", e.target.value)}
-          placeholder={config.cosyvoiceTtsModelVersion === "v3"
-            ? "./models/CosyVoice3-0.5B"
-            : "./models/CosyVoice2-0.5B"}
+          placeholder={config.cosyvoiceTtsModelVersion === "v2"
+            ? "./models/CosyVoice2-0.5B"
+            : "./models/CosyVoice3-0.5B"}
           sx={{ mt: 0.5 }}
         />
 
@@ -208,8 +208,41 @@ export default function CosyVoiceTTSPanel({ config, onConfigChange }: Props) {
       />
 
       <Box sx={{ mb: 1 }}>
+        <Typography variant="caption" color="text.secondary">合成模式</Typography>
+        <Select
+          size="small" fullWidth
+          value={config.cosyvoiceTtsMode}
+          onChange={(e) => onConfigChange("cosyvoiceTtsMode", e.target.value)}
+          sx={{ mt: 0.5 }}
+        >
+          <MenuItem value="auto">自动 — 同语言用 zero_shot，跨语言用 cross_lingual（推荐）</MenuItem>
+          <MenuItem value="zero_shot">zero_shot — LLM+Flow 全链路（需 prompt_text 匹配参考音频）</MenuItem>
+          <MenuItem value="cross_lingual">cross_lingual — 仅 Flow 模型（不需 prompt_text）</MenuItem>
+        </Select>
+      </Box>
+
+      {config.cosyvoiceTtsMode === "cross_lingual" && (
+        <Box sx={{ mb: 1 }}>
+          <Typography variant="caption" color="text.secondary">目标语言</Typography>
+          <Select
+            size="small" fullWidth
+            value={config.cosyvoiceTtsLang || "auto"}
+            onChange={(e) => onConfigChange("cosyvoiceTtsLang", e.target.value === "auto" ? "" : e.target.value)}
+            sx={{ mt: 0.5 }}
+          >
+            <MenuItem value="auto">自动（从字幕语种推断）</MenuItem>
+            <MenuItem value="zh">中文 (zh)</MenuItem>
+            <MenuItem value="en">English (en)</MenuItem>
+            <MenuItem value="ja">日本語 (ja)</MenuItem>
+            <MenuItem value="ko">한국어 (ko)</MenuItem>
+            <MenuItem value="yue">粤语 (yue)</MenuItem>
+          </Select>
+        </Box>
+      )}
+
+      <Box sx={{ mb: 1 }}>
         <Typography variant="caption" color="text.secondary">
-          参考说话人音频 (zero-shot prompt, ≤30s)
+          参考说话人音频 (zero_shot / cross_lingual prompt, ≤30s)
         </Typography>
         <Box sx={{ display: "flex", gap: 0.5, mt: 0.5 }}>
           <TextField

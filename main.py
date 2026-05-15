@@ -513,6 +513,8 @@ def step_tts(
     cosyvoice_tts_model_path: str | None = None,
     cosyvoice_tts_prompt_audio: str | None = None,
     cosyvoice_tts_prompt_text: str | None = None,
+    cosyvoice_tts_mode: str | None = None,
+    cosyvoice_tts_lang: str | None = None,
 ) -> None:
     """步骤 3: TTS 合成 + 视频合并（新管线 TtsPipeline）
 
@@ -602,6 +604,10 @@ def step_tts(
         cfg.cosyvoice_tts_prompt_audio = cosyvoice_tts_prompt_audio
     if cosyvoice_tts_prompt_text is not None:
         cfg.cosyvoice_tts_prompt_text = cosyvoice_tts_prompt_text
+    if cosyvoice_tts_mode is not None:
+        cfg.cosyvoice_tts_mode = cosyvoice_tts_mode
+    if cosyvoice_tts_lang is not None:
+        cfg.cosyvoice_tts_lang = cosyvoice_tts_lang
 
     # ── 字幕配置: CaptionConfig 文件 > 单独 CLI args（后者覆盖） ──
     if caption_config_path and os.path.isfile(caption_config_path):
@@ -790,6 +796,11 @@ def main():
                         help="CosyVoice TTS 参考说话人音频路径")
     parser.add_argument("--cosyvoice-tts-prompt-text", default=None,
                         help="CosyVoice TTS 参考音频转录文本")
+    parser.add_argument("--cosyvoice-tts-mode", default=None,
+                        choices=["auto", "zero_shot", "cross_lingual"],
+                        help="CosyVoice TTS 合成模式 (auto/zero_shot/cross_lingual)")
+    parser.add_argument("--cosyvoice-tts-lang", default=None,
+                        help="CosyVoice TTS 语言标签 (zh/en/ja/ko/yue)")
     parser.add_argument("--skip-extract", action="store_true",
                         help="跳过字幕提取")
     parser.add_argument("--skip-defect-check", action="store_true",
@@ -975,6 +986,8 @@ def main():
                 cosyvoice_tts_model_path=args.cosyvoice_tts_model_path,
                 cosyvoice_tts_prompt_audio=args.cosyvoice_tts_prompt_audio,
                 cosyvoice_tts_prompt_text=args.cosyvoice_tts_prompt_text,
+                cosyvoice_tts_mode=args.cosyvoice_tts_mode,
+                cosyvoice_tts_lang=args.cosyvoice_tts_lang,
             )
         else:
             print("[3/3] TTS 合成 — 已跳过 (--skip-tts)")

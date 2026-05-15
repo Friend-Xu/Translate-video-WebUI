@@ -1,27 +1,26 @@
 """
 CosyVoice 2.0/3.0 离线 TTS 引擎 — CosyVoiceTTSEngine
 
-基于 FunAudioLLM/CosyVoice 的 zero-shot 语音合成引擎。
-一次加载模型，通过参考音频 + 提示文本指定说话人音色。
-inference_zero_shot() 调用完整链路（LLM + Flow + HiFT-GAN），
-产生清晰度远超 ChatTTS 的合成语音（中文 CER 0.81%）。
+通过 subprocess 在隔离 Python 环境中运行 CosyVoice 推理，
+避免 PyTorch 版本冲突和依赖污染。主进程仅负责 prompt 音频预处理和子进程管理。
 
 用法:
-    engine = CosyVoiceTTSEngine(
-        model_version="v3",
-        prompt_audio="speaker.wav",
-        prompt_text="参考音频的文字转录",
-    )
-    duration = engine.synthesize("你好世界", "output.wav")
-    engine.reset_speaker(prompt_audio="new_speaker.wav", prompt_text="新转录")
+    engine = CosyVoiceTTSEngine(model_version="v3", prompt_audio="speaker.wav")
+    engine.warmup()
+    engine.synthesize("你好世界", "output.wav")
+    engine.cleanup()
 """
 
 from __future__ import annotations
 
+import json
 import os
+import subprocess
 import sys
 import tempfile
 import threading
+import time
+from pathlib import Path
 from typing import List, Optional
 
 import torch
@@ -31,66 +30,75 @@ from pipeline.logger import get_logger
 
 logger = get_logger(__name__)
 
-# CosyVoice C 扩展 / PyTorch CUDA 算子均非线程安全。
-# 保护模型加载、prompt 准备和所有推理调用（inference_zero_shot）。
 _COSYVOICE_TTS_LOCK = threading.Lock()
 
-# CosyVoice 3.0 zero-shot 模式要求 prompt_text 以助手模板前缀开头
-_CV3_PROMPT_PREFIX = "You are a helpful assistant.<|endofprompt|>"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_WORKER_SCRIPT = PROJECT_ROOT / "models" / "CosyVoice" / "cosyvoice_worker.py"
+_ISOLATED_PYTHON = PROJECT_ROOT / "models" / "CosyVoice" / ".python310" / "python.exe"
+_ISOLATED_PKGS = PROJECT_ROOT / "models" / "CosyVoice" / ".cosyvenv" / "Lib" / "site-packages"
+_MODELS_DIR = PROJECT_ROOT / "models"
 
 
 class CosyVoiceTTSEngine:
-    """CosyVoice 离线 TTS 引擎 — zero-shot 语音合成。
+    """CosyVoice 离线 TTS 引擎（subprocess 隔离模式）。
 
-    模型懒加载：第一次 synthesize 调用或显式 warmup() 时加载，之后复用。
-    音色由 prompt_audio + prompt_text 控制（zero-shot 说话人克隆）。
-
-    用法:
-        engine = CosyVoiceTTSEngine(
-            model_version="v3",
-            prompt_audio="reference.wav",
-            prompt_text="参考音频中说话人的文字内容",
-        )
-        engine.warmup()
-        engine.synthesize("要合成的文本", "output.wav")
-        engine.cleanup()
+    通过 stdin/stdout JSON 协议与隔离 Python 进程中的 CosyVoice 通信，
+    主进程不加载 CosyVoice 模型，避免了 PyTorch 版本冲突。
     """
 
-    _VERSION_PATH_MAP = {
-        "v2": "./models/CosyVoice2-0.5B",
-        "v3": "./models/CosyVoice3-0.5B",
+    _VERSION_TO_ID = {"v2": "cosyvoice", "v3": "cosyvoice3"}
+    _LANG_TAG_MAP = {
+        "zh": "<|zh|>", "en": "<|en|>", "ja": "<|ja|>",
+        "ko": "<|ko|>", "yue": "<|yue|>",
     }
 
     def __init__(
         self,
-        model_version: str = "v3",
+        model_version: str = "v2",
         model_path: str = "",
         prompt_audio: Optional[str] = None,
         prompt_text: Optional[str] = None,
         fp16: bool = True,
         default_speed: float = 1.0,
+        tts_mode: str = "auto",
+        lang: str = "",
+        worker_python: str = "",
+        worker_script: str = "",
+        site_packages: str = "",
+        model_root: str = "",
     ):
         self._model_version = model_version
-        self._model_path = model_path or self._VERSION_PATH_MAP.get(
-            model_version, "./models/CosyVoice2-0.5B"
-        )
+        if model_path:
+            self._model_path = model_path
+        else:
+            from pipeline.model_manager import ModelManager
+            model_id = self._VERSION_TO_ID.get(model_version, "cosyvoice")
+            self._model_path = str(ModelManager.get_path(model_id))
         self._prompt_audio_path: Optional[str] = prompt_audio
         self._prompt_text: Optional[str] = prompt_text
         self._fp16 = fp16
         self._default_speed = max(0.5, min(2.0, default_speed))
+        self._tts_mode = tts_mode
+        self._lang = lang
 
-        self._model: Optional[object] = None  # CosyVoice2/3 instance
-        self._prompt_audio: Optional[torch.Tensor] = None  # 16 kHz mono
-        self._prompt_wav_path: Optional[str] = None  # 处理后的临时 WAV 路径
+        self._worker_python = worker_python or str(_ISOLATED_PYTHON)
+        self._worker_script = worker_script or str(_WORKER_SCRIPT)
+        self._site_packages = site_packages or str(_ISOLATED_PKGS)
+        self._model_root = model_root or str(_MODELS_DIR)
+
+        self._proc: Optional[subprocess.Popen] = None
+        self._prompt_audio: Optional[torch.Tensor] = None
+        self._prompt_wav_path: Optional[str] = None
         self._loaded = False
+        self._worker_available = True
 
     @property
     def model_loaded(self) -> bool:
         return self._loaded
 
-    # ------------------------------------------------------------------
-    # BaseTTSEngine Protocol
-    # ------------------------------------------------------------------
+    @property
+    def isolated(self) -> bool:
+        return True
 
     def synthesize(
         self,
@@ -99,63 +107,56 @@ class CosyVoiceTTSEngine:
         rate: str = "+0%",
         emotion: Optional["EmotionStyle"] = None,  # type: ignore
     ) -> float:
-        """合成语音，返回音频时长（秒）。
+        if not self._worker_available:
+            raise RuntimeError("CosyVoice 隔离工作进程不可用")
+        if self._proc is None:
+            if not self._restart_worker():
+                raise RuntimeError("CosyVoice worker 未启动，请先调用 warmup()")
 
-        rate 格式为 "+N%" 或 "-N%"，转换为 CosyVoice speed 参数
-        （1.0=原速，>1 加速，<1 减速）。
-        """
-        self._load_model()
+        # health check: if worker died since last call, auto-restart
+        if self._proc is not None and self._proc.poll() is not None:
+            logger.warning(
+                "CosyVoice worker 意外退出 (code=%s), 自动重启",
+                self._proc.returncode,
+            )
+            self._dump_stderr_log()
+            self._shutdown_worker()
+            if not self._restart_worker():
+                raise RuntimeError("CosyVoice worker 重启失败")
+
         self._ensure_prompt()
-        assert self._model is not None
-
         speed = self._parse_rate(rate)
-
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
-        # CosyVoice 3.0 需要助手模板前缀
-        prompt_text = self._prompt_text or ""
-        if self._model_version == "v3" and not prompt_text.startswith(_CV3_PROMPT_PREFIX):
-            prompt_text = _CV3_PROMPT_PREFIX + prompt_text
+        mode = "cross_lingual" if self._tts_mode == "cross_lingual" else "zero_shot"
 
-        # inference_zero_shot 要求 prompt_wav 为文件路径（非 tensor）。
-        # _ensure_prompt() 已将处理后的 16kHz mono 音频写入 self._prompt_wav_path。
-        assert self._prompt_wav_path is not None
+        req = {
+            "action": "synthesize",
+            "text": text,
+            "prompt_audio": self._prompt_wav_path,
+            "prompt_text": self._prompt_text or "",
+            "mode": mode,
+            "speed": speed,
+            "output_path": output_path,
+            "lang": self._lang,
+        }
 
         try:
-            with _COSYVOICE_TTS_LOCK:
-                generator = self._model.inference_zero_shot(
-                    text,
-                    prompt_text,
-                    self._prompt_wav_path,
-                    stream=False,
-                    speed=speed,
-                )
-                for _, result in enumerate(generator):
-                    tts_speech = result["tts_speech"]
-                    speech_cpu = tts_speech.cpu()
-                    sample_rate = self._model.sample_rate
-                    torchaudio.save(output_path, speech_cpu, sample_rate)
-                    duration = float(speech_cpu.shape[1]) / sample_rate
-                    del tts_speech, speech_cpu
-                    break
-                else:
-                    raise RuntimeError("CosyVoice inference_zero_shot 返回空结果")
-
-            # 每次推理后释放 CUDA 缓存碎片
-            try:
-                torch.cuda.empty_cache()
-            except Exception:
-                pass
-            return duration
-
+            resp = self._send_command(req)
+            if resp.get("status") != "ok":
+                raise RuntimeError(resp.get("message", "Unknown error"))
+            return float(resp.get("duration_s", 0))
+        except RuntimeError:
+            self._dump_stderr_log()
+            raise
         except Exception as e:
+            self._dump_stderr_log()
             raise RuntimeError(f"CosyVoice 合成失败: {e}") from e
 
     def get_voices(self) -> List[str]:
         return []
 
     def supports_rate(self) -> bool:
-        """CosyVoice 原生支持 speed 参数（mel spectrogram 线性插值）。"""
         return True
 
     def supports_emotion(self) -> bool:
@@ -164,28 +165,86 @@ class CosyVoiceTTSEngine:
     def emotion_modes(self) -> List[str]:
         return []
 
-    # ------------------------------------------------------------------
-    # Engine lifecycle
-    # ------------------------------------------------------------------
-
     def warmup(self) -> None:
-        """预加载模型并准备 prompt 音频。
+        if self._loaded and self._proc is not None:
+            return
 
-        必须在 TtsPipeline 线程池创建前调用，避免多线程并发 CUDA 操作
-        导致 C 级堆损坏。
-        """
-        self._load_model()
-        self._ensure_prompt()
-        logger.info("CosyVoice TTS 引擎预热完成")
+        if not os.path.isfile(self._worker_python):
+            logger.warning("隔离 Python 不存在: %s, CosyVoice 不可用", self._worker_python)
+            self._worker_available = False
+            return
+
+        if not os.path.isfile(self._worker_script):
+            logger.warning("worker 脚本不存在: %s, CosyVoice 不可用", self._worker_script)
+            self._worker_available = False
+            return
+
+        with _COSYVOICE_TTS_LOCK:
+            if self._loaded and self._proc is not None:
+                return
+
+            logger.info("启动 CosyVoice 隔离 worker: %s", self._worker_python)
+            self._stderr_log = tempfile.NamedTemporaryFile(
+                prefix="cosyvoice_stderr_", suffix=".log",
+                delete=False, mode="w", encoding="utf-8",
+            )
+            logger.debug("worker stderr → %s", self._stderr_log.name)
+            worker_env = os.environ.copy()
+            worker_env.pop("PYTHONUNBUFFERED", None)
+            worker_env["PYTHONIOENCODING"] = "utf-8"
+            try:
+                self._proc = subprocess.Popen(
+                    [
+                        self._worker_python,
+                        self._worker_script,
+                        "--site-packages", self._site_packages,
+                        "--model-root", self._model_root,
+                    ],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=self._stderr_log,
+                    env=worker_env,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+            except Exception as e:
+                self._stderr_log.close()
+                try:
+                    os.unlink(self._stderr_log.name)
+                except OSError:
+                    pass
+                logger.warning("无法启动 CosyVoice worker: %s", e)
+                self._worker_available = False
+                self._proc = None
+                return
+
+            resp = self._send_command({
+                "action": "warmup",
+                "model_version": self._model_version,
+                "model_path": self._model_path,
+                "fp16": self._fp16,
+            }, timeout=120)
+
+            if resp.get("status") != "ok":
+                msg = resp.get("message", "Unknown")
+                logger.error("CosyVoice worker warmup 失败: %s", msg)
+                self._shutdown_worker()
+                self._worker_available = False
+                return
+
+            smoke = resp.get("smoke_test", {})
+            logger.info(
+                "CosyVoice worker 就绪: smoke_test %.1fs, RMS=%.4f, sr=%d",
+                smoke.get("duration_s", 0),
+                smoke.get("rms", 0),
+                resp.get("sample_rate", 24000),
+            )
+            self._loaded = True
 
     def cleanup(self) -> None:
-        """释放 GPU 模型和临时文件，归还显存。"""
-        if self._model is not None:
-            del self._model
-            self._model = None
+        self._shutdown_worker()
         self._loaded = False
         self._prompt_audio = None
-        # 删除 _ensure_prompt() 写入的处理后音频临时文件
         if self._prompt_wav_path and os.path.isfile(self._prompt_wav_path):
             try:
                 os.unlink(self._prompt_wav_path)
@@ -193,28 +252,22 @@ class CosyVoiceTTSEngine:
                 pass
             self._prompt_wav_path = None
         try:
+            import gc
             torch.cuda.empty_cache()
+            gc.collect()
         except Exception:
             pass
-        import gc
-        gc.collect()
 
     def reset_speaker(
         self,
         prompt_audio: Optional[str] = None,
         prompt_text: Optional[str] = None,
     ) -> None:
-        """更换参考说话人。
-
-        prompt_audio=None 时保留原音频路径。
-        prompt_text=None 时保留原提示文本。
-        """
         if prompt_audio is not None:
             self._prompt_audio_path = prompt_audio
         if prompt_text is not None:
             self._prompt_text = prompt_text
-        self._prompt_audio = None  # 强制重新加载 prompt
-        # 清理旧的临时文件，下次 _ensure_prompt() 会重新生成
+        self._prompt_audio = None
         if self._prompt_wav_path and os.path.isfile(self._prompt_wav_path):
             try:
                 os.unlink(self._prompt_wav_path)
@@ -222,136 +275,148 @@ class CosyVoiceTTSEngine:
                 pass
             self._prompt_wav_path = None
 
-    # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
+    def _send_command(self, req: dict, timeout: int = 120) -> dict:
+        if self._proc is None or self._proc.poll() is not None:
+            raise RuntimeError("CosyVoice worker 已退出")
+
+        line = json.dumps(req, ensure_ascii=False) + "\n"
+        try:
+            self._proc.stdin.write(line)
+            self._proc.stdin.flush()
+        except (BrokenPipeError, OSError) as e:
+            raise RuntimeError(f"向 worker 发送命令失败: {e}")
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            resp_line = self._proc.stdout.readline()
+            if resp_line:
+                return json.loads(resp_line.strip())
+            time.sleep(0.1)
+
+        stderr_info = ""
+        if hasattr(self, "_stderr_log") and self._stderr_log is not None:
+            self._stderr_log.flush()
+            try:
+                with open(self._stderr_log.name, "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+                    if lines:
+                        stderr_info = "\nworker stderr tail:\n" + "".join(lines[-30:])
+            except Exception:
+                pass
+        raise RuntimeError(f"worker 响应超时 ({timeout}s){stderr_info}")
+    def _shutdown_worker(self) -> None:
+        if self._proc is None:
+            return
+        try:
+            if self._proc.poll() is None:
+                try:
+                    self._send_command({"action": "shutdown"}, timeout=5)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            self._proc.terminate()
+            self._proc.wait(timeout=5)
+        except Exception:
+            try:
+                self._proc.kill()
+            except Exception:
+                pass
+        self._proc = None
+        if hasattr(self, "_stderr_log") and self._stderr_log is not None:
+            try:
+                self._stderr_log.close()
+            except Exception:
+                pass
+            try:
+                os.unlink(self._stderr_log.name)
+            except OSError:
+                pass
+            self._stderr_log = None
+
+    def _dump_stderr_log(self) -> None:
+        """输出 worker stderr 日志到主日志（用于诊断 worker 崩溃）。"""
+        if not hasattr(self, "_stderr_log") or self._stderr_log is None:
+            return
+        try:
+            self._stderr_log.flush()
+            with open(self._stderr_log.name, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            if content.strip():
+                logger.warning(
+                    "CosyVoice worker stderr (%s):\n%s",
+                    self._stderr_log.name,
+                    content[-4000:],
+                )
+        except Exception:
+            pass
+
+    def _restart_worker(self) -> bool:
+        """自动重启已崩溃的 worker 并重新 warmup。"""
+        self._loaded = False
+        self._prompt_audio = None
+        if self._prompt_wav_path:
+            try:
+                os.unlink(self._prompt_wav_path)
+            except OSError:
+                pass
+            self._prompt_wav_path = None
+        try:
+            self.warmup()
+            return self._loaded
+        except Exception as e:
+            logger.error("CosyVoice worker 自动重启失败: %s", e)
+            self._worker_available = False
+            return False
 
     def _parse_rate(self, rate_str: str) -> float:
-        """'+40%' → 1.4, '-20%' → 0.8, '+0%' → 1.0"""
         s = rate_str.strip()
         if s.endswith("%"):
             try:
                 pct = float(s[:-1].replace("+", "")) / 100.0
-                speed = 1.0 + pct
-                return max(0.5, min(2.0, speed))
+                return max(0.5, min(2.0, 1.0 + pct))
             except ValueError:
                 pass
         return 1.0
 
-    def _load_model(self) -> None:
-        """懒加载 CosyVoice 模型。"""
-        if self._loaded and self._model is not None:
-            return
-
-        with _COSYVOICE_TTS_LOCK:
-            if self._loaded and self._model is not None:
-                return
-
-            # Python version gate
-            if sys.version_info >= (3, 11):
-                msg = (
-                    f"CosyVoice 需要 Python <= 3.10，当前 Python "
-                    f"{sys.version_info.major}.{sys.version_info.minor}。"
-                    f"请切换到 Python 3.10 环境。"
-                )
-                logger.error(msg)
-                raise RuntimeError(msg)
-
-            # Reuse the module-level pre-imports from vc_cosyvoice
-            from pipeline.vc_cosyvoice import CosyVoice2, CosyVoice3
-
-            if self._model_version == "v3" and CosyVoice3 is not None:
-                self._model = CosyVoice3(self._model_path, fp16=self._fp16)
-            elif self._model_version == "v2" and CosyVoice2 is not None:
-                self._model = CosyVoice2(self._model_path, fp16=self._fp16)
-            elif CosyVoice3 is not None:
-                self._model = CosyVoice3(self._model_path, fp16=self._fp16)
-            elif CosyVoice2 is not None:
-                self._model = CosyVoice2(self._model_path, fp16=self._fp16)
-            else:
-                # 区分失败原因
-                cv_src = os.path.isdir(
-                    os.path.join(
-                        os.path.dirname(__file__), "..", "models", "CosyVoice",
-                        "cosyvoice", "cli",
-                    )
-                )
-                cv_w = os.path.isfile(
-                    os.path.join(self._model_path, f"cosyvoice{self._model_version}.yaml")
-                )
-                if not cv_src:
-                    hint = (
-                        "CosyVoice 源代码未找到。请克隆仓库:\n"
-                        "  git clone https://github.com/FunAudioLLM/CosyVoice.git models/CosyVoice"
-                    )
-                elif not cv_w:
-                    hint = (
-                        f"CosyVoice {self._model_version} 模型权重未下载。\n"
-                        f"目录 {self._model_path} 中缺少 cosyvoice{self._model_version}.yaml。\n"
-                        f"请在 WebUI 模型管理面板下载，或手动从 HuggingFace 下载:\n"
-                        f"  https://huggingface.co/FunAudioLLM/CosyVoice{self._model_version.capitalize()}-0.5B"
-                    )
-                else:
-                    hint = (
-                        "CosyVoice 导入失败，请查看上方 warning 日志中的详细错误。\n"
-                        "常见原因: Python > 3.10、依赖缺失、TxF WinError 6714"
-                    )
-                raise ImportError(hint)
-
-            self._loaded = True
-            logger.info(
-                "CosyVoice %s 模型加载完成 (path=%s)",
-                self._model_version,
-                self._model_path,
-            )
-
     def _ensure_prompt(self) -> None:
-        """加载并缓存参考音频。"""
         if self._prompt_audio is not None:
             return
-
         if not self._prompt_audio_path or not os.path.isfile(self._prompt_audio_path):
-            raise RuntimeError(
-                f"CosyVoice TTS 参考音频不存在: {self._prompt_audio_path}"
-            )
+            raise RuntimeError(f"CosyVoice TTS 参考音频不存在: {self._prompt_audio_path}")
 
         with _COSYVOICE_TTS_LOCK:
             if self._prompt_audio is not None:
                 return
-
             wav, sr = torchaudio.load(self._prompt_audio_path)
             if sr != 16000:
                 wav = torchaudio.functional.resample(wav, sr, 16000)
             if wav.shape[0] > 1:
                 wav = wav.mean(dim=0, keepdim=True)
-            # 截取前 30 秒（CosyVoice speech token 提取限制）
             max_samples = 30 * 16000
             if wav.shape[1] > max_samples:
                 wav = wav[:, :max_samples]
             self._prompt_audio = wav
             logger.info("CosyVoice TTS prompt 音频已加载: %s", self._prompt_audio_path)
-
-            # inference_zero_shot() 要求 prompt_wav 为文件路径（非 tensor），
-            # 将处理后的 16kHz mono ≤30s 音频写入持久临时文件，所有合成调用复用。
-            tmp = tempfile.NamedTemporaryFile(
-                prefix="cosyvoice_prompt_", suffix=".wav", delete=False
+            fd, tmp_path = tempfile.mkstemp(
+                prefix="cosyvoice_prompt_", suffix=".wav"
             )
-            torchaudio.save(tmp.name, wav, 16000)
-            self._prompt_wav_path = tmp.name
+            os.close(fd)
+            torchaudio.save(tmp_path, wav.clamp(-1, 1), 16000, bits_per_sample=16)
+            self._prompt_wav_path = tmp_path
 
 
 class CosyVoiceTTSEngineFactory:
-    """CosyVoiceTTSEngine 工厂方法。"""
-
     @staticmethod
     def from_config(config) -> CosyVoiceTTSEngine:
         return CosyVoiceTTSEngine(
-            model_version=getattr(config, "cosyvoice_tts_model_version", "v3"),
-            model_path=getattr(
-                config, "cosyvoice_tts_model_path", "./models/CosyVoice2-0.5B"
-            ),
+            model_version=getattr(config, "cosyvoice_tts_model_version", "v2"),
+            model_path=getattr(config, "cosyvoice_tts_model_path", ""),
             prompt_audio=getattr(config, "cosyvoice_tts_prompt_audio", None),
             prompt_text=getattr(config, "cosyvoice_tts_prompt_text", None),
             fp16=getattr(config, "cosyvoice_tts_fp16", True),
             default_speed=getattr(config, "cosyvoice_tts_speed", 1.0),
+            tts_mode=getattr(config, "cosyvoice_tts_mode", "auto"),
+            lang=getattr(config, "cosyvoice_tts_lang", ""),
         )

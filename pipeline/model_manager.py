@@ -265,6 +265,14 @@ class ModelManager:
     }
 
     @classmethod
+    def get_path(cls, model_id: str) -> Path:
+        """返回指定模型的存储目录（唯一真相来源）。"""
+        entry = cls.KNOWN_MODELS.get(model_id)
+        if entry is None:
+            raise ValueError(f"未知模型: {model_id}")
+        return entry.check_dir
+
+    @classmethod
     def ensure_hf_env(cls) -> None:
         """设置 HF 环境变量：镜像站点 + 缓存目录。
 

@@ -131,10 +131,10 @@ class NoopVoiceCloner:
     """空操作克隆器 — 克隆被禁用时的占位实现"""
 
     def prepare(self, voice_path: str) -> bool:
-        return False
+        return True
 
     def clone(self, tts_audio_path: str, output_dir: str) -> Optional[str]:
-        return None
+        return tts_audio_path
 
     def device_info(self) -> dict:
         return {"device": "none", "vram_mb": 0, "mode": "disabled", "concurrency": 0}

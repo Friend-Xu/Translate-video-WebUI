@@ -8,6 +8,17 @@ tts:
   tts_pronunciation:
     "RTX": "RTX"
     "3060": "三零六零"
+  # ── CosyVoice TTS 配置 ─────────────────────────────
+  cosyvoice_tts_model_version: v2          # v2 (推荐) | v3 (实验性，cross_lingual 有 bug)
+  cosyvoice_tts_model_path: ""             # 留空自动选择 models/CosyVoice2-0.5B 或 CosyVoice3-0.5B
+  cosyvoice_tts_prompt_audio: ""           # 参考音频路径（留空从视频人声自动提取）
+  cosyvoice_tts_prompt_text: ""            # 参考音频的文字转录（zero_shot 需匹配音频内容）
+  cosyvoice_tts_fp16: true                 # FP16 推理降低显存
+  cosyvoice_tts_workers: 0                 # 0=自动（当前强制 1 串行安全）
+  cosyvoice_tts_speed: 1.0                 # 默认语速 (0.5~2.0, 1.0=原速)
+  cosyvoice_tts_mode: auto                 # auto (自动检测) | zero_shot (LLM+Flow) | cross_lingual (仅Flow)
+  cosyvoice_tts_lang: ""                   # cross_lingual 目标语言 (zh/en/ja/ko/yue, 留空=自动)
+  # ── EdgeTTS 配置 ───────────────────────────────────
   voice: zh-CN-XiaoxiaoNeural
   base_speed: 40
   max_speed: 100
