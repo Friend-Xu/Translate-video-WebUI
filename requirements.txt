@@ -1,3 +1,14 @@
+# =============================================================================
+# Translate_video — Main Environment Dependencies
+# =============================================================================
+# Python 3.10+ | Windows/Linux | NVIDIA GPU recommended (CUDA 12.4+)
+#
+# Install:
+#   python -m venv .venv
+#   .venv\Scripts\activate
+#   pip install -r requirements.txt
+# =============================================================================
+
 # Core pipeline
 faster-whisper==1.2.1
 edge-tts==7.2.8
@@ -8,6 +19,7 @@ numpy==2.2.6
 pillow==11.3.0
 moviepy==2.2.1
 PyYAML==6.0.3
+imageio-ffmpeg==0.6.0
 
 # Translation / NLP
 sentence-transformers==5.4.1
@@ -22,6 +34,7 @@ scipy==1.14.1
 
 # HTTP / async
 fastapi==0.136.1
+python-multipart==0.0.27
 uvicorn==0.46.0
 requests==2.33.1
 httpx==0.28.1
@@ -31,12 +44,54 @@ aiohttp==3.13.5
 # ChatTTS local TTS engine
 ChatTTS==0.2.5
 
-# Rubber Band time-stretching (requires rubberband CLI)
+# Rubber Band time-stretching (requires rubberband CLI binary)
 # Windows: tools/rubberband/ pre-bundled
-# Linux: apt install rubberband-cli
+# Linux:   apt install rubberband-cli
 pyrubberband==0.4.0
 
-# CUDA (Windows, Python 3.12 → 3.10)
-# Manual install: download whl from https://download.pytorch.org/whl/cu124/
+# =============================================================================
+# CUDA (PyTorch 2.6 + CUDA 12.4)
+#
+# These require --extra-index-url for the CUDA builds. Install with:
+#
+#   pip install torch==2.6.0 torchaudio==2.6.0 \
+#       --extra-index-url https://download.pytorch.org/whl/cu124
+#
+# Or download the .whl files manually from:
+#   https://download.pytorch.org/whl/cu124/
+# =============================================================================
 torch==2.6.0+cu124
 torchaudio==2.6.0+cu124
+
+# =============================================================================
+# CosyVoice TTS — Isolated Environment (NOT installed in main .venv)
+# =============================================================================
+# CosyVoice runs in a SEPARATE Python 3.10 subprocess to avoid PyTorch version
+# conflicts with the main environment (ChatTTS needs PyTorch 2.6, CosyVoice
+# needs PyTorch 2.3.1 with specific CUDA builds).
+#
+# Architecture:
+#   Main .venv/                   ← this file (pipeline/tts_cosyvoice.py)
+#       │ subprocess.Popen()
+#       ▼
+#   models/CosyVoice/.python310/  ← isolated Python 3.10 runtime
+#   models/CosyVoice/.cosyvenv/   ← isolated site-packages
+#       │
+#       ▼
+#   models/CosyVoice/cosyvoice_worker.py  ← stdin/stdout JSON protocol
+#
+# The isolated environment has its OWN requirements at:
+#   models/CosyVoice/requirements.txt
+#
+# Key dependencies in the isolated env (NOT needed in main .venv):
+#   torch==2.3.1, transformers==4.51.3, modelscope, onnxruntime, wetext, etc.
+#
+# The main environment only needs torch + torchaudio (declared above) for
+# prompt audio preprocessing (load/resample → 16kHz mono WAV for the worker).
+#
+# To set up the isolated environment:
+#   1. Download portable Python 3.10 → models/CosyVoice/.python310/
+#   2. Create venv: .python310/python.exe -m venv .cosyvenv
+#   3. pip install -r models/CosyVoice/requirements.txt (in .cosyvenv)
+#   4. Download CosyVoice2-0.5B model → models/CosyVoice2-0.5B/
+# =============================================================================
