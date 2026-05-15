@@ -797,8 +797,7 @@ def main():
     parser.add_argument("--cosyvoice-tts-prompt-text", default=None,
                         help="CosyVoice TTS 参考音频转录文本")
     parser.add_argument("--cosyvoice-tts-mode", default=None,
-                        choices=["auto", "zero_shot", "cross_lingual"],
-                        help="CosyVoice TTS 合成模式 (auto/zero_shot/cross_lingual)")
+                        help="CosyVoice TTS 合成模式 (固定 cross_lingual)")
     parser.add_argument("--cosyvoice-tts-lang", default=None,
                         help="CosyVoice TTS 语言标签 (zh/en/ja/ko/yue)")
     parser.add_argument("--skip-extract", action="store_true",

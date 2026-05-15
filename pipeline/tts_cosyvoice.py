@@ -47,10 +47,7 @@ class CosyVoiceTTSEngine:
     """
 
     _VERSION_TO_ID = {"v2": "cosyvoice", "v3": "cosyvoice3"}
-    _LANG_TAG_MAP = {
-        "zh": "<|zh|>", "en": "<|en|>", "ja": "<|ja|>",
-        "ko": "<|ko|>", "yue": "<|yue|>",
-    }
+    _VALID_LANGS = {"zh", "en", "ja", "ko", "yue"}
 
     def __init__(
         self,
@@ -79,7 +76,7 @@ class CosyVoiceTTSEngine:
         self._fp16 = fp16
         self._default_speed = max(0.5, min(2.0, default_speed))
         self._tts_mode = tts_mode
-        self._lang = lang
+        self._lang = self._normalize_lang(lang)
 
         self._worker_python = worker_python or str(_ISOLATED_PYTHON)
         self._worker_script = worker_script or str(_WORKER_SCRIPT)
@@ -91,6 +88,21 @@ class CosyVoiceTTSEngine:
         self._prompt_wav_path: Optional[str] = None
         self._loaded = False
         self._worker_available = True
+
+    @staticmethod
+    def _normalize_lang(lang: str) -> str:
+        if not lang:
+            return ""
+        raw = lang.lower().replace("-", "").replace("_", "")
+        if raw in CosyVoiceTTSEngine._VALID_LANGS:
+            return raw
+        for valid in ("zh", "yue", "ja", "ko", "en"):
+            if raw.startswith(valid) or valid in raw:
+                return valid
+        if len(raw) >= 2:
+            if raw[:2] in CosyVoiceTTSEngine._VALID_LANGS:
+                return raw[:2]
+        return ""
 
     @property
     def model_loaded(self) -> bool:

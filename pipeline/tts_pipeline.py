@@ -743,78 +743,14 @@ class TtsPipeline:
         ):
             vocals = self._find_vocals(video_path)
             if vocals:
-                prompt_set = False
-                # 1. auto / zero_shot 模式：尝试 SRT 精确匹配 prompt
-                #    但仅在同语言时使用（跨语言 zero_shot 会导致 LLM 语言混淆/口吃）
-                if self.config.cosyvoice_tts_mode in ("auto", "zero_shot"):
-                    skip_zs = False
-                    target_lang = self.config.cosyvoice_tts_lang or self.config.target_lang
-                    if target_lang and target_lang != "auto":
-                        sr = self._create_zero_shot_prompt(video_path, vocals)
-                        if sr is not None:
-                            prompt_audio, prompt_text = sr
-                            # 检测 prompt 文本语种 vs 目标语种
-                            prompt_is_cjk = bool(
-                                re.search(r"[一-鿿぀-ゟ゠-ヿ가-힯]",
-                                          prompt_text)
-                            )
-                            target_is_cjk = target_lang[:2] in ("zh", "ja", "ko") or target_lang[:3] == "yue"
-                            if prompt_is_cjk == target_is_cjk:
-                                self.engine.reset_speaker(
-                                    prompt_audio=prompt_audio, prompt_text=prompt_text
-                                )
-                                logger.info(
-                                    "CosyVoice TTS: SRT zero_shot prompt (%.1fs) \"%s\"",
-                                    os.path.getsize(prompt_audio) / (16000 * 2),
-                                    prompt_text[:50],
-                                )
-                                prompt_set = True
-                            else:
-                                logger.info(
-                                    "CosyVoice TTS: 检测到跨语言 (prompt≠目标), "
-                                    "自动切换 cross_lingual"
-                                )
-                                self.engine._tts_mode = "cross_lingual"
-                                # 跨语言：SRT prompt 音频作为参考，但不启用 zero_shot
-                                self.engine.reset_speaker(
-                                    prompt_audio=prompt_audio
-                                )
-                                self.engine._tts_mode = "cross_lingual"
-                                prompt_set = True
-                        else:
-                            logger.warning(
-                                "CosyVoice TTS: SRT 无合适字幕，降级到 cross_lingual"
-                            )
-                            self.engine._tts_mode = "cross_lingual"
-                    else:
-                        # 无目标语言信息，无法判断，尝试 zero_shot
-                        sr = self._create_zero_shot_prompt(video_path, vocals)
-                        if sr is not None:
-                            prompt_audio, prompt_text = sr
-                            self.engine.reset_speaker(
-                                prompt_audio=prompt_audio, prompt_text=prompt_text
-                            )
-                            logger.info(
-                                "CosyVoice TTS: SRT zero_shot prompt (%.1fs) \"%s\"",
-                                os.path.getsize(prompt_audio) / (16000 * 2),
-                                prompt_text[:50],
-                            )
-                            prompt_set = True
-                        else:
-                            logger.warning(
-                                "CosyVoice TTS: SRT 无合适字幕，降级到 cross_lingual"
-                            )
-                            self.engine._tts_mode = "cross_lingual"
-
-                # 2. cross_lingual 模式或 zero_shot 降级：只需参考音频
-                if not prompt_set:
-                    color = self._create_color_audio(vocals, video_path)
-                    ref = color or vocals
-                    self.engine.reset_speaker(prompt_audio=ref)
-                    logger.info(
-                        "CosyVoice TTS: %s 模式，参考音频 %s",
-                        self.engine._tts_mode, os.path.basename(ref),
-                    )
+                # cross_lingual 模式：只需参考音频
+                color = self._create_color_audio(vocals, video_path)
+                ref = color or vocals
+                self.engine.reset_speaker(prompt_audio=ref)
+                logger.info(
+                    "CosyVoice TTS: cross_lingual 模式，参考音频 %s",
+                    os.path.basename(ref),
+                )
             else:
                 logger.warning("CosyVoice TTS: 未配置参考音频且找不到 vocals.wav")
 

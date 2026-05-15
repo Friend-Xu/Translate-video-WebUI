@@ -101,15 +101,13 @@ class TTSConfig:
     cosyvoice_tts_speed: float = 1.0
     """CosyVoice TTS 默认语速因子 (0.5~2.0, 1.0=原速)"""
 
-    cosyvoice_tts_mode: str = "auto"
-    """CosyVoice TTS 合成模式: auto | zero_shot | cross_lingual
-    auto:          自动检测语种，同语言选 zero_shot，跨语言选 cross_lingual
-    zero_shot:     LLM+Flow 全链路，需 prompt_text 匹配参考音频，同语言质量最高
-    cross_lingual: 仅 Flow 模型，不需 prompt_text，适合跨语言/未知参考音频内容
+    cosyvoice_tts_mode: str = "cross_lingual"
+    """CosyVoice TTS 合成模式: cross_lingual
+    预规范化 + text_frontend=False，中英混合发音已验证最优。
     """
 
     cosyvoice_tts_lang: str = ""
-    """CosyVoice TTS 合成语言标签 (仅 cross_lingual 模式使用)
+    """CosyVoice TTS 目标语言标签
     留空时自动从字幕语种推断。支持: zh, en, ja, ko, yue"""
 
     # ── 速度策略 ────────────────────────────────────────
@@ -333,8 +331,8 @@ class TTSConfig:
         elif self.enable_openvoice and self.voice_clone_engine == "none":
             self.enable_openvoice = False  # 显式禁用优先
 
-        if self.cosyvoice_tts_mode not in ("auto", "zero_shot", "cross_lingual"):
-            raise ValueError(f"不支持的 CosyVoice TTS 模式: {self.cosyvoice_tts_mode}")
+        if self.cosyvoice_tts_mode != "cross_lingual":
+            raise ValueError(f"CosyVoice TTS 仅支持 cross_lingual 模式，收到: {self.cosyvoice_tts_mode}")
         if self.cosyvoice_tts_lang not in ("", "zh", "en", "ja", "ko", "yue"):
             raise ValueError(f"不支持的 CosyVoice TTS 语言: {self.cosyvoice_tts_lang}")
         if self.engine_type not in ("edge", "chattts", "cosyvoice"):

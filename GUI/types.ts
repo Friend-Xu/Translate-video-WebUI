@@ -20,7 +20,7 @@ export interface PipelineConfig {
   cosyvoiceTtsFp16: boolean
   cosyvoiceTtsWorkers: number
   cosyvoiceTtsSpeed: number
-  cosyvoiceTtsMode: 'auto' | 'zero_shot' | 'cross_lingual'
+  cosyvoiceTtsMode: 'cross_lingual'
   cosyvoiceTtsLang: string
   voice: string
   speechRate: number
@@ -146,7 +146,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   cosyvoiceTtsFp16: true,
   cosyvoiceTtsWorkers: 0,
   cosyvoiceTtsSpeed: 1.0,
-  cosyvoiceTtsMode: 'auto',
+  cosyvoiceTtsMode: 'cross_lingual',
   cosyvoiceTtsLang: '',
   voice: 'zh-CN-XiaoxiaoNeural',
   speechRate: 40,

@@ -401,7 +401,7 @@ def _load_yaml_defaults() -> dict:
         "cosyvoiceTtsFp16": tts.get("cosyvoice_tts_fp16", True),
         "cosyvoiceTtsWorkers": tts.get("cosyvoice_tts_workers", 0),
         "cosyvoiceTtsSpeed": tts.get("cosyvoice_tts_speed", 1.0),
-        "cosyvoiceTtsMode": tts.get("cosyvoice_tts_mode", "auto"),
+        "cosyvoiceTtsMode": tts.get("cosyvoice_tts_mode", "cross_lingual"),
         "cosyvoiceTtsLang": tts.get("cosyvoice_tts_lang", ""),
         "enableCheckpoint": tts.get("enable_resume", False),
         "captionFont": tts.get("caption_font", ""),
@@ -620,7 +620,7 @@ class RunRequest(BaseModel):
     cosyvoice_tts_fp16: bool = True
     cosyvoice_tts_workers: int = 0
     cosyvoice_tts_speed: float = 1.0
-    cosyvoice_tts_mode: str = "auto"
+    cosyvoice_tts_mode: str = "cross_lingual"
     cosyvoice_tts_lang: str = ""
     skip_align: bool = False
     align_lang: str = "ja"

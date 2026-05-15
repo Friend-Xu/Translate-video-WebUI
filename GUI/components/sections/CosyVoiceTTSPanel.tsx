@@ -209,36 +209,30 @@ export default function CosyVoiceTTSPanel({ config, onConfigChange }: Props) {
 
       <Box sx={{ mb: 1 }}>
         <Typography variant="caption" color="text.secondary">合成模式</Typography>
-        <Select
-          size="small" fullWidth
-          value={config.cosyvoiceTtsMode}
-          onChange={(e) => onConfigChange("cosyvoiceTtsMode", e.target.value)}
-          sx={{ mt: 0.5 }}
-        >
-          <MenuItem value="auto">自动 — 同语言用 zero_shot，跨语言用 cross_lingual（推荐）</MenuItem>
-          <MenuItem value="zero_shot">zero_shot — LLM+Flow 全链路（需 prompt_text 匹配参考音频）</MenuItem>
-          <MenuItem value="cross_lingual">cross_lingual — 仅 Flow 模型（不需 prompt_text）</MenuItem>
-        </Select>
+        <Typography variant="body2" sx={{ mt: 0.5, color: "success.main", fontWeight: 500 }}>
+          cross_lingual（已验证最优）
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          预规范化数字 + 自动语言标签，中英混合发音最佳
+        </Typography>
       </Box>
 
-      {config.cosyvoiceTtsMode === "cross_lingual" && (
-        <Box sx={{ mb: 1 }}>
-          <Typography variant="caption" color="text.secondary">目标语言</Typography>
-          <Select
-            size="small" fullWidth
-            value={config.cosyvoiceTtsLang || "auto"}
-            onChange={(e) => onConfigChange("cosyvoiceTtsLang", e.target.value === "auto" ? "" : e.target.value)}
-            sx={{ mt: 0.5 }}
-          >
-            <MenuItem value="auto">自动（从字幕语种推断）</MenuItem>
-            <MenuItem value="zh">中文 (zh)</MenuItem>
-            <MenuItem value="en">English (en)</MenuItem>
-            <MenuItem value="ja">日本語 (ja)</MenuItem>
-            <MenuItem value="ko">한국어 (ko)</MenuItem>
-            <MenuItem value="yue">粤语 (yue)</MenuItem>
-          </Select>
-        </Box>
-      )}
+      <Box sx={{ mb: 1 }}>
+        <Typography variant="caption" color="text.secondary">目标语言</Typography>
+        <Select
+          size="small" fullWidth
+          value={config.cosyvoiceTtsLang || "auto"}
+          onChange={(e) => onConfigChange("cosyvoiceTtsLang", e.target.value === "auto" ? "" : e.target.value)}
+          sx={{ mt: 0.5 }}
+        >
+          <MenuItem value="auto">自动（从字幕语种推断）</MenuItem>
+          <MenuItem value="zh">中文 (zh)</MenuItem>
+          <MenuItem value="en">English (en)</MenuItem>
+          <MenuItem value="ja">日本語 (ja)</MenuItem>
+          <MenuItem value="ko">한국어 (ko)</MenuItem>
+          <MenuItem value="yue">粤语 (yue)</MenuItem>
+        </Select>
+      </Box>
 
       <Box sx={{ mb: 1 }}>
         <Typography variant="caption" color="text.secondary">
