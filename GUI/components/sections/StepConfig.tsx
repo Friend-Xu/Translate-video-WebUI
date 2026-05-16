@@ -392,20 +392,32 @@ function ChatTTSPanel({ config, onConfigChange, chatttsWorkers }: StepConfigProp
       />
       {config.loudnessNormEnabled && (
         <Box>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={config.loudnessTargetAuto}
+                onChange={(e) => onConfigChange('loudnessTargetAuto', e.target.checked)}
+              />
+            }
+            label="自动匹配原视频响度"
+          />
           <Box display="flex" justifyContent="space-between">
             <Typography variant="body2" fontWeight={500}>目标响度 (LUFS)</Typography>
             <Typography variant="body2" fontWeight={600} color="primary">
-              {config.loudnessTargetLufs.toFixed(0)}
+              {config.loudnessTargetAuto ? '自动' : config.loudnessTargetLufs.toFixed(0)}
             </Typography>
           </Box>
           <Typography variant="caption" display="block" mb={1}>
-            -23 = 广播标准, -16 = 播客, -14 = YouTube. 逐段对齐，保留抑扬顿挫
+            {config.loudnessTargetAuto
+              ? '从原视频人声自动测量目标响度，配音与原片听感一致'
+              : '-23 = 广播, -16 = 播客, -14 = YouTube. 逐段对齐，保留抑扬顿挫'}
           </Typography>
           <Slider
             value={config.loudnessTargetLufs}
             min={-23}
             max={-14}
             step={1}
+            disabled={config.loudnessTargetAuto}
             marks={[
               { value: -23, label: '-23' },
               { value: -16, label: '-16' },

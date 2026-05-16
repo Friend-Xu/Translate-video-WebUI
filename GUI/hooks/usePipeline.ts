@@ -101,6 +101,7 @@ export function usePipeline() {
           cosyvoice_tts_mode: config.cosyvoiceTtsMode,
           cosyvoice_tts_lang: config.cosyvoiceTtsLang,
           loudness_norm_enabled: config.loudnessNormEnabled,
+          loudness_target_auto: config.loudnessTargetAuto,
           loudness_target_lufs: config.loudnessTargetLufs,
           voice_clone_engine: config.enableVoiceClone ? config.voiceCloneEngine : 'none',
           voice_clone_device: config.voiceCloneDevice,

@@ -71,8 +71,11 @@ class TTSConfig:
     loudness_norm_enabled: bool = True
     """是否启用逐段 LUFS 响度归一化。消除 ChatTTS/CosyVoice 段间音量跳跃。"""
 
+    loudness_target_auto: bool = True
+    """True = 自动从原视频人声测量目标响度。False = 使用 loudness_target_lufs。"""
+
     loudness_target_lufs: float = -16.0
-    """目标集成响度 (LUFS)。-23 = 广播, -16 = 播客/流媒体, -14 = YouTube。"""
+    """目标集成响度 (LUFS)，仅在 loudness_target_auto=False 时生效。"""
     """ChatTTS 模型来源: local | custom"""
 
     chattts_model_path: Optional[str] = None

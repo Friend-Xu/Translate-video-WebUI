@@ -568,7 +568,7 @@ class TtsPipeline:
                     from pipeline.loudness import normalize_segment_loudness
                     normalize_segment_loudness(
                         output_audio_path,
-                        target_lufs=getattr(self.config, "loudness_target_lufs", -16.0),
+                        target_lufs=getattr(self, "_loudness_target", -16.0),
                     )
 
                 wav_time_original = wav_time
@@ -766,6 +766,27 @@ class TtsPipeline:
                 )
             else:
                 logger.warning("CosyVoice TTS: 未配置参考音频且找不到 vocals.wav")
+
+        # ── LUFS 自动检测：从原视频人声测量目标响度 ──
+        self._loudness_target = self.config.loudness_target_lufs
+        if (
+            getattr(self.config, "loudness_norm_enabled", True)
+            and getattr(self.config, "loudness_target_auto", True)
+        ):
+            vocals = self._find_vocals(video_path)
+            if vocals and os.path.isfile(vocals):
+                from pipeline.loudness import measure_loudness
+                orig_lufs = measure_loudness(vocals)
+                if orig_lufs:
+                    self._loudness_target = orig_lufs["input_i"]
+                    logger.info(
+                        "LUFS 自动检测: 原视频人声 %.1f LUFS → 目标 %.1f LUFS",
+                        self._loudness_target, self._loudness_target,
+                    )
+                else:
+                    logger.warning("LUFS 自动检测失败，使用配置值 %.1f", self._loudness_target)
+            else:
+                logger.warning("LUFS 自动检测: 找不到 vocals.wav，使用配置值 %.1f", self._loudness_target)
 
         # ── 字幕渲染优化（可选） ───────────────────────
         caption_groups = None
