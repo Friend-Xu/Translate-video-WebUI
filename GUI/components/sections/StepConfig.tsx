@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import {
   Box, Typography, Card, CardContent, Select, MenuItem, TextField, Divider, Alert,
   FormControlLabel, Checkbox, Switch, Slider, Stack, Button, Chip, CircularProgress,
+  Dialog, DialogTitle, DialogContent, DialogActions,
 } from '@mui/material'
 import Grid from '@mui/material/Grid'
 import { SectionHeader } from '../SectionHeader'
@@ -436,6 +437,7 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
   const [apiDialogOpen, setApiDialogOpen] = useState(false)
   const [glossaryDicts, setGlossaryDicts] = useState<{name: string, description: string, termCount: number}[]>([])
   const [customPromptOpen, setCustomPromptOpen] = useState(false)
+  const [generalSettingsOpen, setGeneralSettingsOpen] = useState(false)
 
   useEffect(() => {
     fetch('/api/system/info')
@@ -752,46 +754,18 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   </>
                 )}
                 <Divider sx={{ my: 1 }} />
-                <Typography variant="body2" fontWeight={500} color="text.secondary">通用设置</Typography>
-                <Box>
-                  <Box display="flex" justifyContent="space-between">
-                    <Typography variant="body2" fontWeight={500}>视频最低速度</Typography>
-                    <Typography variant="body2" fontWeight={600} color="primary">{config.videoSpeedMin}x</Typography>
-                  </Box>
-                  <Typography variant="caption" display="block" mb={1}>TTS 音频过长时，视频最多减速到此倍数 (&lt;1.0 = 减速)</Typography>
-                  <Slider value={config.videoSpeedMin} min={0.50} max={1.00} step={0.05} marks={[{ value: 0.50, label: '0.50x' }, { value: 0.60, label: '0.60x' }, { value: 0.80, label: '0.80x' }, { value: 1.00, label: '1.00x' }]} onChange={(_, v) => onConfigChange('videoSpeedMin', v as number)} />
-                </Box>
-                <Box>
-                  <Box display="flex" justifyContent="space-between">
-                    <Typography variant="body2" fontWeight={500}>视频最高速度</Typography>
-                    <Typography variant="body2" fontWeight={600} color="primary">{config.videoSpeedMax}x</Typography>
-                  </Box>
-                  <Typography variant="caption" display="block" mb={1}>TTS 音频过短时，视频最多加速到此倍数 (&gt;1.0 = 加速，预留，当前策略不使用)</Typography>
-                  <Slider value={config.videoSpeedMax} min={1.05} max={2.00} step={0.05} marks={[{ value: 1.05, label: '1.05x' }, { value: 1.25, label: '1.25x' }, { value: 2.00, label: '2.00x' }]} onChange={(_, v) => onConfigChange('videoSpeedMax', v as number)} />
-                </Box>
-                <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
-                  <Box display="flex" justifyContent="space-between">
-                    <Typography variant="body2" fontWeight={500}>背景音乐音量</Typography>
-                    <Typography variant="body2" fontWeight={600} color="primary">{config.bgmVolume.toFixed(2)}x</Typography>
-                  </Box>
-                  <Typography variant="caption" display="block" mb={1}>
-                    BGM 与 TTS 语音混合比例 (0=静音, 1=原始电平, 2=加倍)
+                <Button
+                  fullWidth
+                  variant="outlined"
+                  size="small"
+                  onClick={() => setGeneralSettingsOpen(true)}
+                  sx={{ justifyContent: 'space-between', py: 0.5 }}
+                >
+                  <Typography variant="body2" fontWeight={500}>通用设置</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    调速 {config.videoSpeedMin}x–{config.videoSpeedMax}x · BGM {config.bgmVolume.toFixed(1)}x
                   </Typography>
-                  <Slider
-                    value={config.bgmVolume}
-                    min={0}
-                    max={2.0}
-                    step={0.05}
-                    marks={[
-                      { value: 0, label: '静音' },
-                      { value: 0.5, label: '0.5x' },
-                      { value: 1.0, label: '1.0x' },
-                      { value: 1.5, label: '1.5x' },
-                      { value: 2.0, label: '2.0x' },
-                    ]}
-                    onChange={(_, v) => onConfigChange('bgmVolume', v as number)}
-                  />
-                </Box>
+                </Button>
                 <FormControlLabel
                   control={<Checkbox checked={config.enableSubtitleOverlay} onChange={e => onConfigChange('enableSubtitleOverlay', e.target.checked)} />}
                   label={<Box><Typography variant="body2">启用字幕叠加</Typography><Typography variant="caption" display="block">选择是否在视频中显示字幕</Typography></Box>}
@@ -801,6 +775,38 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
           </Card>
         </Grid>
       </Grid>
+      <Dialog open={generalSettingsOpen} onClose={() => setGeneralSettingsOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>通用设置</DialogTitle>
+        <DialogContent dividers>
+          <Box sx={{ mb: 3 }}>
+            <Box display="flex" justifyContent="space-between">
+              <Typography variant="body2" fontWeight={500}>视频最低速度</Typography>
+              <Typography variant="body2" fontWeight={600} color="primary">{config.videoSpeedMin}x</Typography>
+            </Box>
+            <Typography variant="caption" display="block" mb={1}>TTS 音频过长时，视频最多减速到此倍数</Typography>
+            <Slider value={config.videoSpeedMin} min={0.50} max={1.00} step={0.05} marks={[{ value: 0.50, label: '0.50x' }, { value: 0.60, label: '0.60x' }, { value: 0.80, label: '0.80x' }, { value: 1.00, label: '1.00x' }]} onChange={(_, v) => onConfigChange('videoSpeedMin', v as number)} />
+          </Box>
+          <Box sx={{ mb: 3 }}>
+            <Box display="flex" justifyContent="space-between">
+              <Typography variant="body2" fontWeight={500}>视频最高速度</Typography>
+              <Typography variant="body2" fontWeight={600} color="primary">{config.videoSpeedMax}x</Typography>
+            </Box>
+            <Typography variant="caption" display="block" mb={1}>TTS 音频过短时，视频最多加速到此倍数</Typography>
+            <Slider value={config.videoSpeedMax} min={1.05} max={2.00} step={0.05} marks={[{ value: 1.05, label: '1.05x' }, { value: 1.25, label: '1.25x' }, { value: 2.00, label: '2.00x' }]} onChange={(_, v) => onConfigChange('videoSpeedMax', v as number)} />
+          </Box>
+          <Box>
+            <Box display="flex" justifyContent="space-between">
+              <Typography variant="body2" fontWeight={500}>背景音乐音量</Typography>
+              <Typography variant="body2" fontWeight={600} color="primary">{config.bgmVolume.toFixed(2)}x</Typography>
+            </Box>
+            <Typography variant="caption" display="block" mb={1}>BGM 与 TTS 语音混合比例 (0=静音, 1=原始, 2=加倍)</Typography>
+            <Slider value={config.bgmVolume} min={0} max={2.0} step={0.05} marks={[{ value: 0, label: '0' }, { value: 1.0, label: '1x' }, { value: 2.0, label: '2x' }]} onChange={(_, v) => onConfigChange('bgmVolume', v as number)} />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setGeneralSettingsOpen(false)}>关闭</Button>
+        </DialogActions>
+      </Dialog>
       <ApiConfigDialog
         open={apiDialogOpen}
         onClose={() => setApiDialogOpen(false)}
