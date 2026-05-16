@@ -20,7 +20,7 @@ def _configure_root() -> None:
     if root.handlers:
         return
 
-    handler = logging.StreamHandler(sys.stdout)
+    handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(logging.Formatter(
         "[%(levelname)-5s] %(name)s: %(message)s"
     ))

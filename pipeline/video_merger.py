@@ -137,11 +137,32 @@ class VideoMerger:
             cmd.extend(["-c:v", self.config.video_encoder, "-c:a", self.config.audio_encoder])
         cmd.append(output_path)
 
+        logger.info(f"正在合并视频段 (ffmpeg concat)...")
+        last_progress = [0.0]
+
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", errors="replace",
+            )
+            assert proc.stderr is not None
+            for line in proc.stderr:
+                line = line.strip()
+                # ffmpeg 进度行: "frame=... fps=... time=00:00:05.00 ..."
+                if line.startswith("frame=") and "time=" in line:
+                    try:
+                        time_part = line.split("time=")[1].split()[0]
+                        h, m, s = time_part.split(":")
+                        secs = float(h) * 3600 + float(m) * 60 + float(s)
+                        if secs - last_progress[0] >= 5.0:
+                            logger.info(f"  合并进度: {time_part}")
+                            last_progress[0] = secs
+                    except Exception:
+                        pass
+            proc.wait(timeout=300)
+            result = proc.returncode
         except FileNotFoundError:
             logger.warning(f"ffmpeg 不可用: {ffmpeg}")
-            # 清理 manifest
             try:
                 os.remove(manifest)
             except OSError:
@@ -154,16 +175,11 @@ class VideoMerger:
         except OSError:
             pass
 
-        if result.returncode != 0:
-            logger.error(f"ffmpeg concat 失败 (returncode={result.returncode})")
-            # 截取最后几行 stderr 作为错误摘要
-            err_lines = result.stderr.strip().split("\n")[-5:]
-            for line in err_lines:
-                if line.strip():
-                    logger.error(f"  {line.strip()}")
+        if result != 0:
+            logger.error(f"ffmpeg concat 失败 (returncode={result})")
             return None
 
-        logger.info(f"ffmpeg concat 完成: {output_path}")
+        logger.info(f"视频合并完成: {output_path}")
         return output_path
 
     # ── moviepy concatenate ────────────────────────────

@@ -156,11 +156,32 @@ class VideoSegmenter:
         """Apply short fade-in/out to a WAV file to prevent clicks at boundaries."""
         import subprocess
         from pipeline.utils import get_ffmpeg_exe
+        # 获取音频时长，因为 FFmpeg 6.0 的 afade=t=out 不指定 st 时错误地默认 st=0，
+        # 导致整段音频在 15ms 后完全静音
+        dur_result = subprocess.run(
+            [get_ffmpeg_exe(), "-i", wav_path],
+            capture_output=True, text=True, timeout=15,
+        )
+        duration_s = None
+        for line in (dur_result.stderr or "").split("\n"):
+            if "Duration" in line:
+                parts = line.strip().split("Duration: ")[-1].split(",")[0].split(":")
+                try:
+                    duration_s = float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+                except Exception:
+                    pass
+                break
+
         tmp = wav_path + ".fade.wav"
         sec = f"{fade_duration:.4f}"
+        if duration_s is not None and duration_s > fade_duration * 2:
+            fade_out_st = f"{duration_s - fade_duration:.4f}"
+            fade_filter = f"afade=t=in:d={sec},afade=t=out:st={fade_out_st}:d={sec}"
+        else:
+            fade_filter = f"afade=t=in:d={sec}"
         result = subprocess.run(
             [get_ffmpeg_exe(), "-y", "-i", wav_path,
-             "-af", f"afade=t=in:d={sec},afade=t=out:d={sec}",
+             "-af", fade_filter,
              "-acodec", "pcm_s16le", tmp],
             capture_output=True, text=True, timeout=30,
         )
