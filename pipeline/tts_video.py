@@ -152,7 +152,7 @@ class VideoSegmenter:
             raise RuntimeError(f"ffmpeg amix 失败: {err}")
 
     @staticmethod
-    def _ffmpeg_fade_wav(wav_path: str, fade_duration: float = 0.01) -> None:
+    def _ffmpeg_fade_wav(wav_path: str, fade_duration: float = 0.015) -> None:
         """Apply short fade-in/out to a WAV file to prevent clicks at boundaries."""
         import subprocess
         from pipeline.utils import get_ffmpeg_exe
@@ -160,7 +160,7 @@ class VideoSegmenter:
         sec = f"{fade_duration:.4f}"
         result = subprocess.run(
             [get_ffmpeg_exe(), "-y", "-i", wav_path,
-             "-af", f"afade=t=in:d={sec},afade=t=out:st=999999:d={sec}",
+             "-af", f"afade=t=in:d={sec},afade=t=out:d={sec}",
              "-acodec", "pcm_s16le", tmp],
             capture_output=True, text=True, timeout=30,
         )
