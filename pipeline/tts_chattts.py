@@ -96,6 +96,50 @@ def _normalize_numbers(text: str) -> str:
     return re.sub(r"\d+", lambda m: _arabic_to_chinese(m.group()), text)
 
 
+_wetext_normalizer = None
+
+
+def _get_wetext_normalizer():
+    """Lazy-load wetext Normalizer (WeTextProcessing without pynini, works on Windows)."""
+    global _wetext_normalizer
+    if _wetext_normalizer is None:
+        try:
+            from wetext import Normalizer
+            _wetext_normalizer = Normalizer(lang="zh", operator="tn", remove_erhua=True)
+            logger.info("wetext 文本规范化器已加载（零外部依赖）")
+        except ImportError:
+            logger.warning("wetext 未安装，回退到正则规范化")
+            _wetext_normalizer = False
+    return _wetext_normalizer
+
+
+def _normalize_text(text: str) -> str:
+    """Normalize text for ChatTTS using wetext (pynini-free WeTextProcessing).
+
+    Falls back to regex-based normalization if wetext is unavailable.
+    """
+    norm = _get_wetext_normalizer()
+    if norm:
+        return norm.normalize(text)
+    # Fallback: regex-based normalization for core number patterns
+    text = text.replace("？", "?")
+    text = text.replace("…", "...")
+    text = text.replace("—", "，")
+    text = text.replace("～", "~")
+    text = re.sub(r"(\d+(?:\.\d+)?)%",
+                  lambda m: "百分之" + _arabic_to_chinese(m.group(1).split(".")[0])
+                  + ("点" + _decimal_to_chinese(m.group(1).split(".")[1]) if "." in m.group(1) else ""), text)
+    text = re.sub(r"(\d+)\.(\d+)",
+                  lambda m: _arabic_to_chinese(m.group(1)) + "点" + _decimal_to_chinese(m.group(2)), text)
+    text = re.sub(r"\d+", lambda m: _arabic_to_chinese(m.group()), text)
+    return text
+
+
+def _decimal_to_chinese(num_str: str) -> str:
+    """Convert decimal fraction part to digit-by-digit Chinese reading. e.g. '19' → '一九'."""
+    return "".join(_DIGIT_MAP.get(ch, ch) for ch in num_str)
+
+
 def _apply_pronunciation(text: str, entries: dict) -> str:
     """Apply pronunciation dictionary entries (simple key → value replacement)."""
     for key, value in entries.items():
@@ -259,10 +303,10 @@ class ChatTTSEngine:
         assert self._chat is not None
         assert self._spk_emb is not None
 
-        # 发音术语表替换 → 数字归一化 → ChatTTS 推理
+        # 发音术语表替换 → 文本规范化 → ChatTTS 推理
         if self._pronunciation_entries:
             text = _apply_pronunciation(text, self._pronunciation_entries)
-        text = _normalize_numbers(text)
+        text = _normalize_text(text)
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
