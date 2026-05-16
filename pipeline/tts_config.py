@@ -66,6 +66,13 @@ class TTSConfig:
     每个 worker 加载独立模型副本（~2.37 GB VRAM），可并行处理多条字幕。"""
 
     chattts_model_source: str = "local"
+
+    # ── 响度归一化 ──────────────────────────────────────
+    loudness_norm_enabled: bool = True
+    """是否启用逐段 LUFS 响度归一化。消除 ChatTTS/CosyVoice 段间音量跳跃。"""
+
+    loudness_target_lufs: float = -16.0
+    """目标集成响度 (LUFS)。-23 = 广播, -16 = 播客/流媒体, -14 = YouTube。"""
     """ChatTTS 模型来源: local | custom"""
 
     chattts_model_path: Optional[str] = None

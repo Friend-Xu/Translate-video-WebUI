@@ -13,6 +13,8 @@ export interface PipelineConfig {
   chatttsPreviewAudio: string
   chatttsPreviewSeed: number | null
   chatttsSpkEmb: string
+  loudnessNormEnabled: boolean
+  loudnessTargetLufs: number
   cosyvoiceTtsModelVersion: 'v2' | 'v3'
   cosyvoiceTtsModelPath: string
   cosyvoiceTtsPromptAudio: string
@@ -139,6 +141,8 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   chatttsPreviewAudio: '',
   chatttsPreviewSeed: null,
   chatttsSpkEmb: '',
+  loudnessNormEnabled: true,
+  loudnessTargetLufs: -16.0,
   cosyvoiceTtsModelVersion: 'v2',
   cosyvoiceTtsModelPath: '',
   cosyvoiceTtsPromptAudio: '',

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import {
   Box, Typography, Card, CardContent, Select, MenuItem, TextField, Divider, Alert,
-  FormControlLabel, Checkbox, Slider, Stack, Button, Chip, CircularProgress,
+  FormControlLabel, Checkbox, Switch, Slider, Stack, Button, Chip, CircularProgress,
 } from '@mui/material'
 import Grid from '@mui/material/Grid'
 import { SectionHeader } from '../SectionHeader'
@@ -379,6 +379,42 @@ function ChatTTSPanel({ config, onConfigChange, chatttsWorkers }: StepConfigProp
           onChange={(_, v) => onConfigChange('chatttsWorkers', v as number)}
         />
       </Box>
+
+      {/* LUFS 响度归一化 */}
+      <FormControlLabel
+        control={
+          <Switch
+            checked={config.loudnessNormEnabled}
+            onChange={(e) => onConfigChange('loudnessNormEnabled', e.target.checked)}
+          />
+        }
+        label="LUFS 响度归一化"
+      />
+      {config.loudnessNormEnabled && (
+        <Box>
+          <Box display="flex" justifyContent="space-between">
+            <Typography variant="body2" fontWeight={500}>目标响度 (LUFS)</Typography>
+            <Typography variant="body2" fontWeight={600} color="primary">
+              {config.loudnessTargetLufs.toFixed(0)}
+            </Typography>
+          </Box>
+          <Typography variant="caption" display="block" mb={1}>
+            -23 = 广播标准, -16 = 播客, -14 = YouTube. 逐段对齐，保留抑扬顿挫
+          </Typography>
+          <Slider
+            value={config.loudnessTargetLufs}
+            min={-23}
+            max={-14}
+            step={1}
+            marks={[
+              { value: -23, label: '-23' },
+              { value: -16, label: '-16' },
+              { value: -14, label: '-14' },
+            ]}
+            onChange={(_, v) => onConfigChange('loudnessTargetLufs', v as number)}
+          />
+        </Box>
+      )}
     </>
   )
 }
