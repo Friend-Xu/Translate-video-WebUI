@@ -36,12 +36,16 @@ def measure_rms(wav_path: str) -> float | None:
              "-af", "volumedetect",
              "-f", "null", "-"],
             capture_output=True, text=True, timeout=60,
+            encoding="utf-8", errors="replace",
         )
     except (subprocess.TimeoutExpired, OSError) as e:
         logger.warning(f"volumedetect 执行失败: {e}")
         return None
 
     stderr = result.stderr
+    if stderr is None:
+        logger.warning("volumedetect: ffmpeg 无 stderr 输出")
+        return None
     match = re.search(r"mean_volume:\s*([-\d.]+)\s*dB", stderr)
     if match:
         return float(match.group(1))
@@ -70,12 +74,16 @@ def measure_loudness(wav_path: str) -> dict | None:
              "-af", "loudnorm=I=-16:TP=-1.5:LRA=11:print_format=json",
              "-f", "null", "-"],
             capture_output=True, text=True, timeout=120,
+            encoding="utf-8", errors="replace",
         )
     except (subprocess.TimeoutExpired, OSError) as e:
         logger.warning(f"loudnorm 执行失败: {e}")
         return None
 
     stderr = result.stderr
+    if stderr is None:
+        logger.warning("loudnorm: ffmpeg 无 stderr 输出")
+        return None
     try:
         json_start = stderr.index("{")
         json_str = stderr[json_start:]
@@ -194,6 +202,7 @@ def normalize_segment_loudness(
         probe = subprocess.run(
             [ffmpeg, "-i", wav_path],
             capture_output=True, text=True, timeout=10,
+            encoding="utf-8", errors="replace",
         )
         dur_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", probe.stderr or "")
         if dur_match:
