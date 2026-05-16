@@ -156,12 +156,12 @@ class ModelManager:
             name="wav2vec2 时间轴对齐",
             function="时间轴对齐 — 字级别精准对齐 (日语/英语/中文等)",
             category="subtitle",
-            repo_id="",                    # 各语言模型由 transformers 按需下载到 hf_cache
+            repo_id="",                    # 各语言模型通过 snapshot_download 下载到 wav2vec2/{lang}/
             check_dir=MODELS_DIR / "wav2vec2",
-            check_files=("ja/model.safetensors", "en_bak/model.safetensors"),
-            size_gb=2.4,
+            check_files=("ja/model.safetensors", "zh/model.safetensors"),
+            size_gb=3.6,
             vram_gb=1.5,
-            description="wav2vec2 多语言对齐模型，存储于 wav2vec2/ 子目录中，按需下载",
+            description="wav2vec2 多语言对齐模型，按语言存于 wav2vec2/{lang}/，按需下载",
         ),
 
         # ── 翻译 ────────────────────────────────────────────

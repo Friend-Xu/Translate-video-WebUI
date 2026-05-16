@@ -84,13 +84,31 @@ def load_align_model(language_code, device, model_name=None, model_dir=None):
         labels = bundle.get_labels()
         align_dictionary = {c.lower(): i for i, c in enumerate(labels)}
     else:
-        try:
-            processor = Wav2Vec2Processor.from_pretrained(model_name)
-            align_model = Wav2Vec2ForCTC.from_pretrained(model_name)
-        except Exception as e:
-            print(e)
-            print(f"Error loading model from huggingface, check https://huggingface.co/models for finetuned wav2vec2.0 models")
-            raise ValueError(f'The chosen align_model "{model_name}" could not be found in huggingface (https://huggingface.co/models) or torchaudio (https://pytorch.org/audio/stable/pipelines.html#id14)')
+        # Prefer local model_dir over HF cache to avoid duplication
+        if model_dir and os.path.isdir(model_dir) and os.path.isfile(os.path.join(model_dir, "model.safetensors")):
+            os.environ["TRANSFORMERS_OFFLINE"] = "1"
+            processor = Wav2Vec2Processor.from_pretrained(model_dir)
+            align_model = Wav2Vec2ForCTC.from_pretrained(model_dir)
+        elif model_dir:
+            # Download directly to local dir, not to HF cache
+            os.makedirs(model_dir, exist_ok=True)
+            try:
+                from huggingface_hub import snapshot_download
+                snapshot_download(model_name, local_dir=model_dir)
+                os.environ["TRANSFORMERS_OFFLINE"] = "1"
+                processor = Wav2Vec2Processor.from_pretrained(model_dir)
+                align_model = Wav2Vec2ForCTC.from_pretrained(model_dir)
+            except Exception as e:
+                print(e)
+                raise ValueError(f"Failed to download alignment model '{model_name}' to {model_dir}")
+        else:
+            try:
+                processor = Wav2Vec2Processor.from_pretrained(model_name)
+                align_model = Wav2Vec2ForCTC.from_pretrained(model_name)
+            except Exception as e:
+                print(e)
+                print(f"Error loading model from huggingface, check https://huggingface.co/models for finetuned wav2vec2.0 models")
+                raise ValueError(f'The chosen align_model "{model_name}" could not be found in huggingface (https://huggingface.co/models) or torchaudio (https://pytorch.org/audio/stable/pipelines.html#id14)')
         pipeline_type = "huggingface"
         align_model = align_model.to(device)
         labels = processor.tokenizer.get_vocab()

@@ -199,10 +199,12 @@ class Job:
     created_at: str = ""
     batch_id: str | None = None
     _log_event: asyncio.Event = field(default_factory=asyncio.Event)
+    _loop: asyncio.AbstractEventLoop | None = None
 
     def append_log(self, line: str) -> None:
         self.logs.append(line)
-        self.logs = self.logs[-500:]  # 防止内存无限增长（与 BatchSession 一致）
+        if len(self.logs) > 500:
+            del self.logs[:-500]  # keep same list object for SSE idx tracking
         # Parse step hints from stdout for progress
         lower = line.lower()
         if "[1/3]" in line or "字幕提取" in line:
@@ -217,9 +219,9 @@ class Job:
         if "[ok]" in lower:
             self.progress = min(self.progress + 15, 95)
         _save_job(self)
-        # Wake up any SSE listeners
-        self._log_event.set()
-        self._log_event.clear()
+        # Wake up SSE listeners — thread-safe via call_soon_threadsafe
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self._log_event.set)
 
 
 @dataclass
@@ -862,6 +864,7 @@ async def start_pipeline(req: RunRequest) -> RunResponse:
         created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )
     _jobs[job_id] = job
+    job._loop = asyncio.get_running_loop()
     _save_job(job)
 
     apply_subtitle_settings()
@@ -997,6 +1000,7 @@ async def stream_logs(job_id: str) -> StreamingResponse:
             # Wait for new logs or timeout
             try:
                 await asyncio.wait_for(job._log_event.wait(), timeout=2.0)
+                job._log_event.clear()
             except asyncio.TimeoutError:
                 # Send keepalive comment
                 yield ": keepalive\n\n"

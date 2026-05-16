@@ -49,6 +49,14 @@ class PPLEvaluator:
                 return
             from transformers import AutoModelForCausalLM, AutoTokenizer
 
+            # Prevent HF download when local model exists
+            if os.path.isdir(self._model_path) and any(
+                f.endswith((".safetensors", ".bin"))
+                for f in os.listdir(self._model_path)
+            ):
+                os.environ["HF_HUB_OFFLINE"] = "1"
+                os.environ["TRANSFORMERS_OFFLINE"] = "1"
+
             t0 = time.time()
             logger.info(f"加载 Qwen2-0.5B: {self._model_path}")
             self._tokenizer = AutoTokenizer.from_pretrained(

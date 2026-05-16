@@ -47,8 +47,9 @@ export function useSSE(
     })
 
     es.onerror = () => {
-      // EventSource auto-reconnects; close only if job is done
-      disconnect()
+      // Let EventSource auto-reconnect; disconnect only via 'done' event.
+      // Calling disconnect() here defeats the browser's built-in retry,
+      // permanently losing logs after a transient connection drop.
     }
 
     return disconnect

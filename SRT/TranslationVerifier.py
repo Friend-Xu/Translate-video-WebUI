@@ -56,8 +56,8 @@ class CrossLingualScorer:
                 "models", "sentence-transformers", "paraphrase-multilingual-MiniLM-L12-v2",
             )
             if os.path.isdir(local_path):
-                os.environ.setdefault("HF_HUB_OFFLINE", "1")
-                os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+                os.environ["HF_HUB_OFFLINE"] = "1"
+                os.environ["TRANSFORMERS_OFFLINE"] = "1"
                 model_path = local_path
             else:
                 model_path = self.model_name

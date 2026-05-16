@@ -251,9 +251,13 @@ class VADTranscriber:
         from whisperx_local.alignment import load_align_model
         # 强制走 HF 路径，避免 torchaudio TorchScript 在子进程中触发 ACCESS_VIOLATION
         model_name = self._HF_ALIGN_MODELS.get(language)
+        local_model_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models", "wav2vec2", language)
+        if not os.path.isdir(local_model_dir):
+            local_model_dir = None
         self._align_model, self._align_metadata = load_align_model(
             language_code=language, device="cpu",
             model_name=model_name,
+            model_dir=local_model_dir,
         )
 
     def align_all(self, segments: List[dict], language: str = "ja") -> List[dict]:
@@ -271,6 +275,7 @@ class VADTranscriber:
 import json, sys, os, gc
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+os.environ.setdefault("HF_HOME", os.path.join(os.getcwd(), "models", "hf_cache"))
 import torch
 import soundfile as sf
 import numpy as np
@@ -281,7 +286,13 @@ output_file = sys.argv[2]
 with open(input_file, "r", encoding="utf-8") as f:
     data = json.load(f)
 
-model, metadata = load_align_model(language_code=data["language"], device="cpu")
+project_root = os.getcwd()
+lang = data["language"]
+local_model_dir = os.path.join(project_root, "models", "wav2vec2", lang)
+if not os.path.isdir(local_model_dir):
+    local_model_dir = None
+
+model, metadata = load_align_model(language_code=lang, device="cpu", model_dir=local_model_dir)
 audio, sr = sf.read(data["audio_path"])
 if audio.dtype != np.float32:
     audio = audio.astype(np.float32)

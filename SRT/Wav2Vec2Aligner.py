@@ -57,10 +57,15 @@ class Wav2Vec2Aligner:
         if not os.environ.get("HF_HUB_DISABLE_SYMLINKS_WARNING"):
             os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
+        local_model_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models", "wav2vec2", self.language)
+        if not os.path.isdir(local_model_dir):
+            local_model_dir = None
+
         logger.info(f"加载 wav2vec2 对齐模型 (lang={self.language}, device={self.device})...")
         t0 = time.time()
         self._model, self._metadata = load_align_model(
             language_code=self.language, device=self.device,
+            model_dir=local_model_dir,
         )
         logger.info(f"  加载完成，耗时: {time.time()-t0:.1f}s")
 

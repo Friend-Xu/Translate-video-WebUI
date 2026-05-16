@@ -61,6 +61,10 @@ def _get_whisper_model(model_size: str = "small",
         _whisper_root = os.path.join(_project_root, "models", "whisper")
         os.makedirs(_whisper_root, exist_ok=True)
         from faster_whisper import WhisperModel
+        # Prevent HF download when model already cached locally
+        local_model_dir = os.path.join(_whisper_root, model_size)
+        if os.path.isdir(local_model_dir) and os.path.isfile(os.path.join(local_model_dir, "model.bin")):
+            os.environ["HF_HUB_OFFLINE"] = "1"
         logger.info(f"加载 faster-whisper 模型: {model_size} ({device}, {compute_type})")
         t0 = time.time()
         model = WhisperModel(model_size, device=device, compute_type=compute_type,
