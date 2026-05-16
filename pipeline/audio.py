@@ -18,7 +18,7 @@ import subprocess
 
 def get_wav_duration(wav_path: str, ffmpeg_exe: str) -> float:
     """通过 ffmpeg -i 获取 WAV 文件的时长"""
-    r = subprocess.run([ffmpeg_exe, "-i", wav_path], capture_output=True, text=True)
+    r = subprocess.run([ffmpeg_exe, "-i", wav_path], capture_output=True, text=True, encoding="utf-8", errors="replace")
     for line in r.stderr.split("\n"):
         if "Duration:" in line:
             dur_str = line.split(",")[0].replace("Duration:", "").strip()
@@ -79,7 +79,7 @@ def extract_audio_with_fix(video_path: str, wav_path: str,
         "-t", str(duration_sec),
         wav_path,
     ]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
     if r.returncode != 0:
         raise RuntimeError(f"FFmpeg 提取失败: {r.stderr[:200]}")
 
@@ -95,5 +95,5 @@ def extract_audio_bare(video_path: str, wav_path: str, ffmpeg_exe: str,
         "-c:a", "pcm_s16le", "-ar", str(sr), "-ac", str(ch),
         wav_path,
     ]
-    subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=True)
+    subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, check=True)
     return get_wav_duration(wav_path, ffmpeg_exe)

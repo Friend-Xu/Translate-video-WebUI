@@ -41,7 +41,7 @@ def get_video_info(video_path: str, ffmpeg_exe: str) -> VideoInfo:
     """
     result = subprocess.run(
         [ffmpeg_exe, "-i", video_path],
-        capture_output=True, text=True
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     stderr_text = result.stderr
 
