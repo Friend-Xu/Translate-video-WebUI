@@ -113,26 +113,59 @@ def _get_wetext_normalizer():
     return _wetext_normalizer
 
 
+_PUNCT_MAP = {
+    "？": "?",
+    "！": "!",
+    "：": ":",
+    "；": ";",
+    "…": "...",
+    "～": "~",
+    "、": ",",
+    "“": "\"",  # "
+    "”": "\"",  # "
+    "‘": "'",   # '
+    "’": "'",   # '
+    "《": "",    # 《
+    "》": "",    # 》
+    "【": "",    # 【
+    "】": "",    # 】
+    "（": "(",   # （
+    "）": ")",   # ）
+}
+
+
+def _clean_punctuation(text: str) -> str:
+    """Convert Chinese punctuation to ASCII that ChatTTS handles safely.
+
+    Applied after text normalization to prevent ChatTTS from misreading
+    fullwidth punctuation as control tokens or producing artifacts.
+    """
+    text = text.replace("——", "，")  # —— → ，
+    text = text.replace("—", "，")         # — → ，
+    for ch, repl in _PUNCT_MAP.items():
+        text = text.replace(ch, repl)
+    return text
+
+
 def _normalize_text(text: str) -> str:
     """Normalize text for ChatTTS using wetext (pynini-free WeTextProcessing).
 
+    Pipeline: wetext normalization (dates/numbers) → punctuation cleaning.
     Falls back to regex-based normalization if wetext is unavailable.
     """
     norm = _get_wetext_normalizer()
     if norm:
-        return norm.normalize(text)
+        text = norm.normalize(text)
+        return _clean_punctuation(text)
+
     # Fallback: regex-based normalization for core number patterns
-    text = text.replace("？", "?")
-    text = text.replace("…", "...")
-    text = text.replace("—", "，")
-    text = text.replace("～", "~")
     text = re.sub(r"(\d+(?:\.\d+)?)%",
                   lambda m: "百分之" + _arabic_to_chinese(m.group(1).split(".")[0])
                   + ("点" + _decimal_to_chinese(m.group(1).split(".")[1]) if "." in m.group(1) else ""), text)
     text = re.sub(r"(\d+)\.(\d+)",
                   lambda m: _arabic_to_chinese(m.group(1)) + "点" + _decimal_to_chinese(m.group(2)), text)
     text = re.sub(r"\d+", lambda m: _arabic_to_chinese(m.group()), text)
-    return text
+    return _clean_punctuation(text)
 
 
 def _decimal_to_chinese(num_str: str) -> str:
@@ -326,7 +359,7 @@ class ChatTTSEngine:
                     text,
                     skip_refine_text=False,
                     use_decoder=self._use_decoder,
-                    do_text_normalization=True,
+                    do_text_normalization=False,  # done externally via _normalize_text()
                     split_text=False,
                     params_infer_code=params_infer_code,
                     params_refine_text=params_refine_text,
