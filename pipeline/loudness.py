@@ -79,7 +79,8 @@ def measure_loudness(wav_path: str) -> dict | None:
     try:
         json_start = stderr.index("{")
         json_str = stderr[json_start:]
-        data = json.loads(json_str)
+        decoder = json.JSONDecoder()
+        data, _pos = decoder.raw_decode(json_str)
         return {
             "input_i": float(data.get("input_i", -99)),
             "input_tp": float(data.get("input_tp", -99)),
@@ -167,3 +168,75 @@ def apply_gain_to_wav(
         capture_output=True, check=True,
     )
     return dst_path
+
+
+def normalize_segment_loudness(
+    wav_path: str,
+    target_lufs: float = -16.0,
+    skip_gain_threshold: float = 0.5,
+) -> float | None:
+    """逐段 LUFS 归一化：测量响度，加固定增益（不压缩动态）。
+
+    用于消除 ChatTTS/CosyVoice 逐段独立推理造成的段间响度跳跃。
+    增益过小时跳过以避免无意义的重新编码。
+
+    Args:
+        wav_path: 要归一化的 WAV 文件路径（原地修改）。
+        target_lufs: 目标集成响度 (LUFS)。默认 -16。
+        skip_gain_threshold: 增益低于此值 (dB) 时跳过。默认 0.5 dB。
+
+    Returns:
+        实际应用的增益值 (dB)，如果跳过则返回 None。
+    """
+    try:
+        from pipeline.utils import get_ffmpeg_exe
+        ffmpeg = get_ffmpeg_exe()
+        probe = subprocess.run(
+            [ffmpeg, "-i", wav_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        dur_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", probe.stderr or "")
+        if dur_match:
+            duration_s = (
+                int(dur_match.group(1)) * 3600
+                + int(dur_match.group(2)) * 60
+                + float(dur_match.group(3))
+            )
+            if duration_s < 0.4:
+                logger.debug("跳过短段 LUFS 归一化 (%.2fs < 0.4s)", duration_s)
+                return None
+    except Exception:
+        pass
+
+    info = measure_loudness(wav_path)
+    if info is None:
+        return None
+
+    current_lufs = info["input_i"]
+    gain_db = target_lufs - current_lufs
+
+    if abs(gain_db) < skip_gain_threshold:
+        logger.debug(
+            "LUFS 增益过小 (%.1f dB)，跳过 %s",
+            gain_db, os.path.basename(wav_path),
+        )
+        return None
+
+    import tempfile
+    tmp_path = wav_path + ".loudnorm.wav"
+    try:
+        apply_gain_to_wav(wav_path, tmp_path, gain_db)
+        from pipeline.utils import safe_replace
+        safe_replace(tmp_path, wav_path)
+    finally:
+        if os.path.isfile(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    logger.info(
+        "LUFS 归一化: %+.1f dB (%.1f → %.1f LUFS) → %s",
+        gain_db, current_lufs, target_lufs, os.path.basename(wav_path),
+    )
+    return gain_db

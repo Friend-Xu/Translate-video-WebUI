@@ -558,6 +558,13 @@ class TtsPipeline:
                 wav_time = engine.synthesize(
                     text_zh, output_audio_path, f"+{self.config.base_speed}%"
                 )
+
+                # 逐段 LUFS 归一化：消除 ChatTTS/CosyVoice 段间响度跳跃
+                # EdgeTTS (supports_rate=True) 输出响度稳定，跳过
+                if not engine_supports_rate:
+                    from pipeline.loudness import normalize_segment_loudness
+                    normalize_segment_loudness(output_audio_path, target_lufs=-16.0)
+
                 wav_time_original = wav_time
 
                 # 2. 时序对齐
