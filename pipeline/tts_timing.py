@@ -248,7 +248,7 @@ class TimingAdjuster:
             ffmpeg = "ffmpeg"
         subprocess.run(
             [ffmpeg, "-y", "-i", src, "-acodec", "copy", dst],
-            capture_output=True, check=True,
+            capture_output=True, check=True, encoding="utf-8", errors="replace",
         )
 
     @staticmethod
@@ -262,7 +262,7 @@ class TimingAdjuster:
         r = subprocess.run(
             [ffprobe, "-v", "quiet", "-show_entries", "format=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", wav_path],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         return float(r.stdout.strip())
 

@@ -305,7 +305,7 @@ with open(output_file, "w", encoding="utf-8") as f:
         try:
             result = subprocess.run(
                 [sys.executable, "-c", script, input_file, output_file],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True, text=True, timeout=120, encoding="utf-8", errors="replace",
                 cwd=os.path.dirname(os.path.abspath(__file__)) + "/..",
             )
             if result.returncode != 0:

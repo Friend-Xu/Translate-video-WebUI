@@ -95,7 +95,7 @@ def _extract_chunk(ffmpeg: str, wav_path: str, out_path: str,
         [ffmpeg, "-y", "-i", wav_path,
          "-ss", str(start_s), "-t", str(duration_s),
          "-c", "copy", out_path],
-        capture_output=True, check=True,
+        capture_output=True, check=True, encoding="utf-8", errors="replace",
     )
     # -c copy 可能在非关键帧处不准，重试用重编码
     if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
@@ -103,7 +103,7 @@ def _extract_chunk(ffmpeg: str, wav_path: str, out_path: str,
             [ffmpeg, "-y", "-i", wav_path,
              "-ss", str(start_s), "-t", str(duration_s),
              "-acodec", "pcm_s16le", out_path],
-            capture_output=True, check=True,
+            capture_output=True, check=True, encoding="utf-8", errors="replace",
         )
 
 
@@ -125,7 +125,7 @@ def _concat_wavs_ffmpeg(ffmpeg: str, wav_paths: list[str], output_path: str) -> 
     subprocess.run(
         [ffmpeg, "-y", "-f", "concat", "-safe", "0",
          "-i", concat_list, "-c", "copy", output_path],
-        capture_output=True, check=True,
+        capture_output=True, check=True, encoding="utf-8", errors="replace",
     )
     os.remove(concat_list)
 
@@ -144,7 +144,7 @@ def _trim_wav(ffmpeg: str, src: str, dst: str,
         [ffmpeg, "-y", "-i", src,
          "-ss", str(new_start), "-t", str(new_dur),
          "-c", "copy", dst],
-        capture_output=True, check=True,
+        capture_output=True, check=True, encoding="utf-8", errors="replace",
     )
     # -c copy 可能因帧边界不准，重试重编码
     if not os.path.isfile(dst) or os.path.getsize(dst) == 0:
@@ -152,7 +152,7 @@ def _trim_wav(ffmpeg: str, src: str, dst: str,
             [ffmpeg, "-y", "-i", src,
              "-ss", str(new_start), "-t", str(new_dur),
              "-acodec", "pcm_s16le", dst],
-            capture_output=True, check=True,
+            capture_output=True, check=True, encoding="utf-8", errors="replace",
         )
 
 
@@ -188,7 +188,7 @@ def extract_instrumental(video_path: str, output_dir: str,
         [ffmpeg, "-y", "-i", video_path, "-vn",
          "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
          tmp_wav],
-        capture_output=True, check=True,
+        capture_output=True, check=True, encoding="utf-8", errors="replace",
     )
 
     # ── Step 2: 加载模型（只加载一次） ─────────────────
@@ -313,7 +313,7 @@ def extract_instrumental(video_path: str, output_dir: str,
                 [ffmpeg, "-y"] + inputs +
                 ["-filter_complex", amix,
                  "-acodec", "pcm_s16le", instr_path],
-                capture_output=True, check=True,
+                capture_output=True, check=True, encoding="utf-8", errors="replace",
             )
         else:
             shutil.copy2(non_vocal_paths[0], instr_path)

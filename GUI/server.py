@@ -2144,7 +2144,7 @@ async def system_info() -> dict:
         try:
             result = subprocess.run(
                 [smi, "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True, timeout=5, encoding="utf-8", errors="replace",
             )
             if result.returncode == 0 and result.stdout.strip():
                 has_gpu = True
@@ -2211,7 +2211,7 @@ async def video_info(path: str) -> dict:
     try:
         result = subprocess.run(
             [ffmpeg, "-i", path],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, encoding="utf-8", errors="replace",
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"ffmpeg 执行失败: {e}")
@@ -2655,7 +2655,7 @@ def _render_subtitle_imagemagick(
     args.append(out_path)
 
     try:
-        result = subprocess.run(args, capture_output=True, text=True, timeout=10)
+        result = subprocess.run(args, capture_output=True, text=True, timeout=10, encoding="utf-8", errors="replace")
         if result.returncode != 0:
             logger.error("ImageMagick render failed: %s", result.stderr[:500])
             raise HTTPException(status_code=500, detail=f"ImageMagick 渲染失败: {result.stderr[:500]}")

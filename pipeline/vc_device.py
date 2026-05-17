@@ -39,7 +39,7 @@ def detect_vram_mb(device: str = "cuda:0") -> int:
             ],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=10, encoding="utf-8", errors="replace",
         )
         if result.returncode == 0:
             return int(result.stdout.strip().split("\n")[0])

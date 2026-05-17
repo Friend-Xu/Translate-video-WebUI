@@ -173,7 +173,7 @@ def apply_gain_to_wav(
         [ffmpeg, "-y", "-i", src_path,
          "-af", f"volume={gain_str}",
          "-acodec", "pcm_s16le", dst_path],
-        capture_output=True, check=True,
+        capture_output=True, check=True, encoding="utf-8", errors="replace",
     )
     return dst_path
 

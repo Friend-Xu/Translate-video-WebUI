@@ -146,7 +146,7 @@ class VideoSegmenter:
             cmd.extend(["-t", f"{output_duration:.6f}"])
         cmd.append(output_path)
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, encoding="utf-8", errors="replace")
         if result.returncode != 0:
             err = result.stderr.strip()[-500:] if result.stderr else "unknown error"
             raise RuntimeError(f"ffmpeg amix 失败: {err}")
@@ -160,7 +160,7 @@ class VideoSegmenter:
         # 导致整段音频在 15ms 后完全静音
         dur_result = subprocess.run(
             [get_ffmpeg_exe(), "-i", wav_path],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, timeout=15, encoding="utf-8", errors="replace",
         )
         duration_s = None
         for line in (dur_result.stderr or "").split("\n"):
@@ -183,7 +183,7 @@ class VideoSegmenter:
             [get_ffmpeg_exe(), "-y", "-i", wav_path,
              "-af", fade_filter,
              "-acodec", "pcm_s16le", tmp],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=30, encoding="utf-8", errors="replace",
         )
         if result.returncode != 0:
             err = result.stderr.strip()[-200:] if result.stderr else "unknown error"
