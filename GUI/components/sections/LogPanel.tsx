@@ -17,6 +17,7 @@ const levelColor: Record<string, string> = {
   INFO: 'text.secondary',
   WARN: '#d97706',
   ERROR: '#dc2626',
+  STAGE: '#2563eb',
 }
 
 export function LogPanel({ logs, showTitle = true, headerLabel, reviewEnabled = false, onStartReview }: LogPanelProps) {
@@ -77,8 +78,18 @@ export function LogPanel({ logs, showTitle = true, headerLabel, reviewEnabled = 
                 <Typography variant="body2" color="text.secondary">等待任务开始...</Typography>
               ) : (
                 logs.map((entry, i) => (
-                  <Box key={i} sx={{ color: levelColor[entry.level] || 'text.secondary', lineHeight: 1.8 }}>
-                    [{entry.level}] {entry.message}
+                  <Box key={i} sx={{
+                    color: levelColor[entry.level] || 'text.secondary',
+                    lineHeight: 1.8,
+                    fontWeight: entry.level === 'STAGE' ? 700 : 400,
+                    bgcolor: entry.level === 'STAGE' ? 'rgba(37,99,235,0.08)' : 'transparent',
+                    borderLeft: entry.level === 'STAGE' ? '3px solid #2563eb' : 'none',
+                    pl: entry.level === 'STAGE' ? 0.8 : 0,
+                    py: entry.level === 'STAGE' ? 0.2 : 0,
+                    my: entry.level === 'STAGE' ? 0.3 : 0,
+                    borderRadius: entry.level === 'STAGE' ? '0 4px 4px 0' : 0,
+                  }}>
+                    {entry.level === 'STAGE' ? '' : `[${entry.level}] `}{entry.message}
                   </Box>
                 ))
               )}
@@ -134,7 +145,7 @@ export function LogPanel({ logs, showTitle = true, headerLabel, reviewEnabled = 
                 <Typography variant="body2" color="text.secondary">暂无警告或错误</Typography>
               ) : (
                 warnings.map((entry, i) => (
-                  <Box key={i} sx={{ lineHeight: 1.8 }}>
+                  <Box key={i} sx={{ color: levelColor[entry.level] || 'text.secondary', lineHeight: 1.8 }}>
                     [{entry.level}] {entry.message}
                   </Box>
                 ))

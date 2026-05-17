@@ -207,17 +207,20 @@ class Job:
             del self.logs[:-500]  # keep same list object for SSE idx tracking
         # Parse step hints from stdout for progress
         lower = line.lower()
-        if "[1/3]" in line or "字幕提取" in line:
+        if "[1/4]" in line or "字幕提取" in line:
             self.current_step = "字幕提取中..."
-            self.progress = 10
-        elif "[2/3]" in line or "翻译" in line:
+            self.progress = 5
+        elif "[2/4]" in line or (self.current_step == "字幕提取中..." and "翻译" in line):
             self.current_step = "字幕翻译中..."
-            self.progress = 40
-        elif "[3/3]" in line or "tts" in line.lower():
+            self.progress = 30
+        elif "[3/4]" in line or (self.current_step == "字幕翻译中..." and "tts" in lower):
             self.current_step = "TTS 合成中..."
-            self.progress = 70
+            self.progress = 60
+        elif "[4/4]" in line:
+            self.current_step = "视频渲染中..."
+            self.progress = 85
         if "[ok]" in lower:
-            self.progress = min(self.progress + 15, 95)
+            self.progress = min(self.progress + 10, 95)
         _save_job(self)
         # Wake up SSE listeners — thread-safe via call_soon_threadsafe
         if self._loop is not None:

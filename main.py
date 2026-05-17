@@ -25,6 +25,9 @@ import subprocess
 import sys
 import time
 
+from pipeline.logger import get_logger
+logger = get_logger("main")
+
 # 防 CUDA 碎片化：PyTorch 2.0+ expandable segments 允许内存段动态伸缩，
 # 配合 max_split_size_mb 防止大块被切碎后无法归还。
 # 必须在 torch 首次导入前设置（ChatTTS / pipeline 模块内懒加载 torch）。
@@ -271,6 +274,7 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
         print("\n[1/3] 字幕提取 — 已完成 (checkpoint)，跳过")
         return
 
+    logger.info("[STAGE] [1/4] 字幕提取 + 语音识别开始")
     print("\n[1/3] 字幕提取...")
     ck.start_step("extract")
     ck.save()
@@ -378,6 +382,7 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
         _manifest_set_files(video, {"machine_srt": "02_translate/machine.srt"})
         return output
 
+    logger.info("[STAGE] [2/4] 字幕翻译 + 术语替换开始")
     print("\n[2/3] 字幕翻译 + 术语替换...")
     ck.start_step("translate")
     ck.save()
@@ -553,6 +558,7 @@ def step_tts(
             print()
             print(f"[WARN] [3/3] 找不到伴奏文件: {ws['instrumental_wav']}，将不使用背景音乐继续合成（可加 --skip-demucs 消除此警告）")
 
+    logger.info("[STAGE] [3/4] TTS 语音合成开始")
     print(f"\n[3/3] TTS 语音合成 + 视频合并 ({engine})...")
     ck.start_step("tts")
     ck.save()

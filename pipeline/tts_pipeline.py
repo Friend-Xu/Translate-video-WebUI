@@ -989,6 +989,7 @@ class TtsPipeline:
 
         # 合并视频段
         if self.config.enable_merge:
+            logger.info("[STAGE] [4/4] 视频渲染合并开始")
             self._merge_segments()
 
     def _merge_segments(self):
