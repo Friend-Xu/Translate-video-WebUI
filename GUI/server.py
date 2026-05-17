@@ -202,6 +202,9 @@ class Job:
     _loop: asyncio.AbstractEventLoop | None = None
 
     def append_log(self, line: str) -> None:
+        # 跳过 tqdm 进度条行（每秒数十条，无信息价值）
+        if re.match(r'^\s*\d+%\|', line):
+            return
         self.logs.append(line)
         if len(self.logs) > 500:
             del self.logs[:-500]  # keep same list object for SSE idx tracking
