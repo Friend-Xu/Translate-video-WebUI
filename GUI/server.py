@@ -203,8 +203,8 @@ class Job:
 
     def append_log(self, line: str) -> None:
         self.logs.append(line)
-        if len(self.logs) > 500:
-            del self.logs[:-500]  # keep same list object for SSE idx tracking
+        # 不裁剪 — SSE 的 idx 依赖列表索引稳定。
+        # _save_job 已用 [-200:] 控制磁盘持久化大小。
         # Parse step hints from stdout for progress
         lower = line.lower()
         if "[1/3]" in line or "字幕提取" in line:
