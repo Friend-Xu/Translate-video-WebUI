@@ -63,7 +63,7 @@ def check_audio_stream(video_path: str) -> bool:
     """Return True if the video file contains at least one audio stream."""
     ffmpeg = _get_ffmpeg()
     result = subprocess.run(
-        [ffmpeg, "-i", video_path], capture_output=True, text=True,
+        [ffmpeg, "-i", video_path], capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     return any("Audio:" in line for line in result.stderr.split("\n"))
 
@@ -72,7 +72,7 @@ def get_media_duration(file_path: str) -> float:
     """Get container duration (CD) of a media file in seconds via ffmpeg -i."""
     ffmpeg = _get_ffmpeg()
     result = subprocess.run(
-        [ffmpeg, "-i", file_path], capture_output=True, text=True,
+        [ffmpeg, "-i", file_path], capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     return _parse_duration(result.stderr)
 
@@ -86,7 +86,7 @@ def get_decoded_duration(file_path: str) -> float:
     ffmpeg = _get_ffmpeg()
     result = subprocess.run(
         [ffmpeg, "-i", file_path, "-f", "null", "-"],
-        capture_output=True, text=True, timeout=120,
+        capture_output=True, text=True, timeout=120, encoding="utf-8", errors="replace",
     )
     for line in result.stderr.split("\n"):
         if "time=" in line:
@@ -296,7 +296,7 @@ def mux_video_audio(video_path: str, audio_path: str, output_path: str = "") -> 
     if video_duration > 0:
         cmd.extend(["-t", str(video_duration)])
     cmd.append(output_path)
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, encoding="utf-8", errors="replace")
     if result.returncode != 0:
         err = result.stderr.strip()[-400:] if result.stderr else "unknown error"
         raise RuntimeError(f"ffmpeg 合并失败: {err}")

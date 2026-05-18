@@ -439,7 +439,7 @@ class TtsPipeline:
                         "-ac", "1",
                         prompt_wav,
                     ],
-                    capture_output=True, check=True, timeout=30,
+                    capture_output=True, check=True, timeout=30, encoding="utf-8", errors="replace",
                 )
             except Exception as e:
                 logger.warning("ffmpeg 截取 zero_shot prompt 失败: %s", e)
@@ -511,7 +511,7 @@ class TtsPipeline:
             "-t", f"{duration:.3f}",
             "-acodec", "pcm_s16le",
             output_path,
-        ], capture_output=True, check=True, timeout=30)
+        ], capture_output=True, check=True, timeout=30, encoding="utf-8", errors="replace")
 
     def _process_single_subtitle(
         self,
@@ -816,7 +816,7 @@ class TtsPipeline:
                      "-to", str(seg_end_ms / 1000),
                      "-acodec", "pcm_s16le",
                      seg_path],
-                    capture_output=True, check=True, timeout=60,
+                    capture_output=True, check=True, timeout=60, encoding="utf-8", errors="replace",
                 )
             return seg_path
 
@@ -989,6 +989,7 @@ class TtsPipeline:
 
         # 合并视频段
         if self.config.enable_merge:
+            logger.info("[STAGE] [4/4] 视频渲染合并开始")
             self._merge_segments()
 
     def _merge_segments(self):

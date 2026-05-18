@@ -38,7 +38,7 @@ def _get_available_encoders(ffmpeg_exe: str) -> List[str]:
     try:
         result = subprocess.run(
             [ffmpeg_exe, "-encoders"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, encoding="utf-8", errors="replace",
         )
         if result.returncode != 0:
             return []
@@ -60,7 +60,7 @@ def _check_nvidia_gpu() -> bool:
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=5, encoding="utf-8", errors="replace",
         )
         return result.returncode == 0 and bool(result.stdout.strip())
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -107,7 +107,7 @@ def detect_gpu_info() -> Dict[str, Optional[str]]:
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, timeout=5, encoding="utf-8", errors="replace",
         )
         if result.returncode == 0 and result.stdout.strip():
             parts = result.stdout.strip().split(",")

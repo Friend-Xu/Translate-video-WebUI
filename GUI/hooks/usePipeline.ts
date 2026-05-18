@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import type { PipelineConfig, PipelineStatus, LogEntry } from '../types'
 
 const API = '/api/pipeline'
@@ -9,8 +9,18 @@ export function usePipeline() {
   })
   const [logs, setLogs] = useState<LogEntry[]>([])
 
+  const _buf = useRef<LogEntry[]>([])
+  const _timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const appendLog = useCallback((entry: LogEntry) => {
-    setLogs(prev => [...prev, entry])
+    _buf.current.push(entry)
+    if (_timer.current === null) {
+      _timer.current = setTimeout(() => {
+        setLogs(prev => [...prev, ..._buf.current].slice(-500))
+        _buf.current = []
+        _timer.current = null
+      }, 100)
+    }
   }, [])
 
   const handleDone = useCallback((finalStatus: string) => {

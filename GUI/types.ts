@@ -109,7 +109,7 @@ export interface PipelineStatus {
 }
 
 export interface LogEntry {
-  level: 'INFO' | 'WARN' | 'ERROR'
+  level: 'INFO' | 'WARN' | 'ERROR' | 'STAGE'
   message: string
   timestamp: string
 }

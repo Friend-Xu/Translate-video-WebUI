@@ -27,8 +27,12 @@ export function useSSE(
         const data = JSON.parse(event.data)
         const raw: string = data.message || ''
         const match = raw.match(/^\[(\w+)\]\s*(.*)/)
-        const level = (match?.[1] || 'INFO') as LogEntry['level']
-        const message = match?.[2] || raw
+        let level = (match?.[1] || 'INFO') as LogEntry['level']
+        let message = match?.[2] || raw
+        if (message.includes('[STAGE]')) {
+          level = 'STAGE'
+          message = message.replace('[STAGE] ', '')
+        }
         const timestamp = new Date().toLocaleTimeString()
         onLog({ level, message, timestamp })
       } catch {

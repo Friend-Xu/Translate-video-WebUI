@@ -13,6 +13,7 @@ ChatTTS 离线引擎实现 — ChatTTSEngine
 
 from __future__ import annotations
 
+import logging
 import os
 import random
 import re
@@ -264,6 +265,9 @@ class ChatTTSEngine:
 
             import ChatTTS
             from ChatTTS import Chat
+
+            # 静默 ChatTTS 库内部 DEBUG 日志（每段推理 ~20 条重复 start/finis xxx）
+            logging.getLogger("ChatTTS").setLevel(logging.WARNING)
 
             chat = Chat()
             load_kwargs = {"source": self._model_source, "compile": False}

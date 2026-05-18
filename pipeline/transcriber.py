@@ -74,7 +74,7 @@ class VADTranscriber:
         compute_type: str = "int8",
         download_root: Optional[str] = None,
         merge_gap: float = 0.5,
-        merge_max_dur: float = 120.0,
+        merge_max_dur: float = 45.0,
         segment_gap: float = 1.5,
         sample_rate: int = 16000,
         num_workers: int = 1,
@@ -305,7 +305,7 @@ with open(output_file, "w", encoding="utf-8") as f:
         try:
             result = subprocess.run(
                 [sys.executable, "-c", script, input_file, output_file],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True, text=True, timeout=120, encoding="utf-8", errors="replace",
                 cwd=os.path.dirname(os.path.abspath(__file__)) + "/..",
             )
             if result.returncode != 0:

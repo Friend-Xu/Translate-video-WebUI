@@ -108,7 +108,7 @@ def _detect_gpu_fallback(info: EnvInfo) -> None:
             ["nvidia-smi", "--query-gpu=name,memory.total,memory.free",
              "--format=csv,noheader,nounits"],
             timeout=10,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
         )
         parts = out.strip().split(",")
         if len(parts) >= 2:

@@ -202,22 +202,28 @@ class Job:
     _loop: asyncio.AbstractEventLoop | None = None
 
     def append_log(self, line: str) -> None:
+        # 跳过 tqdm 进度条行（每秒数十条，无信息价值）
+        if re.match(r'^\s*\d+%\|', line):
+            return
         self.logs.append(line)
         if len(self.logs) > 500:
             del self.logs[:-500]  # keep same list object for SSE idx tracking
         # Parse step hints from stdout for progress
         lower = line.lower()
-        if "[1/3]" in line or "字幕提取" in line:
+        if "[1/4]" in line or "字幕提取" in line:
             self.current_step = "字幕提取中..."
-            self.progress = 10
-        elif "[2/3]" in line or "翻译" in line:
+            self.progress = 5
+        elif "[2/4]" in line or (self.current_step == "字幕提取中..." and "翻译" in line):
             self.current_step = "字幕翻译中..."
-            self.progress = 40
-        elif "[3/3]" in line or "tts" in line.lower():
+            self.progress = 30
+        elif "[3/4]" in line or (self.current_step == "字幕翻译中..." and "tts" in lower):
             self.current_step = "TTS 合成中..."
-            self.progress = 70
+            self.progress = 60
+        elif "[4/4]" in line:
+            self.current_step = "视频渲染中..."
+            self.progress = 85
         if "[ok]" in lower:
-            self.progress = min(self.progress + 15, 95)
+            self.progress = min(self.progress + 10, 95)
         _save_job(self)
         # Wake up SSE listeners — thread-safe via call_soon_threadsafe
         if self._loop is not None:
@@ -2144,7 +2150,7 @@ async def system_info() -> dict:
         try:
             result = subprocess.run(
                 [smi, "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True, timeout=5, encoding="utf-8", errors="replace",
             )
             if result.returncode == 0 and result.stdout.strip():
                 has_gpu = True
@@ -2211,7 +2217,7 @@ async def video_info(path: str) -> dict:
     try:
         result = subprocess.run(
             [ffmpeg, "-i", path],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, encoding="utf-8", errors="replace",
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"ffmpeg 执行失败: {e}")
@@ -2655,7 +2661,7 @@ def _render_subtitle_imagemagick(
     args.append(out_path)
 
     try:
-        result = subprocess.run(args, capture_output=True, text=True, timeout=10)
+        result = subprocess.run(args, capture_output=True, text=True, timeout=10, encoding="utf-8", errors="replace")
         if result.returncode != 0:
             logger.error("ImageMagick render failed: %s", result.stderr[:500])
             raise HTTPException(status_code=500, detail=f"ImageMagick 渲染失败: {result.stderr[:500]}")

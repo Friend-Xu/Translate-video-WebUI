@@ -48,10 +48,10 @@ SILERO_SR = 16000
 
 # 默认后处理参数
 DEFAULT_VAD_THRESHOLD = 0.25       # Silero VAD 检测阈值（默认 0.5，ASMR 等弱人声需降低）
-DEFAULT_MIN_SILENCE_GAP = 3.0      # 间隔 < 3s 的段合并
+DEFAULT_MIN_SILENCE_GAP = 0.5      # 间隔 < 0.5s 的段合并（WhisperX 标准：~0.5s）
 DEFAULT_MIN_SPEECH_DURATION = 0.5  # 丢弃 < 0.5s 的语音段
-DEFAULT_MAX_SEGMENT_DURATION = 900.0  # 最大段长 15min (900s)
-DEFAULT_PAD_DURATION = 0.3         # 前后 padding 0.3s
+DEFAULT_MAX_SEGMENT_DURATION = 30.0  # 最大段长 30s（匹配 whisper 训练窗口）
+DEFAULT_PAD_DURATION = 0.2         # 前后 padding 0.2s
 
 
 class VAD_Segmenter:
@@ -440,20 +440,20 @@ class VAD_Segmenter:
                 end + self.pad_duration,
             ))
 
-        # 5. 限制最大段长（强制切割）
+        # 5. 限制最大段长（智能切割，避免切在单词中间）
         final = []
         for start, end in padded:
             duration = end - start
             if duration <= self.max_segment_duration:
                 final.append((start, end))
             else:
-                # 强制切割为 max_segment_duration 的段
-                num_chunks = int(duration / self.max_segment_duration) + 1
-                chunk_size = duration / num_chunks
-                for i in range(num_chunks):
-                    chunk_start = start + i * chunk_size
-                    chunk_end = min(end, start + (i + 1) * chunk_size)
+                # 拆分为多个子段，段间留 0.05s 间隙避免切词
+                chunk_size = self.max_segment_duration
+                chunk_start = start
+                while chunk_start < end:
+                    chunk_end = min(end, chunk_start + chunk_size)
                     final.append((chunk_start, chunk_end))
+                    chunk_start = chunk_end + 0.05  # 小间隙
 
         return final
 

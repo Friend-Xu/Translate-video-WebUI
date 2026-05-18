@@ -173,7 +173,7 @@ class PerSegmentStrategy:
                      "-ss", str(seg_start_ms / 1000),
                      "-to", str(seg_end_ms / 1000),
                      "-acodec", "pcm_s16le", seg_path],
-                    capture_output=True, check=True,
+                    capture_output=True, check=True, encoding="utf-8", errors="replace",
                 )
             return seg_path
 
@@ -388,7 +388,7 @@ class GlobalStrategy:
                      "-ss", str(seg_start_ms / 1000),
                      "-to", str(seg_end_ms / 1000),
                      "-acodec", "pcm_s16le", seg_path],
-                    capture_output=True, check=True,
+                    capture_output=True, check=True, encoding="utf-8", errors="replace",
                 )
             return seg_path
 
