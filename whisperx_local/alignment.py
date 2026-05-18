@@ -178,7 +178,7 @@ def align(
                 pass
             elif cdx > len(text) - num_trailing - 1:
                 pass
-            elif char_ in model_dictionary.keys():
+            elif char_ in model_dictionary.keys() or char_.isdigit() or char_ in ".!?,:;\"'-":
                 clean_char.append(char_)
                 clean_cdx.append(cdx)
 
@@ -236,7 +236,9 @@ def align(
             continue
 
         text_clean = "".join(segment["clean_char"])
-        tokens = [model_dictionary[c] for c in text_clean]
+        # Use wildcard token index for chars not in phoneme dictionary (digits/symbols)
+        _wildcard_id = len(model_dictionary)
+        tokens = [model_dictionary.get(c, _wildcard_id) for c in text_clean]
 
         f1 = int(t1 * SAMPLE_RATE)
         f2 = int(t2 * SAMPLE_RATE)
@@ -399,11 +401,20 @@ def get_trellis(emission, tokens, blank_id=0):
     trellis[-num_tokens:, 0] = float("inf")
 
     for t in range(num_frame):
+        # Safe emission lookup — tokens may include wildcard indices
+        # (digits/symbols not in wav2vec2 phoneme vocabulary).
+        # Clamp to valid range and replace wildcard scores with max emission.
+        tt = torch.as_tensor(tokens, dtype=torch.long, device=emission.device)
+        safe = tt.clamp(min=0, max=emission.size(0) - 1)
+        token_scores = emission[t, safe].clone()
+        wild_mask = (tt < 0) | (tt >= emission.size(0))
+        if wild_mask.any().item():
+            token_scores[wild_mask] = emission[t].max()
         trellis[t + 1, 1:] = torch.maximum(
             # Score for staying at the same token
             trellis[t, 1:] + emission[t, blank_id],
             # Score for changing to the next token
-            trellis[t, :-1] + emission[t, tokens],
+            trellis[t, :-1] + token_scores,
         )
     return trellis
 
@@ -425,17 +436,20 @@ def backtrack(trellis, emission, tokens, blank_id=0):
     t_start = torch.argmax(trellis[:, j]).item()
 
     path = []
+    def _ts(frame, idx):
+        """Safe token emission lookup with wildcard fallback."""
+        if 0 <= idx < emission.size(1):
+            return emission[frame, idx]
+        return emission[frame].max()
+
     for t in range(t_start, 0, -1):
         # 1. Figure out if the current position was stay or change
-        # Note (again):
-        # `emission[J-1]` is the emission at time frame `J` of trellis dimension.
-        # Score for token staying the same from time frame J-1 to T.
         stayed = trellis[t - 1, j] + emission[t - 1, blank_id]
-        # Score for token changing from C-1 at T-1 to J at T.
-        changed = trellis[t - 1, j - 1] + emission[t - 1, tokens[j - 1]]
+        changed = trellis[t - 1, j - 1] + _ts(t - 1, tokens[j - 1])
 
         # 2. Store the path with frame-wise probability.
-        prob = emission[t - 1, tokens[j - 1] if changed > stayed else 0].exp().item()
+        best_token = tokens[j - 1] if changed > stayed else 0
+        prob = _ts(t - 1, best_token).exp().item()
         # Return token index and time index in non-trellis coordinate.
         path.append(Point(j - 1, t - 1, prob))
 

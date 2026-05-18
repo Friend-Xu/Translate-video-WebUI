@@ -617,10 +617,44 @@ class EnglishProcessor:
 
     # ── 主处理流程 ──
 
+    def _merge_hallucinated_fragments(self, segments):
+        """向后合并 whisper 时间戳幻觉产生的数字碎片。
+
+        检测条件:
+          1. 文本仅含数字/标点，长度 < 10
+          2. 与相邻段时间重叠（start/end 被 wav2vec2 NaN 插值偷走）
+
+        合并方向始终向后（whisper 从前一段幻想了这个碎片）。
+        end 时间戳用 max(prev.end, frag.start)，避免带偷来的 end。
+        """
+        _DIGIT_ONLY = re.compile(r'^[\d\s.,;:!?\'\")%$\-]+$')
+        result = []
+        for i, curr in enumerate(segments):
+            s = dict(curr)
+            prev = result[-1] if result else None
+
+            text = s['text'].strip()
+            is_frag = bool(_DIGIT_ONLY.match(text)) and len(text) < 10
+
+            if is_frag and prev:
+                overlaps_prev = prev['start'] < s['end'] and s['start'] < prev['end']
+                nxt = segments[i + 1] if i + 1 < len(segments) else None
+                overlaps_next = nxt and s['start'] < nxt['end'] and nxt['start'] < s['end']
+
+                if overlaps_prev or overlaps_next:
+                    prev['end'] = max(prev['end'], s['start'])
+                    prev['start'] = min(prev['start'], s['start'])
+                    prev['text'] = prev['text'].rstrip() + ' ' + text
+                    prev['words'] = prev.get('words', []) + s.get('words', [])
+                    continue
+
+            result.append(s)
+        return result
+
     def process_segments(self, segments):
         """英语字幕处理主流程
 
-        管线: 静音 → 智能标点 → 分割长段 → 合并短段 → 时间同步 → 标点收尾 → srt_entries
+        管线: 静音 → 碎片合并 → 智能标点 → 分割长段 → 合并短段 → 时间同步 → 标点收尾 → srt_entries
         """
         if not segments:
             return
@@ -629,6 +663,9 @@ class EnglishProcessor:
 
         segments = self.detect_and_handle_silence(segments)
         print(f"静音处理后: {len(segments)}段")
+
+        segments = self._merge_hallucinated_fragments(segments)
+        print(f"碎片合并后: {len(segments)}段")
 
         segments = self.smart_punctuation(segments)
         print(f"智能标点后: {len(segments)}段")

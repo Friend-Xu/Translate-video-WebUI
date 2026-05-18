@@ -74,7 +74,7 @@ class VADTranscriber:
         compute_type: str = "int8",
         download_root: Optional[str] = None,
         merge_gap: float = 0.5,
-        merge_max_dur: float = 120.0,
+        merge_max_dur: float = 45.0,
         segment_gap: float = 1.5,
         sample_rate: int = 16000,
         num_workers: int = 1,
