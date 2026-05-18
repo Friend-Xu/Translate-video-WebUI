@@ -34,6 +34,9 @@ logger = get_logger("main")
 if os.environ.get("PYTORCH_CUDA_ALLOC_CONF") is None:
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:128"
 
+# 延迟加载 CUDA 模块：减少驱动初始化时的内存碎片
+os.environ.setdefault("CUDA_MODULE_LOADING", "LAZY")
+
 # Windows GBK terminal fix
 if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", write_through=True)
@@ -304,13 +307,42 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
 
+    from pipeline.ntstatus import decode_exit_code, is_native_crash, is_retryable
+
+    MAX_RETRIES = 3
     print(f"  运行: extract_subtitles.py")
-    result = subprocess.run(cmd, cwd=PROJECT_ROOT, env=env)
-    if result.returncode != 0:
-        ck.fail_step("extract", f"subprocess exit code {result.returncode}",
-                       error_type="APPLICATION")
+    for attempt in range(1, MAX_RETRIES + 1):
+        result = subprocess.run(cmd, cwd=PROJECT_ROOT, env=env)
+        if result.returncode == 0:
+            break
+
+        status_name, status_desc = decode_exit_code(result.returncode)
+        if is_retryable(result.returncode) and attempt < MAX_RETRIES:
+            print(f"  [checkpoint] 本机崩溃 ({status_name})，"
+                  f"清理 CUDA 并重试 (尝试 {attempt + 1}/{MAX_RETRIES})...")
+            print(f"              原因: {status_desc.split('。')[0]}。")
+            try:
+                import torch
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+            import gc
+            gc.collect()
+            import time
+            time.sleep(2.0)
+            continue
+
+        # 重试用尽或不可重试的错误
+        error_type = "INFRASTRUCTURE" if is_native_crash(result.returncode) else "APPLICATION"
+        error_msg = f"{status_name}: {status_desc.split('。')[0]} (code={result.returncode})"
+        ck.fail_step("extract", error_msg, error_type=error_type)
         ck.save()
-        print(f"[X] 字幕提取失败 (code={result.returncode})")
+        if attempt > 1:
+            print(f"  [X] 字幕提取失败 (重试 {MAX_RETRIES} 次均失败)")
+        print(f"  [X] {error_msg}")
+        if is_native_crash(result.returncode):
+            print(f"  [checkpoint] 建议: 重启服务器以重置 GPU 上下文，"
+                  f"或设置 CUDA_MODULE_LOADING=LAZY")
         sys.exit(result.returncode)
 
     # 标准化文件名
@@ -677,6 +709,8 @@ def step_tts(
     from pipeline.tts_pipeline import TtsPipeline
 
     pipeline = TtsPipeline(cfg)
+    tts_failed = False
+    tts_error_msg = ""
     try:
         pipeline.run(
             video_path=video,
@@ -684,20 +718,36 @@ def step_tts(
             translated_srt_path=srt_translated,
             source_srt_path=srt_source,
         )
+    except Exception as exc:
+        tts_failed = True
+        tts_error_msg = f"{type(exc).__name__}: {exc}"
+        import traceback
+        traceback.print_exc()
     finally:
         pipeline.cleanup()
 
-    if os.path.isfile(final_output):
+    if tts_failed:
+        ck.fail_step("tts", tts_error_msg, error_type="APPLICATION")
+        ck.save()
+        print(f"\n[X] TTS 合成失败: {tts_error_msg}")
+        print(f"  [checkpoint] TTS 已标记为失败，视频段保留在 {cfg.video_output_dir}/")
+        print(f"  [checkpoint] 重启后可断点续传 (已处理的片段会自动跳过)")
+        _manifest_set_step(video, "tts", "failed")
+        sys.exit(1)
+    elif os.path.isfile(final_output):
         sz = os.path.getsize(final_output)
         from pipeline.checkpoint import _file_sha256
         ck.complete_step("tts", output_hashes={"dubbed_mp4": _file_sha256(final_output)})
         ck.save()
         print(f"  [OK] 最终视频: {final_output} ({sz/1024/1024:.1f}MB)")
+        _manifest_set_step(video, "tts", "completed")
     else:
         ck.fail_step("tts", "final output not produced", error_type="APPLICATION")
         ck.save()
-        print(f"  [OK] TTS 合成完成（最终视频路径: {final_output}）")
-    _manifest_set_step(video, "tts", "completed")
+        print(f"\n[X] TTS 合成未生成最终视频")
+        print(f"  [checkpoint] TTS 已标记为失败，重启后可断点续传")
+        _manifest_set_step(video, "tts", "failed")
+        sys.exit(1)
     _manifest_set_files(video, {"dubbed": "04_output/dubbed.mp4"})
     if backup_dir:
         backup_step("03_tts_done", [final_output], backup_dir)

@@ -53,7 +53,7 @@ def calc_chattts_workers(model_size_gb: float = _CHATTS_MODEL_SIZE_GB,
             total_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
             available = total_gb - overhead_gb
             workers = max(1, int(available / model_size_gb))
-            logger.info(f"ChatTTS VRAM: {total_gb:.1f} GB → 最大 {workers} worker(s)")
+            logger.debug(f"ChatTTS VRAM: {total_gb:.1f} GB → 最大 {workers} worker(s)")
             return workers
     except Exception:
         pass

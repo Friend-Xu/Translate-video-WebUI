@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import sys
 from logging.handlers import RotatingFileHandler
@@ -46,7 +47,8 @@ def setup_logging(
     root.handlers.clear()
 
     # 终端 handler (stderr — uvicorn 不会截获)
-    ch = logging.StreamHandler(sys.stderr)
+    utf8_stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    ch = logging.StreamHandler(utf8_stderr)
     ch.setLevel(console_level)
     ch.setFormatter(_CONSOLE_FMT)
     root.addHandler(ch)
