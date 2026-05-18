@@ -206,8 +206,6 @@ class Job:
         if re.match(r'^\s*\d+%\|', line):
             return
         self.logs.append(line)
-        if len(self.logs) > 500:
-            del self.logs[:-500]  # keep same list object for SSE idx tracking
         # Parse step hints from stdout for progress
         lower = line.lower()
         if "[1/4]" in line or "字幕提取" in line:
@@ -789,7 +787,13 @@ def _build_cli_args(req: RunRequest) -> list[str]:
 
 
 def _run_job_sync(job: Job, args: list[str]) -> None:
-    """Run a single job synchronously (called from thread executor)."""
+    """Run a single job synchronously (called from thread executor).
+
+    On native crashes (STATUS_HEAP_CORRUPTION, STATUS_ACCESS_VIOLATION),
+    automatically retries up to 3 times with CUDA cleanup between attempts.
+    """
+    from pipeline.ntstatus import decode_exit_code, is_native_crash, is_retryable
+
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
@@ -797,40 +801,90 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
     sse_handler = SSELogHandler(job.append_log)
     root_logger = logging.getLogger()
     root_logger.addHandler(sse_handler)
-    try:
-        logger.info("启动流水线: %s", " ".join(args))
-        job.process = subprocess.Popen(
-            args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            cwd=str(PROJECT_ROOT),
-            env=env,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        assert job.process.stdout is not None
-        for line in job.process.stdout:
-            line = line.rstrip()
-            if line:
-                job.append_log(line)
 
-        job.process.wait()
-        if job.status == "cancelled":
+    MAX_TRIES = 3
+    try:
+        for attempt in range(1, MAX_TRIES + 1):
+            if attempt > 1:
+                job.append_log(
+                    f"[INFO] 重试 ({attempt}/{MAX_TRIES}) — 清理 CUDA..."
+                )
+                try:
+                    import torch
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+                import gc
+                gc.collect()
+                import time
+                time.sleep(2.0)
+
+            logger.info("启动流水线: %s", " ".join(args))
+            job.process = subprocess.Popen(
+                args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=str(PROJECT_ROOT),
+                env=env,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            assert job.process.stdout is not None
+            for line in job.process.stdout:
+                line = line.rstrip()
+                if line:
+                    job.append_log(line)
+
+            job.process.wait()
+            if job.status == "cancelled":
+                _save_job(job)
+                return
+            if job.process.returncode == 0:
+                job.status = "completed"
+                job.progress = 100
+                job.current_step = "处理完成"
+                job.append_log("[INFO] 处理完成")
+                logger.info("流水线完成 (job=%s)", job.id)
+                _save_job(job)
+                return
+
+            # Non-zero exit code — check if retryable
+            status_name, status_desc = decode_exit_code(job.process.returncode)
+            if is_retryable(job.process.returncode) and attempt < MAX_TRIES:
+                job.append_log(
+                    f"[WARN] 本机崩溃 ({status_name}): "
+                    f"{status_desc.split('。')[0]}"
+                )
+                job.append_log(
+                    f"[INFO] 自动重试 ({attempt + 1}/{MAX_TRIES})..."
+                )
+                logger.warning(
+                    "本机崩溃 (job=%s rc=%d %s), 将重试",
+                    job.id, job.process.returncode, status_name,
+                )
+                continue
+
+            # Not retryable or retries exhausted
+            job.status = "failed"
+            job.current_step = f"失败 ({status_name})"
+            job.append_log(
+                f"[ERROR] 流水线失败，退出码: {job.process.returncode}"
+                f" ({status_name})"
+            )
+            job.append_log(f"[ERROR] 原因: {status_desc}")
+            if is_native_crash(job.process.returncode) and attempt >= MAX_TRIES:
+                job.append_log(
+                    "[ERROR] 建议: 重启服务器以重置 GPU 上下文，"
+                    "或设置 CUDA_MODULE_LOADING=LAZY"
+                )
+            logger.error(
+                "流水线失败 (job=%s, rc=%d, %s)",
+                job.id, job.process.returncode, status_name,
+            )
             _save_job(job)
             return
-        if job.process.returncode == 0:
-            job.status = "completed"
-            job.progress = 100
-            job.current_step = "处理完成"
-            job.append_log("[INFO] 处理完成")
-            logger.info("流水线完成 (job=%s)", job.id)
-        else:
-            job.status = "failed"
-            job.current_step = f"失败 (code={job.process.returncode})"
-            job.append_log(f"[ERROR] 流水线失败，退出码: {job.process.returncode}")
-            logger.error("流水线失败 (job=%s, rc=%d)", job.id, job.process.returncode)
-        _save_job(job)
+
     except Exception as e:
         job.status = "failed"
         job.current_step = "异常"
