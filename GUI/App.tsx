@@ -89,7 +89,7 @@ export default function App() {
 
   // SSE: batch mode uses active video's jobId, single mode uses status.jobId
   const sseJobId = mode === 'batch' ? activeVideoJobId : status.jobId
-  useSSE(sseJobId, appendLog, handleDone, () => {})
+  const { connectionState } = useSSE(sseJobId, appendLog, handleDone, () => {})
 
   const showMsg = useCallback((msg: string, severity: 'success' | 'error' | 'info' = 'info') => {
     setSnackbar({ open: true, msg, severity })
@@ -315,6 +315,7 @@ export default function App() {
               onReorderFiles={handleReorderFiles}
               onRemoveFile={handleRemoveFile}
               logs={logs}
+              connectionState={connectionState}
               onStartReview={handleStartReview}
               reviewSaved={reviewSaved}
               onContinueTTS={handleContinueTTS}
