@@ -35,15 +35,6 @@ os.environ["HF_HOME"] = os.path.join(PROJECT_ROOT, "models", "hf_cache")
 os.environ["TRANSFORMERS_CACHE"] = os.path.join(PROJECT_ROOT, "models", "hf_cache")
 os.environ["TORCH_HOME"] = os.path.join(PROJECT_ROOT, "models")
 
-# 防 CUDA 碎片化：PyTorch 2.0+ expandable_segments 允许内存段动态伸缩。
-# 必须在 torch 首次导入前设置（transcriber 内部懒加载 torch）。
-if os.environ.get("PYTORCH_CUDA_ALLOC_CONF") is None:
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:128"
-
-# 延迟加载 CUDA 模块：减少驱动初始化时的内存碎片，
-# 为 CTranslate2 的 cudaMalloc 留出更多连续空间。
-os.environ.setdefault("CUDA_MODULE_LOADING", "LAZY")
-
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "SRT"))
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "pipeline"))

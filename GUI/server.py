@@ -205,6 +205,11 @@ class Job:
         # 跳过 tqdm 进度条行（每秒数十条，无信息价值）
         if re.match(r'^\s*\d+%\|', line):
             return
+        # 过滤 ANSI 转义码和 null 字节（破坏 JSON/SSE 解析）
+        line = re.sub(r'\x1b\[[0-9;]*m', '', line)
+        line = line.replace('\x00', '')
+        if not line.strip():
+            return
         self.logs.append(line)
         # Parse step hints from stdout for progress
         lower = line.lower()
@@ -797,6 +802,9 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
+    # 禁止 PyTorch CUDA 缓存分配器，防止与 CTranslate2/ChatTTS 的
+    # 裸 cudaMalloc 在同一 CUDA 上下文中冲突导致本机崩溃
+    env["PYTORCH_NO_CUDA_MEMORY_CACHING"] = "1"
 
     sse_handler = SSELogHandler(job.append_log)
     root_logger = logging.getLogger()
@@ -876,7 +884,7 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
             if is_native_crash(job.process.returncode) and attempt >= MAX_TRIES:
                 job.append_log(
                     "[ERROR] 建议: 重启服务器以重置 GPU 上下文，"
-                    "或设置 CUDA_MODULE_LOADING=LAZY"
+                    "或重启服务器后重试"
                 )
             logger.error(
                 "流水线失败 (job=%s, rc=%d, %s)",
@@ -2112,6 +2120,11 @@ async def preview_chattts_voice(req: ChatTTSPreviewRequest) -> dict:
 async def release_chattts_engine() -> dict:
     """释放 ChatTTS 预览引擎，归还 GPU 显存给流水线使用。"""
     global _chattts_engine, _chattts_engine_config
+    if _chattts_engine is not None:
+        try:
+            _chattts_engine.cleanup()
+        except Exception:
+            pass
     _chattts_engine = None
     _chattts_engine_config = None
     import gc
