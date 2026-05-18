@@ -41,22 +41,29 @@ _CHATTS_MODEL_SIZE_GB = 2.37
 _CHATTS_VRAM_OVERHEAD_GB = 1.0
 
 
+_chattts_workers_cache: int | None = None
+
+
 def calc_chattts_workers(model_size_gb: float = _CHATTS_MODEL_SIZE_GB,
                          overhead_gb: float = _CHATTS_VRAM_OVERHEAD_GB) -> int:
     """根据 GPU 显存计算 ChatTTS 可并行加载的模型副本数。
 
     每个 worker 加载一份独立模型（~2.37 GB），需要充足显存。
+    结果在进程生命周期内不变，首次计算后缓存。
     """
+    global _chattts_workers_cache
+    if _chattts_workers_cache is not None:
+        return _chattts_workers_cache
     try:
         import torch
         if torch.cuda.is_available():
             total_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
             available = total_gb - overhead_gb
-            workers = max(1, int(available / model_size_gb))
-            logger.debug(f"ChatTTS VRAM: {total_gb:.1f} GB → 最大 {workers} worker(s)")
-            return workers
+            _chattts_workers_cache = max(1, int(available / model_size_gb))
+            return _chattts_workers_cache
     except Exception:
         pass
+    _chattts_workers_cache = 1
     return 1
 
 

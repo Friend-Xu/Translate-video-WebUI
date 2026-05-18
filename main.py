@@ -34,8 +34,11 @@ logger = get_logger("main")
 if os.environ.get("PYTORCH_CUDA_ALLOC_CONF") is None:
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:128"
 
-# 延迟加载 CUDA 模块：减少驱动初始化时的内存碎片
-os.environ.setdefault("CUDA_MODULE_LOADING", "LAZY")
+# 禁用 PyTorch CUDA 缓存分配器，强制使用裸 cudaMalloc。
+# CTranslate2 (faster-whisper) 和 ChatTTS 都使用裸 cudaMalloc，
+# PyTorch 的 CUDACachingAllocator 与其在同一 CUDA 上下文中冲突，
+# 在 Windows 上导致 STATUS_HEAP_CORRUPTION (0xC0000374)。
+os.environ.setdefault("PYTORCH_NO_CUDA_MEMORY_CACHING", "1")
 
 # Windows GBK terminal fix
 if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
@@ -341,8 +344,7 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
             print(f"  [X] 字幕提取失败 (重试 {MAX_RETRIES} 次均失败)")
         print(f"  [X] {error_msg}")
         if is_native_crash(result.returncode):
-            print(f"  [checkpoint] 建议: 重启服务器以重置 GPU 上下文，"
-                  f"或设置 CUDA_MODULE_LOADING=LAZY")
+            print(f"  [checkpoint] 建议: 重启服务器以重置 GPU 上下文后重试")
         sys.exit(result.returncode)
 
     # 标准化文件名

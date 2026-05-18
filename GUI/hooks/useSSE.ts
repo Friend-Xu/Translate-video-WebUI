@@ -26,7 +26,7 @@ export function useSSE(
       try {
         const data = JSON.parse(event.data)
         const raw: string = data.message || ''
-        const match = raw.match(/^\[(\w+)\]\s*(.*)/)
+        const match = raw.match(/^\[(\w+)\s*\]\s*(.*)/)
         let level = (match?.[1] || 'INFO') as LogEntry['level']
         let message = match?.[2] || raw
         if (message.includes('[STAGE]')) {

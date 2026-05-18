@@ -24,6 +24,12 @@ _NTSTATUS: dict[int, tuple[str, str]] = {
         "STATUS_STACK_OVERFLOW",
         "线程栈耗尽 — 可能是无限递归或过深的 Python 调用栈。"
     ),
+    0xC000013A: (
+        "STATUS_ENTRYPOINT_NOT_FOUND",
+        "DLL 入口点未找到 — CUDA/cuDNN 版本不匹配或 DLL 冲突。"
+        "通常由 PyTorch 与系统 CUDA 库版本不一致引起。"
+        "重启后重试，如持续发生需检查 CUDA 环境。"
+    ),
     0xC0000374: (
         "STATUS_HEAP_CORRUPTION",
         "堆损坏 — 两个本机内存分配器（PyTorch CUDA 缓存 / CTranslate2 cudaMalloc）"
@@ -53,6 +59,7 @@ _UNIX_SIGNALS: dict[int, tuple[str, str]] = {
 
 _RETRYABLE_CODES: set[int] = {
     0xC0000005,  # ACCESS_VIOLATION
+    0xC000013A,  # ENTRYPOINT_NOT_FOUND (DLL version mismatch)
     0xC0000374,  # HEAP_CORRUPTION
 }
 
