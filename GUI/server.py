@@ -764,8 +764,8 @@ def _build_cli_args(req: RunRequest) -> list[str]:
         args.append("--skip-naturalness-check")
     if req.voice_clone_engine and req.voice_clone_engine != "none":
         args.extend(["--voice-clone-engine", req.voice_clone_engine])
-    if req.voice_clone_device and req.voice_clone_device != "auto":
-        args.extend(["--voice-clone-device", req.voice_clone_device])
+        if req.voice_clone_device and req.voice_clone_device != "auto":
+            args.extend(["--voice-clone-device", req.voice_clone_device])
     # CosyVoice TTS args
     if req.engine == "cosyvoice":
         if req.cosyvoice_tts_model_version:
@@ -2196,9 +2196,20 @@ async def delete_glossary_dict(name: str) -> dict:
 # System info
 # ---------------------------------------------------------------------------
 
+# Cached system info — GPU name/VRAM don't change at runtime
+_sys_info_cache: dict | None = None
+
+
 @app.get("/api/system/info")
 async def system_info() -> dict:
-    """Detect CPU/GPU to recommend concurrency and device."""
+    """Detect CPU/GPU to recommend concurrency and device.
+
+    Only scans on first call; subsequent polls return cached result.
+    """
+    global _sys_info_cache
+    if _sys_info_cache is not None:
+        return _sys_info_cache
+
     import os
 
     cpu_count = os.cpu_count() or 4
@@ -2252,15 +2263,15 @@ async def system_info() -> dict:
     source_dir = os.path.join(PROJECT_ROOT, "source_file")
     default_video_dir = source_dir if os.path.isdir(source_dir) else str(PROJECT_ROOT)
 
-    # ChatTTS worker count based on VRAM
+    # ChatTTS worker count based on VRAM (pass known VRAM to avoid import torch)
     chattts_workers = 1
     try:
         from pipeline.tts_pipeline import calc_chattts_workers
-        chattts_workers = calc_chattts_workers()
+        chattts_workers = calc_chattts_workers(total_vram_mb=gpu_vram_mb if has_gpu else None)
     except Exception:
         pass
 
-    return {
+    _sys_info_cache = {
         "cpuCount": cpu_count,
         "hasGpu": has_gpu,
         "gpuName": gpu_name,
@@ -2269,6 +2280,7 @@ async def system_info() -> dict:
         "defaultVideoDir": default_video_dir,
         "chatttsWorkers": chattts_workers,
     }
+    return _sys_info_cache
 
 
 @app.get("/api/video/info")

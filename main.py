@@ -487,12 +487,16 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
         ws = workspace_paths(video)
         if ws:
             qa_cfg = _load_translate_cfg_field("quality_assessment", {})
-            if qa_cfg.get("enabled", True):
+            qa_naturalness = (
+                qa_cfg.get("dimensions", {}).get("naturalness", {}).get("enabled", True)
+                and not skip_naturalness_check
+            )
+            if qa_cfg.get("enabled", True) and not (skip_semantic_validation and skip_naturalness_check):
                 assessor = QualityAssessor(
                     ws_dir=ws["workspace"],
                     semantic_threshold=qa_cfg.get("dimensions", {}).get("semantic", {}).get("threshold", 0.70),
                     naturalness_threshold=qa_cfg.get("dimensions", {}).get("naturalness", {}).get("threshold", 3.0),
-                    naturalness_enabled=qa_cfg.get("dimensions", {}).get("naturalness", {}).get("enabled", True),
+                    naturalness_enabled=qa_naturalness,
                     source_lang=_load_translate_cfg_field("source_lang", "auto"),
                 )
                 assessor.run()
@@ -707,7 +711,7 @@ def step_tts(
             if removed:
                 print(f"  [force] 已清除 {removed} 个旧视频段")
 
-    # 运行新管线
+    # 运行 TtsPipeline（ChatTTS CUDA 隔离由持久子进程 chattts_worker.py 处理）
     from pipeline.tts_pipeline import TtsPipeline
 
     pipeline = TtsPipeline(cfg)
@@ -997,15 +1001,8 @@ def main():
                 print(f"  使用已有翻译: {os.path.basename(existing)}")
 
         # ── 步骤 3: TTS ──
-        # 翻译环节是纯 CPU 操作，但 TTS 需要大量 GPU 显存。
-        # 提前释放 PyTorch CUDA 缓存池碎片，确保 ChatTTS 模型加载时有充足连续显存。
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except Exception:
-            pass
-        import gc; gc.collect()
+        # 翻译阶段全部 CPU（MiniLM + QualityAssessor），
+        # ChatTTS 运行在独立子进程中，无需主进程 CUDA 清理。
 
         if not args.skip_tts:
             step_tts(
