@@ -198,8 +198,20 @@ class Job:
     video_path: str = ""
     created_at: str = ""
     batch_id: str | None = None
-    _log_event: asyncio.Event = field(default_factory=asyncio.Event)
+    _queues: list[asyncio.Queue] = field(default_factory=list)
+    _pending_save: int = 0
     _loop: asyncio.AbstractEventLoop | None = None
+
+    def subscribe(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue()
+        self._queues.append(q)
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue) -> None:
+        try:
+            self._queues.remove(q)
+        except ValueError:
+            pass
 
     def append_log(self, line: str) -> None:
         # 跳过 tqdm 进度条行（每秒数十条，无信息价值）
@@ -227,10 +239,25 @@ class Job:
             self.progress = 85
         if "[ok]" in lower:
             self.progress = min(self.progress + 10, 95)
-        _save_job(self)
-        # Wake up SSE listeners — thread-safe via call_soon_threadsafe
-        if self._loop is not None:
-            self._loop.call_soon_threadsafe(self._log_event.set)
+
+        # 批量写磁盘：每 50 条日志保存一次
+        self._pending_save += 1
+        if self._pending_save >= 50:
+            _save_job(self)
+            self._pending_save = 0
+
+        # SSE 即时推送：通过 asyncio.Queue 通知所有订阅者
+        if self._loop is not None and self._queues:
+            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+            payload = {"message": line, "ts": ts}
+            for q in self._queues:
+                self._loop.call_soon_threadsafe(q.put_nowait, payload)
+
+    def _save_deferred(self) -> None:
+        """Flush pending saves (call on status change or shutdown)."""
+        if self._pending_save > 0:
+            _save_job(self)
+            self._pending_save = 0
 
 
 @dataclass
@@ -310,6 +337,7 @@ def _save_job(job: Job) -> None:
         }, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    job._pending_save = 0
 
 
 def _load_jobs() -> dict[str, Job]:
@@ -1046,32 +1074,36 @@ async def get_status(job_id: str) -> StatusResponse:
 
 
 @app.get("/api/pipeline/{job_id}/logs")
-async def stream_logs(job_id: str) -> StreamingResponse:
+async def stream_logs(job_id: str, request: Request) -> StreamingResponse:
     job = _jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
+    queue: asyncio.Queue = job.subscribe()
+
     async def event_stream() -> AsyncIterator[str]:
-        idx = 0
-        while True:
-            # Send any new log lines
-            while idx < len(job.logs):
-                data = json.dumps({"message": job.logs[idx]}, ensure_ascii=False)
+        try:
+            # First, send all existing logs
+            for line in job.logs:
+                data = json.dumps({"message": line}, ensure_ascii=False)
                 yield f"data: {data}\n\n"
-                idx += 1
 
-            if job.status in ("completed", "failed", "cancelled"):
-                # Send final status event
-                yield f"event: done\ndata: {json.dumps({'status': job.status})}\n\n"
-                return
+            while True:
+                if await request.is_disconnected():
+                    return
 
-            # Wait for new logs or timeout
-            try:
-                await asyncio.wait_for(job._log_event.wait(), timeout=2.0)
-                job._log_event.clear()
-            except asyncio.TimeoutError:
-                # Send keepalive comment
-                yield ": keepalive\n\n"
+                if job.status in ("completed", "failed", "cancelled"):
+                    yield f"event: done\ndata: {json.dumps({'status': job.status})}\n\n"
+                    return
+
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    data = json.dumps(payload, ensure_ascii=False)
+                    yield f"data: {data}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            job.unsubscribe(queue)
 
     return StreamingResponse(
         event_stream(),

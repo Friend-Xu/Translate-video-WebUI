@@ -46,6 +46,7 @@ interface PipelinePanelProps {
   onReorderFiles: (reordered: string[]) => void
   onRemoveFile: (path: string) => void
   logs: LogEntry[]
+  connectionState?: 'connected' | 'reconnecting' | 'closed'
   onStartReview?: () => void
   reviewSaved?: boolean
   onContinueTTS?: () => void
@@ -77,7 +78,7 @@ export function PipelinePanel({
   onStartBatch, onCancelBatch, onSkipCurrent,
   onViewLogs, activeVideoJobId,
   onAddFiles, onReorderFiles, onRemoveFile,
-  logs,
+  logs, connectionState,
   onStartReview,
   reviewSaved = false,
   onContinueTTS,
@@ -501,7 +502,7 @@ export function PipelinePanel({
             {controlsCard}
           </Grid>
           <Grid size={{ xs: 12, md: 7 }}>
-            <LogPanel logs={logs} showTitle={false} reviewEnabled={translationComplete} onStartReview={onStartReview} />
+            <LogPanel logs={logs} showTitle={false} reviewEnabled={translationComplete} onStartReview={onStartReview} connectionState={connectionState} />
           </Grid>
         </Grid>
       ) : (
@@ -579,7 +580,7 @@ export function PipelinePanel({
             {controlsCard}
           </Grid>
           <Grid size={{ xs: 12, md: 7 }}>
-            <LogPanel logs={logs} showTitle={false} headerLabel={logHeaderLabel} reviewEnabled={translationComplete} onStartReview={onStartReview} />
+            <LogPanel logs={logs} showTitle={false} headerLabel={logHeaderLabel} reviewEnabled={translationComplete} onStartReview={onStartReview} connectionState={connectionState} />
           </Grid>
         </Grid>
       )}

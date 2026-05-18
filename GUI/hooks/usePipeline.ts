@@ -19,7 +19,7 @@ export function usePipeline() {
         setLogs(prev => [...prev, ..._buf.current].slice(-500))
         _buf.current = []
         _timer.current = null
-      }, 100)
+      }, 250)
     }
   }, [])
 
