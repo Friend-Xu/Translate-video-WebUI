@@ -30,7 +30,7 @@ def load_glossary(dict_dir: str, dict_name: str) -> Dict[str, str]:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     raw = data.get("terms", {})
-    filtered = {k: v for k, v in raw.items() if _is_valid_glossary_term(k)}
+    filtered = {k: v for k, v in raw.items() if _is_valid_glossary_term(k) and "§" not in v}
     return filtered
 
 
