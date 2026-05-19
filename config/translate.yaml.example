@@ -19,10 +19,11 @@ translate:
   max_group_size: 8
   output_format: numbered_list
 
-  # Rate limiting
+  # Rate limiting. DeepSeek has no fixed RPM cap (dynamic throttling via 429).
+  # Lower RPM to 20-60 if using other providers (OpenAI, Kimi, etc.)
   rate_limit:
-    min_interval_seconds: 0.5
-    requests_per_minute: 20
+    min_interval_seconds: 0.1
+    requests_per_minute: 120
 
   # Concurrency (experimental, disabled by default)
   concurrency:
