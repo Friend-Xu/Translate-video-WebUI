@@ -1,8 +1,0 @@
-file 'D:/Workspace/Translate_video/tutorial_raw/_s_sec00.mp4'
-file 'D:/Workspace/Translate_video/tutorial_raw/_s_sec01.mp4'
-file 'D:/Workspace/Translate_video/tutorial_raw/_s_sec02.mp4'
-file 'D:/Workspace/Translate_video/tutorial_raw/_s_sec03.mp4'
-file 'D:/Workspace/Translate_video/tutorial_raw/_s_sec04.mp4'
-file 'D:/Workspace/Translate_video/tutorial_raw/_s_sec05.mp4'
-file 'D:/Workspace/Translate_video/tutorial_raw/_s_sec06.mp4'
-file 'D:/Workspace/Translate_video/tutorial_raw/_s_sec07.mp4'
