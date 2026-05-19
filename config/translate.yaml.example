@@ -1,50 +1,79 @@
-# DeepSeek API translation configuration
+# =============================================================================
+# Translate_video — Translation Configuration Example
+# =============================================================================
 # Copy this file to translate.yaml and fill in your API key,
 # or set the DEEPSEEK_API_KEY environment variable.
+#
+# DeepSeek API has no fixed RPM cap (dynamic throttling via 429).
+# Lower RPM to 20-60 if using other providers (OpenAI, Kimi, etc.)
+# =============================================================================
 
 translate:
-  api_key: 'your-deepseek-api-key-here'   # or set DEEPSEEK_API_KEY env var
+  # ── API ──────────────────────────────────────────
+  api_key: 'your-deepseek-api-key-here'
   api_type: deepseek
+  api_base_url: https://api.deepseek.com
   model: deepseek-chat
   max_tokens: 4000
   temperature: 0.1
   top_p: 0.9
   timeout: 60
 
-  # Source language: ja, en, etc.
-  source_lang: ja
+  # ── Language ─────────────────────────────────────
+  source_lang: auto                          # auto = detect, or ja/en/zh/etc.
+  target_lang: zh-CN
 
-  # Batch translation settings
-  max_group_chars: 500
-  max_group_size: 8
+  # ── Batch translation ───────────────────────────
+  max_group_chars: 500                       # max chars per API call
+  max_group_size: 8                          # max subtitles per API call
+  min_pause_gap: 0.5                         # min silence gap to split groups (seconds)
   output_format: numbered_list
 
-  # Rate limiting. DeepSeek has no fixed RPM cap (dynamic throttling via 429).
+  # ── Rate limiting ───────────────────────────────
+  # DeepSeek has no fixed RPM cap (dynamic throttling via 429).
   # Lower RPM to 20-60 if using other providers (OpenAI, Kimi, etc.)
   rate_limit:
     min_interval_seconds: 0.1
     requests_per_minute: 120
 
-  # Concurrency (experimental, disabled by default)
+  # ── Concurrency ─────────────────────────────────
   concurrency:
-    enabled: false
-    max_workers: 3
-    semaphore_delay: 1.0
+    enabled: true
+    max_workers: 8
 
-  # Fallback strategy
-  fallback_to_single: true
-  manual_fallback: true
+  # ── Fallback strategy ───────────────────────────
+  fallback_to_single: true                   # degrade to per-subtitle if batch fails
+  manual_fallback: true                      # mark as manual-review if all fail
   max_retries: 2
 
-  # Semantic verification
-  semantic_check: true
-  semantic_threshold: 0.70
+  # ── Quality checks ──────────────────────────────
+  semantic_check: true                       # MiniLM cross-lingual verification
+  semantic_threshold: 0.70                   # min cosine similarity
+  naturalness_check: true                    # PPL-based fluency check (Qwen2-0.5B)
+  naturalness_threshold: 3.0                 # PPL ratio above baseline → re-translate
 
-  # Terminology dictionary
+  # ── Glossary ────────────────────────────────────
   terms_dict:
     enabled: true
-    default_dict: minecraft.json
     dict_dir: config/terms/
+    default_dict:                            # list of glossary files to merge
+      - minecraft.json
+      - minecraft_mod.json
+      - minecraft_mod_names.json
 
-  # Minimum gap between subtitles for grouping
-  min_pause_gap: 0.5
+  # ── Custom prompts (optional) ───────────────────
+  custom_prompt:
+    enabled: false
+    system_prompt: ''
+    batch_prompt: ''
+    single_prompt: ''
+    semantic_retry_prompt: ''
+    naturalness_retry_prompt: ''
+
+  # ── Advanced (usually left disabled) ────────────
+  split_brain:
+    enabled: false                           # double-LLM creative+consistency
+  multi_agent:
+    enabled: false                           # multi-agent conductor pipeline
+  quality_assessment:
+    enabled: false                           # MQM scoring (expensive)
