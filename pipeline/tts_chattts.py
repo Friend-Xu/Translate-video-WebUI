@@ -124,6 +124,9 @@ def _clean_punctuation(text: str) -> str:
 
 
 def _normalize_text(text: str) -> str:
+    # 归一化小数格式：修复 whisperX 空格 artifact ("1 .19") 和全角句点 ("1．19")
+    text = re.sub(r'(?<=\d)\s*[.．]\s*(\d)', r'.\1', text)
+    text = re.sub(r'(\d)\s*[.．]\s*(?=\d)', r'\1.', text)
     norm = _get_wetext_normalizer()
     if norm:
         text = norm.normalize(text)
