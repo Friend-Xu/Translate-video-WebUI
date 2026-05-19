@@ -589,6 +589,8 @@ class EnglishProcessor:
             if not found_sentence:
                 # gap 过大导致 break，当前段未提交，补句号
                 merged_words = list(current.get('words', []))
+                for k in range(i + 1, j):
+                    merged_words.extend(segments[k].get('words', []))
                 result.append({
                     'text': merged_text.strip() + '.',
                     'start': current['start'],
