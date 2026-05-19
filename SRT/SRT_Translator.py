@@ -223,17 +223,30 @@ class DeepSeekAPI(TranslationAPI):
             "top_p": self.top_p,
         }
 
-        try:
-            resp = requests.post(self.url, json=payload, headers=headers, timeout=self.timeout)
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"].strip()
-        except requests.exceptions.RequestException as e:
-            logger.error(f"DeepSeek API 请求失败: {e}")
-            raise
-        except (KeyError, IndexError) as e:
-            logger.error(f"DeepSeek API 响应解析失败: {e}")
-            raise
+        import time as _time
+        max_429_retries = 5
+        for attempt in range(max_429_retries + 1):
+            try:
+                resp = requests.post(self.url, json=payload, headers=headers, timeout=self.timeout)
+                if resp.status_code == 429:
+                    delay = 2 ** attempt  # 1, 2, 4, 8, 16s
+                    logger.warning(
+                        f"DeepSeek API 429 限流 (attempt {attempt+1}/{max_429_retries+1}), "
+                        f"{delay}s 后重试..."
+                    )
+                    if attempt < max_429_retries:
+                        _time.sleep(delay)
+                        continue
+                    resp.raise_for_status()
+                resp.raise_for_status()
+                data = resp.json()
+                return data["choices"][0]["message"]["content"].strip()
+            except requests.exceptions.RequestException as e:
+                logger.error(f"DeepSeek API 请求失败: {e}")
+                raise
+            except (KeyError, IndexError) as e:
+                logger.error(f"DeepSeek API 响应解析失败: {e}")
+                raise
 
 
 # OpenAI-compatible API providers with their default base URLs
