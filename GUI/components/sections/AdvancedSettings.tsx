@@ -294,10 +294,19 @@ export function AdvancedSettings({ config, onConfigChange, showTitle = true }: A
             <Divider sx={{ my: 1.5 }} />
 
             <Box>
-              <FormControlLabel
-                control={<Checkbox size="small" checked={config.voiceCloneEngine !== 'none'} onChange={e => onConfigChange('voiceCloneEngine', e.target.checked ? 'openvoice' : 'none')} />}
-                label={<Typography variant="body2" fontWeight={500}>声音克隆</Typography>} />
-              <Box sx={{ ml: 3.5, mt: 0.5, opacity: config.voiceCloneEngine !== 'none' ? 1 : 0.5, pointerEvents: config.voiceCloneEngine !== 'none' ? 'auto' : 'none' }}>
+              {(config.engine === 'indextts' || config.engine === 'cosyvoice') ? (
+                <Box sx={{ p: 1.5, bgcolor: 'info.light', borderRadius: 1 }}>
+                  <Typography variant="body2" color="info.dark" fontWeight={500}>
+                    声音克隆 — 引擎内置
+                  </Typography>
+                  <Typography variant="caption" color="info.dark">
+                    {config.engine} 已内置零样本音色克隆。参考音频请在 TTS 引擎配置中设置，无需在此独立配置 voice cloner。
+                  </Typography>
+                </Box>
+              ) : config.enableVoiceClone ? (
+              <>
+              <Typography variant="body2" fontWeight={500} gutterBottom>声音克隆</Typography>
+              <Box sx={{ ml: 1 }}>
                 <Stack spacing={1}>
                   <Box>
                     <Typography variant="caption" color="text.secondary">引擎</Typography>
@@ -306,7 +315,6 @@ export function AdvancedSettings({ config, onConfigChange, showTitle = true }: A
                       sx={{ mt: 0.25, bgcolor: 'background.paper' }}>
                       <MenuItem value="openvoice">OpenVoice V2</MenuItem>
                       <MenuItem value="cosyvoice">CosyVoice 2.0/3.0</MenuItem>
-                      <MenuItem value="none">禁用</MenuItem>
                     </Select>
                   </Box>
                   <Box>
@@ -336,6 +344,12 @@ export function AdvancedSettings({ config, onConfigChange, showTitle = true }: A
                   </Box>
                 </Stack>
               </Box>
+              </>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  声音克隆 — 请在主面板「启用声音克隆」后配置
+                </Typography>
+              )}
             </Box>
           </CardContent>
         </Card>

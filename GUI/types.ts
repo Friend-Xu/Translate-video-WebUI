@@ -5,7 +5,7 @@ export interface PipelineConfig {
   model: 'tiny' | 'base' | 'small' | 'medium' | 'turbo' | 'large-v3'
   device: 'cpu' | 'cuda'
   computeType: 'int8' | 'float32' | 'float16' | 'int8_float16'
-  engine: 'edge' | 'chattts' | 'cosyvoice'
+  engine: 'edge' | 'chattts' | 'cosyvoice' | 'indextts'
   chatttsSpeakerSeed: number | null
   chatttsSpeakerPt: string
   chatttsModelSource: 'local' | 'custom'
@@ -25,6 +25,10 @@ export interface PipelineConfig {
   cosyvoiceTtsSpeed: number
   cosyvoiceTtsMode: 'cross_lingual'
   cosyvoiceTtsLang: string
+  indexttsFp16: boolean
+  indexttsEnableClone: boolean
+  indexttsSpeakerAudio: string
+  indexttsCheckpointsDir: string
   voice: string
   speechRate: number
   maxSpeed: number
@@ -154,6 +158,10 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   cosyvoiceTtsSpeed: 1.0,
   cosyvoiceTtsMode: 'cross_lingual',
   cosyvoiceTtsLang: '',
+  indexttsFp16: true,
+  indexttsEnableClone: true,
+  indexttsSpeakerAudio: '',
+  indexttsCheckpointsDir: '',
   voice: 'zh-CN-XiaoxiaoNeural',
   speechRate: 40,
   maxSpeed: 100,

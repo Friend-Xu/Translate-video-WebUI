@@ -252,6 +252,11 @@ export function PipelinePanel({
                 control={<Checkbox size="small" checked={config.enableVoiceClone} onChange={e => onConfigChange('enableVoiceClone', e.target.checked)} disabled={isRunning || !config.enableTTS} />}
                 label={<Typography variant="body2" sx={{ color: !config.enableTTS ? 'text.disabled' : undefined }}>启用声音克隆</Typography>}
               />
+              {(config.engine === 'indextts' || config.engine === 'cosyvoice') && (
+                <Typography variant="caption" color="info.main" sx={{ ml: 4.5, display: 'block', mt: -0.5 }}>
+                  {config.engine} 引擎已内置零样本音色克隆，无需独立 voice cloner
+                </Typography>
+              )}
             </Box>
           </Box>
         </Box>

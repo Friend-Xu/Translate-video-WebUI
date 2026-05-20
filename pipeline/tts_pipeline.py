@@ -536,8 +536,8 @@ class TtsPipeline:
         if not self.config.voice_clone_active:
             return NoopVoiceCloner()
 
-        if self.config.engine_type == "cosyvoice":
-            logger.info("TTS 引擎为 CosyVoice，自带 zero_shot 音色克隆，跳过独立 voice cloner")
+        if self.config.engine_type in ("cosyvoice", "indextts"):
+            logger.info("TTS 引擎为 %s，自带 zero_shot 音色克隆，跳过独立 voice cloner", self.config.engine_type)
             return NoopVoiceCloner()
 
         vc_config = VoiceCloneConfig(
@@ -852,9 +852,10 @@ class TtsPipeline:
             else:
                 logger.warning("CosyVoice TTS: 未配置参考音频且找不到 vocals.wav")
 
-        # ── IndexTTS 自动参考音频（用户未手动配置时） ──
+        # ── IndexTTS 自动参考音频（用户未手动配置且启用克隆时） ──
         if (
             self.config.engine_type == "indextts"
+            and self.config.indextts_enable_clone
             and not self.config.indextts_speaker_audio
         ):
             vocals = self._find_vocals(video_path)

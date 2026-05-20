@@ -70,6 +70,7 @@ class ModelManager:
     CHATTS_DIR = MODELS_DIR / "ChatTTS"
     COSYVOICE2_DIR = MODELS_DIR / "CosyVoice2-0.5B"
     COSYVOICE3_DIR = MODELS_DIR / "CosyVoice3-0.5B"
+    EMOTION2VEC_DIR = MODELS_DIR / "emotion2vec"
 
     # snapshot_download 默认忽略模式（排除冗余导出/缓存/文档）
     DEFAULT_IGNORE_PATTERNS: tuple = (
@@ -273,6 +274,18 @@ class ModelManager:
             size_gb=5.9,
             vram_gb=7.8,
             description="B站开源 IndexTTS 2.0，自回归 GPT + BigVGAN，支持零样本音色克隆和精确时长控制",
+        ),
+        "emotion2vec": ModelEntry(
+            id="emotion2vec",
+            name="emotion2vec+ large",
+            function="语音情感识别 — 提取情感标签和嵌入向量",
+            category="subtitle",
+            repo_id="",
+            check_dir=MODELS_DIR / "emotion2vec",
+            check_files=("model.pt", "configuration.json"),
+            size_gb=1.9,
+            vram_gb=1.0,
+            description="Alibaba DAMO emotion2vec+ large，9类情感识别 + 1024维情感嵌入",
         ),
     }
 

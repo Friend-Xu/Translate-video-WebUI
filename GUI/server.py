@@ -442,6 +442,10 @@ def _load_yaml_defaults() -> dict:
         "cosyvoiceTtsSpeed": tts.get("cosyvoice_tts_speed", 1.0),
         "cosyvoiceTtsMode": tts.get("cosyvoice_tts_mode", "cross_lingual"),
         "cosyvoiceTtsLang": tts.get("cosyvoice_tts_lang", ""),
+        "indexttsFp16": tts.get("indextts_fp16", True),
+        "indexttsEnableClone": tts.get("indextts_enable_clone", True),
+        "indexttsSpeakerAudio": tts.get("indextts_speaker_audio", ""),
+        "indexttsCheckpointsDir": tts.get("indextts_checkpoints_dir", ""),
         "loudnessNormEnabled": tts.get("loudness_norm_enabled", True),
         "loudnessTargetAuto": tts.get("loudness_target_auto", True),
         "loudnessTargetLufs": tts.get("loudness_target_lufs", -16.0),
@@ -664,6 +668,10 @@ class RunRequest(BaseModel):
     cosyvoice_tts_speed: float = 1.0
     cosyvoice_tts_mode: str = "cross_lingual"
     cosyvoice_tts_lang: str = ""
+    indextts_fp16: bool = True
+    indextts_enable_clone: bool = True
+    indextts_speaker_audio: str = ""
+    indextts_checkpoints_dir: str = ""
     loudness_norm_enabled: bool = True
     loudness_target_auto: bool = True
     loudness_target_lufs: float = -16.0
@@ -749,6 +757,10 @@ def _write_tts_runtime_config(req: RunRequest) -> str:
             "cosyvoice_tts_speed": req.cosyvoice_tts_speed,
             "cosyvoice_tts_mode": req.cosyvoice_tts_mode,
             "cosyvoice_tts_lang": req.cosyvoice_tts_lang,
+            "indextts_fp16": req.indextts_fp16,
+            "indextts_enable_clone": req.indextts_enable_clone,
+            "indextts_speaker_audio": req.indextts_speaker_audio or None,
+            "indextts_checkpoints_dir": req.indextts_checkpoints_dir or None,
             "loudness_norm_enabled": req.loudness_norm_enabled,
             "loudness_target_auto": req.loudness_target_auto,
             "loudness_target_lufs": req.loudness_target_lufs,
@@ -2168,6 +2180,17 @@ async def release_chattts_engine() -> dict:
     except Exception:
         pass
     return {"status": "released"}
+
+
+@app.get("/api/tts/indextts-preset-audio")
+async def indextts_preset_audio(path: str) -> dict:
+    """Return base64 audio for an IndexTTS preset voice WAV file."""
+    import base64
+    if not path or not os.path.isfile(path):
+        raise HTTPException(404, f"preset not found: {path}")
+    with open(path, "rb") as f:
+        data = base64.b64encode(f.read()).decode()
+    return {"audio_base64": data, "path": path}
 
 
 # ---------------------------------------------------------------------------

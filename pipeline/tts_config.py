@@ -124,6 +124,9 @@ class TTSConfig:
     indextts_fp16: bool = True
     """IndexTTS 推理精度: True=FP16 (~7.8GB VRAM), False=FP32"""
 
+    indextts_enable_clone: bool = True
+    """是否克隆原视频音色。关闭时使用预设音色"""
+
     indextts_speaker_audio: str = ""
     """IndexTTS 零样本音色克隆参考音频。留空时自动从原视频人声提取"""
 

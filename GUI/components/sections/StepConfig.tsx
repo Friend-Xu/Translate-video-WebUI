@@ -40,6 +40,7 @@ const TARGET_LANG_TO_VOICE: Record<string, string> = {
 }
 import { PROVIDER_PRESETS } from '../../types'
 import CosyVoiceTTSPanel from './CosyVoiceTTSPanel'
+import IndexTTSPanel from './IndexTTSPanel'
 
 interface StepConfigProps {
   config: PipelineConfig
@@ -700,6 +701,7 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                     <MenuItem value="edge">edge</MenuItem>
                     <MenuItem value="chattts">chattts</MenuItem>
                     <MenuItem value="cosyvoice">cosyvoice</MenuItem>
+                    <MenuItem value="indextts">indextts</MenuItem>
                   </Select>
                   <Typography variant="caption">选择用于语音合成的TTS引擎</Typography>
                 </Box>
@@ -708,6 +710,9 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                 )}
                 {config.engine === 'cosyvoice' && (
                   <CosyVoiceTTSPanel config={config} onConfigChange={onConfigChange} />
+                )}
+                {config.engine === 'indextts' && (
+                  <IndexTTSPanel config={config} onConfigChange={onConfigChange} />
                 )}
                 {config.engine === 'edge' && (
                   <>
