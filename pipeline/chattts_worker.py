@@ -81,6 +81,9 @@ class ChatTTSWorker:
             import ChatTTS
             from ChatTTS import Chat
 
+            import torch
+            torch.set_num_threads(1)
+
             logging.getLogger("ChatTTS").setLevel(logging.WARNING)
 
             speaker_seed = req.get("speaker_seed")
@@ -159,8 +162,19 @@ class ChatTTSWorker:
                 wav = wav.detach().cpu().numpy()
             audio_data = np.asarray(wav, dtype=np.float32).copy()
             del wavs, wav
-            sf.write(output_path, audio_data, self._sample_rate, subtype="PCM_16")
-            duration = float(len(audio_data) / self._sample_rate)
+
+            # Resample from 24000 Hz to 44100 Hz for video pipeline compatibility.
+            # Non-standard sample rates cause metallic distortion (电音) when
+            # encoded by moviepy/ffmpeg into MP4 containers.
+            native_sr = self._sample_rate
+            target_sr = 44100
+            if native_sr != target_sr:
+                from scipy.signal import resample
+                target_len = int(len(audio_data) * target_sr / native_sr)
+                audio_data = resample(audio_data, target_len).astype(np.float32)
+
+            sf.write(output_path, audio_data, target_sr, subtype="PCM_16")
+            duration = float(len(audio_data) / target_sr)
             del audio_data
 
             try:

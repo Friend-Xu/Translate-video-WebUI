@@ -262,6 +262,18 @@ class ModelManager:
             vram_gb=0,
             description="微软 Edge TTS 云端服务，无需本地显存，需联网使用",
         ),
+        "indextts": ModelEntry(
+            id="indextts",
+            name="IndexTTS 2.0",
+            function="零样本音色克隆 + 精确时长控制 TTS",
+            category="tts",
+            repo_id="IndexTeam/IndexTTS-2",
+            check_dir=MODELS_DIR / "IndexTTS" / "index-tts-batch" / "checkpoints",
+            check_files=("gpt.pth", "s2mel.pth"),
+            size_gb=5.9,
+            vram_gb=7.8,
+            description="B站开源 IndexTTS 2.0，自回归 GPT + BigVGAN，支持零样本音色克隆和精确时长控制",
+        ),
     }
 
     @classmethod

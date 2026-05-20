@@ -7,7 +7,7 @@ TTS 配置模块 — TTSConfig 数据类 + YAML 配置管理
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
 from typing import Optional, List
 
 # target_lang → EdgeTTS voice name mapping
@@ -42,7 +42,7 @@ class TTSConfig:
 
     # ── TTS 引擎配置 ──────────────────────────────────────
     engine_type: str = "edge"
-    """TTS 引擎类型: edge | chattts | cosyvoice | coqui | azure"""
+    """TTS 引擎类型: edge | chattts | cosyvoice | indextts | coqui | azure"""
 
     voice: str = "zh-CN-XiaoxiaoNeural"
     """TTS 音色名称（EdgeTTS/Coqui 使用）"""
@@ -119,6 +119,16 @@ class TTSConfig:
     cosyvoice_tts_lang: str = ""
     """CosyVoice TTS 目标语言标签
     留空时自动从字幕语种推断。支持: zh, en, ja, ko, yue"""
+
+    # ── IndexTTS 专用参数 ──────────────────────────────────
+    indextts_fp16: bool = True
+    """IndexTTS 推理精度: True=FP16 (~7.8GB VRAM), False=FP32"""
+
+    indextts_speaker_audio: str = ""
+    """IndexTTS 零样本音色克隆参考音频。留空时自动从原视频人声提取"""
+
+    indextts_checkpoints_dir: str = ""
+    """IndexTTS 模型 checkpoint 目录。留空时使用默认路径 models/IndexTTS/index-tts-batch/checkpoints/"""
 
     # ── 速度策略 ────────────────────────────────────────
     speed_mode: str = "per_segment"
@@ -345,7 +355,7 @@ class TTSConfig:
             raise ValueError(f"CosyVoice TTS 仅支持 cross_lingual 模式，收到: {self.cosyvoice_tts_mode}")
         if self.cosyvoice_tts_lang not in ("", "zh", "en", "ja", "ko", "yue"):
             raise ValueError(f"不支持的 CosyVoice TTS 语言: {self.cosyvoice_tts_lang}")
-        if self.engine_type not in ("edge", "chattts", "cosyvoice"):
+        if self.engine_type not in ("edge", "chattts", "cosyvoice", "indextts"):
             raise ValueError(f"不支持的 TTS 引擎类型: {self.engine_type}")
         if self.voice_clone_engine not in ("openvoice", "cosyvoice", "none"):
             raise ValueError(f"不支持的音色克隆引擎: {self.voice_clone_engine}")
@@ -415,6 +425,13 @@ class TTSConfig:
             data = {}
 
         tts_data = data.get("tts", data)
+        # 过滤 dataclass 不识别的陈旧字段，避免 stale config 导致崩溃
+        valid_fields = {f.name for f in fields(cls)}
+        unknown = [k for k in tts_data if k not in valid_fields]
+        if unknown:
+            import logging
+            logging.getLogger(__name__).warning("TTSConfig.from_yaml: 忽略未知字段 %s", unknown)
+            tts_data = {k: v for k, v in tts_data.items() if k in valid_fields}
         return cls(**tts_data)
 
     def to_yaml(self, path: Optional[str] = None) -> Optional[str]:
