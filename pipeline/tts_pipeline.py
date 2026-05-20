@@ -821,8 +821,10 @@ class TtsPipeline:
 
         logger.info(f"TTS Pipeline: {len(subs_translated)} 条字幕, 视频总长 {total_duration:.1f}s")
 
-        # ── 音色克隆准备：提取人声 VAD 片段作为 Color_audio.WAV，然后提取 speaker embedding ──
-        if self.config.voice_clone_active:
+        # ── 音色克隆准备：提取 speaker embedding ──
+        # ChatTTS 三阶段管线延迟到 Phase 1.5（引擎清理后）执行，避免 VRAM 冲突。
+        # EdgeTTS / CosyVoice / Global 模式仍在此处提前准备。
+        if self.config.voice_clone_active and self.config.engine_type != "chattts":
             vocals = self._find_vocals(video_path)
             if vocals:
                 color = self._create_color_audio(vocals, video_path)
@@ -1069,20 +1071,25 @@ class TtsPipeline:
                         logger.info("音色克隆: speaker embedding %s (ref=%s)",
                                     "OK" if ok else "FAIL", os.path.basename(ref))
 
-                    # 3. 批量克隆
+                    # 3. 逐条克隆 + 重采样，增量更新进度条
                     clone_dir = os.path.join(self.config.output_dir, "cloned")
                     os.makedirs(clone_dir, exist_ok=True)
-                    clone_items = [(t["wav_path"], clone_dir)
-                                   for t in tasks if t.get("success")]
-                    if clone_items:
-                        results = self.voice_cloner.clone_batch(clone_items)
-                        idx = 0
-                        for task in tasks:
-                            if task.get("success"):
-                                cloned = results[idx] if idx < len(results) else None
-                                if cloned:
-                                    task["wav_path"] = cloned
-                                idx += 1
+                    import subprocess as _sp
+                    for task in tasks:
+                        if not task.get("success"):
+                            continue
+                        cloned = self.voice_cloner.clone(task["wav_path"], clone_dir)
+                        if cloned:
+                            # CosyVoice outputs 24kHz; resample to 44.1kHz
+                            _tmp = cloned + ".resampled.wav"
+                            _sp.run(
+                                [ffmpeg_exe, "-y", "-i", cloned,
+                                 "-ar", "44100", "-acodec", "pcm_s16le", _tmp],
+                                capture_output=True, check=True,
+                                timeout=60, encoding="utf-8", errors="replace")
+                            safe_replace(_tmp, cloned)
+                            task["wav_path"] = cloned
+                        pbar.update(1)
 
                     # 4. 防止 Phase 3 重复克隆（不影响 EdgeTTS/CosyVoice/Global 模式）
                     self.video_seg.clone_color = False
@@ -1096,8 +1103,6 @@ class TtsPipeline:
                         pass
                     import gc
                     gc.collect()
-
-                    pbar.update(len(tasks))
 
                 # ── Phase 2: 时序调整（CPU 密集，RubberBand，并行）──
                 pbar.reset(total=len(tasks))
