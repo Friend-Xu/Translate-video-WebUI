@@ -30,9 +30,6 @@ from pipeline.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Serialize access to worker subprocess stdin/stdout
-_CHATTS_WORKER_LOCK = threading.Lock()
-
 _DIGIT_MAP = {"0": "零", "1": "一", "2": "二", "3": "三", "4": "四",
               "5": "五", "6": "六", "7": "七", "8": "八", "9": "九"}
 _UNITS = ["", "十", "百", "千"]
@@ -171,6 +168,7 @@ class ChatTTSEngine:
         spk_emb: Optional[str] = None,
         speaker_pt: Optional[str] = None,
     ):
+        self._lock = threading.Lock()
         self._speaker_seed = speaker_seed
         self._model_source = model_source
         self._model_path = model_path
@@ -190,6 +188,10 @@ class ChatTTSEngine:
     @property
     def model_loaded(self) -> bool:
         return self._loaded
+
+    @property
+    def healthy(self) -> bool:
+        return self._proc is not None and self._proc.poll() is None and self._loaded
 
     @property
     def speaker_seed(self) -> Optional[int]:
@@ -349,31 +351,32 @@ class ChatTTSEngine:
         rate: str = "+0%",
         emotion=None,
     ) -> float:
-        if self._proc is None:
-            if not self._restart_worker():
-                raise RuntimeError("ChatTTS worker not started; call warmup() first")
-
-        if self._proc.poll() is not None:
-            logger.warning("ChatTTS worker exited unexpectedly (code=%s), auto-restart",
-                          self._proc.returncode)
-            self._dump_stderr_log()
-            self._shutdown_worker()
-            if not self._restart_worker():
-                raise RuntimeError("ChatTTS worker restart failed")
-
+        # CPU-only text preprocessing outside the lock (each engine has its
+        # own subprocess pipe, so no contention on shared state here).
         if self._pronunciation_entries:
             text = _apply_pronunciation(text, self._pronunciation_entries)
         text = _normalize_text(text)
-
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
-        req = {"action": "synthesize", "text": text, "output_path": output_path}
-        try:
-            with _CHATTS_WORKER_LOCK:
+        with self._lock:
+            if self._proc is None:
+                if not self._restart_worker():
+                    raise RuntimeError("ChatTTS worker not started; call warmup() first")
+
+            if self._proc.poll() is not None:
+                logger.warning("ChatTTS worker exited unexpectedly (code=%s), auto-restart",
+                              self._proc.returncode)
+                self._dump_stderr_log()
+                self._shutdown_worker()
+                if not self._restart_worker():
+                    raise RuntimeError("ChatTTS worker restart failed")
+
+            req = {"action": "synthesize", "text": text, "output_path": output_path}
+            try:
                 resp = self._send_command(req, timeout=120)
-        except Exception as e:
-            self._dump_stderr_log()
-            raise RuntimeError(f"ChatTTS synthesis failed: {e}") from e
+            except Exception as e:
+                self._dump_stderr_log()
+                raise RuntimeError(f"ChatTTS synthesis failed: {e}") from e
 
         if resp.get("status") != "ok":
             self._dump_stderr_log()

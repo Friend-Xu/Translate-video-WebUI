@@ -131,17 +131,18 @@ class VideoSegmenter:
                     chain.append("atempo=0.5")
                     remaining /= 0.5
                 chain.append(f"atempo={remaining:.6f}")
-            # 统一格式: 44100Hz mono s16
+            # 统一格式: 44100Hz mono s16（pan 滤镜在 amix 后转为立体声）
             chain.append("aformat=sample_fmts=s16:sample_rates=44100:channel_layouts=mono")
             filters.append(f"[{i}:a]{','.join(chain)}[a{i}]")
 
-        # amix
+        # amix → mono, then pan → stereo (duplicate mono to both channels)
         mix_inputs = "".join(f"[a{i}]" for i in range(n))
-        filters.append(f"{mix_inputs}amix=inputs={n}:duration=longest:normalize=0[out]")
+        filters.append(f"{mix_inputs}amix=inputs={n}:duration=longest:normalize=0[out_mono]")
+        filters.append("[out_mono]pan=stereo|c0=c0|c1=c0[out]")
 
         filter_str = ";".join(filters)
         cmd.extend(["-filter_complex", filter_str, "-map", "[out]"])
-        cmd.extend(["-acodec", "pcm_s16le", "-ar", "44100", "-ac", "1"])
+        cmd.extend(["-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2"])
         if output_duration is not None:
             cmd.extend(["-t", f"{output_duration:.6f}"])
         cmd.append(output_path)
@@ -360,6 +361,7 @@ class VideoSegmenter:
             audio_codec=self.audio_codec,
             bitrate=self.video_bitrate,
             preset=self.video_preset,
+            audio_nbytes=2,  # 16-bit audio (moviepy defaults to 4=32-bit)
             logger=None,
         )
 
