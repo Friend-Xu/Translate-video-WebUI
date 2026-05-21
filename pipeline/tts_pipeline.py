@@ -320,24 +320,23 @@ class TtsPipeline:
             logger.warning("Color_audio.WAV 提取失败: %s，回退到完整 vocals", e)
             return None
 
-    def _extract_emotion_prompts(self, vocals_path: str,
+    def _run_emotion_extraction(self, vocals_path: str,
                                   subs_translated: list,
-                                  output_dir: str = "") -> dict:
-        """Emotion analysis: emotion2vec -> per-segment ChatTTS prompts.
+                                  output_dir: str = "") -> tuple:
+        """Run emotion2vec per segment, return (prompts_dict, segments_meta).
 
-        Returns dict mapping (start_ms, end_ms) -> prompt_string.
-        Only called when enable_emotion=True and engine_type=chattts.
+        prompts_dict: {(start_ms, end_ms): prompt_string}
+        segments_meta: [{key, start_ms, end_ms, prompt, top_emotion, top_score, scores}, ...]
         """
         prompts: dict = {}
+        segments_meta: list = []
         from funasr import AutoModel
 
-        # Temp dir for audio slices
         emo_dir = os.path.join(output_dir, "_emo") if output_dir else tempfile.mkdtemp()
         os.makedirs(emo_dir, exist_ok=True)
 
         logger.info("情感分析开始: %d 段字幕, 临时目录 %s", len(subs_translated), emo_dir)
 
-        # Emotion -> ChatTTS prompt mapping
         _EMO_MAP = {
             "生气/angry":(3,0,2),"厌恶/disgusted":(1,0,4),"恐惧/fearful":(2,0,4),
             "开心/happy":(6,1,4),"中立/neutral":(2,0,5),"其他/other":(2,0,5),
@@ -359,8 +358,14 @@ class TtsPipeline:
 
         for start_ms, end_ms, text in subs_translated:
             dur_s = (end_ms - start_ms) / 1000.0
+            key = f"{start_ms}_{end_ms}"
             if dur_s < 1.0:
                 prompts[(start_ms, end_ms)] = "[oral_0][break_5]"
+                segments_meta.append({
+                    "key": key, "start_ms": start_ms, "end_ms": end_ms,
+                    "prompt": "[oral_0][break_5]",
+                    "top_emotion": "short", "top_score": 0, "scores": {},
+                })
                 continue
             try:
                 seg_wav = os.path.join(emo_dir, f"emo_{start_ms}_{end_ms}.wav")
@@ -375,23 +380,93 @@ class TtsPipeline:
                 result = model.generate(
                     input=seg_wav, output_dir=None, granularity="utterance")
                 if result and len(result) > 0:
-                    prompts[(start_ms, end_ms)] = _scores_to_prompt(
-                        result[0]["scores"])
+                    scores = result[0]["scores"]
+                    labels = result[0]["labels"]
+                    prompt = _scores_to_prompt(scores)
+                    top_idx = max(range(len(scores)), key=lambda i: scores[i])
+                    prompts[(start_ms, end_ms)] = prompt
+                    segments_meta.append({
+                        "key": key, "start_ms": start_ms, "end_ms": end_ms,
+                        "prompt": prompt,
+                        "top_emotion": labels[top_idx],
+                        "top_score": round(scores[top_idx], 4),
+                        "scores": {l: round(s, 4) for l, s in zip(labels, scores)},
+                    })
                 else:
                     prompts[(start_ms, end_ms)] = "[oral_0][break_5]"
+                    segments_meta.append({
+                        "key": key, "start_ms": start_ms, "end_ms": end_ms,
+                        "prompt": "[oral_0][break_5]",
+                        "top_emotion": "fail", "top_score": 0, "scores": {},
+                    })
                 os.unlink(seg_wav)
             except Exception:
                 prompts[(start_ms, end_ms)] = "[oral_0][break_5]"
+                segments_meta.append({
+                    "key": key, "start_ms": start_ms, "end_ms": end_ms,
+                    "prompt": "[oral_0][break_5]",
+                    "top_emotion": "error", "top_score": 0, "scores": {},
+                })
 
-        # Cleanup: remove temp dir if empty
         try:
             os.rmdir(emo_dir)
         except OSError:
-            pass  # dir not empty, leave it
+            pass
 
         n_unique = len(set(prompts.values()))
         logger.info("情感分析完成: %d/%d 段, %d 种不同 prompt",
                     len(prompts), len(subs_translated), n_unique)
+        return prompts, segments_meta
+
+    def _load_or_extract_emotion_prompts(self, vocals_path: str,
+                                          subs_translated: list,
+                                          output_dir: str = "") -> dict:
+        """Load cached emotion prompts or re-extract if missing/stale.
+
+        Returns dict mapping (start_ms, end_ms) -> prompt_string.
+        Caches to {output_dir}/emotion_prompts.json for checkpoint/resume.
+        """
+        json_path = os.path.join(output_dir, "emotion_prompts.json")
+        n_segments = len(subs_translated)
+
+        # Try loading cached file
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+                if cached.get("segment_count") == n_segments:
+                    prompts = {}
+                    for k, v in cached["segments"].items():
+                        prompts[(v["start_ms"], v["end_ms"])] = v["prompt"]
+                    logger.info("加载已缓存的情感 prompt: %s (%d 段)",
+                                json_path, len(prompts))
+                    return prompts
+                logger.info("情感缓存段数不匹配 (%d ≠ %d), 重新提取",
+                           cached.get("segment_count", 0), n_segments)
+            except Exception:
+                logger.warning("情感缓存读取失败, 重新提取", exc_info=True)
+
+        # Extract fresh
+        prompts, segments_meta = self._run_emotion_extraction(
+            vocals_path, subs_translated, output_dir)
+
+        # Save to disk
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            cached = {
+                "version": 1,
+                "engine": "emotion2vec",
+                "model": "iic/emotion2vec_plus_large",
+                "segment_count": n_segments,
+                "unique_prompts": len(set(v["prompt"] for v in segments_meta)),
+                "segments": {m["key"]: m for m in segments_meta},
+            }
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(cached, f, ensure_ascii=False, indent=2)
+            logger.info("情感分析结果已保存: %s", json_path)
+        except Exception:
+            logger.warning("情感缓存写入失败", exc_info=True)
+
         return prompts
 
     # ── 默认组件工厂 ──────────────────────────────────
@@ -1011,7 +1086,7 @@ class TtsPipeline:
                 and self.config.engine_type == "chattts"):
             vocals = self._find_vocals(video_path)
             if vocals:
-                _emo_prompts = self._extract_emotion_prompts(
+                _emo_prompts = self._load_or_extract_emotion_prompts(
                     vocals, subs_translated,
                     output_dir=self.config.output_dir)
 
