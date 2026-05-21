@@ -1,0 +1,282 @@
+{
+  "video": "source_20.srt",
+  "model": "deepseek-v4-flash",
+  "source_lang": "en",
+  "target_lang": "简体中文",
+  "records": [
+    {
+      "type": "batch",
+      "group_indices": [
+        6
+      ],
+      "retry": false,
+      "prompt_step": "batch",
+      "prompt_hash": "12f97ba15f24",
+      "input": {
+        "system_prompt": "你是专业英语字幕翻译。请将以下英语逐条翻译为简体中文。\n风格要求：1.你是专业的字幕翻译员。请将以下字幕逐条翻译为简体中文。2.Minecraft 模组名称、游戏专有名词、英文品牌名保持原文不翻译\n\n【以下为系统强制格式要求，必须严格遵守】\n输出格式必须严格为 <index> 译文（如 <1> 大家好）\n编号数量和顺序必须与输入完全一致\n每条独立成行，不要合并\n不要添加任何额外说明或标注",
+        "user_prompt": "待翻译：\n<6> So, let me make a quick recap of this video, then we will be able to get into the new ones.\n\n翻译：",
+        "source_texts": {
+          "6": "So, let me make a quick recap of this video, then we will be able to get into the new ones."
+        }
+      },
+      "output": {
+        "raw": "<6> 那么，让我快速回顾一下这个视频，然后我们就可以进入新的内容了。",
+        "parsed": {
+          "6": "那么，让我快速回顾一下这个视频，然后我们就可以进入新的内容了。"
+        },
+        "validation_error": ""
+      },
+      "duration": 1.39,
+      "timestamp": "2026-05-21T21:44:21.175532"
+    },
+    {
+      "type": "batch",
+      "group_indices": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "retry": false,
+      "prompt_step": "batch",
+      "prompt_hash": "ecaedd36ff4c",
+      "input": {
+        "system_prompt": "你是专业英语字幕翻译。请将以下英语逐条翻译为简体中文。\n风格要求：1.你是专业的字幕翻译员。请将以下字幕逐条翻译为简体中文。2.Minecraft 模组名称、游戏专有名词、英文品牌名保持原文不翻译\n\n【以下为系统强制格式要求，必须严格遵守】\n输出格式必须严格为 <index> 译文（如 <1> 大家好）\n编号数量和顺序必须与输入完全一致\n每条独立成行，不要合并\n不要添加任何额外说明或标注",
+        "user_prompt": "待翻译：\n<1> These are always related to this world, some are small and passive, while others represent a colossal threat.\n<2> But a dragon has always existed on the other until now.\n<3> Well, we are back with other things on the dragons.\n<4> If you were already coming to the channel, you can't be, I am going to be on a video that I made it a few months and that was a new mode of dragons.\n<5> And yes, since the release of this video, the developers added some additional dragons, as well as many other features.\n\n翻译：",
+        "source_texts": {
+          "1": "These are always related to this world, some are small and passive, while others represent a colossal threat.",
+          "2": "But a dragon has always existed on the other until now.",
+          "3": "Well, we are back with other things on the dragons.",
+          "4": "If you were already coming to the channel, you can't be, I am going to be on a video that I made it a few months and that was a new mode of dragons.",
+          "5": "And yes, since the release of this video, the developers added some additional dragons, as well as many other features."
+        }
+      },
+      "output": {
+        "raw": "<1> 这些总是与这个世界相关，有些小而被动，而另一些则代表着巨大的威胁。\n<2> 但直到现在，另一边一直存在着一只龙。\n<3> 好了，我们回来继续讨论关于龙的其他事情。\n<4> 如果你已经来过这个频道，那不可能，我即将展示几个月前制作的一个视频，那是一种新的龙模式。\n<5> 是的，自从这个视频发布以来，开发者添加了一些额外的龙，以及许多其他功能。",
+        "parsed": {
+          "1": "这些总是与这个世界相关，有些小而被动，而另一些则代表着巨大的威胁。",
+          "2": "但直到现在，另一边一直存在着一只龙。",
+          "3": "好了，我们回来继续讨论关于龙的其他事情。",
+          "4": "如果你已经来过这个频道，那不可能，我即将展示几个月前制作的一个视频，那是一种新的龙模式。",
+          "5": "是的，自从这个视频发布以来，开发者添加了一些额外的龙，以及许多其他功能。"
+        },
+        "validation_error": ""
+      },
+      "duration": 2.16,
+      "timestamp": "2026-05-21T21:44:21.944062"
+    },
+    {
+      "type": "batch",
+      "group_indices": [
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ],
+      "retry": false,
+      "prompt_step": "batch",
+      "prompt_hash": "7784a63f40ef",
+      "input": {
+        "system_prompt": "你是专业英语字幕翻译。请将以下英语逐条翻译为简体中文。\n风格要求：1.你是专业的字幕翻译员。请将以下字幕逐条翻译为简体中文。2.Minecraft 模组名称、游戏专有名词、英文品牌名保持原文不翻译\n\n【以下为系统强制格式要求，必须严格遵守】\n输出格式必须严格为 <index> 译文（如 <1> 大家好）\n编号数量和顺序必须与输入完全一致\n每条独立成行，不要合并\n不要添加任何额外说明或标注",
+        "user_prompt": "待翻译：\n<7> Last time, we have put a few dragons available, which is the one, alias the Veine de Sand.\n<8> We also put a few of these dragons, also known as the one, also known as the one.\n<9> the name of Ravix.\n<10> I don't know if it was a new feature with the last new feature, but I certainly.\n<11> don't remember having seen this kind of variation auparavant, like the noir and l 'or.\n<12> It's a really weird thing.\n<13> And of course, who could forget the Ignore absolutely gigantesque behind me, just here.\n\n翻译：",
+        "source_texts": {
+          "7": "Last time, we have put a few dragons available, which is the one, alias the Veine de Sand.",
+          "8": "We also put a few of these dragons, also known as the one, also known as the one.",
+          "9": "the name of Ravix.",
+          "10": "I don't know if it was a new feature with the last new feature, but I certainly.",
+          "11": "don't remember having seen this kind of variation auparavant, like the noir and l 'or.",
+          "12": "It's a really weird thing.",
+          "13": "And of course, who could forget the Ignore absolutely gigantesque behind me, just here."
+        }
+      },
+      "output": {
+        "raw": "<7> 上次我们提供了几条龙，就是那条，又名Veine de Sand。\n<8> 我们也放了几条这样的龙，也叫作那条，也叫作那条。\n<9> 名字叫Ravix。\n<10> 我不知道这算不算上次新版本的新特性，但我肯定。\n<11> 不记得以前见过这种变体，比如noir和l'or。\n<12> 这真的很奇怪。\n<13> 当然，谁能忘了我身后那个绝对巨大的Ignore，就在这儿。",
+        "parsed": {
+          "7": "上次我们提供了几条龙，就是那条，又名Veine de Sand。",
+          "8": "我们也放了几条这样的龙，也叫作那条，也叫作那条。",
+          "9": "名字叫Ravix。",
+          "10": "我不知道这算不算上次新版本的新特性，但我肯定。",
+          "11": "不记得以前见过这种变体，比如noir和l'or。",
+          "12": "这真的很奇怪。",
+          "13": "当然，谁能忘了我身后那个绝对巨大的Ignore，就在这儿。"
+        },
+        "validation_error": ""
+      },
+      "duration": 5.44,
+      "timestamp": "2026-05-21T21:44:25.227727"
+    },
+    {
+      "type": "batch",
+      "group_indices": [
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20
+      ],
+      "retry": false,
+      "prompt_step": "batch",
+      "prompt_hash": "a98f363ae667",
+      "input": {
+        "system_prompt": "你是专业英语字幕翻译。请将以下英语逐条翻译为简体中文。\n风格要求：1.你是专业的字幕翻译员。请将以下字幕逐条翻译为简体中文。2.Minecraft 模组名称、游戏专有名词、英文品牌名保持原文不翻译\n\n【以下为系统强制格式要求，必须严格遵守】\n输出格式必须严格为 <index> 译文（如 <1> 大家好）\n编号数量和顺序必须与输入完全一致\n每条独立成行，不要合并\n不要添加任何额外说明或标注",
+        "user_prompt": "待翻译：\n<14> And yeah, after having played a lot of modes of dragons, this one is just so crazy.\n<15> Like the realism with that, like the ombrage and all.\n<16> I mean, look at that.\n<17> And yeah, I don't even talk about the gigantic scale of some of these dragons.\n<18> Like these things are absolute units.\n<19> And I'll just show you some variations that these guys can really have.\n<20> So with the Ignore just here, you can change it for this one.\n\n翻译：",
+        "source_texts": {
+          "14": "And yeah, after having played a lot of modes of dragons, this one is just so crazy.",
+          "15": "Like the realism with that, like the ombrage and all.",
+          "16": "I mean, look at that.",
+          "17": "And yeah, I don't even talk about the gigantic scale of some of these dragons.",
+          "18": "Like these things are absolute units.",
+          "19": "And I'll just show you some variations that these guys can really have.",
+          "20": "So with the Ignore just here, you can change it for this one."
+        }
+      },
+      "output": {
+        "raw": "<14> 嗯，玩过很多种龙模式之后，这个实在是太疯狂了。\n\n<15> 比如那种真实感，还有那些阴翳什么的。\n\n<16> 我是说，看看那个。\n\n<17> 嗯，我甚至还没提这些龙的巨大体型呢。\n\n<18> 这些东西简直是庞然大物。\n\n<19> 我来给你看看它们能有的几种变体。\n\n<20> 所以用这个 Ignore 按钮，你就可以把它换成这个。",
+        "parsed": {
+          "14": "嗯，玩过很多种龙模式之后，这个实在是太疯狂了。",
+          "15": "比如那种真实感，还有那些阴翳什么的。",
+          "16": "我是说，看看那个。",
+          "17": "嗯，我甚至还没提这些龙的巨大体型呢。",
+          "18": "这些东西简直是庞然大物。",
+          "19": "我来给你看看它们能有的几种变体。",
+          "20": "所以用这个 Ignore 按钮，你就可以把它换成这个。"
+        },
+        "validation_error": ""
+      },
+      "duration": 6.85,
+      "timestamp": "2026-05-21T21:44:26.637702"
+    },
+    {
+      "type": "semantic_retry",
+      "group_indices": [
+        15
+      ],
+      "prompt_step": "semantic_retry",
+      "prompt_hash": "261fbd2997b2",
+      "input": {
+        "system_prompt": "你是专业翻译。请将以下自动检测字幕翻译成简体中文。\n请结合上下文理解原文含义，用自然流畅的语言准确表达。\n输出只有译文本身，不要添加任何说明。\nMinecraft 模组名称、游戏专有名词、英文品牌名保持原文不翻译",
+        "user_prompt": "前文：当然，谁能忘了我身后那个绝对巨大的Ignore，就在这儿。 嗯，玩过很多种龙模式之后，这个实在是太疯狂了。\n下文：我是说，看看那个。 嗯，我甚至还没提这些龙的巨大体型呢。\n\n原文：Like the realism with that, like the ombrage and all.\n旧译文（请避免）：比如那种真实感，还有那些阴翳什么的。\n新译文：",
+        "source_text": "Like the realism with that, like the ombrage and all."
+      },
+      "output": {
+        "raw": "看看那真实感，还有那些阴影什么的。",
+        "parsed": {
+          "15": "看看那真实感，还有那些阴影什么的。"
+        }
+      },
+      "duration": 2.21,
+      "timestamp": "2026-05-21T21:44:29.667069"
+    },
+    {
+      "type": "semantic_retry",
+      "group_indices": [
+        9
+      ],
+      "prompt_step": "semantic_retry",
+      "prompt_hash": "262970886fdd",
+      "input": {
+        "system_prompt": "你是专业翻译。请将以下自动检测字幕翻译成简体中文。\n请结合上下文理解原文含义，用自然流畅的语言准确表达。\n输出只有译文本身，不要添加任何说明。\nMinecraft 模组名称、游戏专有名词、英文品牌名保持原文不翻译",
+        "user_prompt": "前文：上次我们提供了几条龙，就是那条，又名Veine de Sand。 我们也放了几条这样的龙，也叫作那条，也叫作那条。\n下文：我不知道这算不算上次新版本的新特性，但我肯定。 不记得以前见过这种变体，比如noir和l'or。\n\n原文：the name of Ravix.\n旧译文（请避免）：名字叫Ravix。\n新译文：",
+        "source_text": "the name of Ravix."
+      },
+      "output": {
+        "raw": "名为Ravix。",
+        "parsed": {
+          "9": "名为Ravix。"
+        }
+      },
+      "duration": 2.58,
+      "timestamp": "2026-05-21T21:44:30.195413"
+    },
+    {
+      "type": "semantic_retry",
+      "group_indices": [
+        18
+      ],
+      "prompt_step": "semantic_retry",
+      "prompt_hash": "bc3364564233",
+      "input": {
+        "system_prompt": "你是专业翻译。请将以下自动检测字幕翻译成简体中文。\n请结合上下文理解原文含义，用自然流畅的语言准确表达。\n输出只有译文本身，不要添加任何说明。\nMinecraft 模组名称、游戏专有名词、英文品牌名保持原文不翻译",
+        "user_prompt": "前文：我是说，看看那个。 嗯，我甚至还没提这些龙的巨大体型呢。\n下文：我来给你看看它们能有的几种变体。 所以用这个 Ignore 按钮，你就可以把它换成这个。\n\n原文：Like these things are absolute units.\n旧译文（请避免）：这些东西简直是庞然大物。\n新译文：",
+        "source_text": "Like these things are absolute units."
+      },
+      "output": {
+        "raw": "这些家伙绝对是巨无霸。",
+        "parsed": {
+          "18": "这些家伙绝对是巨无霸。"
+        }
+      },
+      "duration": 1.75,
+      "timestamp": "2026-05-21T21:44:31.466575"
+    },
+    {
+      "type": "naturalness_retry",
+      "group_indices": [
+        2
+      ],
+      "prompt_step": "naturalness_retry",
+      "prompt_hash": "d2d03e10b019",
+      "input": {
+        "system_prompt": "你是专业翻译。请将以下自动检测字幕重新翻译成更自然、更地道的简体中文。\n用日常交流的口吻表达，避免翻译腔（直译/逐字翻译）。\n输出只有译文本身，不要添加任何说明。\nMinecraft 模组名称、游戏专有名词、英文品牌名保持原文不翻译",
+        "user_prompt": "前文：这些总是与这个世界相关，有些小而被动，而另一些则代表着巨大的威胁。\n下文：好了，我们回来继续讨论关于龙的其他事情。 如果你已经来过这个频道，那不可能，我即将展示几个月前制作的一个视频，那是一种新的龙模式。\n\n原文：But a dragon has always existed on the other until now.\n旧译文（请避免）：但直到现在，另一边一直存在着一只龙。\n新译文：",
+        "source_text": "But a dragon has always existed on the other until now."
+      },
+      "output": {
+        "raw": "但直到现在，另一边一直都有一只龙。",
+        "parsed": {
+          "2": "但直到现在，另一边一直都有一只龙。"
+        }
+      },
+      "duration": 4.01,
+      "timestamp": "2026-05-21T21:44:32.031381"
+    },
+    {
+      "type": "naturalness_retry",
+      "group_indices": [
+        7
+      ],
+      "prompt_step": "naturalness_retry",
+      "prompt_hash": "5504a137f00e",
+      "input": {
+        "system_prompt": "你是专业翻译。请将以下自动检测字幕重新翻译成更自然、更地道的简体中文。\n用日常交流的口吻表达，避免翻译腔（直译/逐字翻译）。\n输出只有译文本身，不要添加任何说明。\nMinecraft 模组名称、游戏专有名词、英文品牌名保持原文不翻译",
+        "user_prompt": "前文：是的，自从这个视频发布以来，开发者添加了一些额外的龙，以及许多其他功能。 那么，让我快速回顾一下这个视频，然后我们就可以进入新的内容了。\n下文：我们也放了几条这样的龙，也叫作那条，也叫作那条。 名字叫Ravix。\n\n原文：Last time, we have put a few dragons available, which is the one, alias the Veine de Sand.\n旧译文（请避免）：上次我们提供了几条龙，就是那条，又名Veine de Sand。\n新译文：",
+        "source_text": "Last time, we have put a few dragons available, which is the one, alias the Veine de Sand."
+      },
+      "output": {
+        "raw": "上次我们放了几条龙，其中就有那条叫Veine de Sand的。",
+        "parsed": {
+          "7": "上次我们放了几条龙，其中就有那条叫Veine de Sand的。"
+        }
+      },
+      "duration": 3.45,
+      "timestamp": "2026-05-21T21:44:33.813769"
+    },
+    {
+      "type": "naturalness_retry",
+      "group_indices": [
+        13
+      ],
+      "prompt_step": "naturalness_retry",
+      "prompt_hash": "c906a7f6b82a",
+      "input": {
+        "system_prompt": "你是专业翻译。请将以下自动检测字幕重新翻译成更自然、更地道的简体中文。\n用日常交流的口吻表达，避免翻译腔（直译/逐字翻译）。\n输出只有译文本身，不要添加任何说明。\nMinecraft 模组名称、游戏专有名词、英文品牌名保持原文不翻译",
+        "user_prompt": "前文：不记得以前见过这种变体，比如noir和l'or。 这真的很奇怪。\n下文：嗯，玩过很多种龙模式之后，这个实在是太疯狂了。 比如那种真实感，还有那些阴翳什么的。\n\n原文：And of course, who could forget the Ignore absolutely gigantesque behind me, just here.\n旧译文（请避免）：当然，谁能忘了我身后那个绝对巨大的Ignore，就在这儿。\n新译文：",
+        "source_text": "And of course, who could forget the Ignore absolutely gigantesque behind me, just here."
+      },
+      "output": {
+        "raw": "当然，谁能忘了我身后这个巨大无比的Ignore呢？就在这儿。",
+        "parsed": {
+          "13": "当然，谁能忘了我身后这个巨大无比的Ignore呢？就在这儿。"
+        }
+      },
+      "duration": 2.59,
+      "timestamp": "2026-05-21T21:44:36.482959"
+    }
+  ]
+}

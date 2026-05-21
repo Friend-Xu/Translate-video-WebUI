@@ -44,6 +44,7 @@ export interface PipelineConfig {
   apiTopP: number
   enableSemanticValidation: boolean
   enableNaturalnessCheck: boolean
+  jointVerification: boolean
   enableTermReplacement: boolean
   enableReviewAfterTranslate: boolean
   enableDemucs: boolean
@@ -178,6 +179,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   apiTopP: 0.9,
   enableSemanticValidation: true,
   enableNaturalnessCheck: true,
+  jointVerification: false,
   enableTermReplacement: true,
   enableReviewAfterTranslate: true,
   enableDemucs: true,

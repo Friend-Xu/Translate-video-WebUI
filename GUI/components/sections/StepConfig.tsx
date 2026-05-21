@@ -596,6 +596,66 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   <Slider value={config.concurrency} min={1} max={8} step={1} marks={[{ value: 1, label: '1' }, { value: 3, label: '3' }, { value: 5, label: '5' }, { value: 8, label: '8' }]} onChange={(_, v) => onConfigChange('concurrency', v as number)} />
                 </Box>
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                  <Typography variant="body2" fontWeight={500} mb={1}>翻译规则</Typography>
+                  <Box sx={{ display: 'flex', gap: 1.5 }}>
+                    <Card
+                      sx={{
+                        flex: 1, p: 1.5, cursor: 'pointer',
+                        border: config.enableNaturalnessCheck ? '1px solid' : '2px solid',
+                        borderColor: config.enableNaturalnessCheck ? 'divider' : 'primary.main',
+                        bgcolor: config.enableNaturalnessCheck ? 'transparent' : 'primary.lightest',
+                        opacity: config.enableNaturalnessCheck ? 0.7 : 1,
+                      }}
+                      onClick={() => onConfigChange('enableNaturalnessCheck', false)}
+                    >
+                      <Typography variant="body2" fontWeight={600}>
+                        仅语义验证 <Chip label="推荐" size="small" color="primary" sx={{ height: 18, fontSize: '0.6rem' }} />
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        翻译 → MiniLM 语义核对 → 不合格重翻
+                      </Typography>
+                    </Card>
+                    <Card
+                      sx={{
+                        flex: 1, p: 1.5, cursor: 'pointer',
+                        border: config.enableNaturalnessCheck ? '2px solid' : '1px solid',
+                        borderColor: config.enableNaturalnessCheck ? 'primary.main' : 'divider',
+                        bgcolor: config.enableNaturalnessCheck ? 'primary.lightest' : 'transparent',
+                        opacity: config.enableNaturalnessCheck ? 1 : 0.7,
+                      }}
+                      onClick={() => onConfigChange('enableNaturalnessCheck', true)}
+                    >
+                      <Typography variant="body2" fontWeight={600}>
+                        语义 + 自然度联合验证 <Chip label="实验性" size="small" color="warning" sx={{ height: 18, fontSize: '0.6rem' }} />
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        + PPL 自然度检查 → 重翻 → 联合公式闭环
+                      </Typography>
+                    </Card>
+                  </Box>
+                  {config.enableNaturalnessCheck && (
+                    <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 2 }}>
+                      <Box>
+                        <Box display="flex" justifyContent="space-between">
+                          <Typography variant="body2">PPL 自然度阈值</Typography>
+                          <Typography variant="body2" fontWeight={600} color="primary">{(config as any).naturalnessThreshold ?? 3.0}x</Typography>
+                        </Box>
+                        <Slider
+                          value={(config as any).naturalnessThreshold ?? 3.0}
+                          min={1.5} max={6.0} step={0.5}
+                          marks={[{ value: 2, label: '2x' }, { value: 3, label: '3x' }, { value: 4, label: '4x' }, { value: 5, label: '5x' }]}
+                          onChange={(_, v) => onConfigChange('naturalnessThreshold' as any, v as number)}
+                          sx={{ width: 160 }}
+                        />
+                      </Box>
+                      <FormControlLabel
+                        control={<Checkbox checked={config.jointVerification} onChange={e => onConfigChange('jointVerification', e.target.checked)} size="small" />}
+                        label={<Typography variant="body2">联合公式闭环验证</Typography>}
+                      />
+                    </Box>
+                  )}
+                </Box>
+                <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
                   <Typography variant="body2" fontWeight={500}>System Prompt</Typography>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
                     <Button
@@ -823,6 +883,7 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
         onClose={() => setCustomPromptOpen(false)}
         config={config}
         onConfigChange={onConfigChange}
+        jointVerification={config.jointVerification}
       />
     </>
   )

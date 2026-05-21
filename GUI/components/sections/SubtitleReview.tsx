@@ -943,11 +943,9 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
             <ToggleButton value="semantic" sx={{ px: 1.5 }}>
               语义<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>{semanticCount}</Box>
             </ToggleButton>
-            {naturalnessCount > 0 && (
-              <ToggleButton value="naturalness" sx={{ px: 1.5 }} color="warning">
-                自然度<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>{naturalnessCount}</Box>
-              </ToggleButton>
-            )}
+            <ToggleButton value="naturalness" sx={{ px: 1.5 }}>
+              自然度<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>{naturalnessCount}</Box>
+            </ToggleButton>
             {reviewCritCount > 0 && (
               <ToggleButton value="review_critical" sx={{ px: 1.5 }} color="error">
                 质量<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>{reviewCritCount}</Box>
@@ -1245,6 +1243,38 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
                         )}
                       </Box>
                     )}
+                    {entry.quality?.naturalness && entry.quality.naturalness.confidence > 0 && (() => {
+                      const nat = entry.quality.naturalness
+                      const ratio = parseFloat(nat.detail?.match(/ratio=([\d.]+)/)?.[1] || '0')
+                      const ppl = parseFloat(nat.detail?.match(/PPL=([\d.]+)/)?.[1] || '0')
+                      const baseline = parseFloat(nat.detail?.match(/baseline=([\d.]+)/)?.[1] || '0')
+                      return (
+                        <Box sx={{ mt: 0.5, p: 1, bgcolor: nat.flagged ? 'warning.main' + '14' : 'success.main' + '14', borderRadius: 1, border: '1px solid', borderColor: nat.flagged ? 'warning.main' + '33' : 'success.main' + '33' }}>
+                          <Typography variant="caption" fontWeight={600} color={nat.flagged ? 'warning.main' : 'success.main'}>
+                            自然度评估 {nat.flagged ? '(翻译腔风险)' : '(自然流畅)'}
+                          </Typography>
+                          <Box sx={{ display: 'flex', gap: 1, mt: 0.5, flexWrap: 'wrap' }}>
+                            <Chip label={`PPL ${ppl.toFixed(1)}`} size="small"
+                              color={nat.flagged ? 'warning' : 'default'}
+                              variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+                            <Typography variant="caption" sx={{ lineHeight: '18px' }}>/</Typography>
+                            <Chip label={`基线 ${baseline.toFixed(1)}`} size="small"
+                              variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+                            <Typography variant="caption" sx={{ lineHeight: '18px' }}>=</Typography>
+                            <Chip label={`${ratio.toFixed(2)}x`} size="small"
+                              color={nat.flagged ? 'error' : 'success'}
+                              variant="outlined" sx={{ height: 18, fontSize: '0.6rem' }} />
+                            {nat.flagged && (
+                              <Chip label={`超阈值 ${nat.threshold}x`} size="small"
+                                color="error" sx={{ height: 18, fontSize: '0.6rem' }} />
+                            )}
+                          </Box>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                            {nat.detail}
+                          </Typography>
+                        </Box>
+                      )
+                    })()}
                     {entry.issues.length > 0 && (
                       <Box sx={{ mt: 0.5 }}>
                         {entry.issues.map((issue, i) => (

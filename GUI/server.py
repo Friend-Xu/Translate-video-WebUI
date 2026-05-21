@@ -494,6 +494,7 @@ def _load_yaml_defaults() -> dict:
         "apiType": trans.get("api_type", "deepseek"),
         "enableSemanticValidation": trans.get("semantic_check", True),
         "enableNaturalnessCheck": trans.get("quality_assessment", {}).get("dimensions", {}).get("naturalness", {}).get("enabled", True),
+        "jointVerification": trans.get("joint_verification", False),
         "enableTermReplacement": trans.get("terms_dict", {}).get("enabled", True),
         "activeGlossary": _parse_glossary_list(trans.get("terms_dict", {}).get("default_dict", ["minecraft.json"])),
         "targetLang": trans.get("target_lang", "zh-CN"),
@@ -629,6 +630,10 @@ def _sync_translate_config(target_lang: str = "") -> None:
         if "quality_assessment" not in trans["translate"]:
             trans["translate"]["quality_assessment"] = {"dimensions": {"naturalness": {}}}
         trans["translate"]["quality_assessment"]["dimensions"]["naturalness"]["enabled"] = pipeline_cfg["enableNaturalnessCheck"]
+
+    # Sync joint verification
+    if pipeline_cfg.get("jointVerification") is not None:
+        trans["translate"]["joint_verification"] = pipeline_cfg["jointVerification"]
 
     # Sync terms_dict
     if "terms_dict" not in trans["translate"]:

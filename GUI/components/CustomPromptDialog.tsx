@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   Button, TextField, Box, Typography, Chip, Paper, Divider,
-  FormControlLabel, Switch, Tabs, Tab,
+  FormControlLabel, Switch, Tabs, Tab, Tooltip,
 } from '@mui/material'
 import type { PipelineConfig } from '../types'
 
@@ -33,6 +33,7 @@ interface Props {
   onClose: () => void
   config: PipelineConfig
   onConfigChange: <K extends keyof PipelineConfig>(key: K, value: PipelineConfig[K]) => void
+  jointVerification?: boolean
 }
 
 const PROMPT_LEVELS = [
@@ -41,7 +42,7 @@ const PROMPT_LEVELS = [
   { key: 'naturalness_retry' as const, label: '自然度重翻', desc: 'PPL 自然度比率 > 3.0 时触发', trigger: '翻译腔（直译/不自然）', icon: '💬' },
 ] as const
 
-export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Props) {
+export function CustomPromptDialog({ open, onClose, config, onConfigChange, jointVerification }: Props) {
   const [localEnabled, setLocalEnabled] = useState(config.customPromptEnabled)
   const [tabIndex, setTabIndex] = useState(0)
   const textFieldRef = useRef<HTMLTextAreaElement>(null)
@@ -160,16 +161,23 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Pr
         {localEnabled && (
           <>
             <Tabs value={tabIndex} onChange={(_, v) => setTabIndex(v)} sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}>
-              {PROMPT_LEVELS.map((l, i) => (
-                <Tab key={l.key} label={
+              {PROMPT_LEVELS.map((l, i) => {
+                const disabled = l.key === 'naturalness_retry' && !jointVerification
+                return (
+                <Tab key={l.key}
+                  disabled={disabled}
+                  label={
+                  <Tooltip title={disabled ? '请先在翻译规则中启用"语义 + 自然度联合验证"' : ''}>
                   <Box sx={{ textAlign: 'left' }}>
-                    <Typography variant="body2">{l.label}</Typography>
+                    <Typography variant="body2" color={disabled ? 'text.disabled' : undefined}>{l.label}</Typography>
                     <Typography variant="caption" color={tabIndex === i ? 'primary' : 'text.disabled'} fontSize="0.65rem">
-                      {l.trigger}
+                      {disabled ? '需要联合翻译规则' : l.trigger}
                     </Typography>
                   </Box>
-                } />
-              ))}
+                  </Tooltip>
+                }
+                />
+              )})}
             </Tabs>
 
             <Paper variant="outlined" sx={{ p: 1.5, mb: 2, bgcolor: 'action.hover' }}>

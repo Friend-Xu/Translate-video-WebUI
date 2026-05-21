@@ -788,6 +788,7 @@ class SRTTranslator:
             "dimensions", {}).get("naturalness", {}).get("enabled", True)
         self.naturalness_threshold = self.config.get("quality_assessment", {}).get(
             "dimensions", {}).get("naturalness", {}).get("threshold", 3.0)
+        self.joint_verification = self.config.get("joint_verification", False)
         self._ppl_evaluator = None
         # 并发配置
         conc_cfg = self.config.get("concurrency", {})
@@ -1109,9 +1110,9 @@ class SRTTranslator:
                         # ≥ 0.70 → 候选进入 Phase 2 (PPL 自然度检查)
                         ppl_candidates.append((sub, source))
 
-                # Phase 2: PPL 自然度检查 (MiniLM ≥ 0.70 + naturalness_check + 中/英文)
-                _ppl_langs = ("zh-CN", "en")
-                if ppl_candidates and self.naturalness_check and self.target_lang in _ppl_langs:
+                # Phase 2: PPL 自然度检查 (MiniLM ≥ 0.70 + naturalness_check)
+                ppl_data: dict = {}  # {index: {ppl, baseline, ratio}}
+                if ppl_candidates and self.naturalness_check:
                     ppl_eval = self._get_ppl_evaluator()
                     if ppl_eval:
                         texts = [s.text for s, _ in ppl_candidates]
@@ -1127,6 +1128,11 @@ class SRTTranslator:
 
                             for i, (sub, source) in enumerate(ppl_candidates):
                                 ppl = ppls[i]
+                                ppl_data[sub.index] = {
+                                    "ppl": round(ppl, 1),
+                                    "baseline": round(baseline, 1),
+                                    "ratio": round(ppl / baseline, 2) if baseline > 0 else 0,
+                                }
                                 if ppl > 0 and baseline > 0 and (ppl / baseline) > self.naturalness_threshold:
                                     logger.warning(
                                         f"  ⚠ 索引 {sub.index} PPL 偏高 ({ppl:.0f}/{baseline:.0f}="
@@ -1136,7 +1142,38 @@ class SRTTranslator:
                                         source, sub.text, sub.index, group
                                     )
                                     if refined and refined != sub.text:
-                                        sub.text = refined
+                                        if self.joint_verification:
+                                            # 闭环验证：联合得分判断语义是否偏离
+                                            old_sim = similarities.get(sub.index, 0.70)
+                                            old_ratio = ppl / baseline
+                                            result = self._verify_naturalness_result(
+                                                source, sub.text, refined,
+                                                old_sim, old_ratio, baseline,
+                                            )
+                                            if result["accepted"]:
+                                                sub.text = refined
+                                                logger.info(
+                                                    f"  ✓ 索引 {sub.index}: 自然度重翻已采纳 "
+                                                    f"(old={old_sim:.2f}+{old_ratio:.1f}x, "
+                                                    f"new={result['new_sim']:.2f}+{result['new_ratio']:.1f}x)"
+                                                )
+                                            else:
+                                                logger.warning(
+                                                    f"  ✗ 索引 {sub.index}: 自然度重翻被驳回 "
+                                                    f"({result['reason']}), 保留原译"
+                                                )
+                                            # 补全 _semantic_flagged 中的 similarity 数据
+                                            for sf in reversed(self._semantic_flagged):
+                                                if sf.get("index") == sub.index and sf.get("reason") == "naturalness_retry":
+                                                    sf["similarity"] = round(old_sim, 4)
+                                                    sf["new_similarity"] = round(result.get("new_sim", old_sim), 4)
+                                                    sf["kept"] = result["kept"]
+                                                    sf["improvement"] = round(result.get("new_score", 0) - result.get("old_score", 0), 4) if "old_score" in result else 0
+                                                    if not result["accepted"]:
+                                                        sf["reason"] = f"naturalness_retry_rejected:{result['reason']}"
+                                                    break
+                                        else:
+                                            sub.text = refined
                         except Exception as e:
                             logger.warning(f"PPL 批量推理失败: {e}")
             with self._log_lock:
@@ -1150,6 +1187,8 @@ class SRTTranslator:
                 }
                 if similarities:
                     detail["similarities"] = similarities
+                if ppl_data:
+                    detail["ppls"] = ppl_data
                 self.log.details.append(detail)
             return True
 
@@ -1589,6 +1628,58 @@ class SRTTranslator:
         except Exception as e:
             logger.warning(f"  自然度重翻异常 (索引 {sub_index}): {e}")
             return None
+
+    def _verify_naturalness_result(self, source: str, old_text: str,
+                                   refined: str, old_sim: float,
+                                   old_ppl: float, baseline: float) -> dict:
+        """闭环验证：联合得分判断自然度重翻是否可接受。
+
+        参照 _verify_and_refine 的闭环模式：
+        1. MiniLM 计算新译文的语义相似度
+        2. 计算新译文的 PPL
+        3. 联合得分对比：只有总分提升且语义不低于阈值才接受
+
+        Returns: {accepted: bool, kept: str, reason: str, new_sim, new_ratio, ...}
+        """
+        # 计算新译文的语义相似度
+        verifier = self._get_verifier()
+        if not verifier:
+            # Verifier 不可用时，信任 LLM 输出的旧行为
+            return {"accepted": True, "kept": "new", "reason": "verifier_unavailable",
+                    "new_sim": old_sim, "new_ratio": old_ppl / baseline if baseline > 0 else 1.0}
+
+        new_sim = verifier.verify(source, refined)["similarity"]
+
+        # Gate A: 语义底线
+        if new_sim < self.semantic_threshold:
+            return {"accepted": False, "kept": "old", "reason": "semantic_drift",
+                    "new_sim": new_sim, "new_ratio": 0}
+
+        # 计算新译文 PPL
+        ppl_eval = self._get_ppl_evaluator()
+        if ppl_eval:
+            try:
+                new_ppl = ppl_eval.perplexity(refined)
+            except Exception:
+                new_ppl = old_ppl
+        else:
+            new_ppl = old_ppl
+        new_ratio = new_ppl / baseline if baseline > 0 else 1.0
+        old_ratio = old_ppl / baseline if baseline > 0 else 1.0
+
+        # Gate B: 联合得分比较
+        def _score(r, s, b=1.0, g=1.0):
+            return b * (1.0 - r) + g * s
+
+        old_score = _score(old_ratio, old_sim)
+        new_score = _score(new_ratio, new_sim)
+
+        if new_score > old_score:
+            return {"accepted": True, "kept": "new", "reason": "joint_improvement",
+                    "new_sim": new_sim, "new_ratio": new_ratio}
+        else:
+            return {"accepted": False, "kept": "old", "reason": "no_improvement",
+                    "new_sim": new_sim, "new_ratio": new_ratio}
 
     def _get_context_subs(self, sub_index: int, group: List) -> Tuple[List, List]:
         """获取某条字幕的上下文（前后各最多 2 条）"""
