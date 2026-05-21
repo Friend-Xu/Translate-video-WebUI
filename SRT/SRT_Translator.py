@@ -1676,10 +1676,12 @@ class SRTTranslator:
 
         if new_score > old_score:
             return {"accepted": True, "kept": "new", "reason": "joint_improvement",
-                    "new_sim": new_sim, "new_ratio": new_ratio}
+                    "new_sim": new_sim, "new_ratio": new_ratio,
+                    "old_score": round(old_score, 4), "new_score": round(new_score, 4)}
         else:
             return {"accepted": False, "kept": "old", "reason": "no_improvement",
-                    "new_sim": new_sim, "new_ratio": new_ratio}
+                    "new_sim": new_sim, "new_ratio": new_ratio,
+                    "old_score": round(old_score, 4), "new_score": round(new_score, 4)}
 
     def _get_context_subs(self, sub_index: int, group: List) -> Tuple[List, List]:
         """获取某条字幕的上下文（前后各最多 2 条）"""

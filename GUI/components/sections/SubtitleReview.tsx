@@ -1245,9 +1245,10 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
                     )}
                     {entry.quality?.naturalness && entry.quality.naturalness.confidence > 0 && (() => {
                       const nat = entry.quality.naturalness
-                      const ratio = parseFloat(nat.detail?.match(/ratio=([\d.]+)/)?.[1] || '0')
-                      const ppl = parseFloat(nat.detail?.match(/PPL=([\d.]+)/)?.[1] || '0')
-                      const baseline = parseFloat(nat.detail?.match(/baseline=([\d.]+)/)?.[1] || '0')
+                      const m = nat.detail?.match(/PPL=([\d.]+),\s*baseline=([\d.]+),\s*ratio=([\d.]+)/)
+                      const ppl = parseFloat(m?.[1] || '0')
+                      const baseline = parseFloat(m?.[2] || '0')
+                      const ratio = parseFloat(m?.[3] || '0')
                       return (
                         <Box sx={{ mt: 0.5, p: 1, bgcolor: nat.flagged ? 'warning.main' + '14' : 'success.main' + '14', borderRadius: 1, border: '1px solid', borderColor: nat.flagged ? 'warning.main' + '33' : 'success.main' + '33' }}>
                           <Typography variant="caption" fontWeight={600} color={nat.flagged ? 'warning.main' : 'success.main'}>

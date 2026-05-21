@@ -42,6 +42,31 @@ import { PROVIDER_PRESETS } from '../../types'
 import CosyVoiceTTSPanel from './CosyVoiceTTSPanel'
 import IndexTTSPanel from './IndexTTSPanel'
 
+
+function RuleSelectorCard({ selected, label, chip, chipColor, desc, onClick }: {
+  selected: boolean; label: string; chip: string; chipColor: 'primary' | 'warning'; desc: string; onClick: () => void
+}) {
+  return (
+    <Card
+      sx={{
+        flex: 1, p: 1.5, cursor: 'pointer',
+        border: selected ? '2px solid' : '1px solid',
+        borderColor: selected ? 'primary.main' : 'divider',
+        bgcolor: selected ? 'primary.lightest' : 'transparent',
+        opacity: selected ? 1 : 0.7,
+      }}
+      onClick={onClick}
+    >
+      <Typography variant="body2" fontWeight={600}>
+        {label} <Chip label={chip} size="small" color={chipColor} sx={{ height: 18, fontSize: '0.6rem' }} />
+      </Typography>
+      <Typography variant="caption" color="text.secondary" display="block">
+        {desc}
+      </Typography>
+    </Card>
+  )
+}
+
 interface StepConfigProps {
   config: PipelineConfig
   onConfigChange: <K extends keyof PipelineConfig>(key: K, value: PipelineConfig[K]) => void
@@ -598,53 +623,35 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
                   <Typography variant="body2" fontWeight={500} mb={1}>翻译规则</Typography>
                   <Box sx={{ display: 'flex', gap: 1.5 }}>
-                    <Card
-                      sx={{
-                        flex: 1, p: 1.5, cursor: 'pointer',
-                        border: config.enableNaturalnessCheck ? '1px solid' : '2px solid',
-                        borderColor: config.enableNaturalnessCheck ? 'divider' : 'primary.main',
-                        bgcolor: config.enableNaturalnessCheck ? 'transparent' : 'primary.lightest',
-                        opacity: config.enableNaturalnessCheck ? 0.7 : 1,
-                      }}
+                    <RuleSelectorCard
+                      selected={!config.enableNaturalnessCheck}
+                      label="仅语义验证"
+                      chip="推荐"
+                      chipColor="primary"
+                      desc="翻译 → MiniLM 语义核对 → 不合格重翻"
                       onClick={() => onConfigChange('enableNaturalnessCheck', false)}
-                    >
-                      <Typography variant="body2" fontWeight={600}>
-                        仅语义验证 <Chip label="推荐" size="small" color="primary" sx={{ height: 18, fontSize: '0.6rem' }} />
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        翻译 → MiniLM 语义核对 → 不合格重翻
-                      </Typography>
-                    </Card>
-                    <Card
-                      sx={{
-                        flex: 1, p: 1.5, cursor: 'pointer',
-                        border: config.enableNaturalnessCheck ? '2px solid' : '1px solid',
-                        borderColor: config.enableNaturalnessCheck ? 'primary.main' : 'divider',
-                        bgcolor: config.enableNaturalnessCheck ? 'primary.lightest' : 'transparent',
-                        opacity: config.enableNaturalnessCheck ? 1 : 0.7,
-                      }}
+                    />
+                    <RuleSelectorCard
+                      selected={config.enableNaturalnessCheck}
+                      label="语义 + 自然度联合验证"
+                      chip="实验性"
+                      chipColor="warning"
+                      desc="+ PPL 自然度检查 → 重翻 → 联合公式闭环"
                       onClick={() => onConfigChange('enableNaturalnessCheck', true)}
-                    >
-                      <Typography variant="body2" fontWeight={600}>
-                        语义 + 自然度联合验证 <Chip label="实验性" size="small" color="warning" sx={{ height: 18, fontSize: '0.6rem' }} />
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        + PPL 自然度检查 → 重翻 → 联合公式闭环
-                      </Typography>
-                    </Card>
+                    />
                   </Box>
                   {config.enableNaturalnessCheck && (
                     <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 2 }}>
                       <Box>
                         <Box display="flex" justifyContent="space-between">
                           <Typography variant="body2">PPL 自然度阈值</Typography>
-                          <Typography variant="body2" fontWeight={600} color="primary">{(config as any).naturalnessThreshold ?? 3.0}x</Typography>
+                          <Typography variant="body2" fontWeight={600} color="primary">{config.naturalnessThreshold}x</Typography>
                         </Box>
                         <Slider
-                          value={(config as any).naturalnessThreshold ?? 3.0}
+                          value={config.naturalnessThreshold}
                           min={1.5} max={6.0} step={0.5}
                           marks={[{ value: 2, label: '2x' }, { value: 3, label: '3x' }, { value: 4, label: '4x' }, { value: 5, label: '5x' }]}
-                          onChange={(_, v) => onConfigChange('naturalnessThreshold' as any, v as number)}
+                          onChange={(_, v) => onConfigChange('naturalnessThreshold', v as number)}
                           sx={{ width: 160 }}
                         />
                       </Box>
