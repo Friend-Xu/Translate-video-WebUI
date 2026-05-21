@@ -16,7 +16,9 @@ import os
 import re
 from tqdm import tqdm
 from pipeline.utils import safe_replace
+import subprocess
 import sys
+import tempfile
 import queue
 import threading
 from dataclasses import dataclass, field
@@ -318,6 +320,66 @@ class TtsPipeline:
             logger.warning("Color_audio.WAV 提取失败: %s，回退到完整 vocals", e)
             return None
 
+    def _extract_emotion_prompts(self, vocals_path: str,
+                                  subs_translated: list) -> dict:
+        """Emotion analysis: emotion2vec -> per-segment ChatTTS prompts.
+
+        Returns dict mapping (start_ms, end_ms) -> prompt_string.
+        Only called when enable_emotion=True and engine_type=chattts.
+        """
+        prompts: dict = {}
+        from funasr import AutoModel
+
+        # Emotion -> ChatTTS prompt mapping
+        _EMO_MAP = {
+            "生气/angry":(3,0,2),"厌恶/disgusted":(1,0,4),"恐惧/fearful":(2,0,4),
+            "开心/happy":(6,1,4),"中立/neutral":(2,0,5),"其他/other":(2,0,5),
+            "难过/sad":(1,0,6),"吃惊/surprised":(4,0,3),"<unk>":(2,0,5),
+        }
+        _LABELS = [
+            "生气/angry","厌恶/disgusted","恐惧/fearful","开心/happy",
+            "中立/neutral","其他/other","难过/sad","吃惊/surprised","<unk>",
+        ]
+
+        def _scores_to_prompt(scores):
+            oral = sum(_EMO_MAP[l][0]*s for l,s in zip(_LABELS,scores) if l in _EMO_MAP)
+            laugh = sum(_EMO_MAP[l][1]*s for l,s in zip(_LABELS,scores) if l in _EMO_MAP)
+            brk = sum(_EMO_MAP[l][2]*s for l,s in zip(_LABELS,scores) if l in _EMO_MAP)
+            return f"[oral_{max(0,min(9,int(round(oral))))}][laugh_{max(0,min(2,int(round(laugh))))}][break_{max(0,min(7,int(round(brk))))}]"
+
+        model = AutoModel(
+            model="iic/emotion2vec_plus_large", hub="ms", disable_update=True)
+
+        for start_ms, end_ms, text in subs_translated:
+            dur_s = (end_ms - start_ms) / 1000.0
+            if dur_s < 1.0:
+                prompts[(start_ms, end_ms)] = "[oral_0][break_5]"
+                continue
+            try:
+                seg_wav = tempfile.mktemp(suffix=".wav")
+                subprocess.run([
+                    "ffmpeg", "-y", "-v", "quiet",
+                    "-i", vocals_path,
+                    "-ss", str(start_ms / 1000),
+                    "-t", str(dur_s + 0.1),
+                    "-ac", "1", "-ar", "16000",
+                    seg_wav,
+                ], check=True)
+                result = model.generate(
+                    input=seg_wav, output_dir=None, granularity="utterance")
+                if result and len(result) > 0:
+                    prompts[(start_ms, end_ms)] = _scores_to_prompt(
+                        result[0]["scores"])
+                else:
+                    prompts[(start_ms, end_ms)] = "[oral_0][break_5]"
+                os.unlink(seg_wav)
+            except Exception:
+                prompts[(start_ms, end_ms)] = "[oral_0][break_5]"
+
+        n_unique = len(set(prompts.values()))
+        logger.info("情感分析完成: %d 段, %d 种不同 prompt", len(prompts), n_unique)
+        return prompts
+
     # ── 默认组件工厂 ──────────────────────────────────
 
     def _default_engine(self):
@@ -611,6 +673,7 @@ class TtsPipeline:
                     _synth_kwargs['target_length_ms'] = float(end - start)
                 wav_time = engine.synthesize(
                     task["text_cn"], output_audio_path, f"+{self.config.base_speed}%",
+                    emotion=_emo_prompts.get((start, end)),
                     **_synth_kwargs,
                 )
 
@@ -928,14 +991,31 @@ class TtsPipeline:
             video, instrumental_path, subs_translated, total_duration, _extract_instrumental_segment
         )
 
+        # ── 情感分析（可选，仅 ChatTTS）──
+        _emo_prompts: dict = {}
+        if (self.config.enable_emotion
+                and self.config.engine_type == "chattts"):
+            vocals = self._find_vocals(video_path)
+            if vocals:
+                _emo_prompts = self._extract_emotion_prompts(
+                    vocals, subs_translated)
+
         # ── Global 模式：全局统一调速 ─────────────────
         if self.config.speed_mode == "global":
             from pipeline.speed_strategy import create_strategy, StrategyContext
 
+            _emo_re = re.compile(r"^TTS_(\d+)_(\d+)")
+
             def _synth_fn(text: str, path: str, rate: str) -> float:
                 engine = self._borrow_engine()
                 try:
-                    return engine.synthesize(text, path, rate)
+                    emotion = None
+                    if _emo_prompts:
+                        m = _emo_re.search(os.path.basename(path))
+                        if m:
+                            key = (int(m.group(1)), int(m.group(2)))
+                            emotion = _emo_prompts.get(key)
+                    return engine.synthesize(text, path, rate, emotion=emotion)
                 finally:
                     self._return_engine(engine)
 
