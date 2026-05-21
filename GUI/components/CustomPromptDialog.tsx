@@ -113,7 +113,7 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange, join
     '新译文：'
 
   const SYSTEM_DEFAULTS: Record<string, string> = {
-    'system': `你是专业${srcLabel}字幕翻译。请将以下${srcLabel}逐条翻译为${tgtLabel}。\n\n要求：\n1. 准确传达原文含义，上下文连贯\n2. 输出格式必须严格为 <index> 译文（如 <1> 大家好）\n   编号数量和顺序必须与输入完全一致\n   每条独立成行，不要合并\n   不要添加任何额外说明或标注\n\n【运行时】\n待翻译：\n<1> <第一条字幕原文>\n<2> <第二条字幕原文>\n...\n\n翻译：`,
+    'system': `你是专业${srcLabel}字幕翻译。请将以下${srcLabel}逐条翻译为${tgtLabel}。\n\n要求：\n1. 准确传达原文含义，上下文连贯\n2. 输出格式必须严格为 <index> 译文（如 <1> 大家好）\n   编号数量和顺序必须与输入完全一致\n   每条独立成行，不要合并\n   不要添加任何额外说明或标注\n3. 不要添加解释性内容：不在译文后加括号标注英文原文、不增补版本号或日期等解释性后缀\n4. 保持原文的叙述节奏和句式结构，直译优先，不要改写为说明书式语言\n\n【运行时】\n待翻译：\n<1> <第一条字幕原文>\n<2> <第二条字幕原文>\n...\n\n翻译：`,
     'semantic_retry': `你是专业翻译。请将以下${srcLabel}字幕翻译成${tgtLabel}。\n请结合上下文理解原文含义，用自然流畅的语言准确表达。\n输出只有译文本身，不要添加任何说明。${RUNTIME_CONTEXT_HINT}`,
     'naturalness_retry': `你是专业翻译。请将以下${srcLabel}字幕重新翻译成更自然、更地道的${tgtLabel}。\n用日常交流的口吻表达，避免翻译腔（直译/逐字翻译）。\n输出只有译文本身，不要添加任何说明。${RUNTIME_CONTEXT_HINT}`,
   }
