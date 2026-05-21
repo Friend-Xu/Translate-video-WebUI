@@ -558,6 +558,7 @@ def step_tts(
     cosyvoice_tts_prompt_text: str | None = None,
     cosyvoice_tts_mode: str | None = None,
     cosyvoice_tts_lang: str | None = None,
+    enable_emotion: bool | None = None,
 ) -> None:
     """步骤 3: TTS 合成 + 视频合并（新管线 TtsPipeline）
 
@@ -606,6 +607,8 @@ def step_tts(
     cfg = TTSConfig.from_yaml(config_path) if config_path and os.path.isfile(config_path) else TTSConfig()
 
     cfg.engine_type = engine
+    if enable_emotion is not None:
+        cfg.enable_emotion = enable_emotion
 
     # 目标语言：从 translate.yaml 读取并写入 TTSConfig（驱动 EdgeTTS 语音自动选择）
     translate_yaml = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
@@ -862,6 +865,8 @@ def main():
                         help="CosyVoice TTS 合成模式 (固定 cross_lingual)")
     parser.add_argument("--cosyvoice-tts-lang", default=None,
                         help="CosyVoice TTS 语言标签 (zh/en/ja/ko/yue)")
+    parser.add_argument("--enable-emotion", action="store_true", default=None,
+                        help="启用情感分析 (仅 ChatTTS). 不传则使用配置文件值")
     parser.add_argument("--skip-extract", action="store_true",
                         help="跳过字幕提取")
     parser.add_argument("--skip-defect-check", action="store_true",
@@ -1042,6 +1047,7 @@ def main():
                 cosyvoice_tts_prompt_text=args.cosyvoice_tts_prompt_text,
                 cosyvoice_tts_mode=args.cosyvoice_tts_mode,
                 cosyvoice_tts_lang=args.cosyvoice_tts_lang,
+                enable_emotion=args.enable_emotion,
             )
         else:
             print("[3/3] TTS 合成 — 已跳过 (--skip-tts)")

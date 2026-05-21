@@ -351,7 +351,16 @@ class TtsPipeline:
             oral = sum(_EMO_MAP[l][0]*s for l,s in zip(_LABELS,scores) if l in _EMO_MAP)
             laugh = sum(_EMO_MAP[l][1]*s for l,s in zip(_LABELS,scores) if l in _EMO_MAP)
             brk = sum(_EMO_MAP[l][2]*s for l,s in zip(_LABELS,scores) if l in _EMO_MAP)
-            return f"[oral_{max(0,min(9,int(round(oral))))}][laugh_{max(0,min(2,int(round(laugh))))}][break_{max(0,min(7,int(round(brk))))}]"
+            oral_val = max(0, min(9, int(round(oral))))
+            # 笑声门控: happy 分 ≥ 0.8（仅高置信度）且 oral ≥ 4（足够口语化）
+            if laugh >= 0.8 and oral_val >= 4:
+                laugh_val = 1
+            elif laugh >= 1.5:
+                laugh_val = 2
+            else:
+                laugh_val = 0
+            brk_val = max(0, min(7, int(round(brk))))
+            return f"[oral_{oral_val}][laugh_{laugh_val}][break_{brk_val}]"
 
         model = AutoModel(
             model="iic/emotion2vec_plus_large", hub="ms", disable_update=True)
@@ -434,7 +443,8 @@ class TtsPipeline:
             try:
                 with open(json_path, "r", encoding="utf-8") as f:
                     cached = json.load(f)
-                if cached.get("segment_count") == n_segments:
+                if (cached.get("segment_count") == n_segments
+                        and cached.get("version", 1) >= 2):
                     prompts = {}
                     for k, v in cached["segments"].items():
                         prompts[(v["start_ms"], v["end_ms"])] = v["prompt"]
@@ -454,7 +464,7 @@ class TtsPipeline:
         try:
             os.makedirs(output_dir, exist_ok=True)
             cached = {
-                "version": 1,
+                "version": 2,
                 "engine": "emotion2vec",
                 "model": "iic/emotion2vec_plus_large",
                 "segment_count": n_segments,
@@ -762,7 +772,7 @@ class TtsPipeline:
                     _synth_kwargs['target_length_ms'] = float(end - start)
                 wav_time = engine.synthesize(
                     task["text_cn"], output_audio_path, f"+{self.config.base_speed}%",
-                    emotion=_emo_prompts.get((start, end)),
+                    emotion=self._emo_prompts.get((start, end)),
                     **_synth_kwargs,
                 )
 
@@ -1081,12 +1091,12 @@ class TtsPipeline:
         )
 
         # ── 情感分析（可选，仅 ChatTTS）──
-        _emo_prompts: dict = {}
+        self._emo_prompts: dict = {}
         if (self.config.enable_emotion
                 and self.config.engine_type == "chattts"):
             vocals = self._find_vocals(video_path)
             if vocals:
-                _emo_prompts = self._load_or_extract_emotion_prompts(
+                self._emo_prompts = self._load_or_extract_emotion_prompts(
                     vocals, subs_translated,
                     output_dir=self.config.output_dir)
 
@@ -1100,11 +1110,11 @@ class TtsPipeline:
                 engine = self._borrow_engine()
                 try:
                     emotion = None
-                    if _emo_prompts:
+                    if self._emo_prompts:
                         m = _emo_re.search(os.path.basename(path))
                         if m:
                             key = (int(m.group(1)), int(m.group(2)))
-                            emotion = _emo_prompts.get(key)
+                            emotion = self._emo_prompts.get(key)
                     return engine.synthesize(text, path, rate, emotion=emotion)
                 finally:
                     self._return_engine(engine)

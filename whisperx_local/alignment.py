@@ -405,9 +405,9 @@ def get_trellis(emission, tokens, blank_id=0):
         # (digits/symbols not in wav2vec2 phoneme vocabulary).
         # Clamp to valid range and replace wildcard scores with max emission.
         tt = torch.as_tensor(tokens, dtype=torch.long, device=emission.device)
-        safe = tt.clamp(min=0, max=emission.size(0) - 1)
+        safe = tt.clamp(min=0, max=emission.size(1) - 1)
         token_scores = emission[t, safe].clone()
-        wild_mask = (tt < 0) | (tt >= emission.size(0))
+        wild_mask = (tt < 0) | (tt >= emission.size(1))
         if wild_mask.any().item():
             token_scores[wild_mask] = emission[t].max()
         trellis[t + 1, 1:] = torch.maximum(

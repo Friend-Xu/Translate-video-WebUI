@@ -257,7 +257,7 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
   const [sessionMeta, setSessionMeta] = useState<{
     videoPath: string; sourceSrtPath: string; translatedSrtPath: string
   } | null>(null)
-  const [filterMode, setFilterMode] = useState<'all' | 'pending' | 'flagged' | 'semantic' | 'review_critical'>('all')
+  const [filterMode, setFilterMode] = useState<'all' | 'pending' | 'flagged' | 'semantic' | 'naturalness' | 'review_critical'>('all')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -307,6 +307,7 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
     if (filterMode === 'pending') result = result.filter(e => e.reviewStatus === 'pending')
     else if (filterMode === 'flagged') result = result.filter(e => e.issues.length > 0)
     else if (filterMode === 'semantic') result = result.filter(e => e.semanticFlagged != null)
+    else if (filterMode === 'naturalness') result = result.filter(e => e.quality?.naturalness?.flagged === true)
     else if (filterMode === 'review_critical') result = result.filter(e => e.tier === 'review' || e.tier === 'critical')
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase()
@@ -320,6 +321,7 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
 
   const approvedCount = useMemo(() => entries.filter(e => e.reviewStatus === 'approved').length, [entries])
   const semanticCount = useMemo(() => entries.filter(e => e.semanticFlagged != null).length, [entries])
+  const naturalnessCount = useMemo(() => entries.filter(e => e.quality?.naturalness?.flagged === true).length, [entries])
   const modifiedCount = useMemo(() => entries.filter(e => e.reviewStatus === 'modified').length, [entries])
   const flaggedCount = useMemo(() => entries.filter(e => e.issues.length > 0).length, [entries])
   const reviewCritCount = useMemo(() => entries.filter(e => e.tier === 'review' || e.tier === 'critical').length, [entries])
@@ -832,6 +834,7 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
       if (e.key === '2') { e.preventDefault(); setFilterMode('pending'); return }
       if (e.key === '3') { e.preventDefault(); setFilterMode('flagged'); return }
       if (e.key === '4') { e.preventDefault(); setFilterMode('semantic'); return }
+      if (e.key === '5') { e.preventDefault(); setFilterMode('naturalness'); return }
 
       if (e.key === 'Escape') {
         setSelectedIndices(new Set())
@@ -940,6 +943,11 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
             <ToggleButton value="semantic" sx={{ px: 1.5 }}>
               语义<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>{semanticCount}</Box>
             </ToggleButton>
+            {naturalnessCount > 0 && (
+              <ToggleButton value="naturalness" sx={{ px: 1.5 }} color="warning">
+                自然度<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>{naturalnessCount}</Box>
+              </ToggleButton>
+            )}
             {reviewCritCount > 0 && (
               <ToggleButton value="review_critical" sx={{ px: 1.5 }} color="error">
                 质量<Box component="span" sx={{ ml: 0.5, opacity: 0.4, fontSize: '0.65rem' }}>{reviewCritCount}</Box>

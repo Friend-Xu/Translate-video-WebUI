@@ -1,0 +1,222 @@
+{
+  "source": {
+    "audio": "D:\\Workspace\\Translate_video\\source_file\\test_project\\01_extract\\vocals.wav",
+    "srt": "D:\\Workspace\\Translate_video\\source_file\\test_project\\02_translate\\machine.srt"
+  },
+  "global": {
+    "top_emotions": [
+      [
+        "<unk>",
+        0.5788
+      ],
+      [
+        "开心/happy",
+        0.2114
+      ],
+      [
+        "中立/neutral",
+        0.1799
+      ]
+    ],
+    "prompt": "[oral_3][laugh_0][break_5]",
+    "elapsed_s": 0.61
+  },
+  "segments": [
+    {
+      "index": 1,
+      "start_sec": 0.0,
+      "end_sec": 8.0,
+      "duration": 8.0,
+      "text": "今天，伙计们，我们将看到 10 个适用于 1.19 以及当然还有 1.18 的最佳 Minecraft 整合包。",
+      "emotion": {
+        "top_label": "中立/neutral",
+        "top_score": 0.9426,
+        "top3": [
+          [
+            "中立/neutral",
+            0.9426
+          ],
+          [
+            "<unk>",
+            0.0339
+          ],
+          [
+            "开心/happy",
+            0.0194
+          ]
+        ],
+        "all_scores": [
+          0.0003,
+          0.0024,
+          0.0007,
+          0.0194,
+          0.9426,
+          0.0002,
+          0.0002,
+          0.0003,
+          0.0339
+        ]
+      },
+      "prompt": "[oral_2][laugh_0][break_5]",
+      "elapsed_s": 0.041
+    },
+    {
+      "index": 2,
+      "start_sec": 8.259,
+      "end_sec": 19.859,
+      "duration": 11.6,
+      "text": "现在确实每天都会新增大量全新的整合包，但不幸的是，并非所有整合包都已为 1.19 进行优化，所以这也是我们还会纳入一些来自 1.18 的整合包的原因。",
+      "emotion": {
+        "top_label": "中立/neutral",
+        "top_score": 0.892,
+        "top3": [
+          [
+            "中立/neutral",
+            0.892
+          ],
+          [
+            "<unk>",
+            0.0971
+          ],
+          [
+            "厌恶/disgusted",
+            0.0041
+          ]
+        ],
+        "all_scores": [
+          0.0013,
+          0.0041,
+          0.0003,
+          0.0035,
+          0.892,
+          0.0007,
+          0.001,
+          0.0001,
+          0.0971
+        ]
+      },
+      "prompt": "[oral_2][laugh_0][break_5]",
+      "elapsed_s": 0.098
+    },
+    {
+      "index": 3,
+      "start_sec": 20.1,
+      "end_sec": 24.239,
+      "duration": 4.139,
+      "text": "但我向你们保证，这些是目前可用的 10 个最佳整合包。",
+      "emotion": {
+        "top_label": "开心/happy",
+        "top_score": 0.9501,
+        "top3": [
+          [
+            "开心/happy",
+            0.9501
+          ],
+          [
+            "<unk>",
+            0.041
+          ],
+          [
+            "中立/neutral",
+            0.0031
+          ]
+        ],
+        "all_scores": [
+          0.0005,
+          0.002,
+          0.0008,
+          0.9501,
+          0.0031,
+          0.0001,
+          0.0002,
+          0.0023,
+          0.041
+        ]
+      },
+      "prompt": "[oral_6][laugh_1][break_4]",
+      "elapsed_s": 0.036
+    },
+    {
+      "index": 4,
+      "start_sec": 24.359,
+      "end_sec": 31.42,
+      "duration": 7.061,
+      "text": "确保你们全程观看，因为这些整合包只会越来越好，你是不会错过目前最好的整合包。",
+      "emotion": {
+        "top_label": "开心/happy",
+        "top_score": 0.8157,
+        "top3": [
+          [
+            "开心/happy",
+            0.8157
+          ],
+          [
+            "<unk>",
+            0.1569
+          ],
+          [
+            "中立/neutral",
+            0.0207
+          ]
+        ],
+        "all_scores": [
+          0.0008,
+          0.0027,
+          0.0005,
+          0.8157,
+          0.0207,
+          0.0017,
+          0.0008,
+          0.0001,
+          0.1569
+        ]
+      },
+      "prompt": "[oral_5][laugh_1][break_4]",
+      "elapsed_s": 0.031
+    },
+    {
+      "index": 5,
+      "start_sec": 31.539,
+      "end_sec": 40.64,
+      "duration": 9.101,
+      "text": "但我们从 Mayan Colonies 开始列举，这个目前适用于 1.19.2，已有超过 70 万次下载。",
+      "emotion": {
+        "top_label": "中立/neutral",
+        "top_score": 0.9987,
+        "top3": [
+          [
+            "中立/neutral",
+            0.9987
+          ],
+          [
+            "开心/happy",
+            0.0005
+          ],
+          [
+            "<unk>",
+            0.0005
+          ]
+        ],
+        "all_scores": [
+          0.0001,
+          0.0001,
+          0.0,
+          0.0005,
+          0.9987,
+          0.0001,
+          0.0,
+          0.0,
+          0.0005
+        ]
+      },
+      "prompt": "[oral_2][laugh_0][break_5]",
+      "elapsed_s": 0.04
+    }
+  ],
+  "summary": {
+    "total_segments": 5,
+    "extracted": 5,
+    "skipped": 0,
+    "failed": 0
+  }
+}

@@ -52,6 +52,9 @@ interface PipelinePanelProps {
   onContinueTTS?: () => void
   onFileDropped?: (file: File) => void
   onOpenOutputFolder?: () => void
+  logFirstIndex?: number
+  logTotal?: number
+  onLoadOlderLogs?: () => void
 }
 
 const statusChipColor: Record<string, 'default' | 'primary' | 'success' | 'error' | 'warning'> = {
@@ -84,6 +87,7 @@ export function PipelinePanel({
   onContinueTTS,
   onFileDropped,
   onOpenOutputFolder,
+  logFirstIndex, logTotal, onLoadOlderLogs,
 }: PipelinePanelProps) {
 
   const isRunning = status.state === 'running' || batch.status === 'running'
@@ -507,7 +511,7 @@ export function PipelinePanel({
             {controlsCard}
           </Grid>
           <Grid size={{ xs: 12, md: 7 }}>
-            <LogPanel logs={logs} showTitle={false} reviewEnabled={translationComplete} onStartReview={onStartReview} connectionState={connectionState} />
+            <LogPanel logs={logs} showTitle={false} reviewEnabled={translationComplete} onStartReview={onStartReview} connectionState={connectionState} logFirstIndex={logFirstIndex} logTotal={logTotal} onLoadOlder={onLoadOlderLogs} />
           </Grid>
         </Grid>
       ) : (
@@ -585,7 +589,7 @@ export function PipelinePanel({
             {controlsCard}
           </Grid>
           <Grid size={{ xs: 12, md: 7 }}>
-            <LogPanel logs={logs} showTitle={false} headerLabel={logHeaderLabel} reviewEnabled={translationComplete} onStartReview={onStartReview} connectionState={connectionState} />
+            <LogPanel logs={logs} showTitle={false} headerLabel={logHeaderLabel} reviewEnabled={translationComplete} onStartReview={onStartReview} connectionState={connectionState} logFirstIndex={logFirstIndex} logTotal={logTotal} onLoadOlder={onLoadOlderLogs} />
           </Grid>
         </Grid>
       )}

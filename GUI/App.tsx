@@ -24,7 +24,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('主界面')
   const [mode, setMode] = useState<PipelineMode>('single')
   const { config, updateConfig, resetConfig } = useConfig()
-  const { status, logs, appendLog, handleDone, startPipeline, cancelPipeline } = usePipeline()
+  const { status, logs, appendLog, handleDone, startPipeline, cancelPipeline, logFirstIndex, logTotal, loadOlderLogs } = usePipeline()
   const {
     batch, activeVideoJobId,
     startBatch, cancelBatch, skipCurrent,
@@ -321,6 +321,9 @@ export default function App() {
               onContinueTTS={handleContinueTTS}
               onFileDropped={handleFileDropped}
               onOpenOutputFolder={handleOpenOutputFolder}
+              logFirstIndex={logFirstIndex.current}
+              logTotal={logTotal.current}
+              onLoadOlderLogs={() => loadOlderLogs(status.jobId)}
             />
           </KeepAliveSection>
           <KeepAliveSection active={activeTab === '步骤配置'}>

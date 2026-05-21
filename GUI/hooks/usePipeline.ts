@@ -2,6 +2,25 @@ import { useState, useCallback, useRef } from 'react'
 import type { PipelineConfig, PipelineStatus, LogEntry } from '../types'
 
 const API = '/api/pipeline'
+const MAX_WINDOW = 500      // max loaded entries in memory
+const TAIL_LIMIT = 200       // initial fetch size
+const PAGE_LIMIT = 200       // scroll-up page size
+
+let _nextId = 1              // global monotonic counter for unique keys
+
+function nextId(): number { return _nextId++ }
+
+/** Parse a raw log line into a LogEntry. Mirrors the parsing in useSSE.ts. */
+function parseLine(raw: string): LogEntry {
+  const match = raw.match(/^\[(\w+)\s*\]\s*(.*)/)
+  let level: LogEntry['level'] = (match?.[1] || 'INFO') as LogEntry['level']
+  let message = match?.[2] || raw
+  if (message.includes('[STAGE]')) {
+    level = 'STAGE'
+    message = message.replace('[STAGE] ', '')
+  }
+  return { _id: nextId(), level, message, timestamp: new Date().toLocaleTimeString() }
+}
 
 export function usePipeline() {
   const [status, setStatus] = useState<PipelineStatus>({
@@ -9,28 +28,100 @@ export function usePipeline() {
   })
   const [logs, setLogs] = useState<LogEntry[]>([])
 
+  // Virtual window: logs array is a sliding window into the full log file.
+  // firstItemIndex is 0 during auto-follow; only set when prepending history.
+  const firstItemIndex = useRef(0)
+  // Global index of logs[0] in the full file — used internally for range lookups.
+  // Always tracks the real position, even when firstItemIndex (the Virtuoso prop) is 0.
+  const headGlobalIndex = useRef(0)
+  const totalLines = useRef(0)
+  const loadingOlder = useRef(false)
+
   const _buf = useRef<LogEntry[]>([])
   const _timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const flushBatch = useCallback(() => {
+    if (_buf.current.length === 0) return
+    setLogs(prev => {
+      const next = [...prev, ..._buf.current]
+      if (next.length > MAX_WINDOW) {
+        const trim = next.length - MAX_WINDOW
+        headGlobalIndex.current += trim
+        // Don't change firstItemIndex during auto-follow — avoids Virtuoso jitter
+        return next.slice(trim)
+      }
+      return next
+    })
+    totalLines.current += _buf.current.length
+    _buf.current = []
+    _timer.current = null
+  }, [])
+
   const appendLog = useCallback((entry: LogEntry) => {
+    // Ensure unique id
+    if (entry._id == null) entry._id = nextId()
     _buf.current.push(entry)
     if (_timer.current === null) {
-      _timer.current = setTimeout(() => {
-        setLogs(prev => [...prev, ..._buf.current].slice(-500))
-        _buf.current = []
-        _timer.current = null
-      }, 250)
+      _timer.current = setTimeout(flushBatch, 500)
+    }
+  }, [flushBatch])
+
+  // Load initial tail from workspace log file
+  const loadLogTail = useCallback(async (jobId: string) => {
+    try {
+      const res = await fetch(`${API}/${jobId}/logs/tail?limit=${TAIL_LIMIT}`)
+      if (!res.ok) return
+      const data = await res.json()
+      const entries: LogEntry[] = (data.lines || []).map(parseLine)
+      if (entries.length > 0) {
+        setLogs(entries)
+        totalLines.current = data.total || entries.length
+        headGlobalIndex.current = Math.max(0, totalLines.current - entries.length)
+        firstItemIndex.current = 0  // auto-follow mode, don't expose to Virtuoso
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  // Load older entries when user scrolls to top (startReached)
+  const loadOlderLogs = useCallback(async (jobId: string | null) => {
+    if (!jobId || loadingOlder.current) return
+    // Use headGlobalIndex (real position) for range lookup
+    const before = headGlobalIndex.current
+    if (before <= 0) return
+
+    loadingOlder.current = true
+    try {
+      const res = await fetch(`${API}/${jobId}/logs/range?before=${before}&limit=${PAGE_LIMIT}`)
+      if (!res.ok) return
+      const data = await res.json()
+      const olderEntries: LogEntry[] = (data.lines || []).map(parseLine)
+      if (olderEntries.length > 0) {
+        setLogs(prev => {
+          const next = [...olderEntries, ...prev]
+          if (next.length > MAX_WINDOW) {
+            return next.slice(0, MAX_WINDOW)
+          }
+          return next
+        })
+        const newFirst = data.first ?? (before - olderEntries.length)
+        headGlobalIndex.current = newFirst
+        firstItemIndex.current = newFirst  // set only when prepending
+      }
+    } catch { /* ignore */ }
+    finally {
+      loadingOlder.current = false
     }
   }, [])
 
   const handleDone = useCallback((finalStatus: string) => {
+    flushBatch()
     setStatus(prev => ({
       ...prev,
       state: finalStatus as PipelineStatus['state'],
       progress: finalStatus === 'completed' ? 100 : prev.progress,
       currentStep: finalStatus === 'completed' ? '处理完成' : '处理结束',
     }))
-  }, [])
+  }, [flushBatch])
 
   // Poll status while running
   const pollStatus = useCallback(async (jobId: string) => {
@@ -55,6 +146,9 @@ export function usePipeline() {
 
   const startPipeline = useCallback(async (config: PipelineConfig) => {
     setLogs([])
+    firstItemIndex.current = 0
+    headGlobalIndex.current = 0
+    totalLines.current = 0
     setStatus({ state: 'running', progress: 5, currentStep: '启动中...', jobId: null, detail: '' })
 
     try {
@@ -81,7 +175,6 @@ export function usePipeline() {
           chattts_workers: config.chatttsWorkers,
           skip_align: !config.enableAlignment,
           align_lang: config.lang !== 'auto' ? config.lang : '',
-          // Caption rendering params (all 13)
           caption_font: config.captionFont,
           caption_font_size_mode: config.captionFontSizeMode,
           caption_font_size: config.captionFontSize,
@@ -127,13 +220,16 @@ export function usePipeline() {
 
       const { job_id } = await res.json()
       setStatus(prev => ({ ...prev, jobId: job_id, currentStep: '流水线运行中...' }))
+
+      // Load initial log tail from file, then start polling + SSE
+      await loadLogTail(job_id)
       pollStatus(job_id)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setStatus({ state: 'failed', progress: 0, currentStep: '启动失败', jobId: null, detail: '' })
       appendLog({ level: 'ERROR', message: msg, timestamp: new Date().toLocaleTimeString() })
     }
-  }, [appendLog, pollStatus])
+  }, [appendLog, pollStatus, loadLogTail])
 
   const cancelPipeline = useCallback(async () => {
     if (!status.jobId) return
@@ -151,5 +247,8 @@ export function usePipeline() {
     handleDone,
     startPipeline,
     cancelPipeline,
+    logFirstIndex: firstItemIndex,
+    logTotal: totalLines,
+    loadOlderLogs,
   }
 }

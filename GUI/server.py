@@ -201,6 +201,8 @@ class Job:
     _queues: list[asyncio.Queue] = field(default_factory=list)
     _pending_save: int = 0
     _loop: asyncio.AbstractEventLoop | None = None
+    _log_file: object | None = None    # open file handle for {workspace}/pipeline.log
+    _log_lock: object | None = None    # threading.Lock for file writes
 
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue()
@@ -213,6 +215,31 @@ class Job:
         except ValueError:
             pass
 
+    def open_log_file(self, workspace: str) -> None:
+        """Open workspace log file for append."""
+        import threading
+        os.makedirs(workspace, exist_ok=True)
+        self._log_file = open(os.path.join(workspace, "pipeline.log"), "a", encoding="utf-8")
+        self._log_lock = threading.Lock()
+
+    def close_log_file(self) -> None:
+        """Close workspace log file."""
+        if self._log_file is not None:
+            self._log_file.close()
+            self._log_file = None
+        self._log_lock = None
+
+    @property
+    def log_file_path(self) -> str | None:
+        """Absolute path to workspace log file, if available."""
+        if self._log_file is not None:
+            return self._log_file.name
+        # Fallback: derive from video_path
+        if self.video_path:
+            stem = os.path.splitext(os.path.basename(self.video_path))[0]
+            return os.path.join(os.path.dirname(self.video_path), f"{stem}_project", "pipeline.log")
+        return None
+
     def append_log(self, line: str) -> None:
         # 跳过 tqdm 进度条行（每秒数十条，无信息价值）
         if re.match(r'^\s*\d+%\|', line):
@@ -223,6 +250,16 @@ class Job:
         if not line.strip():
             return
         self.logs.append(line)
+        # 内存封顶 500 条
+        if len(self.logs) > 500:
+            self.logs = self.logs[-500:]
+
+        # 写入 workspace pipeline.log（线程安全）
+        if self._log_file is not None and self._log_lock is not None:
+            with self._log_lock:
+                self._log_file.write(line + "\n")
+                self._log_file.flush()
+
         # Parse step hints from stdout for progress
         lower = line.lower()
         if "[1/4]" in line or "字幕提取" in line:
@@ -240,7 +277,7 @@ class Job:
         if "[ok]" in lower:
             self.progress = min(self.progress + 10, 95)
 
-        # 批量写磁盘：每 50 条日志保存一次
+        # 批量写磁盘：每 50 条日志保存一次（仅保存元信息，不保存全量日志）
         self._pending_save += 1
         if self._pending_save >= 50:
             _save_job(self)
@@ -330,7 +367,7 @@ def _save_job(job: Job) -> None:
             "status": job.status,
             "progress": job.progress,
             "current_step": job.current_step,
-            "logs": job.logs[-200:],
+            "logs_tail": job.logs[-10:],   # only last 10 lines for preview; full log in workspace pipeline.log
             "video_path": job.video_path,
             "created_at": job.created_at,
             "batch_id": job.batch_id,
@@ -353,7 +390,7 @@ def _load_jobs() -> dict[str, Job]:
             status=data.get("status", "failed"),
             progress=data.get("progress", 0),
             current_step=data.get("current_step", ""),
-            logs=data.get("logs", []),
+            logs=data.get("logs_tail", data.get("logs", [])),
             video_path=data.get("video_path", ""),
             created_at=data.get("created_at", ""),
             batch_id=data.get("batch_id"),
@@ -852,6 +889,11 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
     root_logger = logging.getLogger()
     root_logger.addHandler(sse_handler)
 
+    # 打开 workspace 日志文件
+    stem = os.path.splitext(os.path.basename(job.video_path))[0]
+    ws_dir = os.path.join(os.path.dirname(job.video_path), f"{stem}_project")
+    job.open_log_file(ws_dir)
+
     MAX_TRIES = 3
     try:
         for attempt in range(1, MAX_TRIES + 1):
@@ -943,6 +985,7 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
         _save_job(job)
     finally:
         root_logger.removeHandler(sse_handler)
+        job.close_log_file()
 
 
 # ---------------------------------------------------------------------------
@@ -1089,6 +1132,10 @@ async def get_status(job_id: str) -> StatusResponse:
 
 @app.get("/api/pipeline/{job_id}/logs")
 async def stream_logs(job_id: str, request: Request) -> StreamingResponse:
+    """SSE 实时日志流 — 只推送新日志，不重放历史。
+
+    前端先通过 /logs/tail 加载初始显示，再用此 SSE 收增量。
+    """
     job = _jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -1097,10 +1144,9 @@ async def stream_logs(job_id: str, request: Request) -> StreamingResponse:
 
     async def event_stream() -> AsyncIterator[str]:
         try:
-            # First, send all existing logs
-            for line in job.logs:
-                data = json.dumps({"message": line}, ensure_ascii=False)
-                yield f"data: {data}\n\n"
+            # 发送 log_file_path 供前端确认
+            if job.log_file_path:
+                yield f"event: meta\ndata: {json.dumps({'log_file': job.log_file_path})}\n\n"
 
             while True:
                 if await request.is_disconnected():
@@ -1142,6 +1188,81 @@ async def cancel_job(job_id: str) -> dict:
         job.append_log("[WARN] 任务已取消")
         _save_job(job)
     return {"ok": True}
+
+
+def _read_log_tail(file_path: str, limit: int = 200) -> list[str]:
+    """Read last N lines from a log file efficiently (seek from end)."""
+    if not os.path.isfile(file_path):
+        return []
+    with open(file_path, "rb") as f:
+        f.seek(0, 2)  # EOF
+        fsize = f.tell()
+        if fsize == 0:
+            return []
+        # Read last ~8KB or whole file, whichever is smaller
+        chunk_size = min(fsize, max(limit * 200, 8192))
+        f.seek(max(0, fsize - chunk_size))
+        raw = f.read().decode("utf-8", errors="replace")
+        lines = raw.split("\n")
+        # Strip empty trailing line from split
+        if lines and lines[-1] == "":
+            lines.pop()
+        # If we didn't read enough lines, re-read larger chunk
+        if len(lines) < limit and fsize > chunk_size:
+            chunk_size = min(fsize, chunk_size * 3)
+            f.seek(max(0, fsize - chunk_size))
+            raw = f.read().decode("utf-8", errors="replace")
+            lines = raw.split("\n")
+            if lines and lines[-1] == "":
+                lines.pop()
+        return lines[-limit:]
+
+
+def _read_log_range(file_path: str, before_line: int, limit: int = 200) -> tuple[list[str], int]:
+    """Read up to `limit` lines ending at `before_line` (0-indexed).
+
+    Returns (lines, first_line_index).
+    """
+    if not os.path.isfile(file_path):
+        return [], 0
+    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+        all_lines = f.read().split("\n")
+        if all_lines and all_lines[-1] == "":
+            all_lines.pop()
+    total = len(all_lines)
+    if before_line > total:
+        before_line = total
+    start = max(0, before_line - limit)
+    return all_lines[start:before_line], start
+
+
+@app.get("/api/pipeline/{job_id}/logs/tail")
+async def logs_tail(job_id: str, limit: int = 200) -> dict:
+    """Read last N lines from the workspace pipeline.log file."""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    file_path = job.log_file_path
+    if not file_path:
+        # Fallback to in-memory logs
+        return {"lines": job.logs[-limit:], "total": len(job.logs), "source": "memory"}
+    lines = _read_log_tail(file_path, limit)
+    # Count total lines
+    total = len(job.logs)  # approximate; for accurate count use file size
+    return {"lines": lines, "total": total, "source": "file"}
+
+
+@app.get("/api/pipeline/{job_id}/logs/range")
+async def logs_range(job_id: str, before: int = 0, limit: int = 200) -> dict:
+    """Read a range of lines before `before` index from the workspace log file."""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    file_path = job.log_file_path
+    if not file_path or not os.path.isfile(file_path):
+        return {"lines": [], "first": 0, "total": 0}
+    lines, first = _read_log_range(file_path, before, limit)
+    return {"lines": lines, "first": first, "total": len(job.logs)}
 
 
 @app.get("/api/jobs")

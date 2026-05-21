@@ -113,6 +113,7 @@ export interface PipelineStatus {
 }
 
 export interface LogEntry {
+  _id?: number   // monotonic counter for stable react keys
   level: 'INFO' | 'WARN' | 'ERROR' | 'STAGE'
   message: string
   timestamp: string
@@ -291,7 +292,7 @@ export interface ReviewSession {
   sourceSrtPath: string
   translatedSrtPath: string
   entries: SubtitleEntry[]
-  filterMode: 'all' | 'pending' | 'flagged' | 'semantic' | 'review_critical'
+  filterMode: 'all' | 'pending' | 'flagged' | 'semantic' | 'naturalness' | 'review_critical'
   qualitySummary?: {
     total: number
     tier_pass: number
