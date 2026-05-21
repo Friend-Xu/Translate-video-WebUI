@@ -412,6 +412,8 @@ def build_system_prompt(source_lang: str, fmt: str = "numbered_list", retry: boo
         "要求：",
         "1. 准确传达原文含义，上下文连贯",
         "2. " + fmt_rules,
+        "3. 不要添加解释性内容：不在译文后加括号标注英文原文、不增补版本号或日期等解释性后缀",
+        "4. 保持原文的叙述节奏和句式结构，直译优先，不要改写为说明书式语言",
     ]
 
     if not retry:
