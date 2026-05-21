@@ -321,7 +321,8 @@ class TtsPipeline:
             return None
 
     def _extract_emotion_prompts(self, vocals_path: str,
-                                  subs_translated: list) -> dict:
+                                  subs_translated: list,
+                                  output_dir: str = "") -> dict:
         """Emotion analysis: emotion2vec -> per-segment ChatTTS prompts.
 
         Returns dict mapping (start_ms, end_ms) -> prompt_string.
@@ -329,6 +330,12 @@ class TtsPipeline:
         """
         prompts: dict = {}
         from funasr import AutoModel
+
+        # Temp dir for audio slices
+        emo_dir = os.path.join(output_dir, "_emo") if output_dir else tempfile.mkdtemp()
+        os.makedirs(emo_dir, exist_ok=True)
+
+        logger.info("情感分析开始: %d 段字幕, 临时目录 %s", len(subs_translated), emo_dir)
 
         # Emotion -> ChatTTS prompt mapping
         _EMO_MAP = {
@@ -356,7 +363,7 @@ class TtsPipeline:
                 prompts[(start_ms, end_ms)] = "[oral_0][break_5]"
                 continue
             try:
-                seg_wav = tempfile.mktemp(suffix=".wav")
+                seg_wav = os.path.join(emo_dir, f"emo_{start_ms}_{end_ms}.wav")
                 subprocess.run([
                     "ffmpeg", "-y", "-v", "quiet",
                     "-i", vocals_path,
@@ -376,8 +383,15 @@ class TtsPipeline:
             except Exception:
                 prompts[(start_ms, end_ms)] = "[oral_0][break_5]"
 
+        # Cleanup: remove temp dir if empty
+        try:
+            os.rmdir(emo_dir)
+        except OSError:
+            pass  # dir not empty, leave it
+
         n_unique = len(set(prompts.values()))
-        logger.info("情感分析完成: %d 段, %d 种不同 prompt", len(prompts), n_unique)
+        logger.info("情感分析完成: %d/%d 段, %d 种不同 prompt",
+                    len(prompts), len(subs_translated), n_unique)
         return prompts
 
     # ── 默认组件工厂 ──────────────────────────────────
@@ -998,7 +1012,8 @@ class TtsPipeline:
             vocals = self._find_vocals(video_path)
             if vocals:
                 _emo_prompts = self._extract_emotion_prompts(
-                    vocals, subs_translated)
+                    vocals, subs_translated,
+                    output_dir=self.config.output_dir)
 
         # ── Global 模式：全局统一调速 ─────────────────
         if self.config.speed_mode == "global":
