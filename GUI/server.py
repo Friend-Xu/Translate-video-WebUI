@@ -677,6 +677,7 @@ class RunRequest(BaseModel):
     loudness_target_lufs: float = -16.0
     skip_align: bool = False
     align_lang: str = "ja"
+    enable_emotion: bool = False
 
 
 class RunResponse(BaseModel):
@@ -764,6 +765,7 @@ def _write_tts_runtime_config(req: RunRequest) -> str:
             "loudness_norm_enabled": req.loudness_norm_enabled,
             "loudness_target_auto": req.loudness_target_auto,
             "loudness_target_lufs": req.loudness_target_lufs,
+            "enable_emotion": req.enable_emotion,
             # Voice clone (existing — keep for backward compat)
             "cosyvoice_mode": req.cosyvoice_mode,
             "cosyvoice_model_version": req.cosyvoice_model_version,

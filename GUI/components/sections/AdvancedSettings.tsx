@@ -260,9 +260,10 @@ export function AdvancedSettings({ config, onConfigChange, showTitle = true }: A
             <Box mt={1}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <FormControlLabel
-                  control={<Checkbox size="small" checked={false} disabled />}
-                  label={<Typography variant="body2" fontWeight={500}>情感克隆</Typography>} />
-                <Chip label="开发中" size="small" color="warning" variant="outlined" />
+                  control={<Checkbox size="small" checked={config.enableEmotionClone}
+                    onChange={e => onConfigChange('enableEmotionClone', e.target.checked)} />}
+                  label={<Typography variant="body2" fontWeight={500}>情感分析</Typography>} />
+                <Chip label="ChatTTS" size="small" color="primary" variant="outlined" />
               </Box>
               <Box sx={{ ml: 3.5, mt: 0.5, opacity: config.enableEmotionClone ? 1 : 0.5, pointerEvents: config.enableEmotionClone ? 'auto' : 'none' }}>
                 <Stack spacing={1}>

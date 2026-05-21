@@ -113,6 +113,7 @@ export function usePipeline() {
           loudness_norm_enabled: config.loudnessNormEnabled,
           loudness_target_auto: config.loudnessTargetAuto,
           loudness_target_lufs: config.loudnessTargetLufs,
+          enable_emotion: config.enableEmotionClone,
           voice_clone_engine: config.enableVoiceClone ? config.voiceCloneEngine : 'none',
           voice_clone_device: config.voiceCloneDevice,
           voice_clone_concurrency: config.voiceCloneConcurrency,
