@@ -1170,8 +1170,9 @@ class SRTTranslator:
                                                         logger.warning(
                                                             f"  ↳ 索引 {sub.index}: 语义崩溃, 回退语义重试 (Tier 2)..."
                                                         )
+                                                        # 用原始正确翻译作为比较基准，而非 Tier 1 的幻觉输出
                                                         best = self._verify_and_refine(
-                                                            source, refined, sub.index, group
+                                                            source, sub.text, sub.index, group
                                                         )
                                                         sub.text = best
                                                     else:
@@ -1680,7 +1681,8 @@ class SRTTranslator:
 
         verification_mode 控制验证策略：
         - "joint_formula": Gate A (sim>=0.70) + Gate B (联合得分 β*(1-ratio)+γ*sim 提升)
-        - "logic_gate":    Gate A (sim>=0.70) + Gate B (PPL 必须下降)
+        - "logic_gate":    Gate A (sim>=0.70) + Gate C (sim_drop + 长度比, NEW)
+                           + Gate B (PPL 下降 + 长度守卫, NEW)
 
         Returns: {accepted: bool, kept: str, reason: str, new_sim, new_ratio, ...}
         """
@@ -1706,6 +1708,26 @@ class SRTTranslator:
                 return {"accepted": False, "kept": "first", "reason": "content_degraded",
                         "new_sim": new_sim, "new_ratio": 0,
                         "sim_drop": round(sim_drop, 4)}
+            # 长度比检测：借鉴 COMET-poly (2025) 用已知正确翻译作参照
+            # 比较重翻结果 vs 原始译文的相对源文长度比
+            src_len = len(source)
+            if src_len > 0 and len(old_text) > 0:
+                orig_len_ratio = len(old_text) / src_len
+                new_len_ratio = len(refined) / src_len
+                if new_len_ratio > orig_len_ratio * 2.0:
+                    return {"accepted": False, "kept": "first", "reason": "content_degraded",
+                            "new_sim": new_sim, "new_ratio": 0,
+                            "sim_drop": round(sim_drop, 4)}
+                if new_len_ratio < orig_len_ratio * 0.4:
+                    return {"accepted": False, "kept": "first", "reason": "content_degraded",
+                            "new_sim": new_sim, "new_ratio": 0,
+                            "sim_drop": round(sim_drop, 4)}
+                _orig_len_ratio = orig_len_ratio
+                _new_len_ratio = new_len_ratio
+            else:
+                _orig_len_ratio = _new_len_ratio = 1.0
+        else:
+            _orig_len_ratio = _new_len_ratio = 1.0
 
         # 计算新译文 PPL
         ppl_eval = self._get_ppl_evaluator()
@@ -1721,6 +1743,11 @@ class SRTTranslator:
         if mode == "logic_gate":
             # Gate B: 自然度改善（PPL 必须下降）
             if new_ratio < old_ratio:
+                # 长度守卫：防止删内容降 PPL 的取巧行为
+                if _new_len_ratio < _orig_len_ratio * 0.5:
+                    return {"accepted": False, "kept": "first", "reason": "content_shrunk",
+                            "new_sim": new_sim, "new_ratio": new_ratio,
+                            "improvement": 0}
                 improvement = round(old_ratio - new_ratio, 4)
                 return {"accepted": True, "kept": "second", "reason": "naturalness_improved",
                         "new_sim": new_sim, "new_ratio": new_ratio,
