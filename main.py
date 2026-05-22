@@ -387,7 +387,8 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
 def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
                    checkpoint: PipelineCheckpoint | None = None,
                    skip_semantic_validation: bool = False,
-                   skip_naturalness_check: bool = False) -> str:
+                   skip_naturalness_check: bool = False,
+                   verification_mode: str | None = None) -> str:
     """步骤 2: 翻译 + 术语替换。
 
     输出到工作目录 02_translate/machine.srt。
@@ -430,6 +431,8 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
         translator.semantic_check = False
     if skip_naturalness_check:
         translator.naturalness_check = False
+    if verification_mode:
+        translator.verification_mode = verification_mode
     auto_srt, pending = translator.translate(srt_path)
 
     if pending:
@@ -487,16 +490,11 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
         ws = workspace_paths(video)
         if ws:
             qa_cfg = _load_translate_cfg_field("quality_assessment", {})
-            qa_naturalness = (
-                qa_cfg.get("dimensions", {}).get("naturalness", {}).get("enabled", True)
-                and not skip_naturalness_check
-            )
             if qa_cfg.get("enabled", True) and not (skip_semantic_validation and skip_naturalness_check):
                 assessor = QualityAssessor(
                     ws_dir=ws["workspace"],
                     semantic_threshold=qa_cfg.get("dimensions", {}).get("semantic", {}).get("threshold", 0.70),
                     naturalness_threshold=qa_cfg.get("dimensions", {}).get("naturalness", {}).get("threshold", 3.0),
-                    naturalness_enabled=qa_naturalness,
                     source_lang=_load_translate_cfg_field("source_lang", "auto"),
                 )
                 assessor.run()
@@ -883,6 +881,9 @@ def main():
                         help="翻译完成后跳过语义校验")
     parser.add_argument("--skip-naturalness-check", action="store_true",
                         help="翻译完成后跳过自然度检查 (PPL)")
+    parser.add_argument("--verification-mode", default=None,
+                        choices=["joint_formula", "logic_gate"],
+                        help="闭环验证模式: joint_formula (联合公式) | logic_gate (逻辑门控)")
     parser.add_argument("--skip-translate", action="store_true",
                         help="跳过翻译")
     parser.add_argument("--skip-tts", action="store_true",
@@ -997,7 +998,8 @@ def main():
             srt_translated = step_translate(video, srt_source, force=args.force, backup_dir=args.backup_dir,
                                               checkpoint=ck,
                                               skip_semantic_validation=args.skip_semantic_validation,
-                                              skip_naturalness_check=args.skip_naturalness_check)
+                                              skip_naturalness_check=args.skip_naturalness_check,
+                                              verification_mode=args.verification_mode)
         else:
             print("[2/3] 翻译 — 已跳过 (--skip-translate)")
             existing = guess_translated_srt(video)

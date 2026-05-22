@@ -3,6 +3,7 @@ import {
   Box, Typography, Card, CardContent, Select, MenuItem, TextField, Divider, Alert,
   FormControlLabel, Checkbox, Switch, Slider, Stack, Button, Chip, CircularProgress,
   Dialog, DialogTitle, DialogContent, DialogActions,
+  ToggleButton, ToggleButtonGroup,
 } from '@mui/material'
 import Grid from '@mui/material/Grid'
 import { SectionHeader } from '../SectionHeader'
@@ -657,8 +658,36 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                       </Box>
                       <FormControlLabel
                         control={<Checkbox checked={config.jointVerification} onChange={e => onConfigChange('jointVerification', e.target.checked)} size="small" />}
-                        label={<Typography variant="body2">联合公式闭环验证</Typography>}
+                        label={<Typography variant="body2">闭环验证</Typography>}
                       />
+                      {config.jointVerification && (
+                        <Box>
+                          <ToggleButtonGroup size="small" exclusive
+                            value={config.verificationMode}
+                            onChange={(_, v) => { if (v !== null) onConfigChange('verificationMode', v) }}
+                            sx={{ '& .MuiToggleButton-root': { px: 1, py: 0.25, fontSize: '0.75rem' } }}
+                          >
+                            <ToggleButton value="joint_formula">联合公式</ToggleButton>
+                            <ToggleButton value="logic_gate">逻辑门控</ToggleButton>
+                          </ToggleButtonGroup>
+                          {config.verificationMode === 'logic_gate' && (
+                            <Box sx={{ mt: 0.5, width: '100%' }}>
+                              <Box display="flex" justifyContent="space-between" alignItems="center">
+                                <Typography variant="caption" color="text.secondary">Gate C: 内容保真度阈值</Typography>
+                                <Typography variant="caption" fontWeight={600} color="primary">{(config.simDropLimit ?? 0.05).toFixed(2)}</Typography>
+                              </Box>
+                              <Slider
+                                value={config.simDropLimit ?? 0.05}
+                                min={0} max={0.15} step={0.01}
+                                marks={[{ value: 0, label: '0' }, { value: 0.05, label: '0.05' }, { value: 0.10, label: '0.10' }, { value: 0.15, label: '0.15' }]}
+                                onChange={(_, v) => onConfigChange('simDropLimit', v as number)}
+                                sx={{ width: 200 }}
+                              />
+                              <Typography variant="caption" color="text.disabled">允许的最大相似度下降 (0 = 禁用 Gate C)</Typography>
+                            </Box>
+                          )}
+                        </Box>
+                      )}
                     </Box>
                   )}
                 </Box>

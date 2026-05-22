@@ -496,6 +496,7 @@ def _load_yaml_defaults() -> dict:
         "enableNaturalnessCheck": trans.get("quality_assessment", {}).get("dimensions", {}).get("naturalness", {}).get("enabled", True),
         "naturalnessThreshold": trans.get("quality_assessment", {}).get("dimensions", {}).get("naturalness", {}).get("threshold", 3.0),
         "jointVerification": trans.get("joint_verification", False),
+        "verificationMode": trans.get("verification_mode", "joint_formula"),
         "enableTermReplacement": trans.get("terms_dict", {}).get("enabled", True),
         "activeGlossary": _parse_glossary_list(trans.get("terms_dict", {}).get("default_dict", ["minecraft.json"])),
         "targetLang": trans.get("target_lang", "zh-CN"),
@@ -636,6 +637,13 @@ def _sync_translate_config(target_lang: str = "") -> None:
     # Sync joint verification
     if pipeline_cfg.get("jointVerification") is not None:
         trans["translate"]["joint_verification"] = pipeline_cfg["jointVerification"]
+
+    # Sync verification mode
+    if pipeline_cfg.get("verificationMode") is not None:
+        trans["translate"]["verification_mode"] = pipeline_cfg["verificationMode"]
+
+    # Sync sim_drop_limit
+    trans["translate"]["sim_drop_limit"] = pipeline_cfg.get("simDropLimit", 0.05)
 
     # Sync terms_dict
     if "terms_dict" not in trans["translate"]:

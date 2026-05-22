@@ -46,6 +46,8 @@ export interface PipelineConfig {
   enableNaturalnessCheck: boolean
   naturalnessThreshold: number
   jointVerification: boolean
+  verificationMode: "joint_formula" | "logic_gate"
+  simDropLimit: number
   enableTermReplacement: boolean
   enableReviewAfterTranslate: boolean
   enableDemucs: boolean
@@ -182,6 +184,8 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   enableNaturalnessCheck: true,
   naturalnessThreshold: 3.0,
   jointVerification: false,
+  verificationMode: "joint_formula",
+  simDropLimit: 0.05,
   enableTermReplacement: true,
   enableReviewAfterTranslate: true,
   enableDemucs: true,
