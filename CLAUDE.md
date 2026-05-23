@@ -23,6 +23,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Run the full 3-step pipeline
 .venv/Scripts/python main.py source_file/video.mp4 --lang ja
 
+# Run with ChatTTS (in-process, GPU-accelerated, VRAM-adaptive model pool)
+.venv/Scripts/python main.py source_file/video.mp4 --lang zh --engine chattts
+
 # Run with CosyVoice TTS (offline, zero-shot)
 .venv/Scripts/python main.py source_file/video.mp4 --lang zh --engine cosyvoice
 
@@ -102,6 +105,27 @@ stdin/stdout JSON protocol: {"action": "synthesize", ...} → {"status": "ok", .
 - **Language tags**: `<|zh|>`, `<|en|>`, `<|ja|>`, `<|ko|>`, `<|yue|>` — placed before the text (before `<|endofprompt|>` for v3). Arbitrary lang codes (zh-CN, en-US) are normalized to these 5 tags.
 - **Worker stderr** captured to temp file for crash diagnosis
 
+### ChatTTS Persistent Worker
+
+ChatTTS also runs in an **isolated Python subprocess** (since v1.4.0) to eliminate STATUS_HEAP_CORRUPTION crashes on Windows CUDA and reduce GPU memory leaks from repeated model loading:
+
+```
+pipeline/tts_chattts.py (ChatTTSEngine)
+    │ subprocess.Popen (encoding="utf-8")
+    ▼
+pipeline/chattts_worker.py
+    │ runs in the same .venv (Python 3.10+)
+    │ ChatTTS model loaded ONCE, reused across segments
+    ▼
+stdin/stdout JSON protocol: {"action": "synthesize", ...} → {"status": "ok", ...}
+```
+
+- **VRAM-aware model pool**: ChatTTS model loaded once at worker startup; VRAM auto-detected at import time via `torch.cuda.mem_get_info()`, model pool size set proportionally
+- **Per-segment LUFS**: Each TTS segment gets independent loudness normalization via `pipeline/loudness.py` (pyloudnorm), preventing volume jumps between segments
+- **Text normalization**: WeTextProcessing (wetext) applies Chinese TN before inference — handles numbers, dates, percentages. Without this, "1.19" becomes "一展一九" instead of "一点一九"
+- **Worker auto-restart**: Worker restarts if it dies mid-pipeline, with exponential backoff (same pattern as CosyVoice)
+- **Worker stderr** captured to temp file for crash diagnosis
+
 ### Checkpoint System (`pipeline/checkpoint.py`)
 
 PipelineCheckpoint tracks progress per step with SHA256 content-hash change detection:
@@ -131,6 +155,18 @@ Pipeline creates a structured workspace per input video:
 ```
 
 `main.py:workspace_paths()` resolves these paths. The WebUI shares the same path derivation (`server.py` open-folder endpoint, `App.tsx` handleStartReview).
+
+## Logging Architecture
+
+The pipeline uses a standardized `pipeline/logger.py` module (`get_logger(__name__)`) across all pipeline components. Key design decisions:
+
+- **Output target**: `StreamHandler(sys.stderr)` — NOT stdout. Third-party libraries (ChatTTS, CosyVoice) also write to stderr via `logging.basicConfig()`. The WebUI subprocess uses `stderr=subprocess.STDOUT` to merge stderr into the captured stdout PIPE, so ALL logs flow through one channel.
+- **Format**: `[%(levelname)-5s] %(name)s: %(message)s` — e.g., `[INFO] pipeline.video_merger: 视频合并完成`
+- **Level**: `DEBUG` on pipeline root logger. Sub-loggers (e.g., `pipeline.video_merger`) inherit this level.
+- **propagate=False**: Pipeline logger does NOT propagate to root logger. This avoids duplicate output (pipeline handler → stderr + root handler → stderr). Messages are handled ONLY by the pipeline's StreamHandler.
+- **SSELogHandler**: In `server.py:_run_job_sync()`, an `SSELogHandler` is added to the server process's root logger to capture server-side log messages. Subprocess output is captured separately via `subprocess.PIPE` line iteration.
+
+When debugging log visibility issues in WebUI: ensure the pipeline subprocess writes to stderr (not just stdout), and check that the subprocess has `PYTHONUNBUFFERED=1` in its environment.
 
 ## WebUI Architecture
 
@@ -180,8 +216,32 @@ Browser (localhost:5173) → Vite dev server → proxy /api/* → uvicorn (local
 - **dist/ staleness** — if accessing via port 8000 directly, rebuild with `npm run build` after frontend changes.
 - **Rubber Band** — `audio_stretch.py` needs `pyrubberband` pip package + `tools/rubberband/rubberband-3.3.0-gpl-executable-windows/` CLI binary. Used for ChatTTS time-stretching (engine doesn't support native rate control).
 - **Voice cloning** — refactored from `tts_openvoice.py` into `vc_base.py` (protocol), `vc_openvoice.py`, `vc_cosyvoice.py`, `vc_device.py` (GPU routing). OpenVoice still noop by default. CosyVoice has built-in zero-shot cloning via prompt audio.
-- **Audio fade** — `tts_video.py` applies 10ms ffmpeg afade to all segment WAVs before writing, prevents clicks at concat boundaries.
+- **Audio fade** — `tts_video.py` applies 15ms ffmpeg afade (with explicit `st` parameter — FFmpeg 6.0's `afade=t=out` defaults `st=0` without it, causing full-segment silence). Prevents clicks at concat boundaries.
 - **Config field duplication** — `TTSConfig` has both `cosyvoice_*` (legacy voice-clone fields) and `cosyvoice_tts_*` (current TTS engine fields). The TTS pipeline uses `cosyvoice_tts_*`; the old fields are for the separate voice-cloning path.
+
+## Worktree 开发规范（强制遵守）
+
+所有新功能/优化必须在隔离 worktree 中开发，禁止在 main 分支或主仓库目录直接写代码。
+
+### 创建 worktree
+```bash
+cd D:\Workspace\Translate_video
+git worktree add -b feature/<功能名> .worktrees/<标识> main
+```
+
+### 环境继承
+- worktree **不创建自己的 .venv**，通过 `activate.bat` 设置环境变量引用主仓库 `.venv`
+- Python: `PYTHONPATH` 指向 `_deps/Lib/site-packages` (优先) + 主 venv (兜底)
+- npm: 使用主仓库 `GUI/node_modules`
+
+### 红线
+1. **pip 永远加 `--target _deps\Lib\site-packages`** — 禁止直接 pip install 到主 venv
+2. **永远不修改主仓库 `.venv`** — 所有包变更走 worktree `_deps/`
+3. **跨 worktree 操作需用户确认**
+4. **新功能 = 新 worktree** — 永远不在 main 分支直接开发
+5. **会话开始时确认路径和分支** — 确保在正确的 worktree 内
+
+详见: `docs/worktree-workflow.md`
 
 ## Project docs
 

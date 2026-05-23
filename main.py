@@ -252,6 +252,7 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
                   backup_dir: str = "", skip_defect_check: bool = False,
                   skip_demucs: bool = False, skip_align: bool = False,
                   align_lang: str | None = None, num_workers: int = 1,
+                  enable_speaker_diarization: bool = False,
                   force: bool = False,
                   checkpoint: PipelineCheckpoint | None = None) -> None:
     """步骤 1: 委托 extract_subtitles.py 完成全流程。
@@ -305,6 +306,8 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
         cmd.extend(["--align-lang", align_lang])
     if num_workers > 1:
         cmd.extend(["--num-workers", str(num_workers)])
+    if enable_speaker_diarization:
+        cmd.append("--enable-speaker-diarization")
 
     # 子进程 UTF-8 输出兼容（Windows GBK 终端）
     env = os.environ.copy()
@@ -387,7 +390,8 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
 def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
                    checkpoint: PipelineCheckpoint | None = None,
                    skip_semantic_validation: bool = False,
-                   skip_naturalness_check: bool = False) -> str:
+                   skip_naturalness_check: bool = False,
+                   verification_mode: str | None = None) -> str:
     """步骤 2: 翻译 + 术语替换。
 
     输出到工作目录 02_translate/machine.srt。
@@ -430,6 +434,8 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
         translator.semantic_check = False
     if skip_naturalness_check:
         translator.naturalness_check = False
+    if verification_mode:
+        translator.verification_mode = verification_mode
     auto_srt, pending = translator.translate(srt_path)
 
     if pending:
@@ -487,16 +493,11 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
         ws = workspace_paths(video)
         if ws:
             qa_cfg = _load_translate_cfg_field("quality_assessment", {})
-            qa_naturalness = (
-                qa_cfg.get("dimensions", {}).get("naturalness", {}).get("enabled", True)
-                and not skip_naturalness_check
-            )
             if qa_cfg.get("enabled", True) and not (skip_semantic_validation and skip_naturalness_check):
                 assessor = QualityAssessor(
                     ws_dir=ws["workspace"],
                     semantic_threshold=qa_cfg.get("dimensions", {}).get("semantic", {}).get("threshold", 0.70),
                     naturalness_threshold=qa_cfg.get("dimensions", {}).get("naturalness", {}).get("threshold", 3.0),
-                    naturalness_enabled=qa_naturalness,
                     source_lang=_load_translate_cfg_field("source_lang", "auto"),
                 )
                 assessor.run()
@@ -558,6 +559,7 @@ def step_tts(
     cosyvoice_tts_prompt_text: str | None = None,
     cosyvoice_tts_mode: str | None = None,
     cosyvoice_tts_lang: str | None = None,
+    enable_emotion: bool | None = None,
 ) -> None:
     """步骤 3: TTS 合成 + 视频合并（新管线 TtsPipeline）
 
@@ -606,6 +608,8 @@ def step_tts(
     cfg = TTSConfig.from_yaml(config_path) if config_path and os.path.isfile(config_path) else TTSConfig()
 
     cfg.engine_type = engine
+    if enable_emotion is not None:
+        cfg.enable_emotion = enable_emotion
 
     # 目标语言：从 translate.yaml 读取并写入 TTSConfig（驱动 EdgeTTS 语音自动选择）
     translate_yaml = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
@@ -826,7 +830,7 @@ def main():
                         help="计算设备 (cuda/cpu)")
     parser.add_argument("--compute-type", default="float16",
                         help="计算精度 (float16/int8_float16/int8/float32)")
-    parser.add_argument("--engine", default="edge", choices=["edge", "chattts", "cosyvoice"],
+    parser.add_argument("--engine", default="edge", choices=["edge", "chattts", "cosyvoice", "indextts"],
                         help="TTS 引擎 (默认 edge)")
     parser.add_argument("--config", help="TTS YAML 配置文件路径")
     parser.add_argument("--caption-config", default=None,
@@ -862,6 +866,8 @@ def main():
                         help="CosyVoice TTS 合成模式 (固定 cross_lingual)")
     parser.add_argument("--cosyvoice-tts-lang", default=None,
                         help="CosyVoice TTS 语言标签 (zh/en/ja/ko/yue)")
+    parser.add_argument("--enable-emotion", action="store_true", default=None,
+                        help="启用情感分析 (仅 ChatTTS). 不传则使用配置文件值")
     parser.add_argument("--skip-extract", action="store_true",
                         help="跳过字幕提取")
     parser.add_argument("--skip-defect-check", action="store_true",
@@ -874,10 +880,15 @@ def main():
                         help="wav2vec2 对齐语言（默认跟随 --lang）")
     parser.add_argument("--num-workers", type=int, default=1,
                         help="whisper 并发 worker 数 (1=串行, 2~4=并行)")
+    parser.add_argument("--enable-speaker-diarization", action="store_true",
+                        help="启用说话人分离 (pyannote, 默认关闭)")
     parser.add_argument("--skip-semantic-validation", action="store_true",
                         help="翻译完成后跳过语义校验")
     parser.add_argument("--skip-naturalness-check", action="store_true",
                         help="翻译完成后跳过自然度检查 (PPL)")
+    parser.add_argument("--verification-mode", default=None,
+                        choices=["joint_formula", "logic_gate"],
+                        help="闭环验证模式: joint_formula (联合公式) | logic_gate (逻辑门控)")
     parser.add_argument("--skip-translate", action="store_true",
                         help="跳过翻译")
     parser.add_argument("--skip-tts", action="store_true",
@@ -976,6 +987,7 @@ def main():
                          backup_dir=args.backup_dir, skip_defect_check=args.skip_defect_check,
                          skip_demucs=args.skip_demucs, skip_align=args.skip_align,
                          align_lang=args.align_lang, num_workers=args.num_workers,
+                         enable_speaker_diarization=args.enable_speaker_diarization,
                          force=args.force, checkpoint=ck)
         else:
             print("[1/3] 字幕提取 — 已跳过 (--skip-extract)")
@@ -992,7 +1004,8 @@ def main():
             srt_translated = step_translate(video, srt_source, force=args.force, backup_dir=args.backup_dir,
                                               checkpoint=ck,
                                               skip_semantic_validation=args.skip_semantic_validation,
-                                              skip_naturalness_check=args.skip_naturalness_check)
+                                              skip_naturalness_check=args.skip_naturalness_check,
+                                              verification_mode=args.verification_mode)
         else:
             print("[2/3] 翻译 — 已跳过 (--skip-translate)")
             existing = guess_translated_srt(video)
@@ -1042,6 +1055,7 @@ def main():
                 cosyvoice_tts_prompt_text=args.cosyvoice_tts_prompt_text,
                 cosyvoice_tts_mode=args.cosyvoice_tts_mode,
                 cosyvoice_tts_lang=args.cosyvoice_tts_lang,
+                enable_emotion=args.enable_emotion,
             )
         else:
             print("[3/3] TTS 合成 — 已跳过 (--skip-tts)")

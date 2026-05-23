@@ -9,6 +9,9 @@
   NODE 2.5 Demucs人声分离    → pipeline/demucs_instr.py
   NODE 3   VAD+转录+断句    → pipeline/transcriber.py
   NODE 3.5 wav2vec2 对齐    → whisperx_local.alignment (精修词级时间戳)
+  NODE 2.7 说话人分离(可选)  → pipeline/speaker_diarize.py
+  NODE 2.75 说话人融合(可选)  → pipeline/speaker_fusion.py
+  NODE 2.8  分离结果验证(可选) → pipeline/diarization_verify.py
   NODE 4   JSON→SRT         → Json_Convert_Srt
 
 用法:
@@ -23,6 +26,7 @@ import os
 import sys
 import time
 import re
+import json
 import subprocess
 import argparse
 from datetime import datetime
@@ -65,6 +69,7 @@ def parse_args():
     parser.add_argument("--skip-align", action="store_true", help="跳过 wav2vec2 强制对齐 (即使指定了 --lang)")
     parser.add_argument("--align-lang", default=None, help="wav2vec2 对齐语言（默认跟随 --lang）")
     parser.add_argument("--num-workers", type=int, default=1, help="whisper 并发 worker 数 (1=串行, 2~4=并行)")
+    parser.add_argument("--enable-speaker-diarization", action="store_true", help="启用说话人分离 (NODE 2.7)")
     return parser.parse_args()
 
 
@@ -296,6 +301,182 @@ def main():
     log_node(3, f"JSON: {json_path} ({format_size(json_size)})")
     d3 = time.time() - t0
     ck.complete_node("N3"); ck.save()
+
+    # ════════════════════════════════════════════════════════
+    # NODE 2.7: 说话人分离 (可选)
+    # ════════════════════════════════════════════════════════
+    speaker_timeline = None
+    speaker_timeline_path = os.path.join(out_dir, "speaker_timeline.json")
+
+    if args.enable_speaker_diarization and os.path.isfile(vocal_path):
+        hr("NODE 2.7: 说话人分离 (pyannote)")
+        t0 = time.time()
+        try:
+            from pipeline.speaker_diarize import SpeakerDiarizer
+            diarizer = SpeakerDiarizer()
+            speaker_timeline = diarizer.run(vocal_path)
+            diarizer.export_timeline_json(vocal_path, speaker_timeline_path)
+            speakers = sorted(set(s[0] for s in speaker_timeline))
+            log_node("2.7", f"检测到 {len(speakers)} 个说话人: {', '.join(speakers)}, "
+                     f"{len(speaker_timeline)} 个语音段")
+            log_node("2.7", f"耗时: {time.time()-t0:.1f}s")
+        except Exception as e:
+            import traceback
+            print(f"  [WARN] 说话人分离失败 ({e})，跳过")
+            traceback.print_exc()
+            log_node("2.7", f"跳过: 分离失败 — {e}")
+            speaker_timeline = None
+
+    if args.enable_speaker_diarization and not os.path.isfile(vocal_path):
+        log_node("2.7", "跳过: 人声文件不存在")
+        print(f"  [INFO] 说话人分离跳过 — 人声文件不存在: {vocal_path}")
+
+    # ════════════════════════════════════════════════════════
+    # NODE 2.75: 说话人融合 (word 级时间交集分配)
+    # ════════════════════════════════════════════════════════
+    speaker_map_path = os.path.join(out_dir, "speaker_map.json")
+
+    if speaker_timeline and result.get("segments"):
+        hr("NODE 2.75: 说话人融合")
+        t0 = time.time()
+        try:
+            from pipeline.speaker_fusion import (
+                assign_word_speakers,
+                split_at_speaker_boundaries,
+                detect_overlaps,
+            )
+
+            # 收集所有词
+            all_words = result.get("words", [])
+            if not all_words:
+                for seg in result["segments"]:
+                    all_words.extend(seg.get("words", []))
+
+            # 词级说话人分配
+            n_assigned = 0
+            if all_words:
+                all_words = assign_word_speakers(all_words, speaker_timeline)
+                n_assigned = sum(1 for w in all_words if w.get("speaker"))
+
+            # 将全局词的 speaker 分配到 segment 内每个 word（时间重叠法）
+            # whisper 词和 wav2vec2 对齐词粒度不同，直接匹配时间戳不可靠
+            if all_words:
+                for seg in result["segments"]:
+                    for w in seg.get("words", []):
+                        if "start" not in w or "end" not in w:
+                            continue
+                        best_spk = None
+                        best_ov = 0.0
+                        for gw in all_words:
+                            s = gw.get("speaker")
+                            if not s or "start" not in gw or "end" not in gw:
+                                continue
+                            ov = max(0, min(w["end"], gw["end"]) - max(w["start"], gw["start"]))
+                            if ov > best_ov:
+                                best_ov = ov
+                                best_spk = s
+                        if best_spk and best_ov > 0:
+                            w["speaker"] = best_spk
+
+            # 检测重叠
+            overlaps = detect_overlaps(speaker_timeline)
+
+            # 段切分
+            original_count = len(result["segments"])
+            result["segments"] = split_at_speaker_boundaries(result["segments"])
+            new_count = len(result["segments"])
+
+            # 更新 result
+            result["words"] = all_words
+            speakers = sorted(set(
+                w.get("speaker", "?") for w in all_words if w.get("speaker")
+            ))
+            result["speakers"] = {
+                spk: {
+                    "total_dur": sum(
+                        w["end"] - w["start"]
+                        for w in all_words
+                        if w.get("speaker") == spk
+                    ),
+                    "segments": sum(
+                        1 for s in result["segments"]
+                        if s.get("speaker") == spk
+                    ),
+                }
+                for spk in speakers
+            }
+            result["speaker_turns"] = [
+                {"speaker": spk, "start": s, "end": e, "confidence": c}
+                for spk, s, e, c in speaker_timeline
+            ]
+
+            # 导出 speaker_map（SRT 索引 → speaker 映射）
+            speaker_map = [
+                {"index": i + 1, "speaker": s.get("speaker", "?")}
+                for i, s in enumerate(result["segments"])
+            ]
+            with open(speaker_map_path, "w", encoding="utf-8") as f:
+                json.dump(speaker_map, f, ensure_ascii=False, indent=2)
+
+            # 更新保存的 JSON
+            json_size = VADTranscriber.save_json(result, json_path)
+
+            log_node("2.75", f"词级分配: {n_assigned}/{len(all_words)} 个词标说话人")
+            log_node("2.75", f"段切分: {original_count} → {new_count} 段")
+            log_node("2.75", f"说话人: {', '.join(speakers) if speakers else '无'}")
+            if overlaps:
+                log_node("2.75", f"重叠: {len(overlaps)} 处")
+            log_node("2.75", f"耗时: {time.time()-t0:.1f}s")
+        except Exception as e:
+            import traceback
+            print(f"  [WARN] 说话人融合失败 ({e})，跳过")
+            traceback.print_exc()
+            log_node("2.75", f"跳过: 融合失败 — {e}")
+
+    # ════════════════════════════════════════════════════════
+    # NODE 2.8: 分离结果验证
+    # ════════════════════════════════════════════════════════
+    speaker_verification_path = os.path.join(out_dir, "speaker_verification.json")
+
+    if speaker_timeline and result.get("segments"):
+        hr("NODE 2.8: 分离结果验证")
+        t0 = time.time()
+        try:
+            from pipeline.diarization_verify import verify_diarization
+
+            # 用 result 中的 speakers 汇总计算音频时长
+            total_speech = sum(
+                s.get("total_dur", 0)
+                for s in result.get("speakers", {}).values()
+            ) if result.get("speakers") else sum(
+                s["end"] - s["start"] for s in result["segments"]
+            )
+
+            report = verify_diarization(
+                speaker_timeline, transcript=result, total_audio_dur=total_speech
+            )
+
+            with open(speaker_verification_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "passes_all": report.passes_all,
+                    "summary": report.summary,
+                    "issues": [
+                        {"layer": i.layer, "severity": i.severity,
+                         "message": i.message, "detail": i.detail}
+                        for i in report.issues
+                    ],
+                }, f, ensure_ascii=False, indent=2)
+
+            status = "通过" if report.passes_all else f"有 {report.summary['errors']} 个错误"
+            log_node("2.8", f"验证: {status}, {report.summary['total_issues']} 个问题")
+            for issue in report.issues:
+                log_node("2.8", f"  [{issue.severity.upper()}] L{issue.layer}: {issue.message}")
+            log_node("2.8", f"耗时: {time.time()-t0:.1f}s")
+        except Exception as e:
+            import traceback
+            print(f"  [WARN] 验证失败 ({e})，跳过")
+            traceback.print_exc()
+            log_node("2.8", f"跳过: 验证失败 — {e}")
 
     # ════════════════════════════════════════════════════════
     # NODE 4: JSON → SRT

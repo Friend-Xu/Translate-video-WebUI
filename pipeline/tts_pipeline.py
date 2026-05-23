@@ -16,7 +16,9 @@ import os
 import re
 from tqdm import tqdm
 from pipeline.utils import safe_replace
+import subprocess
 import sys
+import tempfile
 import queue
 import threading
 from dataclasses import dataclass, field
@@ -37,8 +39,8 @@ from pipeline.logger import get_logger
 logger = get_logger(__name__)
 
 
-_CHATTS_MODEL_SIZE_GB = 2.37
-_CHATTS_VRAM_OVERHEAD_GB = 1.0
+_CHATTS_MODEL_SIZE_GB = 2.0
+_CHATTS_VRAM_OVERHEAD_GB = 0.5
 
 
 _chattts_workers_cache: int | None = None
@@ -117,14 +119,32 @@ class TtsPipeline:
         self.video_seg = video_segmenter or self._default_video()
 
         # ── 引擎 ────────────────────────────────────────────
-        # ChatTTS: PyTorch/CUDA 操作非线程安全，多实例并发推理
-        # 已知在 Windows 上导致 STATUS_HEAP_CORRUPTION (0xC0000374)。
-        # 使用单引擎 + _CHATTS_LOCK 串行化推理，消除并发 CUDA 访问。
+        # ChatTTS: 多子进程引擎池，每子进程独立 CUDA 上下文
+        # 通过 queue.Queue 借还，无全局锁，线程安全。
+        # coqui / cosyvoice: 单引擎（模型大，仅加载一份）。
         self._engine_pool: queue.Queue | None = None
         if tts_engine is not None:
             self.engine = tts_engine
             n_workers = config.threading_workers
-        elif config.engine_type in ("chattts", "coqui", "cosyvoice"):
+        elif config.engine_type == "chattts":
+            requested = config.chattts_workers
+            vram_max = calc_chattts_workers()
+            if requested > 0:
+                n_workers = requested
+                if n_workers > vram_max:
+                    logger.warning("ChatTTS: %d workers 可能超出 VRAM 上限 (%d)，继续尝试",
+                                   n_workers, vram_max)
+            else:
+                n_workers = vram_max
+            logger.info("ChatTTS 多引擎池: %d workers (配置=%d, VRAM估计=%d)",
+                        n_workers, requested, vram_max)
+            self._engine_pool = queue.Queue(maxsize=n_workers)
+            for _ in range(n_workers):
+                engine = self._default_engine()
+                engine.warmup()
+                self._engine_pool.put(engine)
+            self.engine = None
+        elif config.engine_type in ("coqui", "cosyvoice", "indextts"):
             n_workers = 1
             self.engine = self._default_engine()
             self.engine.warmup()
@@ -164,13 +184,31 @@ class TtsPipeline:
         return self.engine
 
     def _return_engine(self, engine):
-        """归还引擎到池中。"""
+        """归还引擎到池中。不健康的引擎自动丢弃并替换。"""
         if self._engine_pool is not None:
-            self._engine_pool.put(engine)
+            if getattr(engine, 'healthy', True):
+                self._engine_pool.put(engine)
+            else:
+                logger.warning("丢弃不健康的 ChatTTS 引擎，创建替换")
+                try:
+                    engine.cleanup()
+                except Exception:
+                    pass
+                new_engine = self._default_engine()
+                try:
+                    new_engine.warmup()
+                    self._engine_pool.put(new_engine)
+                except Exception as e:
+                    logger.error("替换引擎创建失败: %s", e)
 
     def cleanup(self):
         """释放所有 GPU 模型和线程池资源。"""
-        # 1. 释放引擎池
+        # 1. 先关闭线程池（等待所有任务完成），确保引擎不在使用中
+        if self._executor is not None:
+            self._executor.shutdown(wait=True, cancel_futures=True)
+            self._executor = None
+
+        # 2. 释放引擎池
         if self._engine_pool is not None:
             while True:
                 try:
@@ -184,19 +222,36 @@ class TtsPipeline:
             self.engine.cleanup()
             self.engine = None
 
-        # 2. 释放声音克隆模型
+        # 3. 释放声音克隆模型
         if self.voice_cloner is not None and hasattr(self.voice_cloner, 'cleanup'):
             try:
                 self.voice_cloner.cleanup()
             except Exception:
                 pass
 
-        # 3. 关闭线程池
-        if self._executor is not None:
-            self._executor.shutdown(wait=False)
-            self._executor = None
-
         # 4. 释放 CUDA 缓存
+        try:
+            import torch
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+        import gc
+        gc.collect()
+
+    def _cleanup_engine_pool(self):
+        """清理引擎池但不关线程池、不释放 voice_cloner。用于 GPU 阶段切换。"""
+        if self._engine_pool is not None:
+            while True:
+                try:
+                    engine = self._engine_pool.get_nowait()
+                    if hasattr(engine, 'cleanup'):
+                        engine.cleanup()
+                except queue.Empty:
+                    break
+            self._engine_pool = None
+        if self.engine is not None and hasattr(self.engine, 'cleanup'):
+            self.engine.cleanup()
+            self.engine = None
         try:
             import torch
             torch.cuda.empty_cache()
@@ -265,6 +320,209 @@ class TtsPipeline:
             logger.warning("Color_audio.WAV 提取失败: %s，回退到完整 vocals", e)
             return None
 
+    def _run_emotion_extraction(self, vocals_path: str,
+                                  subs_translated: list,
+                                  output_dir: str = "") -> tuple:
+        """Run emotion2vec per segment, return (prompts_dict, segments_meta).
+
+        prompts_dict: {(start_ms, end_ms): prompt_string}
+        segments_meta: [{key, start_ms, end_ms, prompt, top_emotion, top_score, scores}, ...]
+        """
+        prompts: dict = {}
+        segments_meta: list = []
+        from funasr import AutoModel
+
+        emo_dir = os.path.join(output_dir, "_emo") if output_dir else tempfile.mkdtemp()
+        os.makedirs(emo_dir, exist_ok=True)
+
+        logger.info("情感分析开始: %d 段字幕, 临时目录 %s", len(subs_translated), emo_dir)
+
+        _EMO_MAP = {
+            "生气/angry":(3,0,2),"厌恶/disgusted":(1,0,4),"恐惧/fearful":(2,0,4),
+            "开心/happy":(6,1,4),"中立/neutral":(2,0,5),"其他/other":(2,0,5),
+            "难过/sad":(1,0,6),"吃惊/surprised":(4,0,3),"<unk>":(2,0,5),
+        }
+        _LABELS = [
+            "生气/angry","厌恶/disgusted","恐惧/fearful","开心/happy",
+            "中立/neutral","其他/other","难过/sad","吃惊/surprised","<unk>",
+        ]
+
+        def _scores_to_prompt(scores):
+            oral = sum(_EMO_MAP[l][0]*s for l,s in zip(_LABELS,scores) if l in _EMO_MAP)
+            laugh = sum(_EMO_MAP[l][1]*s for l,s in zip(_LABELS,scores) if l in _EMO_MAP)
+            brk = sum(_EMO_MAP[l][2]*s for l,s in zip(_LABELS,scores) if l in _EMO_MAP)
+            oral_val = max(0, min(9, int(round(oral))))
+            # 笑声门控: happy 分 ≥ 0.8（仅高置信度）且 oral ≥ 4（足够口语化）
+            if laugh >= 0.8 and oral_val >= 4:
+                laugh_val = 1
+            elif laugh >= 1.5:
+                laugh_val = 2
+            else:
+                laugh_val = 0
+            brk_val = max(0, min(7, int(round(brk))))
+            return f"[oral_{oral_val}][laugh_{laugh_val}][break_{brk_val}]"
+
+        model = AutoModel(
+            model="iic/emotion2vec_plus_large", hub="ms", disable_update=True)
+
+        for start_ms, end_ms, text in subs_translated:
+            dur_s = (end_ms - start_ms) / 1000.0
+            key = f"{start_ms}_{end_ms}"
+            if dur_s < 1.0:
+                prompts[(start_ms, end_ms)] = "[oral_0][break_5]"
+                segments_meta.append({
+                    "key": key, "start_ms": start_ms, "end_ms": end_ms,
+                    "prompt": "[oral_0][break_5]",
+                    "top_emotion": "short", "top_score": 0, "scores": {},
+                })
+                continue
+            try:
+                seg_wav = os.path.join(emo_dir, f"emo_{start_ms}_{end_ms}.wav")
+                subprocess.run([
+                    "ffmpeg", "-y", "-v", "quiet",
+                    "-i", vocals_path,
+                    "-ss", str(start_ms / 1000),
+                    "-t", str(dur_s + 0.1),
+                    "-ac", "1", "-ar", "16000",
+                    seg_wav,
+                ], check=True)
+                result = model.generate(
+                    input=seg_wav, output_dir=None, granularity="utterance")
+                if result and len(result) > 0:
+                    scores = result[0]["scores"]
+                    labels = result[0]["labels"]
+                    prompt = _scores_to_prompt(scores)
+                    top_idx = max(range(len(scores)), key=lambda i: scores[i])
+                    prompts[(start_ms, end_ms)] = prompt
+                    segments_meta.append({
+                        "key": key, "start_ms": start_ms, "end_ms": end_ms,
+                        "prompt": prompt,
+                        "top_emotion": labels[top_idx],
+                        "top_score": round(scores[top_idx], 4),
+                        "scores": {l: round(s, 4) for l, s in zip(labels, scores)},
+                    })
+                else:
+                    prompts[(start_ms, end_ms)] = "[oral_0][break_5]"
+                    segments_meta.append({
+                        "key": key, "start_ms": start_ms, "end_ms": end_ms,
+                        "prompt": "[oral_0][break_5]",
+                        "top_emotion": "fail", "top_score": 0, "scores": {},
+                    })
+                os.unlink(seg_wav)
+            except Exception:
+                prompts[(start_ms, end_ms)] = "[oral_0][break_5]"
+                segments_meta.append({
+                    "key": key, "start_ms": start_ms, "end_ms": end_ms,
+                    "prompt": "[oral_0][break_5]",
+                    "top_emotion": "error", "top_score": 0, "scores": {},
+                })
+
+        try:
+            os.rmdir(emo_dir)
+        except OSError:
+            pass
+
+        n_unique = len(set(prompts.values()))
+        logger.info("情感分析完成: %d/%d 段, %d 种不同 prompt",
+                    len(prompts), len(subs_translated), n_unique)
+        return prompts, segments_meta
+
+    def _load_or_extract_emotion_prompts(self, vocals_path: str,
+                                          subs_translated: list,
+                                          output_dir: str = "") -> dict:
+        """Load cached emotion prompts or re-extract if missing/stale.
+
+        Returns dict mapping (start_ms, end_ms) -> prompt_string.
+        Caches to {output_dir}/emotion_prompts.json for checkpoint/resume.
+        """
+        json_path = os.path.join(output_dir, "emotion_prompts.json")
+        n_segments = len(subs_translated)
+
+        # Try loading cached file
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+                if (cached.get("segment_count") == n_segments
+                        and cached.get("version", 1) >= 2):
+                    prompts = {}
+                    for k, v in cached["segments"].items():
+                        prompts[(v["start_ms"], v["end_ms"])] = v["prompt"]
+                    logger.info("加载已缓存的情感 prompt: %s (%d 段)",
+                                json_path, len(prompts))
+                    return prompts
+                logger.info("情感缓存段数不匹配 (%d ≠ %d), 重新提取",
+                           cached.get("segment_count", 0), n_segments)
+            except Exception:
+                logger.warning("情感缓存读取失败, 重新提取", exc_info=True)
+
+        # Extract fresh
+        prompts, segments_meta = self._run_emotion_extraction(
+            vocals_path, subs_translated, output_dir)
+
+        # Save to disk
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            cached = {
+                "version": 2,
+                "engine": "emotion2vec",
+                "model": "iic/emotion2vec_plus_large",
+                "segment_count": n_segments,
+                "unique_prompts": len(set(v["prompt"] for v in segments_meta)),
+                "segments": {m["key"]: m for m in segments_meta},
+            }
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(cached, f, ensure_ascii=False, indent=2)
+            logger.info("情感分析结果已保存: %s", json_path)
+        except Exception:
+            logger.warning("情感缓存写入失败", exc_info=True)
+
+        return prompts
+    def _create_speaker_audio(
+        self, vocals_path: str, speaker_timeline: list,
+    ) -> dict[str, str]:
+        """为每个说话人提取参考音频（最长连续段）。
+
+        Returns: {speaker_id: audio_file_path}
+        """
+        import numpy as np
+        import soundfile as sf
+
+        speaker_dir = os.path.join(
+            self.config.video_output_dir, "..", "03_tts", "speakers"
+        )
+        os.makedirs(speaker_dir, exist_ok=True)
+        result = {}
+
+        try:
+            audio, sr = sf.read(vocals_path)
+            if audio.ndim > 1:
+                audio = audio.mean(axis=1)
+        except Exception as e:
+            logger.warning("无法读取人声文件: %s", e)
+            return result
+
+        by_spk: dict[str, list[tuple[float, float]]] = {}
+        for spk, start, end, _ in speaker_timeline:
+            by_spk.setdefault(spk, []).append((start, end))
+
+        for spk, segs in by_spk.items():
+            out_path = os.path.join(speaker_dir, f"{spk}.wav")
+            if os.path.isfile(out_path):
+                result[spk] = out_path
+                continue
+            best = max(segs, key=lambda x: x[1] - x[0])
+            s, e = best
+            si = max(0, int(s * sr))
+            ei = min(len(audio), int(e * sr))
+            if ei - si < int(0.5 * sr):
+                continue
+            sf.write(out_path, audio[si:ei], sr)
+            logger.info("说话人参考音频: %s (%.1fs)", spk, (ei - si) / sr)
+            result[spk] = out_path
+
+        return result
+
     # ── 默认组件工厂 ──────────────────────────────────
 
     def _default_engine(self):
@@ -288,6 +546,13 @@ class TtsPipeline:
                 default_speed=self.config.cosyvoice_tts_speed,
                 tts_mode=self.config.cosyvoice_tts_mode,
                 lang=self.config.cosyvoice_tts_lang or self.config.target_lang,
+            )
+        if self.config.engine_type == "indextts":
+            from pipeline.tts_indextts import IndexTTSEngine
+            return IndexTTSEngine(
+                checkpoints_dir=self.config.indextts_checkpoints_dir or None,
+                fp16=self.config.indextts_fp16,
+                speaker_audio=self.config.indextts_speaker_audio or None,
             )
         return EdgeTTSEngine(
             voice=self.config.voice,
@@ -476,8 +741,8 @@ class TtsPipeline:
         if not self.config.voice_clone_active:
             return NoopVoiceCloner()
 
-        if self.config.engine_type == "cosyvoice":
-            logger.info("TTS 引擎为 CosyVoice，自带 zero_shot 音色克隆，跳过独立 voice cloner")
+        if self.config.engine_type in ("cosyvoice", "indextts"):
+            logger.info("TTS 引擎为 %s，自带 zero_shot 音色克隆，跳过独立 voice cloner", self.config.engine_type)
             return NoopVoiceCloner()
 
         vc_config = VoiceCloneConfig(
@@ -528,6 +793,144 @@ class TtsPipeline:
             output_path,
         ], capture_output=True, check=True, timeout=30, encoding="utf-8", errors="replace")
 
+    def _phase1_synthesize(self, task: dict) -> dict:
+        """Phase 1: 纯 TTS 合成 — 借引擎 → 合成 → LUFS → 还引擎。不碰视频/BGM。"""
+        start, end = task["start"], task["end"]
+        output_audio_path = os.path.join(
+            self.config.output_dir, "audio", f"audio_{start}_{end}.wav"
+        )
+        os.makedirs(os.path.dirname(output_audio_path), exist_ok=True)
+        task["wav_path"] = output_audio_path
+
+        try:
+            engine = self._borrow_engine()
+            engine_supports_rate = getattr(engine, 'supports_rate', lambda: True)()
+
+            import inspect
+            _sig = inspect.signature(engine.synthesize)
+            _use_target_ms = 'target_length_ms' in _sig.parameters
+
+            try:
+                _synth_kwargs = {}
+                if _use_target_ms:
+                    _synth_kwargs['target_length_ms'] = float(end - start)
+                wav_time = engine.synthesize(
+                    task["text_cn"], output_audio_path, f"+{self.config.base_speed}%",
+                    emotion=self._emo_prompts.get((start, end)),
+                    **_synth_kwargs,
+                )
+
+                if (not engine_supports_rate
+                        and getattr(self.config, "loudness_norm_enabled", True)):
+                    from pipeline.loudness import normalize_segment_loudness
+                    normalize_segment_loudness(
+                        output_audio_path,
+                        target_lufs=getattr(self, "_loudness_target", -16.0),
+                    )
+
+                task["wav_time"] = wav_time
+                task["engine_supports_rate"] = engine_supports_rate
+                task["native_duration_control"] = _use_target_ms
+                task["success"] = True
+            finally:
+                self._return_engine(engine)
+        except Exception as e:
+            task["error"] = str(e)
+            task["success"] = False
+            self._log_subtitle_error(start, end, task.get("text_cn", ""), str(e))
+
+        return task
+
+    def _phase2_adjust(self, task: dict) -> dict:
+        """Phase 2: 时序调整 — 比较 wav_time vs segment_duration，超时则 RubberBand 加速。
+
+        不需要引擎。纯 CPU 操作（RubberBand stretch）。
+        IndexTTS 等原生时长控制引擎跳过此阶段。"""
+        if not task.get("success"):
+            return task
+
+        if task.get("native_duration_control"):
+            return task
+
+        wav_time = task["wav_time"]
+        segment_duration = (task["end"] - task["start"]) / 1000
+        engine_supports_rate = task.get("engine_supports_rate", True)
+        task["speed_factor"] = 1.0
+
+        if not engine_supports_rate:
+            if wav_time > segment_duration:
+                from pipeline.audio_stretch import stretch_audio, compute_stretch_rate
+                stretch_rate = compute_stretch_rate(wav_time, segment_duration)
+                if stretch_rate is not None and stretch_rate <= 1.5:
+                    wav_path = task["wav_path"]
+                    stretched_path = wav_path + ".stretched.wav"
+                    try:
+                        new_dur = stretch_audio(wav_path, stretched_path, stretch_rate)
+                        safe_replace(stretched_path, wav_path)
+                        task["wav_time"] = new_dur
+                        task["stretched"] = True
+                        logger.debug("RubberBand stretch: rate=%.2f, %.2fs → %.2fs",
+                                     stretch_rate, wav_time, new_dur)
+                    except Exception:
+                        pass
+        return task
+
+    def _phase3_mix(self, task: dict, video_path: str) -> dict:
+        """Phase 3: 视频混合 — BGM 提取 + ffmpeg amix + 字幕 + 编码。
+
+        VideoFileClip/AudioFileClip 在 worker 线程内按需创建并释放。"""
+        if not task.get("success"):
+            return task
+
+        start, end = task["start"], task["end"]
+        video_end = task["video_end"]
+        wav_path = task["wav_path"]
+        text_cn = task.get("text_cn", "")
+        text_en = task.get("text_en", "")
+        instrumental_path = task.get("instr_seg_path")
+        caption_groups = task.get("caption_groups")
+
+        current_video = None
+        instrumental_audio = None
+        try:
+            from moviepy import VideoFileClip, AudioFileClip
+
+            current_video = VideoFileClip(video_path).subclipped(
+                start / 1000, video_end / 1000)
+            if instrumental_path:
+                instrumental_audio = AudioFileClip(instrumental_path)
+
+            if not os.path.isfile(wav_path):
+                raise FileNotFoundError(f"TTS 音频文件不存在: {wav_path}")
+            tts_audio = AudioFileClip(wav_path)
+            try:
+                self.video_seg.slow_down_video_to_file(
+                    current_video, instrumental_audio, tts_audio,
+                    wav_path, start, text_cn, text_en, end,
+                    caption_groups=caption_groups,
+                )
+            finally:
+                tts_audio.close()
+
+            task["phase3_success"] = True
+        except Exception as e:
+            task["phase3_error"] = str(e)
+            task["phase3_success"] = False
+            self._log_subtitle_error(start, end, text_cn, str(e))
+        finally:
+            if current_video is not None:
+                try:
+                    current_video.close()
+                except Exception:
+                    pass
+            if instrumental_audio is not None:
+                try:
+                    instrumental_audio.close()
+                except Exception:
+                    pass
+
+        return task
+
     def _process_single_subtitle(
         self,
         text_zh: str,
@@ -540,162 +943,33 @@ class TtsPipeline:
         subs_next=None,
         caption_groups: list = None,
     ) -> Optional[dict]:
-        """处理单条字幕：TTS → 时序对齐 → 视频段。
+        """处理单条字幕：TTS → 时序对齐 → 视频段（单函数版本，保留给 Global 模式）。
 
         VideoFileClip/AudioFileClip 在 worker 线程内按需创建并释放，
         避免 Phase 1 预创建 137 个 clip 全部驻留内存导致 OOM。
-
-        Args:
-            video_path: 原视频路径（在 worker 内按需创建 clip）
-            video_end: 视频段截止毫秒
-            instrumental_path: 背景音乐 WAV 路径（None 表示无背景乐）
         """
-        key = (start, end)
-
-        output_audio_path = os.path.join(
-            self.config.output_dir, "audio", f"audio_{start}_{end}.wav"
-        )
-
-        current_video = None
-        instrumental_audio = None
-        try:
-            from moviepy import VideoFileClip, AudioFileClip
-
-            current_video = VideoFileClip(video_path).subclipped(start / 1000, video_end / 1000)
-            if instrumental_path:
-                instrumental_audio = AudioFileClip(instrumental_path)
-            os.makedirs(os.path.dirname(output_audio_path), exist_ok=True)
-
-            # 1. TTS 合成（借用引擎，同一字幕段复用同一引擎处理对齐重试）
-            engine = self._borrow_engine()
-            engine_supports_rate = getattr(engine, 'supports_rate', lambda: True)()
-            try:
-                wav_time = engine.synthesize(
-                    text_zh, output_audio_path, f"+{self.config.base_speed}%"
-                )
-
-                # 逐段 LUFS 归一化：消除 ChatTTS/CosyVoice 段间响度跳跃
-                # EdgeTTS (supports_rate=True) 输出响度稳定，跳过
-                if (
-                    not engine_supports_rate
-                    and getattr(self.config, "loudness_norm_enabled", True)
-                ):
-                    from pipeline.loudness import normalize_segment_loudness
-                    normalize_segment_loudness(
-                        output_audio_path,
-                        target_lufs=getattr(self, "_loudness_target", -16.0),
-                    )
-
-                wav_time_original = wav_time
-
-                # 2. 时序对齐
-                # ChatTTS 不支持语速调节 → 跳过无效的 rate 搜索，
-                # 改用 Rubber Band 后处理加速音频，仍超时则视频变速兜底
-                if not engine_supports_rate:
-                    segment_duration = (end - start) / 1000
-                    from pipeline.tts_timing import AdjustResult
-                    if wav_time > segment_duration:
-                        from pipeline.audio_stretch import stretch_audio, compute_stretch_rate
-                        stretch_rate = compute_stretch_rate(wav_time, segment_duration)
-                        if stretch_rate is not None and stretch_rate <= 1.5:
-                            stretched_path = output_audio_path + ".stretched.wav"
-                            try:
-                                new_dur = stretch_audio(output_audio_path, stretched_path, stretch_rate)
-                                safe_replace(stretched_path, output_audio_path)
-                                wav_time = new_dur
-                                wav_time_original = wav_time
-                                logger.debug(f"RubberBand stretch: rate={stretch_rate:.2f}, "
-                                    f"{segment_duration:.2f}s target → {new_dur:.2f}s")
-                            except Exception:
-                                pass  # stretch failed, use original
-                        adj_result = AdjustResult("speed_up_limited",
-                            over_time_path=output_audio_path,
-                            final_duration=wav_time, rate_used="N/A")
-                        over_time_path = output_audio_path
-                    else:
-                        over_time_path = None
-                        adj_result = AdjustResult("re_write", final_duration=wav_time)
-                else:
-                    over_time_path, adj_result = self.timing.align(
-                        text=text_zh,
-                        wav_time=wav_time,
-                        start=start,
-                        end=end,
-                    output_audio_path=output_audio_path,
-                    subs_next=subs_next,
-                    tts_synthesize_fn=lambda t, p, r: engine.synthesize(t, p, r),
-                )
-            finally:
-                self._return_engine(engine)
-
-            # 3. TTS 音频加载
-            from moviepy import AudioFileClip
-            load_path = (
-                over_time_path
-                if over_time_path and over_time_path != output_audio_path
-                else output_audio_path
-            )
-            if not os.path.isfile(load_path):
-                raise FileNotFoundError(f"TTS 音频文件不存在: {load_path}")
-            tts_audio = AudioFileClip(load_path)
-            try:
-                # 4. 视频段处理（统一走 slow_down_video_to_file）
-                #    根据视频时长/TTS时长自动计算 speed_factor，
-                #    sf=1.0 时等价于不变速。
-                self.video_seg.slow_down_video_to_file(
-                    current_video, instrumental_audio, tts_audio,
-                    load_path, start, text_zh, text_eng, end,
-                    caption_groups=caption_groups,
-                )
-            finally:
-                tts_audio.close()
-
-            return {
-                "start": start,
-                "end": end,
-                "text_zh": text_zh,
-                "text_eng": text_eng,
-                "wav_time": wav_time_original,
-                "adjustment": adj_result.adjustment_type,
-                "success": True,
-            }
-
-        except FileNotFoundError as e:
-            # 文件缺失：标记为错误，继续处理后续条目
-            error_msg = str(e)
-            self._log_subtitle_error(start, end, text_zh, error_msg)
-            return {"start": start, "end": end, "text_zh": text_zh, "error": error_msg, "success": False}
-
-        except OSError as e:
-            # I/O 错误（磁盘满、权限等）：标记为错误，继续
-            error_msg = f"I/O 错误: {e}"
-            self._log_subtitle_error(start, end, text_zh, error_msg)
-            return {"start": start, "end": end, "text_zh": text_zh, "error": error_msg, "success": False}
-
-        except RuntimeError as e:
-            # TTS 引擎错误（重试耗尽等）：标记为错误，继续
-            error_msg = f"TTS 引擎错误: {e}"
-            self._log_subtitle_error(start, end, text_zh, error_msg)
-            return {"start": start, "end": end, "text_zh": text_zh, "error": error_msg, "success": False}
-
-        except Exception as e:
-            # 其他意外错误：标记为错误，继续
-            error_msg = f"未预期的错误 ({type(e).__name__}): {e}"
-            self._log_subtitle_error(start, end, text_zh, error_msg)
-            return {"start": start, "end": end, "text_zh": text_zh, "error": error_msg, "success": False}
-
-        finally:
-            # 释放 worker 线程内创建的 clip 资源
-            if current_video is not None:
-                try:
-                    current_video.close()
-                except Exception:
-                    pass
-            if instrumental_audio is not None:
-                try:
-                    instrumental_audio.close()
-                except Exception:
-                    pass
+        # 构建 task dict 并走三阶段流水线
+        task = {
+            "text_cn": text_zh, "text_en": text_eng,
+            "start": start, "end": end,
+            "video_end": video_end,
+            "instr_seg_path": instrumental_path,
+            "caption_groups": caption_groups,
+        }
+        task = self._phase1_synthesize(task)
+        if not task.get("success"):
+            return {"start": start, "end": end, "text_zh": text_zh,
+                    "error": task.get("error", "Phase 1 failed"), "success": False}
+        task = self._phase2_adjust(task)
+        task = self._phase3_mix(task, video_path)
+        if task.get("phase3_success"):
+            return {"start": start, "end": end, "text_zh": text_zh,
+                    "text_eng": text_eng, "wav_time": task.get("wav_time", 0),
+                    "adjustment": "speed_up_limited" if task.get("stretched") else "re_write",
+                    "success": True}
+        else:
+            return {"start": start, "end": end, "text_zh": text_zh,
+                    "error": task.get("phase3_error", "Phase 3 failed"), "success": False}
 
     def _log_subtitle_error(self, start: int, end: int, text: str, error: str):
         """记录单条字幕的处理错误（线程安全）。"""
@@ -753,8 +1027,10 @@ class TtsPipeline:
 
         logger.info(f"TTS Pipeline: {len(subs_translated)} 条字幕, 视频总长 {total_duration:.1f}s")
 
-        # ── 音色克隆准备：提取人声 VAD 片段作为 Color_audio.WAV，然后提取 speaker embedding ──
-        if self.config.voice_clone_active:
+        # ── 音色克隆准备：提取 speaker embedding ──
+        # ChatTTS 三阶段管线延迟到 Phase 1.5（引擎清理后）执行，避免 VRAM 冲突。
+        # EdgeTTS / CosyVoice / Global 模式仍在此处提前准备。
+        if self.config.voice_clone_active and self.config.engine_type != "chattts":
             vocals = self._find_vocals(video_path)
             if vocals:
                 color = self._create_color_audio(vocals, video_path)
@@ -781,6 +1057,24 @@ class TtsPipeline:
                 )
             else:
                 logger.warning("CosyVoice TTS: 未配置参考音频且找不到 vocals.wav")
+
+        # ── IndexTTS 自动参考音频（用户未手动配置且启用克隆时） ──
+        if (
+            self.config.engine_type == "indextts"
+            and self.config.indextts_enable_clone
+            and not self.config.indextts_speaker_audio
+        ):
+            vocals = self._find_vocals(video_path)
+            if vocals:
+                color = self._create_color_audio(vocals, video_path)
+                ref = color or vocals
+                self.engine.reset_speaker(prompt_audio=ref)
+                logger.info(
+                    "IndexTTS: 零样本音色克隆，参考音频 %s",
+                    os.path.basename(ref),
+                )
+            else:
+                logger.warning("IndexTTS: 未配置参考音频且找不到 vocals.wav")
 
         # ── LUFS 自动检测：从原视频人声测量目标响度 ──
         self._loudness_target = self.config.loudness_target_lufs
@@ -840,14 +1134,32 @@ class TtsPipeline:
             video, instrumental_path, subs_translated, total_duration, _extract_instrumental_segment
         )
 
+        # ── 情感分析（可选，仅 ChatTTS）──
+        self._emo_prompts: dict = {}
+        if (self.config.enable_emotion
+                and self.config.engine_type == "chattts"):
+            vocals = self._find_vocals(video_path)
+            if vocals:
+                self._emo_prompts = self._load_or_extract_emotion_prompts(
+                    vocals, subs_translated,
+                    output_dir=self.config.output_dir)
+
         # ── Global 模式：全局统一调速 ─────────────────
         if self.config.speed_mode == "global":
             from pipeline.speed_strategy import create_strategy, StrategyContext
 
+            _emo_re = re.compile(r"^TTS_(\d+)_(\d+)")
+
             def _synth_fn(text: str, path: str, rate: str) -> float:
                 engine = self._borrow_engine()
                 try:
-                    return engine.synthesize(text, path, rate)
+                    emotion = None
+                    if self._emo_prompts:
+                        m = _emo_re.search(os.path.basename(path))
+                        if m:
+                            key = (int(m.group(1)), int(m.group(2)))
+                            emotion = self._emo_prompts.get(key)
+                    return engine.synthesize(text, path, rate, emotion=emotion)
                 finally:
                     self._return_engine(engine)
 
@@ -935,53 +1247,122 @@ class TtsPipeline:
                     "caption_groups": caption_groups[i] if caption_groups else None,
                 })
 
-            # Phase 2: 并行提交到线程池
+            # ═══════════════════════════════════════════════════════════
+            # 三阶段流水线: TTS → 时序调整 → 视频混合
+            # ═══════════════════════════════════════════════════════════
             if tasks:
-                futures = {}
+                # ── Phase 1: 并行 TTS 合成（引擎池，GPU 密集）──
+                pbar.set_description("🎤 TTS 合成")
+                futures1 = {}
                 for task in tasks:
-                    future = self._executor.submit(
-                        self._process_single_subtitle,
-                        task["text_cn"], task["text_en"],
-                        task["start"], task["end"],
-                        video_path,
-                        task["video_end"],
-                        instrumental_path=task["instr_seg_path"],
-                        subs_next=task["subs_next"],
-                        caption_groups=task["caption_groups"],
-                    )
-                    futures[future] = task
+                    futures1[self._executor.submit(
+                        self._phase1_synthesize, task)] = task
 
-                # Phase 3: 收集结果并更新进度
-                for future in concurrent.futures.as_completed(futures):
-                    task = futures[future]
-                    start, end = task["start"], task["end"]
-                    try:
-                        result = future.result()
-                        if result and result.get("success"):
-                            processed += 1
-                            # 每 10 条释放一次 CUDA 缓存，防碎片化累积导致 OOM
-                            if processed % 10 == 0:
-                                try:
-                                    import torch
-                                    torch.cuda.empty_cache()
-                                except Exception:
-                                    pass
-                                import gc
-                                gc.collect()
-                            if self._ck is not None and processed % 10 == 0:
-                                self._ck.update_extra("tts", segs_done=processed)
-                                self._ck.save()
-                        elif result and not result.get("success"):
-                            errors += 1
-                        else:
-                            skipped += 1
-                    except Exception as e:
+                phase1_ok = 0
+                for future in concurrent.futures.as_completed(futures1):
+                    task = future.result()
+                    if task.get("success"):
+                        phase1_ok += 1
+                        if phase1_ok % 10 == 0:
+                            try:
+                                import torch
+                                torch.cuda.empty_cache()
+                            except Exception:
+                                pass
+                            import gc
+                            gc.collect()
+                    else:
                         errors += 1
-                        tqdm.write(f"  [ERROR] 字幕 [{start}-{end}] 线程异常: {e}")
-                    finally:
-                        # clip 资源已由 _process_single_subtitle 的 finally 块释放
+                        tqdm.write(f"  [ERROR] TTS 合成失败 [{task['start']}-{task['end']}]: "
+                                   f"{task.get('error', 'unknown')}")
+                    pbar.update(1)
+                    pbar.set_postfix(phase="TTS", ok=phase1_ok, err=errors,
+                                     refresh=False)
+
+                # ── Phase 1.5: 批量声音克隆（可选，voice_clone_engine≠none 时启用）──
+                if self.config.voice_clone_active:
+                    pbar.reset(total=len(tasks))
+                    pbar.set_description("🎙 声音克隆")
+
+                    # 1. 清理 ChatTTS 引擎（释放 ~8GB VRAM）
+                    self._cleanup_engine_pool()
+
+                    # 2. prepare speaker embedding
+                    vocals = self._find_vocals(video_path)
+                    if vocals:
+                        color = self._create_color_audio(vocals, video_path)
+                        ref = color or vocals
+                        ok = self.voice_cloner.prepare(ref)
+                        logger.info("音色克隆: speaker embedding %s (ref=%s)",
+                                    "OK" if ok else "FAIL", os.path.basename(ref))
+
+                    # 3. 逐条克隆 + 重采样，增量更新进度条
+                    clone_dir = os.path.join(self.config.output_dir, "cloned")
+                    os.makedirs(clone_dir, exist_ok=True)
+                    import subprocess as _sp
+                    for task in tasks:
+                        if not task.get("success"):
+                            continue
+                        cloned = self.voice_cloner.clone(task["wav_path"], clone_dir)
+                        if cloned:
+                            # CosyVoice outputs 24kHz; resample to 44.1kHz
+                            _tmp = cloned + ".resampled.wav"
+                            _sp.run(
+                                [ffmpeg_exe, "-y", "-i", cloned,
+                                 "-ar", "44100", "-acodec", "pcm_s16le", _tmp],
+                                capture_output=True, check=True,
+                                timeout=60, encoding="utf-8", errors="replace")
+                            safe_replace(_tmp, cloned)
+                            task["wav_path"] = cloned
                         pbar.update(1)
-                        pbar.set_postfix(ok=processed, err=errors, skip=skipped, refresh=False)
+
+                    # 4. 防止 Phase 3 重复克隆（不影响 EdgeTTS/CosyVoice/Global 模式）
+                    self.video_seg.clone_color = False
+
+                    # 5. 释放克隆器 VRAM
+                    self.voice_cloner.cleanup()
+                    try:
+                        import torch
+                        torch.cuda.empty_cache()
+                    except Exception:
+                        pass
+                    import gc
+                    gc.collect()
+
+                # ── Phase 2: 时序调整（CPU 密集，RubberBand，并行）──
+                pbar.reset(total=len(tasks))
+                pbar.set_description("⏱ 时序调整")
+                futures2 = {}
+                for task in tasks:
+                    futures2[self._executor.submit(
+                        self._phase2_adjust, task)] = task
+
+                for future in concurrent.futures.as_completed(futures2):
+                    future.result()
+                    pbar.update(1)
+
+                # ── Phase 3: 视频混合（ffmpeg 密集，并行）──
+                pbar.reset(total=len(tasks))
+                pbar.set_description("🎬 视频混合")
+                futures3 = {}
+                for task in tasks:
+                    futures3[self._executor.submit(
+                        self._phase3_mix, task, video_path)] = task
+
+                for future in concurrent.futures.as_completed(futures3):
+                    task = future.result()
+                    if task.get("phase3_success"):
+                        processed += 1
+                        if self._ck is not None and processed % 10 == 0:
+                            self._ck.update_extra("tts", segs_done=processed)
+                            self._ck.save()
+                    else:
+                        errors += 1
+                        tqdm.write(f"  [ERROR] 视频混合失败 [{task['start']}-{task['end']}]: "
+                                   f"{task.get('phase3_error', 'unknown')}")
+                    pbar.update(1)
+                    pbar.set_postfix(phase="MIX", ok=processed, err=errors,
+                                     refresh=False)
 
             # Final checkpoint save
             if self._ck is not None:
