@@ -97,28 +97,6 @@ class SpeakerDiarizer:
         np.NaN = np.nan
         np.NAN = np.nan
 
-        # PyTorch 2.6: torch.load 默认 weights_only=True，pyannote 旧 checkpoint 需要关闭
-        import torch
-        _orig_load = torch.load
-        def _patched_load(*args, **kwargs):
-            kwargs["weights_only"] = False
-            return _orig_load(*args, **kwargs)
-        torch.load = _patched_load
-
-        # hf_hub_download: use_auth_token -> token (pyannote 3.3.2 用旧 API)
-        # 同时拦截 pyannote 模型请求，直接返回本地路径（不走 HF 缓存/网络）
-        import huggingface_hub
-        _orig_hf_hub = huggingface_hub.hf_hub_download
-        def _patched_hf_hub(repo_id, filename, *args, **kwargs):
-            if "use_auth_token" in kwargs:
-                kwargs["token"] = kwargs.pop("use_auth_token")
-            # pyannote 子模型：直接返回本地文件，不触发任何网络请求
-            local = model_dir.parent / repo_id.split("/")[-1] / filename
-            if local.is_file():
-                return str(local)
-            return _orig_hf_hub(repo_id, filename, *args, **kwargs)
-        huggingface_hub.hf_hub_download = _patched_hf_hub
-
         from pyannote.audio import Pipeline
 
         # 走 ModelManager 取配置路径，fallback 到默认本地路径
@@ -131,24 +109,53 @@ class SpeakerDiarizer:
             model_dir = Path(self._model_name).parent
             config_path = self._model_name
 
-        # 将本地 pyannote 子模型注入 HF 缓存，避免在线下载
+        # 将本地 pyannote 子模型注入 HF 缓存
         import yaml
         with open(config_path, "r", encoding="utf-8") as f:
             cfg = yaml.safe_load(f)
+        if not isinstance(cfg, dict) or "pipeline" not in cfg:
+            raise ValueError(f"pyannote config.yaml 结构异常: {config_path}")
+        params = cfg["pipeline"].get("params", {})
         for key in ("segmentation", "embedding"):
-            repo_id = cfg["pipeline"]["params"].get(key, "")
+            repo_id = params.get(key, "")
             if repo_id and "/" in repo_id:
                 _ensure_hf_cache(repo_id, model_dir.parent / repo_id.split("/")[-1])
 
-        t0 = time.time()
-        logger.info("加载 pyannote: %s", config_path)
-        self._pipeline = Pipeline.from_pretrained(config_path)
-        self._pipeline.to(torch.device(self._device))
-        # 预热 CUDA JIT
-        dummy = torch.randn(1, 16000, device=self._device)
-        self._pipeline({"waveform": dummy, "sample_rate": 16000})
-        self._loaded = True
-        logger.info("pyannote 加载完成 (%.1fs)", time.time() - t0)
+        # PyTorch 2.6 兼容 + hf_hub 本地拦截（仅 Pipeline.from_pretrained 期间生效）
+        import torch, huggingface_hub
+        _orig_load = torch.load
+        _orig_hf_hub = huggingface_hub.hf_hub_download
+
+        def _patched_load(*args, **kwargs):
+            kwargs["weights_only"] = False
+            return _orig_load(*args, **kwargs)
+
+        def _patched_hf_hub(repo_id, filename, *args, **kwargs):
+            if "use_auth_token" in kwargs:
+                kwargs["token"] = kwargs.pop("use_auth_token")
+            # 仅拦截 pyannote 仓库，避免劫持其他模型的 HF 下载
+            if repo_id.startswith("pyannote/"):
+                local = model_dir.parent / repo_id.split("/")[-1] / filename
+                if local.is_file():
+                    return str(local)
+            return _orig_hf_hub(repo_id, filename, *args, **kwargs)
+
+        try:
+            torch.load = _patched_load
+            huggingface_hub.hf_hub_download = _patched_hf_hub
+
+            t0 = time.time()
+            logger.info("加载 pyannote: %s", config_path)
+            self._pipeline = Pipeline.from_pretrained(config_path)
+            self._pipeline.to(torch.device(self._device))
+            # 预热 CUDA JIT
+            dummy = torch.randn(1, 16000, device=self._device)
+            self._pipeline({"waveform": dummy, "sample_rate": 16000})
+            self._loaded = True
+            logger.info("pyannote 加载完成 (%.1fs)", time.time() - t0)
+        finally:
+            torch.load = _orig_load
+            huggingface_hub.hf_hub_download = _orig_hf_hub
 
     def unload_model(self) -> None:
         if self._pipeline is not None:

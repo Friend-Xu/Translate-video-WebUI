@@ -318,7 +318,7 @@ class JapaneseProcessor:
                 # 不同说话人不拼接
                 cur_spk = current.get('speaker')
                 nxt_spk = next_seg.get('speaker')
-                if cur_spk and nxt_spk and cur_spk != nxt_spk:
+                if cur_spk is not None and nxt_spk is not None and cur_spk != nxt_spk:
                     break
                 next_text = next_seg['text'].strip()
                 merged_text += next_text
@@ -363,10 +363,6 @@ class JapaneseProcessor:
 
         return result
 
-    @staticmethod
-    def _speaker_prefix(speaker):
-        return f"[{speaker}] " if speaker else ""
-
     def process_segments(self, segments):
         # 先进行智能标点处理
         segments = self.smart_punctuation(segments)
@@ -396,7 +392,7 @@ class JapaneseProcessor:
                         "index": self.entry_count,
                         "start": sub_start,
                         "end": sub_end,
-                        "text": self._speaker_prefix(segment.get("speaker")) + sub_text.strip(),
+                        "text": sub_text.strip(),
                         "speaker": segment.get("speaker"),
                     })
                     self.entry_count += 1
@@ -412,7 +408,7 @@ class JapaneseProcessor:
                         "index": self.entry_count,
                         "start": sub_start,
                         "end": sub_end,
-                        "text": self._speaker_prefix(segment.get("speaker")) + sub_text.strip(),
+                        "text": sub_text.strip(),
                         "speaker": segment.get("speaker"),
                     })
                     self.entry_count += 1
@@ -440,7 +436,7 @@ class JapaneseProcessor:
                         "index": self.entry_count,
                         "start": current_time,
                         "end": part_end,
-                        "text": self._speaker_prefix(segment.get("speaker")) + part_text.strip(),
+                        "text": part_text.strip(),
                         "speaker": segment.get("speaker"),
                     })
                     self.entry_count += 1

@@ -693,16 +693,12 @@ class EnglishProcessor:
         segments = self.ensure_punctuation_at_end(segments)
 
         for i, seg in enumerate(segments, start=1):
-            speaker = seg.get('speaker')
-            text = seg['text']
-            if speaker:
-                text = f"[{speaker}] {text}"
             self.srt_entries.append({
                 "index": i,
                 "start": seg['start'],
                 "end": seg['end'],
-                "text": text,
-                "speaker": speaker,
+                "text": seg['text'],
+                "speaker": seg.get('speaker'),
             })
         self.entry_count = len(self.srt_entries) + 1
 
