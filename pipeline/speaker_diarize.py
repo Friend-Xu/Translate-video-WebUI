@@ -45,6 +45,31 @@ def _hash_file(path: str, n_bytes: int = 65536) -> str:
     return h.hexdigest()
 
 
+def _ensure_hf_cache(repo_id: str, local_dir: Path) -> None:
+    """将本地模型目录注入 HF 缓存结构，避免 huggingface_hub 在线下载。
+
+    HF 缓存格式: {HF_HOME}/hub/models--{org}--{repo}/snapshots/{hash}/*
+    """
+    import shutil, hashlib
+    hf_home = Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
+    cache_name = "models--" + repo_id.replace("/", "--")
+    snapshots_dir = hf_home / "hub" / cache_name / "snapshots"
+    fnames = sorted(f.name for f in local_dir.glob("*") if f.is_file())
+    h = hashlib.sha256("".join(fnames).encode()).hexdigest()[:40]
+    target = snapshots_dir / h
+    if not target.exists():
+        target.mkdir(parents=True, exist_ok=True)
+        for fn in fnames:
+            src = local_dir / fn
+            dst = target / fn
+            if src.is_file() and not dst.exists():
+                shutil.copy2(src, dst)
+        refs_dir = hf_home / "hub" / cache_name / "refs"
+        refs_dir.mkdir(parents=True, exist_ok=True)
+        (refs_dir / "main").write_text(h)
+        logger.info("HF 缓存注入: %s → %s", repo_id, target)
+
+
 class SpeakerDiarizer:
     """pyannote 说话人分离引擎。每次 run() 加载模型 → 推理 → 卸载。"""
 
@@ -70,14 +95,28 @@ class SpeakerDiarizer:
         # numpy 2.x: np.NaN 被移除
         import numpy as np
         np.NaN = np.nan
+        np.NAN = np.nan
+
+        # PyTorch 2.6: torch.load 默认 weights_only=True，pyannote 旧 checkpoint 需要关闭
+        import torch
+        _orig_load = torch.load
+        def _patched_load(*args, **kwargs):
+            kwargs["weights_only"] = False
+            return _orig_load(*args, **kwargs)
+        torch.load = _patched_load
 
         # hf_hub_download: use_auth_token -> token (pyannote 3.3.2 用旧 API)
+        # 同时拦截 pyannote 模型请求，直接返回本地路径（不走 HF 缓存/网络）
         import huggingface_hub
         _orig_hf_hub = huggingface_hub.hf_hub_download
-        def _patched_hf_hub(*args, **kwargs):
+        def _patched_hf_hub(repo_id, filename, *args, **kwargs):
             if "use_auth_token" in kwargs:
                 kwargs["token"] = kwargs.pop("use_auth_token")
-            return _orig_hf_hub(*args, **kwargs)
+            # pyannote 子模型：直接返回本地文件，不触发任何网络请求
+            local = model_dir.parent / repo_id.split("/")[-1] / filename
+            if local.is_file():
+                return str(local)
+            return _orig_hf_hub(repo_id, filename, *args, **kwargs)
         huggingface_hub.hf_hub_download = _patched_hf_hub
 
         from pyannote.audio import Pipeline
@@ -86,9 +125,20 @@ class SpeakerDiarizer:
         try:
             from pipeline.model_manager import ModelManager
             ModelManager.ensure_hf_env()
-            config_path = str(ModelManager.get_path(DEFAULT_MODEL_ID) / "config.yaml")
+            model_dir = ModelManager.get_path(DEFAULT_MODEL_ID)
+            config_path = str(model_dir / "config.yaml")
         except Exception:
+            model_dir = Path(self._model_name).parent
             config_path = self._model_name
+
+        # 将本地 pyannote 子模型注入 HF 缓存，避免在线下载
+        import yaml
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f)
+        for key in ("segmentation", "embedding"):
+            repo_id = cfg["pipeline"]["params"].get(key, "")
+            if repo_id and "/" in repo_id:
+                _ensure_hf_cache(repo_id, model_dir.parent / repo_id.split("/")[-1])
 
         t0 = time.time()
         logger.info("加载 pyannote: %s", config_path)

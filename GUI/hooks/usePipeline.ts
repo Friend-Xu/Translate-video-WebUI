@@ -175,6 +175,7 @@ export function usePipeline() {
           chattts_workers: config.chatttsWorkers,
           skip_align: !config.enableAlignment,
           align_lang: config.lang !== 'auto' ? config.lang : '',
+          enable_speaker_diarization: config.enableSpeakerDiarization,
           caption_font: config.captionFont,
           caption_font_size_mode: config.captionFontSizeMode,
           caption_font_size: config.captionFontSize,

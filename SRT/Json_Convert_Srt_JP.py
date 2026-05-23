@@ -315,6 +315,11 @@ class JapaneseProcessor:
                     break
 
                 # gap 小 -> 拼接（日语不加空格）
+                # 不同说话人不拼接
+                cur_spk = current.get('speaker')
+                nxt_spk = next_seg.get('speaker')
+                if cur_spk and nxt_spk and cur_spk != nxt_spk:
+                    break
                 next_text = next_seg['text'].strip()
                 merged_text += next_text
                 merged_end = next_seg['end']

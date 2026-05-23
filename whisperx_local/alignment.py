@@ -2,6 +2,7 @@
 Forced Alignment with Whisper
 C. Max Bain
 """
+import os
 from dataclasses import dataclass
 from typing import Iterable, Union, List
 

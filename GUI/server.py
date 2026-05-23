@@ -730,6 +730,7 @@ class RunRequest(BaseModel):
     skip_align: bool = False
     align_lang: str = "ja"
     enable_emotion: bool = False
+    enable_speaker_diarization: bool = False
 
 
 class RunResponse(BaseModel):
@@ -882,6 +883,8 @@ def _build_cli_args(req: RunRequest) -> list[str]:
         args.append("--skip-align")
     if req.align_lang:
         args.extend(["--align-lang", req.align_lang])
+    if req.enable_speaker_diarization:
+        args.append("--enable-speaker-diarization")
     return args
 
 

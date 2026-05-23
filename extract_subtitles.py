@@ -7,11 +7,11 @@
   NODE 1.5 时长缺陷检测     → MediaValidator
   NODE 2   音频提取+修复     → pipeline/audio.py
   NODE 2.5 Demucs人声分离    → pipeline/demucs_instr.py
+  NODE 3   VAD+转录+断句    → pipeline/transcriber.py
+  NODE 3.5 wav2vec2 对齐    → whisperx_local.alignment (精修词级时间戳)
   NODE 2.7 说话人分离(可选)  → pipeline/speaker_diarize.py
   NODE 2.75 说话人融合(可选)  → pipeline/speaker_fusion.py
   NODE 2.8  分离结果验证(可选) → pipeline/diarization_verify.py
-  NODE 3   VAD+转录+断句    → pipeline/transcriber.py
-  NODE 3.5 wav2vec2 对齐    → whisperx_local.alignment (精修词级时间戳)
   NODE 4   JSON→SRT         → Json_Convert_Srt
 
 用法:
@@ -247,35 +247,6 @@ def main():
         ck.complete_node("N2.5"); ck.save()
 
     # ════════════════════════════════════════════════════════
-    # NODE 2.7: 说话人分离 (可选)
-    # ════════════════════════════════════════════════════════
-    speaker_timeline = None
-    speaker_timeline_path = os.path.join(out_dir, "speaker_timeline.json")
-
-    if args.enable_speaker_diarization and os.path.isfile(vocal_path):
-        hr("NODE 2.7: 说话人分离 (pyannote)")
-        t0 = time.time()
-        try:
-            from pipeline.speaker_diarize import SpeakerDiarizer
-            diarizer = SpeakerDiarizer()
-            speaker_timeline = diarizer.run(vocal_path)
-            diarizer.export_timeline_json(vocal_path, speaker_timeline_path)
-            speakers = sorted(set(s[0] for s in speaker_timeline))
-            log_node("2.7", f"检测到 {len(speakers)} 个说话人: {', '.join(speakers)}, "
-                     f"{len(speaker_timeline)} 个语音段")
-            log_node("2.7", f"耗时: {time.time()-t0:.1f}s")
-        except Exception as e:
-            import traceback
-            print(f"  [WARN] 说话人分离失败 ({e})，跳过")
-            traceback.print_exc()
-            log_node("2.7", f"跳过: 分离失败 — {e}")
-            speaker_timeline = None
-
-    if args.enable_speaker_diarization and not os.path.isfile(vocal_path):
-        log_node("2.7", "跳过: 人声文件不存在")
-        print(f"  [INFO] 说话人分离跳过 — 人声文件不存在: {vocal_path}")
-
-    # ════════════════════════════════════════════════════════
     # NODE 3: VAD 分段 + faster-whisper 转录
     # ════════════════════════════════════════════════════════
     hr("NODE 3: VAD 分段 + faster-whisper 转录")
@@ -332,6 +303,35 @@ def main():
     ck.complete_node("N3"); ck.save()
 
     # ════════════════════════════════════════════════════════
+    # NODE 2.7: 说话人分离 (可选)
+    # ════════════════════════════════════════════════════════
+    speaker_timeline = None
+    speaker_timeline_path = os.path.join(out_dir, "speaker_timeline.json")
+
+    if args.enable_speaker_diarization and os.path.isfile(vocal_path):
+        hr("NODE 2.7: 说话人分离 (pyannote)")
+        t0 = time.time()
+        try:
+            from pipeline.speaker_diarize import SpeakerDiarizer
+            diarizer = SpeakerDiarizer()
+            speaker_timeline = diarizer.run(vocal_path)
+            diarizer.export_timeline_json(vocal_path, speaker_timeline_path)
+            speakers = sorted(set(s[0] for s in speaker_timeline))
+            log_node("2.7", f"检测到 {len(speakers)} 个说话人: {', '.join(speakers)}, "
+                     f"{len(speaker_timeline)} 个语音段")
+            log_node("2.7", f"耗时: {time.time()-t0:.1f}s")
+        except Exception as e:
+            import traceback
+            print(f"  [WARN] 说话人分离失败 ({e})，跳过")
+            traceback.print_exc()
+            log_node("2.7", f"跳过: 分离失败 — {e}")
+            speaker_timeline = None
+
+    if args.enable_speaker_diarization and not os.path.isfile(vocal_path):
+        log_node("2.7", "跳过: 人声文件不存在")
+        print(f"  [INFO] 说话人分离跳过 — 人声文件不存在: {vocal_path}")
+
+    # ════════════════════════════════════════════════════════
     # NODE 2.75: 说话人融合 (word 级时间交集分配)
     # ════════════════════════════════════════════════════════
     speaker_map_path = os.path.join(out_dir, "speaker_map.json")
@@ -357,6 +357,26 @@ def main():
             if all_words:
                 all_words = assign_word_speakers(all_words, speaker_timeline)
                 n_assigned = sum(1 for w in all_words if w.get("speaker"))
+
+            # 将全局词的 speaker 分配到 segment 内每个 word（时间重叠法）
+            # whisper 词和 wav2vec2 对齐词粒度不同，直接匹配时间戳不可靠
+            if all_words:
+                for seg in result["segments"]:
+                    for w in seg.get("words", []):
+                        if "start" not in w or "end" not in w:
+                            continue
+                        best_spk = None
+                        best_ov = 0.0
+                        for gw in all_words:
+                            s = gw.get("speaker")
+                            if not s or "start" not in gw or "end" not in gw:
+                                continue
+                            ov = max(0, min(w["end"], gw["end"]) - max(w["start"], gw["start"]))
+                            if ov > best_ov:
+                                best_ov = ov
+                                best_spk = s
+                        if best_spk and best_ov > 0:
+                            w["speaker"] = best_spk
 
             # 检测重叠
             overlaps = detect_overlaps(speaker_timeline)
