@@ -197,28 +197,16 @@ export function PipelinePanel({
                 <Box sx={{ position: 'absolute', left: 11, top: -4, height: 36, width: 2, bgcolor: 'primary.main' }} />
                 <Box sx={{ position: 'absolute', left: 11, top: 14, width: 10, height: 2, bgcolor: 'primary.main' }} />
               </Box>
-              <FormControlLabel
-                control={<Checkbox size="small" checked={config.enableSemanticValidation} onChange={e => onConfigChange('enableSemanticValidation', e.target.checked)} disabled={isRunning || !config.enableTranslate} />}
-                label={<Typography variant="body2" sx={{ color: !config.enableTranslate ? 'text.disabled' : undefined }}>启用语义校验 (MiniLM)</Typography>}
-              />
-            </Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', position: 'relative', height: 32 }}>
-              <Box sx={{ position: 'relative', width: 22, height: 32, flexShrink: 0 }}>
-                <Box sx={{ position: 'absolute', left: 11, top: 0, height: 32, width: 2, bgcolor: 'primary.main' }} />
-                <Box sx={{ position: 'absolute', left: 11, top: 14, width: 10, height: 2, bgcolor: 'primary.main' }} />
-              </Box>
-              <FormControlLabel
-                control={<Checkbox size="small"
-                  checked={config.enableNaturalnessCheck && (config.targetLang === 'zh-CN' || config.targetLang === 'en')}
-                  onChange={e => onConfigChange('enableNaturalnessCheck', e.target.checked)}
-                  disabled={isRunning || !config.enableTranslate || !config.enableSemanticValidation || (config.targetLang !== 'zh-CN' && config.targetLang !== 'en')}
-                />}
-                label={
-                  <Typography variant="body2" sx={{ color: (!config.enableTranslate || !config.enableSemanticValidation || (config.targetLang !== 'zh-CN' && config.targetLang !== 'en')) ? 'text.disabled' : undefined }}>
-                    启用自然度检查 (PPL) {config.targetLang !== 'zh-CN' && config.targetLang !== 'en' ? '— 仅中文/英文有效' : ''}
-                  </Typography>
-                }
-              />
+              <Typography variant="body2" sx={{ mr: 1, minWidth: 56, color: !config.enableTranslate ? 'text.disabled' : undefined }}>翻译验证</Typography>
+              <ToggleButtonGroup size="small" exclusive
+                value={config.verificationMode}
+                onChange={(_, v) => { if (v !== null) onConfigChange('verificationMode', v) }}
+                disabled={isRunning || !config.enableTranslate}
+                sx={{ '& .MuiToggleButton-root': { px: 1, py: 0.25, fontSize: '0.7rem' } }}
+              >
+                <ToggleButton value="joint_formula">联合公式</ToggleButton>
+                <ToggleButton value="logic_gate">逻辑门控</ToggleButton>
+              </ToggleButtonGroup>
             </Box>
             <Box sx={{ display: 'flex', alignItems: 'center', position: 'relative', height: 32 }}>
               <Box sx={{ position: 'relative', width: 22, height: 32, flexShrink: 0 }}>
