@@ -252,6 +252,7 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
                   backup_dir: str = "", skip_defect_check: bool = False,
                   skip_demucs: bool = False, skip_align: bool = False,
                   align_lang: str | None = None, num_workers: int = 1,
+                  enable_speaker_diarization: bool = False,
                   force: bool = False,
                   checkpoint: PipelineCheckpoint | None = None) -> None:
     """步骤 1: 委托 extract_subtitles.py 完成全流程。
@@ -305,6 +306,8 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
         cmd.extend(["--align-lang", align_lang])
     if num_workers > 1:
         cmd.extend(["--num-workers", str(num_workers)])
+    if enable_speaker_diarization:
+        cmd.append("--enable-speaker-diarization")
 
     # 子进程 UTF-8 输出兼容（Windows GBK 终端）
     env = os.environ.copy()
@@ -877,6 +880,8 @@ def main():
                         help="wav2vec2 对齐语言（默认跟随 --lang）")
     parser.add_argument("--num-workers", type=int, default=1,
                         help="whisper 并发 worker 数 (1=串行, 2~4=并行)")
+    parser.add_argument("--enable-speaker-diarization", action="store_true",
+                        help="启用说话人分离 (pyannote, 默认关闭)")
     parser.add_argument("--skip-semantic-validation", action="store_true",
                         help="翻译完成后跳过语义校验")
     parser.add_argument("--skip-naturalness-check", action="store_true",
@@ -982,6 +987,7 @@ def main():
                          backup_dir=args.backup_dir, skip_defect_check=args.skip_defect_check,
                          skip_demucs=args.skip_demucs, skip_align=args.skip_align,
                          align_lang=args.align_lang, num_workers=args.num_workers,
+                         enable_speaker_diarization=args.enable_speaker_diarization,
                          force=args.force, checkpoint=ck)
         else:
             print("[1/3] 字幕提取 — 已跳过 (--skip-extract)")
