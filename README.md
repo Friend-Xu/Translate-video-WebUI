@@ -44,6 +44,16 @@ Models download automatically to `models/` on first run.
 
 ---
 
+## What's New in v1.4.0
+
+- **ChatTTS Persistent Worker** — Isolated subprocess with JSON protocol, eliminates STATUS_HEAP_CORRUPTION crashes on Windows CUDA
+- **SSE Real-time Streaming** — asyncio.Queue instant delivery + react-virtuoso virtual scrolling (500 DOM nodes → ~30), smooth log display even with 1000+ lines
+- **Text Normalization** — WeTextProcessing (wetext) integration for Chinese number/date normalization, fixed Minecraft version number pronunciation ("1.19" → "一点一九")
+- **Glossary Safety** — Auto-filter Minecraft formatting codes (§l, §r) from glossary values, preventing subtitle corruption
+- **Per-segment LUFS** — Automatic loudness normalization per TTS segment, eliminates volume jumps between ChatTTS/CosyVoice segments
+- **UTF-8 Everywhere** — Enforced UTF-8 encoding for all subprocess calls, no more GBK decode crashes on Chinese Windows
+
+---
 ## Features
 
 | Feature | Description |
@@ -54,8 +64,9 @@ Models download automatically to `models/` on first run.
 | 🎤 **CosyVoice TTS** | Offline zero-shot voice cloning TTS, subprocess isolation (no PyTorch conflicts), v2/v3 dual versions, auto number normalization |
 | 🎼 **Rubber Band Stretch** | Industrial-grade time-stretching, natural-sounding ChatTTS speed adjustment |
 | 🎵 **BGM Preservation** | Demucs vocal/instrumental separation, retains background music with loudness compensation |
-| 🖥️ **WebUI Panel** | React + FastAPI, single video + batch mode, SSE real-time logs |
+| 🖥️ **WebUI Panel** | React + FastAPI, single video + batch mode, SSE real-time logs, virtual scrolling, connection status |
 | 📝 **Subtitle Review** | Visual calibration panel, manual translation editing + save |
+| 🔤 **Text Normalization** | WeTextProcessing Chinese TN (numbers/dates/percentages), whisperX artifact auto-fix |
 | ⚡ **GPU Accelerated** | CUDA + float16 default, ChatTTS VRAM-aware model pool auto-sizing |
 | 🔄 **Checkpoint Resume** | Interruption recovery, automatic re-run on source video change |
 | 🧹 **Memory Cleanup** | Auto-release GPU/CPU memory after pipeline (>10GB freed) |

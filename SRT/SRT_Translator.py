@@ -223,17 +223,30 @@ class DeepSeekAPI(TranslationAPI):
             "top_p": self.top_p,
         }
 
-        try:
-            resp = requests.post(self.url, json=payload, headers=headers, timeout=self.timeout)
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"].strip()
-        except requests.exceptions.RequestException as e:
-            logger.error(f"DeepSeek API 请求失败: {e}")
-            raise
-        except (KeyError, IndexError) as e:
-            logger.error(f"DeepSeek API 响应解析失败: {e}")
-            raise
+        import time as _time
+        max_429_retries = 5
+        for attempt in range(max_429_retries + 1):
+            try:
+                resp = requests.post(self.url, json=payload, headers=headers, timeout=self.timeout)
+                if resp.status_code == 429:
+                    delay = 2 ** attempt  # 1, 2, 4, 8, 16s
+                    logger.warning(
+                        f"DeepSeek API 429 限流 (attempt {attempt+1}/{max_429_retries+1}), "
+                        f"{delay}s 后重试..."
+                    )
+                    if attempt < max_429_retries:
+                        _time.sleep(delay)
+                        continue
+                    resp.raise_for_status()
+                resp.raise_for_status()
+                data = resp.json()
+                return data["choices"][0]["message"]["content"].strip()
+            except requests.exceptions.RequestException as e:
+                logger.error(f"DeepSeek API 请求失败: {e}")
+                raise
+            except (KeyError, IndexError) as e:
+                logger.error(f"DeepSeek API 响应解析失败: {e}")
+                raise
 
 
 # OpenAI-compatible API providers with their default base URLs
@@ -399,6 +412,8 @@ def build_system_prompt(source_lang: str, fmt: str = "numbered_list", retry: boo
         "要求：",
         "1. 准确传达原文含义，上下文连贯",
         "2. " + fmt_rules,
+        "3. 不要添加解释性内容：不在译文后加括号标注英文原文、不增补版本号或日期等解释性后缀",
+        "4. 保持原文的叙述节奏和句式结构，直译优先，不要改写为说明书式语言",
     ]
 
     if not retry:
@@ -775,6 +790,9 @@ class SRTTranslator:
             "dimensions", {}).get("naturalness", {}).get("enabled", True)
         self.naturalness_threshold = self.config.get("quality_assessment", {}).get(
             "dimensions", {}).get("naturalness", {}).get("threshold", 3.0)
+        self.joint_verification = self.config.get("joint_verification", False)
+        self.verification_mode = self.config.get("verification_mode", "joint_formula")
+        self.sim_drop_limit = self.config.get("sim_drop_limit", 0.05)
         self._ppl_evaluator = None
         # 并发配置
         conc_cfg = self.config.get("concurrency", {})
@@ -1096,9 +1114,9 @@ class SRTTranslator:
                         # ≥ 0.70 → 候选进入 Phase 2 (PPL 自然度检查)
                         ppl_candidates.append((sub, source))
 
-                # Phase 2: PPL 自然度检查 (MiniLM ≥ 0.70 + naturalness_check + 中/英文)
-                _ppl_langs = ("zh-CN", "en")
-                if ppl_candidates and self.naturalness_check and self.target_lang in _ppl_langs:
+                # Phase 2: PPL 自然度检查 (MiniLM ≥ 0.70 + naturalness_check)
+                ppl_data: dict = {}  # {index: {ppl, baseline, ratio}}
+                if ppl_candidates and self.naturalness_check:
                     ppl_eval = self._get_ppl_evaluator()
                     if ppl_eval:
                         texts = [s.text for s, _ in ppl_candidates]
@@ -1114,6 +1132,11 @@ class SRTTranslator:
 
                             for i, (sub, source) in enumerate(ppl_candidates):
                                 ppl = ppls[i]
+                                ppl_data[sub.index] = {
+                                    "ppl": round(ppl, 1),
+                                    "baseline": round(baseline, 1),
+                                    "ratio": round(ppl / baseline, 2) if baseline > 0 else 0,
+                                }
                                 if ppl > 0 and baseline > 0 and (ppl / baseline) > self.naturalness_threshold:
                                     logger.warning(
                                         f"  ⚠ 索引 {sub.index} PPL 偏高 ({ppl:.0f}/{baseline:.0f}="
@@ -1123,7 +1146,60 @@ class SRTTranslator:
                                         source, sub.text, sub.index, group
                                     )
                                     if refined and refined != sub.text:
-                                        sub.text = refined
+                                        if self.joint_verification:
+                                            # 闭环验证：联合得分判断语义是否偏离
+                                            old_sim = similarities.get(sub.index, 0.70)
+                                            old_ratio = ppl / baseline
+                                            result = self._verify_naturalness_result(
+                                                source, sub.text, refined,
+                                                old_sim, old_ratio, baseline,
+                                            )
+                                            if result["accepted"]:
+                                                sub.text = refined
+                                                logger.info(
+                                                    f"  ✓ 索引 {sub.index}: 自然度重翻已采纳 "
+                                                    f"(old={old_sim:.2f}+{old_ratio:.1f}x, "
+                                                    f"new={result['new_sim']:.2f}+{result['new_ratio']:.1f}x)"
+                                                )
+                                            else:
+                                                reason = result["reason"]
+                                                if reason in ("semantic_drift", "content_degraded"):
+                                                    # Tier 2 回退
+                                                    pre_tier2_text = sub.text
+                                                    if reason == "semantic_drift":
+                                                        logger.warning(
+                                                            f"  ↳ 索引 {sub.index}: 语义崩溃, 回退语义重试 (Tier 2)..."
+                                                        )
+                                                        # 用原始正确翻译作为比较基准，而非 Tier 1 的幻觉输出
+                                                        best = self._verify_and_refine(
+                                                            source, sub.text, sub.index, group
+                                                        )
+                                                        sub.text = best
+                                                    else:
+                                                        logger.warning(
+                                                            f"  ↳ 索引 {sub.index}: 内容退化 "
+                                                            f"({result.get('sim_drop', 0):.2f}), "
+                                                            f"回退内容保全重试 (Tier 2)..."
+                                                        )
+                                                        best = self._refine_content_preserving(
+                                                            source, refined, sub.index, group
+                                                        )
+                                                        if best and best != refined:
+                                                            sub.text = best
+                                                    # 更新 _semantic_flagged 记录
+                                                    for sf in reversed(self._semantic_flagged):
+                                                        if sf.get("index") == sub.index and sf.get("reason") == "naturalness_retry":
+                                                            sf["reason"] = f"naturalness_retry_rejected:{reason}_fellback"
+                                                            sf["kept"] = "second" if sub.text != pre_tier2_text else "first"
+                                                            break
+                                                else:
+                                                    # Gate B 失败: 保留原译，无需重试
+                                                    logger.warning(
+                                                        f"  ✗ 索引 {sub.index}: 自然度重翻被驳回 "
+                                                        f"({reason}), 保留原译"
+                                                    )
+                                        else:
+                                            sub.text = refined
                         except Exception as e:
                             logger.warning(f"PPL 批量推理失败: {e}")
             with self._log_lock:
@@ -1137,6 +1213,8 @@ class SRTTranslator:
                 }
                 if similarities:
                     detail["similarities"] = similarities
+                if ppl_data:
+                    detail["ppls"] = ppl_data
                 self.log.details.append(detail)
             return True
 
@@ -1496,11 +1574,14 @@ class SRTTranslator:
         logger.info(f"Prompt 清单已保存: {manifest_path}")
 
     def _refine_naturalness(self, source_text: str, translated_text: str,
-                            sub_index: int, group: List) -> Optional[str]:
+                            sub_index: int, group: List,
+                            preserve_content: bool = False) -> Optional[str]:
         """
         自然度重翻 (PPL 偏高 → RefineContrast 自然中文)
 
         与语义重翻不同：这里侧重用更地道的目标语言重新表达，而非纠正语义错误。
+
+        preserve_content=True: 强调保持原文完整信息量，用于 Gate C 失败后的 Tier 2 回退
         """
         src_label, tgt_label = self._get_lang_labels()
         prev_subs, next_subs = self._get_context_subs(sub_index, group)
@@ -1519,6 +1600,13 @@ class SRTTranslator:
             system_msg = self.custom_naturalness_retry_prompt.replace(
                 "{source_lang}", src_label
             ).replace("{target_lang}", tgt_label)
+        elif preserve_content:
+            system_msg = (
+                f"你是专业翻译。请将以下{src_label}字幕重新翻译成更自然、更地道的{tgt_label}。"
+                "严格保持原文的完整信息量——不要增删任何内容要点，不要省略或添加信息。"
+                "用日常交流的口吻表达，避免翻译腔（直译/逐字翻译）。"
+                "输出只有译文本身，不要添加任何说明。"
+            )
         else:
             system_msg = (
                 f"你是专业翻译。请将以下{src_label}字幕重新翻译成更自然、更地道的{tgt_label}。"
@@ -1576,6 +1664,114 @@ class SRTTranslator:
         except Exception as e:
             logger.warning(f"  自然度重翻异常 (索引 {sub_index}): {e}")
             return None
+
+    def _refine_content_preserving(self, source_text: str, translated_text: str,
+                                   sub_index: int, group: List) -> Optional[str]:
+        """内容保全重试 — Gate C 失败后的 Tier 2 回退。
+
+        与 _refine_naturalness 相同，但强调保持原文完整信息量。
+        """
+        return self._refine_naturalness(source_text, translated_text,
+                                        sub_index, group, preserve_content=True)
+
+    def _verify_naturalness_result(self, source: str, old_text: str,
+                                   refined: str, old_sim: float,
+                                   old_ratio: float, baseline: float) -> dict:
+        """闭环验证：判断自然度重翻是否可接受。
+
+        verification_mode 控制验证策略：
+        - "joint_formula": Gate A (sim>=0.70) + Gate B (联合得分 β*(1-ratio)+γ*sim 提升)
+        - "logic_gate":    Gate A (sim>=0.70) + Gate C (sim_drop + 长度比, NEW)
+                           + Gate B (PPL 下降 + 长度守卫, NEW)
+
+        Returns: {accepted: bool, kept: str, reason: str, new_sim, new_ratio, ...}
+        """
+        verifier = self._get_verifier()
+        if not verifier:
+            return {"accepted": True, "kept": "second", "reason": "verifier_unavailable",
+                    "new_sim": old_sim, "new_ratio": old_ratio}
+
+        new_sim = verifier.verify(source, refined)["similarity"]
+
+        # Gate A: 语义安全底线（两种模式共用）
+        if new_sim < self.semantic_threshold:
+            return {"accepted": False, "kept": "first", "reason": "semantic_drift",
+                    "new_sim": new_sim, "new_ratio": 0}
+
+        # Gate C: 内容保真度（仅 logic_gate 模式）
+        # 防止 LLM 通过"注水"或"偷工减料"人为压低 PPL
+        # sim_drop_limit=0 时禁用 Gate C
+        mode = getattr(self, "verification_mode", "joint_formula")
+        if mode == "logic_gate" and self.sim_drop_limit > 0:
+            sim_drop = old_sim - new_sim
+            if sim_drop > self.sim_drop_limit:
+                return {"accepted": False, "kept": "first", "reason": "content_degraded",
+                        "new_sim": new_sim, "new_ratio": 0,
+                        "sim_drop": round(sim_drop, 4)}
+            # 长度比检测：借鉴 COMET-poly (2025) 用已知正确翻译作参照
+            # 比较重翻结果 vs 原始译文的相对源文长度比
+            src_len = len(source)
+            if src_len > 0 and len(old_text) > 0:
+                orig_len_ratio = len(old_text) / src_len
+                new_len_ratio = len(refined) / src_len
+                if new_len_ratio > orig_len_ratio * 2.0:
+                    return {"accepted": False, "kept": "first", "reason": "content_degraded",
+                            "new_sim": new_sim, "new_ratio": 0,
+                            "sim_drop": round(sim_drop, 4)}
+                if new_len_ratio < orig_len_ratio * 0.4:
+                    return {"accepted": False, "kept": "first", "reason": "content_degraded",
+                            "new_sim": new_sim, "new_ratio": 0,
+                            "sim_drop": round(sim_drop, 4)}
+                _orig_len_ratio = orig_len_ratio
+                _new_len_ratio = new_len_ratio
+            else:
+                _orig_len_ratio = _new_len_ratio = 1.0
+        else:
+            _orig_len_ratio = _new_len_ratio = 1.0
+
+        # 计算新译文 PPL
+        ppl_eval = self._get_ppl_evaluator()
+        if ppl_eval:
+            try:
+                new_ppl = ppl_eval.perplexity(refined)
+            except Exception:
+                new_ppl = old_ratio * baseline if baseline > 0 else old_ratio
+        else:
+            new_ppl = old_ratio * baseline if baseline > 0 else old_ratio
+        new_ratio = new_ppl / baseline if baseline > 0 else 1.0
+
+        if mode == "logic_gate":
+            # Gate B: 自然度改善（PPL 必须下降）
+            if new_ratio < old_ratio:
+                # 长度守卫：防止删内容降 PPL 的取巧行为
+                if _new_len_ratio < _orig_len_ratio * 0.5:
+                    return {"accepted": False, "kept": "first", "reason": "content_shrunk",
+                            "new_sim": new_sim, "new_ratio": new_ratio,
+                            "improvement": 0}
+                improvement = round(old_ratio - new_ratio, 4)
+                return {"accepted": True, "kept": "second", "reason": "naturalness_improved",
+                        "new_sim": new_sim, "new_ratio": new_ratio,
+                        "improvement": improvement}
+            else:
+                return {"accepted": False, "kept": "first", "reason": "no_naturalness_gain",
+                        "new_sim": new_sim, "new_ratio": new_ratio,
+                        "improvement": 0}
+        else:
+            # Gate B: 联合得分比较（默认）
+            def _score(r, s, b=1.0, g=1.0):
+                return b * (1.0 - r) + g * s
+
+            old_score = _score(old_ratio, old_sim)
+            new_score = _score(new_ratio, new_sim)
+
+            if new_score > old_score:
+                return {"accepted": True, "kept": "second", "reason": "joint_improvement",
+                        "new_sim": new_sim, "new_ratio": new_ratio,
+                        "old_score": round(old_score, 4), "new_score": round(new_score, 4)}
+            else:
+                return {"accepted": False, "kept": "first", "reason": "no_improvement",
+                        "new_sim": new_sim, "new_ratio": new_ratio,
+                        "old_score": round(old_score, 4), "new_score": round(new_score, 4)}
 
     def _get_context_subs(self, sub_index: int, group: List) -> Tuple[List, List]:
         """获取某条字幕的上下文（前后各最多 2 条）"""

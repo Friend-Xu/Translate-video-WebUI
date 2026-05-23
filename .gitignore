@@ -124,6 +124,7 @@ __启动脚本.bat
 # Personal planning / dev notes
 docs/
 计划开发/
+tutorial_raw/
 .worktrees/
 GUI/graphify-out/
 .playwright-mcp/

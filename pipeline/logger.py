@@ -7,6 +7,7 @@ Pipeline 共享日志配置。
 
 from __future__ import annotations
 
+import io
 import logging
 import sys
 
@@ -20,7 +21,8 @@ def _configure_root() -> None:
     if root.handlers:
         return
 
-    handler = logging.StreamHandler(sys.stderr)
+    utf8_stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    handler = logging.StreamHandler(utf8_stderr)
     handler.setFormatter(logging.Formatter(
         "[%(levelname)-5s] %(name)s: %(message)s"
     ))

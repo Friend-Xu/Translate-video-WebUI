@@ -24,7 +24,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('主界面')
   const [mode, setMode] = useState<PipelineMode>('single')
   const { config, updateConfig, resetConfig } = useConfig()
-  const { status, logs, appendLog, handleDone, startPipeline, cancelPipeline } = usePipeline()
+  const { status, logs, appendLog, handleDone, startPipeline, cancelPipeline, logFirstIndex, logTotal, loadOlderLogs } = usePipeline()
   const {
     batch, activeVideoJobId,
     startBatch, cancelBatch, skipCurrent,
@@ -89,7 +89,7 @@ export default function App() {
 
   // SSE: batch mode uses active video's jobId, single mode uses status.jobId
   const sseJobId = mode === 'batch' ? activeVideoJobId : status.jobId
-  useSSE(sseJobId, appendLog, handleDone, () => {})
+  const { connectionState } = useSSE(sseJobId, appendLog, handleDone, () => {})
 
   const showMsg = useCallback((msg: string, severity: 'success' | 'error' | 'info' = 'info') => {
     setSnackbar({ open: true, msg, severity })
@@ -315,11 +315,15 @@ export default function App() {
               onReorderFiles={handleReorderFiles}
               onRemoveFile={handleRemoveFile}
               logs={logs}
+              connectionState={connectionState}
               onStartReview={handleStartReview}
               reviewSaved={reviewSaved}
               onContinueTTS={handleContinueTTS}
               onFileDropped={handleFileDropped}
               onOpenOutputFolder={handleOpenOutputFolder}
+              logFirstIndex={logFirstIndex.current}
+              logTotal={logTotal.current}
+              onLoadOlderLogs={() => loadOlderLogs(status.jobId)}
             />
           </KeepAliveSection>
           <KeepAliveSection active={activeTab === '步骤配置'}>

@@ -18,7 +18,11 @@ import subprocess
 
 def get_wav_duration(wav_path: str, ffmpeg_exe: str) -> float:
     """通过 ffmpeg -i 获取 WAV 文件的时长"""
-    r = subprocess.run([ffmpeg_exe, "-i", wav_path], capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        r = subprocess.run([ffmpeg_exe, "-i", wav_path], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=30)
+    except (subprocess.TimeoutExpired, OSError):
+        return 0.0
     for line in r.stderr.split("\n"):
         if "Duration:" in line:
             dur_str = line.split(",")[0].replace("Duration:", "").strip()

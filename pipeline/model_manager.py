@@ -70,6 +70,7 @@ class ModelManager:
     CHATTS_DIR = MODELS_DIR / "ChatTTS"
     COSYVOICE2_DIR = MODELS_DIR / "CosyVoice2-0.5B"
     COSYVOICE3_DIR = MODELS_DIR / "CosyVoice3-0.5B"
+    EMOTION2VEC_DIR = MODELS_DIR / "emotion2vec"
 
     # snapshot_download 默认忽略模式（排除冗余导出/缓存/文档）
     DEFAULT_IGNORE_PATTERNS: tuple = (
@@ -261,6 +262,66 @@ class ModelManager:
             size_gb=0,
             vram_gb=0,
             description="微软 Edge TTS 云端服务，无需本地显存，需联网使用",
+        ),
+        "indextts": ModelEntry(
+            id="indextts",
+            name="IndexTTS 2.0",
+            function="零样本音色克隆 + 精确时长控制 TTS",
+            category="tts",
+            repo_id="IndexTeam/IndexTTS-2",
+            check_dir=MODELS_DIR / "IndexTTS" / "index-tts-batch" / "checkpoints",
+            check_files=("gpt.pth", "s2mel.pth"),
+            size_gb=5.9,
+            vram_gb=7.8,
+            description="B站开源 IndexTTS 2.0，自回归 GPT + BigVGAN，支持零样本音色克隆和精确时长控制",
+        ),
+        "emotion2vec": ModelEntry(
+            id="emotion2vec",
+            name="emotion2vec+ large",
+            function="语音情感识别 — 提取情感标签和嵌入向量",
+            category="subtitle",
+            repo_id="",
+            check_dir=MODELS_DIR / "emotion2vec",
+            check_files=("model.pt", "configuration.json"),
+            size_gb=1.9,
+            vram_gb=1.0,
+            description="Alibaba DAMO emotion2vec+ large，9类情感识别 + 1024维情感嵌入",
+        ),
+        "pyannote-diarization": ModelEntry(
+            id="pyannote-diarization",
+            name="pyannote speaker-diarization-3.1",
+            function="说话人分离 — 多说话人识别和时间线标注",
+            category="subtitle",
+            repo_id="pyannote/speaker-diarization-3.1",
+            check_dir=MODELS_DIR / "pyannote" / "speaker-diarization-3.1",
+            check_files=("config.yaml",),
+            size_gb=0.1,
+            vram_gb=0,
+            description="pyannote.audio 3.1 说话人分离 pipeline 配置，指向 segmentation + embedding 子模型",
+        ),
+        "pyannote-segmentation": ModelEntry(
+            id="pyannote-segmentation",
+            name="pyannote segmentation-3.0",
+            function="VAD + 说话人切换检测模型",
+            category="subtitle",
+            repo_id="pyannote/segmentation-3.0",
+            check_dir=MODELS_DIR / "pyannote" / "segmentation-3.0",
+            check_files=("pytorch_model.bin",),
+            size_gb=0.3,
+            vram_gb=0.5,
+            description="SincNet 架构的语音/非语音二分类 + 说话人切换检测",
+        ),
+        "pyannote-embedding": ModelEntry(
+            id="pyannote-embedding",
+            name="pyannote wespeaker-voxceleb-resnet34-LM",
+            function="声纹嵌入模型 — 提取说话人特征向量",
+            category="subtitle",
+            repo_id="pyannote/wespeaker-voxceleb-resnet34-LM",
+            check_dir=MODELS_DIR / "pyannote" / "wespeaker-voxceleb-resnet34-LM",
+            check_files=("pytorch_model.bin",),
+            size_gb=0.2,
+            vram_gb=0.5,
+            description="ResNet34 声纹嵌入，WeSpeaker 预训练，ECAPA-TDNN 192维输出",
         ),
     }
 

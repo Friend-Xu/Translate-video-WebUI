@@ -131,22 +131,23 @@ class VideoSegmenter:
                     chain.append("atempo=0.5")
                     remaining /= 0.5
                 chain.append(f"atempo={remaining:.6f}")
-            # 统一格式: 44100Hz mono s16
+            # 统一格式: 44100Hz mono s16（pan 滤镜在 amix 后转为立体声）
             chain.append("aformat=sample_fmts=s16:sample_rates=44100:channel_layouts=mono")
             filters.append(f"[{i}:a]{','.join(chain)}[a{i}]")
 
-        # amix
+        # amix → mono, then pan → stereo (duplicate mono to both channels)
         mix_inputs = "".join(f"[a{i}]" for i in range(n))
-        filters.append(f"{mix_inputs}amix=inputs={n}:duration=longest:normalize=0[out]")
+        filters.append(f"{mix_inputs}amix=inputs={n}:duration=longest:normalize=0[out_mono]")
+        filters.append("[out_mono]pan=stereo|c0=c0|c1=c0[out]")
 
         filter_str = ";".join(filters)
         cmd.extend(["-filter_complex", filter_str, "-map", "[out]"])
-        cmd.extend(["-acodec", "pcm_s16le", "-ar", "44100", "-ac", "1"])
+        cmd.extend(["-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2"])
         if output_duration is not None:
             cmd.extend(["-t", f"{output_duration:.6f}"])
         cmd.append(output_path)
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, encoding="utf-8", errors="replace")
         if result.returncode != 0:
             err = result.stderr.strip()[-500:] if result.stderr else "unknown error"
             raise RuntimeError(f"ffmpeg amix 失败: {err}")
@@ -160,7 +161,7 @@ class VideoSegmenter:
         # 导致整段音频在 15ms 后完全静音
         dur_result = subprocess.run(
             [get_ffmpeg_exe(), "-i", wav_path],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, timeout=15, encoding="utf-8", errors="replace",
         )
         duration_s = None
         for line in (dur_result.stderr or "").split("\n"):
@@ -183,7 +184,7 @@ class VideoSegmenter:
             [get_ffmpeg_exe(), "-y", "-i", wav_path,
              "-af", fade_filter,
              "-acodec", "pcm_s16le", tmp],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=30, encoding="utf-8", errors="replace",
         )
         if result.returncode != 0:
             err = result.stderr.strip()[-200:] if result.stderr else "unknown error"
@@ -360,6 +361,7 @@ class VideoSegmenter:
             audio_codec=self.audio_codec,
             bitrate=self.video_bitrate,
             preset=self.video_preset,
+            audio_nbytes=2,  # 16-bit audio (moviepy defaults to 4=32-bit)
             logger=None,
         )
 

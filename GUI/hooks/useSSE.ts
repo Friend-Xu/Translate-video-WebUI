@@ -1,5 +1,10 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback, useState } from 'react'
 import type { LogEntry } from '../types'
+
+export type ConnectionState = 'connected' | 'reconnecting' | 'closed'
+
+let _sseId = 1000000
+function sseNextId(): number { return _sseId++ }
 
 export function useSSE(
   jobId: string | null,
@@ -8,37 +13,50 @@ export function useSSE(
   onClear?: () => void,
 ) {
   const sourceRef = useRef<EventSource | null>(null)
+  const [connectionState, setConnectionState] = useState<ConnectionState>('closed')
 
   const disconnect = useCallback(() => {
     sourceRef.current?.close()
     sourceRef.current = null
+    setConnectionState('closed')
   }, [])
 
   useEffect(() => {
-    if (!jobId) return
+    if (!jobId) {
+      setConnectionState('closed')
+      return
+    }
 
     onClear?.()
 
     const es = new EventSource(`/api/pipeline/${jobId}/logs`)
     sourceRef.current = es
 
+    es.onopen = () => {
+      setConnectionState('connected')
+    }
+
     es.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
         const raw: string = data.message || ''
-        const match = raw.match(/^\[(\w+)\]\s*(.*)/)
-        const level = (match?.[1] || 'INFO') as LogEntry['level']
-        const message = match?.[2] || raw
-        const timestamp = new Date().toLocaleTimeString()
-        onLog({ level, message, timestamp })
+        const match = raw.match(/^\[(\w+)\s*\]\s*(.*)/)
+        let level = (match?.[1] || 'INFO') as LogEntry['level']
+        let message = match?.[2] || raw
+        if (message.includes('[STAGE]')) {
+          level = 'STAGE'
+          message = message.replace('[STAGE] ', '')
+        }
+        const timestamp = data.ts || new Date().toLocaleTimeString()
+        onLog({ _id: sseNextId(), level, message, timestamp })
       } catch {
-        onLog({ level: 'INFO', message: event.data, timestamp: new Date().toLocaleTimeString() })
+        onLog({ _id: sseNextId(), level: 'INFO', message: event.data, timestamp: new Date().toLocaleTimeString() })
       }
     }
 
     es.addEventListener('done', (event) => {
       try {
-        const data = JSON.parse(event.data)
+        const data = JSON.parse((event as MessageEvent).data)
         onDone(data.status)
       } catch {
         onDone('completed')
@@ -47,11 +65,15 @@ export function useSSE(
     })
 
     es.onerror = () => {
-      // Let EventSource auto-reconnect; disconnect only via 'done' event.
-      // Calling disconnect() here defeats the browser's built-in retry,
-      // permanently losing logs after a transient connection drop.
+      if (es.readyState === EventSource.CLOSED) {
+        setConnectionState('closed')
+      } else {
+        setConnectionState('reconnecting')
+      }
     }
 
     return disconnect
   }, [jobId, onLog, onDone, disconnect])
+
+  return { connectionState }
 }

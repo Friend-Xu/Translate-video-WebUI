@@ -53,7 +53,7 @@ Open `http://localhost:5173`.
 Just drop a video file on the main panel. The pipeline auto-detects filepath, language, and workspace.
 
 ### Live Progress
-SSE streaming logs with per-step timing. See exactly what's happening at each pipeline stage in real time.
+SSE streaming logs with asyncio.Queue instant delivery + react-virtuoso virtual scrolling. See exactly what's happening at each pipeline stage in real time, with connection status indicator (connected/reconnecting/closed) and log level filter chips (ALL/STAGE/WARN/ERROR). Smooth even with 1000+ log lines.
 
 ### GPU Auto-Detection
 Detects NVIDIA GPU + VRAM capacity on startup. Automatically selects hardware encoder (NVENC) and calculates optimal ChatTTS worker count.

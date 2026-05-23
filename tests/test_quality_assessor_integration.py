@@ -9,7 +9,7 @@ from pipeline.quality_assessor import QualityAssessor
 ws = "source_file/test_project"
 assessor = QualityAssessor(
     ws_dir=ws, semantic_threshold=0.70,
-    naturalness_threshold=3.0, naturalness_enabled=True,
+    naturalness_threshold=3.0,
     source_lang="ja",
 )
 report = assessor.run()
@@ -22,7 +22,6 @@ s = report["summary"]
 print(f"\nQuality Report Summary:")
 print(f"  Total: {s['total']}")
 print(f"  PASS: {s['tier_pass']}  GLANCE: {s['tier_glance']}  REVIEW: {s['tier_review']}  CRITICAL: {s['tier_critical']}")
-print(f"  PPL Baseline: {s['naturalness_baseline_ppl']}")
 print(f"  Coverage: {s['dimension_coverage']}")
 
 for e in report["entries"][:3]:

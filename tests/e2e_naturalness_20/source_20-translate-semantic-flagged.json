@@ -1,0 +1,75 @@
+{
+  "video": "source_20.srt",
+  "threshold": 0.7,
+  "flagged": [
+    {
+      "index": 15,
+      "source": "Like the realism with that, like the ombrage and all.",
+      "translated": "比如那种真实感，还有那些阴翳什么的。",
+      "similarity": 0.6021,
+      "retried": true,
+      "new_translated": "看看那真实感，还有那些阴影什么的。",
+      "new_similarity": 0.5093,
+      "kept": "first",
+      "improvement": -0.0928
+    },
+    {
+      "index": 9,
+      "source": "the name of Ravix.",
+      "translated": "名字叫Ravix。",
+      "similarity": 0.652,
+      "retried": true,
+      "new_translated": "名为Ravix。",
+      "new_similarity": 0.6426,
+      "kept": "first",
+      "improvement": -0.0094
+    },
+    {
+      "index": 18,
+      "source": "Like these things are absolute units.",
+      "translated": "这些东西简直是庞然大物。",
+      "similarity": 0.4855,
+      "retried": true,
+      "new_translated": "这些家伙绝对是巨无霸。",
+      "new_similarity": 0.2915,
+      "kept": "first",
+      "improvement": -0.194
+    },
+    {
+      "index": 2,
+      "source": "But a dragon has always existed on the other until now.",
+      "translated": "但直到现在，另一边一直存在着一只龙。",
+      "similarity": 0.8504,
+      "retried": true,
+      "new_translated": "但直到现在，另一边一直都有一只龙。",
+      "new_similarity": 0.8634,
+      "kept": "old",
+      "improvement": 0,
+      "reason": "naturalness_retry_rejected:no_improvement"
+    },
+    {
+      "index": 7,
+      "source": "Last time, we have put a few dragons available, which is the one, alias the Veine de Sand.",
+      "translated": "上次我们提供了几条龙，就是那条，又名Veine de Sand。",
+      "similarity": 0.7384,
+      "retried": true,
+      "new_translated": "上次我们放了几条龙，其中就有那条叫Veine de Sand的。",
+      "new_similarity": 0.7585,
+      "kept": "old",
+      "improvement": 0,
+      "reason": "naturalness_retry_rejected:no_improvement"
+    },
+    {
+      "index": 13,
+      "source": "And of course, who could forget the Ignore absolutely gigantesque behind me, just here.",
+      "translated": "当然，谁能忘了我身后那个绝对巨大的Ignore，就在这儿。",
+      "similarity": 0.9315,
+      "retried": true,
+      "new_translated": "当然，谁能忘了我身后这个巨大无比的Ignore呢？就在这儿。",
+      "new_similarity": 0.9399,
+      "kept": "old",
+      "improvement": 0,
+      "reason": "naturalness_retry_rejected:no_improvement"
+    }
+  ]
+}

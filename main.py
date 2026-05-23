@@ -25,11 +25,20 @@ import subprocess
 import sys
 import time
 
+from pipeline.logger import get_logger
+logger = get_logger("main")
+
 # 防 CUDA 碎片化：PyTorch 2.0+ expandable segments 允许内存段动态伸缩，
 # 配合 max_split_size_mb 防止大块被切碎后无法归还。
 # 必须在 torch 首次导入前设置（ChatTTS / pipeline 模块内懒加载 torch）。
 if os.environ.get("PYTORCH_CUDA_ALLOC_CONF") is None:
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True,max_split_size_mb:128"
+
+# 禁用 PyTorch CUDA 缓存分配器，强制使用裸 cudaMalloc。
+# CTranslate2 (faster-whisper) 和 ChatTTS 都使用裸 cudaMalloc，
+# PyTorch 的 CUDACachingAllocator 与其在同一 CUDA 上下文中冲突，
+# 在 Windows 上导致 STATUS_HEAP_CORRUPTION (0xC0000374)。
+os.environ.setdefault("PYTORCH_NO_CUDA_MEMORY_CACHING", "1")
 
 # Windows GBK terminal fix
 if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
@@ -243,6 +252,7 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
                   backup_dir: str = "", skip_defect_check: bool = False,
                   skip_demucs: bool = False, skip_align: bool = False,
                   align_lang: str | None = None, num_workers: int = 1,
+                  enable_speaker_diarization: bool = False,
                   force: bool = False,
                   checkpoint: PipelineCheckpoint | None = None) -> None:
     """步骤 1: 委托 extract_subtitles.py 完成全流程。
@@ -271,6 +281,7 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
         print("\n[1/3] 字幕提取 — 已完成 (checkpoint)，跳过")
         return
 
+    logger.info("[STAGE] [1/4] 字幕提取 + 语音识别开始")
     print("\n[1/3] 字幕提取...")
     ck.start_step("extract")
     ck.save()
@@ -295,18 +306,48 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
         cmd.extend(["--align-lang", align_lang])
     if num_workers > 1:
         cmd.extend(["--num-workers", str(num_workers)])
+    if enable_speaker_diarization:
+        cmd.append("--enable-speaker-diarization")
 
     # 子进程 UTF-8 输出兼容（Windows GBK 终端）
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
 
+    from pipeline.ntstatus import decode_exit_code, is_native_crash, is_retryable
+
+    MAX_RETRIES = 3
     print(f"  运行: extract_subtitles.py")
-    result = subprocess.run(cmd, cwd=PROJECT_ROOT, env=env)
-    if result.returncode != 0:
-        ck.fail_step("extract", f"subprocess exit code {result.returncode}",
-                       error_type="APPLICATION")
+    for attempt in range(1, MAX_RETRIES + 1):
+        result = subprocess.run(cmd, cwd=PROJECT_ROOT, env=env)
+        if result.returncode == 0:
+            break
+
+        status_name, status_desc = decode_exit_code(result.returncode)
+        if is_retryable(result.returncode) and attempt < MAX_RETRIES:
+            print(f"  [checkpoint] 本机崩溃 ({status_name})，"
+                  f"清理 CUDA 并重试 (尝试 {attempt + 1}/{MAX_RETRIES})...")
+            print(f"              原因: {status_desc.split('。')[0]}。")
+            try:
+                import torch
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+            import gc
+            gc.collect()
+            import time
+            time.sleep(2.0)
+            continue
+
+        # 重试用尽或不可重试的错误
+        error_type = "INFRASTRUCTURE" if is_native_crash(result.returncode) else "APPLICATION"
+        error_msg = f"{status_name}: {status_desc.split('。')[0]} (code={result.returncode})"
+        ck.fail_step("extract", error_msg, error_type=error_type)
         ck.save()
-        print(f"[X] 字幕提取失败 (code={result.returncode})")
+        if attempt > 1:
+            print(f"  [X] 字幕提取失败 (重试 {MAX_RETRIES} 次均失败)")
+        print(f"  [X] {error_msg}")
+        if is_native_crash(result.returncode):
+            print(f"  [checkpoint] 建议: 重启服务器以重置 GPU 上下文后重试")
         sys.exit(result.returncode)
 
     # 标准化文件名
@@ -349,7 +390,8 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
 def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
                    checkpoint: PipelineCheckpoint | None = None,
                    skip_semantic_validation: bool = False,
-                   skip_naturalness_check: bool = False) -> str:
+                   skip_naturalness_check: bool = False,
+                   verification_mode: str | None = None) -> str:
     """步骤 2: 翻译 + 术语替换。
 
     输出到工作目录 02_translate/machine.srt。
@@ -378,6 +420,7 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
         _manifest_set_files(video, {"machine_srt": "02_translate/machine.srt"})
         return output
 
+    logger.info("[STAGE] [2/4] 字幕翻译 + 术语替换开始")
     print("\n[2/3] 字幕翻译 + 术语替换...")
     ck.start_step("translate")
     ck.save()
@@ -391,6 +434,8 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
         translator.semantic_check = False
     if skip_naturalness_check:
         translator.naturalness_check = False
+    if verification_mode:
+        translator.verification_mode = verification_mode
     auto_srt, pending = translator.translate(srt_path)
 
     if pending:
@@ -448,12 +493,11 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
         ws = workspace_paths(video)
         if ws:
             qa_cfg = _load_translate_cfg_field("quality_assessment", {})
-            if qa_cfg.get("enabled", True):
+            if qa_cfg.get("enabled", True) and not (skip_semantic_validation and skip_naturalness_check):
                 assessor = QualityAssessor(
                     ws_dir=ws["workspace"],
                     semantic_threshold=qa_cfg.get("dimensions", {}).get("semantic", {}).get("threshold", 0.70),
                     naturalness_threshold=qa_cfg.get("dimensions", {}).get("naturalness", {}).get("threshold", 3.0),
-                    naturalness_enabled=qa_cfg.get("dimensions", {}).get("naturalness", {}).get("enabled", True),
                     source_lang=_load_translate_cfg_field("source_lang", "auto"),
                 )
                 assessor.run()
@@ -515,6 +559,7 @@ def step_tts(
     cosyvoice_tts_prompt_text: str | None = None,
     cosyvoice_tts_mode: str | None = None,
     cosyvoice_tts_lang: str | None = None,
+    enable_emotion: bool | None = None,
 ) -> None:
     """步骤 3: TTS 合成 + 视频合并（新管线 TtsPipeline）
 
@@ -553,6 +598,7 @@ def step_tts(
             print()
             print(f"[WARN] [3/3] 找不到伴奏文件: {ws['instrumental_wav']}，将不使用背景音乐继续合成（可加 --skip-demucs 消除此警告）")
 
+    logger.info("[STAGE] [3/4] TTS 语音合成开始")
     print(f"\n[3/3] TTS 语音合成 + 视频合并 ({engine})...")
     ck.start_step("tts")
     ck.save()
@@ -562,6 +608,8 @@ def step_tts(
     cfg = TTSConfig.from_yaml(config_path) if config_path and os.path.isfile(config_path) else TTSConfig()
 
     cfg.engine_type = engine
+    if enable_emotion is not None:
+        cfg.enable_emotion = enable_emotion
 
     # 目标语言：从 translate.yaml 读取并写入 TTSConfig（驱动 EdgeTTS 语音自动选择）
     translate_yaml = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
@@ -667,10 +715,12 @@ def step_tts(
             if removed:
                 print(f"  [force] 已清除 {removed} 个旧视频段")
 
-    # 运行新管线
+    # 运行 TtsPipeline（ChatTTS CUDA 隔离由持久子进程 chattts_worker.py 处理）
     from pipeline.tts_pipeline import TtsPipeline
 
     pipeline = TtsPipeline(cfg)
+    tts_failed = False
+    tts_error_msg = ""
     try:
         pipeline.run(
             video_path=video,
@@ -678,20 +728,36 @@ def step_tts(
             translated_srt_path=srt_translated,
             source_srt_path=srt_source,
         )
+    except Exception as exc:
+        tts_failed = True
+        tts_error_msg = f"{type(exc).__name__}: {exc}"
+        import traceback
+        traceback.print_exc()
     finally:
         pipeline.cleanup()
 
-    if os.path.isfile(final_output):
+    if tts_failed:
+        ck.fail_step("tts", tts_error_msg, error_type="APPLICATION")
+        ck.save()
+        print(f"\n[X] TTS 合成失败: {tts_error_msg}")
+        print(f"  [checkpoint] TTS 已标记为失败，视频段保留在 {cfg.video_output_dir}/")
+        print(f"  [checkpoint] 重启后可断点续传 (已处理的片段会自动跳过)")
+        _manifest_set_step(video, "tts", "failed")
+        sys.exit(1)
+    elif os.path.isfile(final_output):
         sz = os.path.getsize(final_output)
         from pipeline.checkpoint import _file_sha256
         ck.complete_step("tts", output_hashes={"dubbed_mp4": _file_sha256(final_output)})
         ck.save()
         print(f"  [OK] 最终视频: {final_output} ({sz/1024/1024:.1f}MB)")
+        _manifest_set_step(video, "tts", "completed")
     else:
         ck.fail_step("tts", "final output not produced", error_type="APPLICATION")
         ck.save()
-        print(f"  [OK] TTS 合成完成（最终视频路径: {final_output}）")
-    _manifest_set_step(video, "tts", "completed")
+        print(f"\n[X] TTS 合成未生成最终视频")
+        print(f"  [checkpoint] TTS 已标记为失败，重启后可断点续传")
+        _manifest_set_step(video, "tts", "failed")
+        sys.exit(1)
     _manifest_set_files(video, {"dubbed": "04_output/dubbed.mp4"})
     if backup_dir:
         backup_step("03_tts_done", [final_output], backup_dir)
@@ -764,7 +830,7 @@ def main():
                         help="计算设备 (cuda/cpu)")
     parser.add_argument("--compute-type", default="float16",
                         help="计算精度 (float16/int8_float16/int8/float32)")
-    parser.add_argument("--engine", default="edge", choices=["edge", "chattts", "cosyvoice"],
+    parser.add_argument("--engine", default="edge", choices=["edge", "chattts", "cosyvoice", "indextts"],
                         help="TTS 引擎 (默认 edge)")
     parser.add_argument("--config", help="TTS YAML 配置文件路径")
     parser.add_argument("--caption-config", default=None,
@@ -800,6 +866,8 @@ def main():
                         help="CosyVoice TTS 合成模式 (固定 cross_lingual)")
     parser.add_argument("--cosyvoice-tts-lang", default=None,
                         help="CosyVoice TTS 语言标签 (zh/en/ja/ko/yue)")
+    parser.add_argument("--enable-emotion", action="store_true", default=None,
+                        help="启用情感分析 (仅 ChatTTS). 不传则使用配置文件值")
     parser.add_argument("--skip-extract", action="store_true",
                         help="跳过字幕提取")
     parser.add_argument("--skip-defect-check", action="store_true",
@@ -812,10 +880,15 @@ def main():
                         help="wav2vec2 对齐语言（默认跟随 --lang）")
     parser.add_argument("--num-workers", type=int, default=1,
                         help="whisper 并发 worker 数 (1=串行, 2~4=并行)")
+    parser.add_argument("--enable-speaker-diarization", action="store_true",
+                        help="启用说话人分离 (pyannote, 默认关闭)")
     parser.add_argument("--skip-semantic-validation", action="store_true",
                         help="翻译完成后跳过语义校验")
     parser.add_argument("--skip-naturalness-check", action="store_true",
                         help="翻译完成后跳过自然度检查 (PPL)")
+    parser.add_argument("--verification-mode", default=None,
+                        choices=["joint_formula", "logic_gate"],
+                        help="闭环验证模式: joint_formula (联合公式) | logic_gate (逻辑门控)")
     parser.add_argument("--skip-translate", action="store_true",
                         help="跳过翻译")
     parser.add_argument("--skip-tts", action="store_true",
@@ -914,6 +987,7 @@ def main():
                          backup_dir=args.backup_dir, skip_defect_check=args.skip_defect_check,
                          skip_demucs=args.skip_demucs, skip_align=args.skip_align,
                          align_lang=args.align_lang, num_workers=args.num_workers,
+                         enable_speaker_diarization=args.enable_speaker_diarization,
                          force=args.force, checkpoint=ck)
         else:
             print("[1/3] 字幕提取 — 已跳过 (--skip-extract)")
@@ -930,7 +1004,8 @@ def main():
             srt_translated = step_translate(video, srt_source, force=args.force, backup_dir=args.backup_dir,
                                               checkpoint=ck,
                                               skip_semantic_validation=args.skip_semantic_validation,
-                                              skip_naturalness_check=args.skip_naturalness_check)
+                                              skip_naturalness_check=args.skip_naturalness_check,
+                                              verification_mode=args.verification_mode)
         else:
             print("[2/3] 翻译 — 已跳过 (--skip-translate)")
             existing = guess_translated_srt(video)
@@ -939,15 +1014,8 @@ def main():
                 print(f"  使用已有翻译: {os.path.basename(existing)}")
 
         # ── 步骤 3: TTS ──
-        # 翻译环节是纯 CPU 操作，但 TTS 需要大量 GPU 显存。
-        # 提前释放 PyTorch CUDA 缓存池碎片，确保 ChatTTS 模型加载时有充足连续显存。
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except Exception:
-            pass
-        import gc; gc.collect()
+        # 翻译阶段全部 CPU（MiniLM + QualityAssessor），
+        # ChatTTS 运行在独立子进程中，无需主进程 CUDA 清理。
 
         if not args.skip_tts:
             step_tts(
@@ -987,6 +1055,7 @@ def main():
                 cosyvoice_tts_prompt_text=args.cosyvoice_tts_prompt_text,
                 cosyvoice_tts_mode=args.cosyvoice_tts_mode,
                 cosyvoice_tts_lang=args.cosyvoice_tts_lang,
+                enable_emotion=args.enable_emotion,
             )
         else:
             print("[3/3] TTS 合成 — 已跳过 (--skip-tts)")

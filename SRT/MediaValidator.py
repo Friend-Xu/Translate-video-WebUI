@@ -428,7 +428,7 @@ def ensure_audio_duration(video_path: str, output_wav: str,
              "-ar", str(sr), "-ac", str(ch),
              "-t", str(cd),
              output_wav],
-            capture_output=True, check=True)
+            capture_output=True, check=True, encoding="utf-8", errors="replace")
 
         # 验证修复效果
         add = _wav_dur(output_wav)
@@ -446,7 +446,7 @@ def ensure_audio_duration(video_path: str, output_wav: str,
          "-vn", "-acodec", "pcm_s16le",
          "-ar", str(sr), "-ac", str(ch),
          output_wav],
-        capture_output=True, check=True)
+        capture_output=True, check=True, encoding="utf-8", errors="replace")
     add = _wav_dur(output_wav)
     logger.info(f"裸提取完成: 输出时长={add:.2f}s")
     return output_wav

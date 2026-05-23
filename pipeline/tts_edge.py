@@ -118,7 +118,7 @@ class EdgeTTSEngine(BaseTTSEngine):
                      "-ar", "44100",
                      "-ac", "1",
                      output_path],
-                    capture_output=True, check=True,
+                    capture_output=True, check=True, encoding="utf-8", errors="replace",
                 )
                 # 清理临时 MP3
                 if os.path.isfile(mp3_path):

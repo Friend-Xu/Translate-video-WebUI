@@ -44,6 +44,9 @@ aiohttp==3.13.5
 # ChatTTS local TTS engine
 ChatTTS==0.2.5
 
+# Chinese text normalization (WeTextProcessing runtime)
+wetext==0.1.2
+
 # Rubber Band time-stretching (requires rubberband CLI binary)
 # Windows: tools/rubberband/ pre-bundled
 # Linux:   apt install rubberband-cli

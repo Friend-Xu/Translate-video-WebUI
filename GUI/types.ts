@@ -5,7 +5,7 @@ export interface PipelineConfig {
   model: 'tiny' | 'base' | 'small' | 'medium' | 'turbo' | 'large-v3'
   device: 'cpu' | 'cuda'
   computeType: 'int8' | 'float32' | 'float16' | 'int8_float16'
-  engine: 'edge' | 'chattts' | 'cosyvoice'
+  engine: 'edge' | 'chattts' | 'cosyvoice' | 'indextts'
   chatttsSpeakerSeed: number | null
   chatttsSpeakerPt: string
   chatttsModelSource: 'local' | 'custom'
@@ -25,6 +25,10 @@ export interface PipelineConfig {
   cosyvoiceTtsSpeed: number
   cosyvoiceTtsMode: 'cross_lingual'
   cosyvoiceTtsLang: string
+  indexttsFp16: boolean
+  indexttsEnableClone: boolean
+  indexttsSpeakerAudio: string
+  indexttsCheckpointsDir: string
   voice: string
   speechRate: number
   maxSpeed: number
@@ -40,6 +44,10 @@ export interface PipelineConfig {
   apiTopP: number
   enableSemanticValidation: boolean
   enableNaturalnessCheck: boolean
+  naturalnessThreshold: number
+  jointVerification: boolean
+  verificationMode: "joint_formula" | "logic_gate"
+  simDropLimit: number
   enableTermReplacement: boolean
   enableReviewAfterTranslate: boolean
   enableDemucs: boolean
@@ -98,6 +106,9 @@ export interface PipelineConfig {
   multiAgentEnabled: boolean
   mqmEnabled: boolean
   mqmThreshold: number
+  /** 启用说话人分离 */
+  enableSpeakerDiarization: boolean
+  speakerOverlapStrategy: 'dominant_energy' | 'split_sequential' | 'mark_for_review'
 }
 
 export interface PipelineStatus {
@@ -109,7 +120,8 @@ export interface PipelineStatus {
 }
 
 export interface LogEntry {
-  level: 'INFO' | 'WARN' | 'ERROR'
+  _id?: number   // monotonic counter for stable react keys
+  level: 'INFO' | 'WARN' | 'ERROR' | 'STAGE'
   message: string
   timestamp: string
 }
@@ -154,6 +166,10 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   cosyvoiceTtsSpeed: 1.0,
   cosyvoiceTtsMode: 'cross_lingual',
   cosyvoiceTtsLang: '',
+  indexttsFp16: true,
+  indexttsEnableClone: true,
+  indexttsSpeakerAudio: '',
+  indexttsCheckpointsDir: '',
   voice: 'zh-CN-XiaoxiaoNeural',
   speechRate: 40,
   maxSpeed: 100,
@@ -169,6 +185,10 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   apiTopP: 0.9,
   enableSemanticValidation: true,
   enableNaturalnessCheck: true,
+  naturalnessThreshold: 3.0,
+  jointVerification: false,
+  verificationMode: "joint_formula",
+  simDropLimit: 0.05,
   enableTermReplacement: true,
   enableReviewAfterTranslate: true,
   enableDemucs: true,
@@ -227,6 +247,8 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   multiAgentEnabled: false,
   mqmEnabled: false,
   mqmThreshold: 0.6,
+  enableSpeakerDiarization: false,
+  speakerOverlapStrategy: 'dominant_energy' as const,
 }
 
 export interface SubtitleIssue {
@@ -276,6 +298,8 @@ export interface SubtitleEntry {
   quality?: QualityScores
   tier?: QualityTier
   tierReason?: string
+  /** 说话人 ID（多说话人视频） */
+  speakerId?: string
 }
 
 export interface ReviewSession {
@@ -283,7 +307,7 @@ export interface ReviewSession {
   sourceSrtPath: string
   translatedSrtPath: string
   entries: SubtitleEntry[]
-  filterMode: 'all' | 'pending' | 'flagged' | 'semantic' | 'review_critical'
+  filterMode: 'all' | 'pending' | 'flagged' | 'semantic' | 'naturalness' | 'review_critical'
   qualitySummary?: {
     total: number
     tier_pass: number
@@ -349,4 +373,50 @@ export interface BatchStatus {
   videos: BatchVideoItem[]
   logs: string[]
   created_at: string
+}
+
+/** 单个说话人轮次 */
+export interface SpeakerTurn {
+  speaker: string
+  start: number
+  end: number
+  confidence: number
+}
+
+/** 说话人汇总 */
+export interface SpeakerInfo {
+  totalDur: number
+  segments: number
+  samplePath?: string
+}
+
+/** 说话人验证问题 */
+export interface SpeakerVerificationIssue {
+  layer: number
+  severity: 'error' | 'warning' | 'info'
+  message: string
+  detail: Record<string, unknown>
+}
+
+/** 说话人分离验证报告 */
+export interface SpeakerVerification {
+  passesAll: boolean
+  summary: {
+    totalIssues: number
+    errors: number
+    warnings: number
+    info: number
+    speakers: number
+    turns: number
+  }
+  issues: SpeakerVerificationIssue[]
+}
+
+/** 说话人审核会话 */
+export interface DiarizationSession {
+  workspace: string
+  vocalPath: string
+  speakers: string[]
+  timeline: SpeakerTurn[]
+  verification: SpeakerVerification | null
 }

@@ -35,9 +35,18 @@ import queue
 import time
 import json
 from typing import List, Tuple, Optional
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from pipeline.logger import get_logger
+
+# 全局锁：序列化所有 CTranslate2 CUDA 操作（模型加载 + 推理）。
+# faster-whisper (CTranslate2) 内部调用裸 cudaMalloc 和 cuBLAS/cuDNN
+# 句柄到与 PyTorch CUDA 缓存分配器相同的上下文中。
+# 两个本机分配器在 Windows 上没有协调导致堆损坏
+# (STATUS_HEAP_CORRUPTION 0xC0000374)。
+# 参考: pipeline/tts_chattts.py _CHATTS_LOCK 相同模式
+_CTRANSLATE_LOCK = threading.Lock()
 
 logger = get_logger(__name__)
 
@@ -74,7 +83,7 @@ class VADTranscriber:
         compute_type: str = "int8",
         download_root: Optional[str] = None,
         merge_gap: float = 0.5,
-        merge_max_dur: float = 120.0,
+        merge_max_dur: float = 45.0,
         segment_gap: float = 1.5,
         sample_rate: int = 16000,
         num_workers: int = 1,
@@ -175,6 +184,9 @@ class VADTranscriber:
 
         每个模型实例 cpu_threads=0, num_workers=1，并发由外部线程池管理。
         GPU 下根据 VRAM 自动限制实例数，避免 OOM。
+
+        GPU 下用 _CTRANSLATE_LOCK 序列化模型创建，防止 CTranslate2 的
+        cudaMalloc 与 PyTorch CUDA 分配器冲突导致堆损坏。
         """
         from faster_whisper import WhisperModel
         logger = logging.getLogger(__name__)
@@ -188,20 +200,34 @@ class VADTranscriber:
             model_path = self.model_name
 
         count = self._compute_vram_limit(model_path, count)
+        # GPU 下最多 2 个实例：CTranslate2 CUDA 操作已序列化，多实例无并发收益
+        if self.device == "cuda":
+            count = min(count, 2)
 
         t0 = time.time()
         self._model_pool = queue.Queue(maxsize=count)
-        for i in range(count):
-            logger.info("加载模型 %d/%d: %s", i + 1, count, model_path)
-            model = WhisperModel(
-                model_path,
-                device=self.device,
-                compute_type=self.compute_type,
-                download_root=self.download_root,
-                cpu_threads=0,
-                num_workers=1,
-            )
-            self._model_pool.put(model)
+        # 序列化所有 CTranslate2 模型创建，防止与 PyTorch CUDA 分配器冲突
+        with _CTRANSLATE_LOCK:
+            # 在 CTranslate2 接管 cudaMalloc 前强制 PyTorch 释放 CUDA 缓存
+            try:
+                import torch
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+            import gc
+            gc.collect()
+
+            for i in range(count):
+                logger.info("加载模型 %d/%d: %s", i + 1, count, model_path)
+                model = WhisperModel(
+                    model_path,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                    download_root=self.download_root,
+                    cpu_threads=0,
+                    num_workers=1,
+                )
+                self._model_pool.put(model)
         return time.time() - t0
 
     # ── 语言检测 ────────────────────────────────────────────────
@@ -219,7 +245,8 @@ class VADTranscriber:
         try:
             detect_dur = min(15.0, self._audio_len)
             audio_data, sr = sf.read(self.audio_path, start=0, frames=int(detect_dur * self.sample_rate))
-            seg_gen, detect_info = model.transcribe(audio_data, beam_size=2)
+            with _CTRANSLATE_LOCK:
+                seg_gen, detect_info = model.transcribe(audio_data, beam_size=2)
             for _ in seg_gen:
                 pass
             language = detect_info.language if detect_info else "en"
@@ -305,7 +332,7 @@ with open(output_file, "w", encoding="utf-8") as f:
         try:
             result = subprocess.run(
                 [sys.executable, "-c", script, input_file, output_file],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True, text=True, timeout=120, encoding="utf-8", errors="replace",
                 cwd=os.path.dirname(os.path.abspath(__file__)) + "/..",
             )
             if result.returncode != 0:
@@ -409,13 +436,15 @@ with open(output_file, "w", encoding="utf-8") as f:
 
         whisper_model = model if model is not None else self._model_pool.get()
         seg_words = []
-        segments, info = whisper_model.transcribe(
-            audio_seg,
-            language=self._language,
-            word_timestamps=True,
-            beam_size=2,
-            vad_filter=False,
-        )
+        # 序列化 CTranslate2 推理，防止多线程并发 CUDA 操作导致堆损坏
+        with _CTRANSLATE_LOCK:
+            segments, info = whisper_model.transcribe(
+                audio_seg,
+                language=self._language,
+                word_timestamps=True,
+                beam_size=2,
+                vad_filter=False,
+            )
         for seg in segments:
             if seg.words:
                 for w in seg.words:
@@ -541,7 +570,7 @@ with open(output_file, "w", encoding="utf-8") as f:
         model_load_time = self._load_model_pool(pool_size)
 
         # 语言检测
-        if language is None:
+        if language is None or language == "auto":
             t0 = time.time()
             self._language, lang_prob = self.detect_language()
             detect_time = time.time() - t0
@@ -669,25 +698,28 @@ with open(output_file, "w", encoding="utf-8") as f:
             logger.info(f"wav2vec2 对齐完成，耗时: {align_time:.1f}s")
 
         # 清理模型池（对齐完成后安全释放）
+        # 模型析构触发 CTranslate2 cudaFree，必须序列化防止与 PyTorch 冲突
         if self._model_pool:
             logger = logging.getLogger(__name__)
             destroyed = 0
-            while True:
+            with _CTRANSLATE_LOCK:
+                while True:
+                    try:
+                        m = self._model_pool.get_nowait()
+                        del m
+                        destroyed += 1
+                    except queue.Empty:
+                        break
+                self._model_pool = None
+                # 在 CTranslate2 释放后清理 PyTorch CUDA 缓存
                 try:
-                    m = self._model_pool.get_nowait()
-                    del m
-                    destroyed += 1
-                except queue.Empty:
-                    break
-            self._model_pool = None
+                    import torch
+                    torch.cuda.empty_cache()
+                except Exception:
+                    pass
+                gc.collect()
             if destroyed:
                 logger.info("已释放 %d 个模型实例", destroyed)
-        try:
-            import torch
-            torch.cuda.empty_cache()
-        except Exception:
-            pass
-        gc.collect()
 
         return {
             "segments": segments,

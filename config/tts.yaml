@@ -3,6 +3,7 @@ tts:
   # ChatTTS 本地 TTS 配置
   chattts_speaker_seed: 2      # 固定音色种子（null=随机）
   chattts_model_source: local   # local | custom
+  chattts_workers: 4             # 0=自动（VRAM 估算），>0=强制
   chattts_model_path: null      # custom 模式下的本地模型路径
   # ChatTTS 发音术语表（优先于自动数字转换，key → 替换后文本）
   tts_pronunciation:
@@ -18,6 +19,11 @@ tts:
   cosyvoice_tts_speed: 1.0                 # 默认语速 (0.5~2.0, 1.0=原速)
   cosyvoice_tts_mode: cross_lingual         # 统一使用 cross_lingual（预规范化 + text_frontend=False，已验证最优）
   cosyvoice_tts_lang: ""                   # cross_lingual 目标语言 (zh/en/ja/ko/yue, 留空=自动)
+  # ── IndexTTS 配置 ────────────────────────────────
+  indextts_fp16: true                       # FP16 推理 (~7.8GB VRAM), false=FP32
+  indextts_enable_clone: true                # 是否克隆原视频音色（false=使用预设音色）
+  indextts_speaker_audio: ""                # 零样本音色克隆参考音频（留空从原视频人声自动提取）
+  indextts_checkpoints_dir: ""              # 模型 checkpoint 目录（留空自动）
   # ── EdgeTTS 配置 ───────────────────────────────────
   voice: zh-CN-XiaoxiaoNeural
   base_speed: 40
@@ -40,10 +46,9 @@ tts:
   enable_caption: true
   caption_font: ./models/font/Minecraft_font/5_Minecraft_AE_zh_en.ttf
   enable_resume: true
-  resume_file: file/wav_path.txt
   output_dir: file/EdgeTTS_Audio_file
   video_output_dir: file/Video_file
-  audio_codec: pcm_s32le
+  audio_codec: pcm_s16le
   audio_bitrate: 192k
   video_codec: libx264
   video_audio_codec: aac

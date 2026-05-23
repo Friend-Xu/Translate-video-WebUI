@@ -315,6 +315,11 @@ class JapaneseProcessor:
                     break
 
                 # gap 小 -> 拼接（日语不加空格）
+                # 不同说话人不拼接
+                cur_spk = current.get('speaker')
+                nxt_spk = next_seg.get('speaker')
+                if cur_spk is not None and nxt_spk is not None and cur_spk != nxt_spk:
+                    break
                 next_text = next_seg['text'].strip()
                 merged_text += next_text
                 merged_end = next_seg['end']
@@ -325,7 +330,8 @@ class JapaneseProcessor:
                     result.append({
                         'text': merged_text.strip(),
                         'start': current['start'],
-                        'end': merged_end
+                        'end': merged_end,
+                        'speaker': current.get('speaker'),
                     })
                     i = j + 1
                     found_sentence = True
@@ -338,7 +344,8 @@ class JapaneseProcessor:
                 result.append({
                     'text': merged_text.strip() + '。',
                     'start': current['start'],
-                    'end': merged_end
+                    'end': merged_end,
+                    'speaker': current.get('speaker'),
                 })
                 i = j + 1 if j > i else i + 1
                 continue
@@ -348,7 +355,8 @@ class JapaneseProcessor:
                 result.append({
                     'text': merged_text.strip() + '。',
                     'start': current['start'],
-                    'end': merged_end
+                    'end': merged_end,
+                    'speaker': current.get('speaker'),
                 })
                 i = j
             continue
@@ -384,7 +392,8 @@ class JapaneseProcessor:
                         "index": self.entry_count,
                         "start": sub_start,
                         "end": sub_end,
-                        "text": sub_text.strip()
+                        "text": sub_text.strip(),
+                        "speaker": segment.get("speaker"),
                     })
                     self.entry_count += 1
             elif len(parts) == 1 and len(parts[0][0]) > self.max_chars:
@@ -399,7 +408,8 @@ class JapaneseProcessor:
                         "index": self.entry_count,
                         "start": sub_start,
                         "end": sub_end,
-                        "text": sub_text.strip()
+                        "text": sub_text.strip(),
+                        "speaker": segment.get("speaker"),
                     })
                     self.entry_count += 1
             else:
@@ -426,7 +436,8 @@ class JapaneseProcessor:
                         "index": self.entry_count,
                         "start": current_time,
                         "end": part_end,
-                        "text": part_text.strip()
+                        "text": part_text.strip(),
+                        "speaker": segment.get("speaker"),
                     })
                     self.entry_count += 1
                     current_time = part_end
