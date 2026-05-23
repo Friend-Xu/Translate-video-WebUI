@@ -372,6 +372,10 @@ class ChatTTSEngine:
                     raise RuntimeError("ChatTTS worker restart failed")
 
             req = {"action": "synthesize", "text": text, "output_path": output_path}
+            if emotion is not None:
+                prompt = emotion if isinstance(emotion, str) else emotion.get("prompt", "")
+                if prompt:
+                    req["refine_prompt"] = prompt
             try:
                 resp = self._send_command(req, timeout=120)
             except Exception as e:

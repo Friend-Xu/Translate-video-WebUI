@@ -201,6 +201,8 @@ class Job:
     _queues: list[asyncio.Queue] = field(default_factory=list)
     _pending_save: int = 0
     _loop: asyncio.AbstractEventLoop | None = None
+    _log_file: object | None = None    # open file handle for {workspace}/pipeline.log
+    _log_lock: object | None = None    # threading.Lock for file writes
 
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue()
@@ -213,6 +215,31 @@ class Job:
         except ValueError:
             pass
 
+    def open_log_file(self, workspace: str) -> None:
+        """Open workspace log file for append."""
+        import threading
+        os.makedirs(workspace, exist_ok=True)
+        self._log_file = open(os.path.join(workspace, "pipeline.log"), "a", encoding="utf-8")
+        self._log_lock = threading.Lock()
+
+    def close_log_file(self) -> None:
+        """Close workspace log file."""
+        if self._log_file is not None:
+            self._log_file.close()
+            self._log_file = None
+        self._log_lock = None
+
+    @property
+    def log_file_path(self) -> str | None:
+        """Absolute path to workspace log file, if available."""
+        if self._log_file is not None:
+            return self._log_file.name
+        # Fallback: derive from video_path
+        if self.video_path:
+            stem = os.path.splitext(os.path.basename(self.video_path))[0]
+            return os.path.join(os.path.dirname(self.video_path), f"{stem}_project", "pipeline.log")
+        return None
+
     def append_log(self, line: str) -> None:
         # 跳过 tqdm 进度条行（每秒数十条，无信息价值）
         if re.match(r'^\s*\d+%\|', line):
@@ -223,6 +250,16 @@ class Job:
         if not line.strip():
             return
         self.logs.append(line)
+        # 内存封顶 500 条
+        if len(self.logs) > 500:
+            self.logs = self.logs[-500:]
+
+        # 写入 workspace pipeline.log（线程安全）
+        if self._log_file is not None and self._log_lock is not None:
+            with self._log_lock:
+                self._log_file.write(line + "\n")
+                self._log_file.flush()
+
         # Parse step hints from stdout for progress
         lower = line.lower()
         if "[1/4]" in line or "字幕提取" in line:
@@ -240,7 +277,7 @@ class Job:
         if "[ok]" in lower:
             self.progress = min(self.progress + 10, 95)
 
-        # 批量写磁盘：每 50 条日志保存一次
+        # 批量写磁盘：每 50 条日志保存一次（仅保存元信息，不保存全量日志）
         self._pending_save += 1
         if self._pending_save >= 50:
             _save_job(self)
@@ -330,7 +367,7 @@ def _save_job(job: Job) -> None:
             "status": job.status,
             "progress": job.progress,
             "current_step": job.current_step,
-            "logs": job.logs[-200:],
+            "logs_tail": job.logs[-10:],   # only last 10 lines for preview; full log in workspace pipeline.log
             "video_path": job.video_path,
             "created_at": job.created_at,
             "batch_id": job.batch_id,
@@ -353,7 +390,7 @@ def _load_jobs() -> dict[str, Job]:
             status=data.get("status", "failed"),
             progress=data.get("progress", 0),
             current_step=data.get("current_step", ""),
-            logs=data.get("logs", []),
+            logs=data.get("logs_tail", data.get("logs", [])),
             video_path=data.get("video_path", ""),
             created_at=data.get("created_at", ""),
             batch_id=data.get("batch_id"),
@@ -442,6 +479,10 @@ def _load_yaml_defaults() -> dict:
         "cosyvoiceTtsSpeed": tts.get("cosyvoice_tts_speed", 1.0),
         "cosyvoiceTtsMode": tts.get("cosyvoice_tts_mode", "cross_lingual"),
         "cosyvoiceTtsLang": tts.get("cosyvoice_tts_lang", ""),
+        "indexttsFp16": tts.get("indextts_fp16", True),
+        "indexttsEnableClone": tts.get("indextts_enable_clone", True),
+        "indexttsSpeakerAudio": tts.get("indextts_speaker_audio", ""),
+        "indexttsCheckpointsDir": tts.get("indextts_checkpoints_dir", ""),
         "loudnessNormEnabled": tts.get("loudness_norm_enabled", True),
         "loudnessTargetAuto": tts.get("loudness_target_auto", True),
         "loudnessTargetLufs": tts.get("loudness_target_lufs", -16.0),
@@ -453,6 +494,9 @@ def _load_yaml_defaults() -> dict:
         "apiType": trans.get("api_type", "deepseek"),
         "enableSemanticValidation": trans.get("semantic_check", True),
         "enableNaturalnessCheck": trans.get("quality_assessment", {}).get("dimensions", {}).get("naturalness", {}).get("enabled", True),
+        "naturalnessThreshold": trans.get("quality_assessment", {}).get("dimensions", {}).get("naturalness", {}).get("threshold", 3.0),
+        "jointVerification": trans.get("joint_verification", False),
+        "verificationMode": trans.get("verification_mode", "joint_formula"),
         "enableTermReplacement": trans.get("terms_dict", {}).get("enabled", True),
         "activeGlossary": _parse_glossary_list(trans.get("terms_dict", {}).get("default_dict", ["minecraft.json"])),
         "targetLang": trans.get("target_lang", "zh-CN"),
@@ -588,6 +632,18 @@ def _sync_translate_config(target_lang: str = "") -> None:
         if "quality_assessment" not in trans["translate"]:
             trans["translate"]["quality_assessment"] = {"dimensions": {"naturalness": {}}}
         trans["translate"]["quality_assessment"]["dimensions"]["naturalness"]["enabled"] = pipeline_cfg["enableNaturalnessCheck"]
+        trans["translate"]["quality_assessment"]["dimensions"]["naturalness"]["threshold"] = pipeline_cfg.get("naturalnessThreshold", 3.0)
+
+    # Sync joint verification
+    if pipeline_cfg.get("jointVerification") is not None:
+        trans["translate"]["joint_verification"] = pipeline_cfg["jointVerification"]
+
+    # Sync verification mode
+    if pipeline_cfg.get("verificationMode") is not None:
+        trans["translate"]["verification_mode"] = pipeline_cfg["verificationMode"]
+
+    # Sync sim_drop_limit
+    trans["translate"]["sim_drop_limit"] = pipeline_cfg.get("simDropLimit", 0.05)
 
     # Sync terms_dict
     if "terms_dict" not in trans["translate"]:
@@ -664,11 +720,17 @@ class RunRequest(BaseModel):
     cosyvoice_tts_speed: float = 1.0
     cosyvoice_tts_mode: str = "cross_lingual"
     cosyvoice_tts_lang: str = ""
+    indextts_fp16: bool = True
+    indextts_enable_clone: bool = True
+    indextts_speaker_audio: str = ""
+    indextts_checkpoints_dir: str = ""
     loudness_norm_enabled: bool = True
     loudness_target_auto: bool = True
     loudness_target_lufs: float = -16.0
     skip_align: bool = False
     align_lang: str = "ja"
+    enable_emotion: bool = False
+    enable_speaker_diarization: bool = False
 
 
 class RunResponse(BaseModel):
@@ -749,9 +811,14 @@ def _write_tts_runtime_config(req: RunRequest) -> str:
             "cosyvoice_tts_speed": req.cosyvoice_tts_speed,
             "cosyvoice_tts_mode": req.cosyvoice_tts_mode,
             "cosyvoice_tts_lang": req.cosyvoice_tts_lang,
+            "indextts_fp16": req.indextts_fp16,
+            "indextts_enable_clone": req.indextts_enable_clone,
+            "indextts_speaker_audio": req.indextts_speaker_audio or None,
+            "indextts_checkpoints_dir": req.indextts_checkpoints_dir or None,
             "loudness_norm_enabled": req.loudness_norm_enabled,
             "loudness_target_auto": req.loudness_target_auto,
             "loudness_target_lufs": req.loudness_target_lufs,
+            "enable_emotion": req.enable_emotion,
             # Voice clone (existing — keep for backward compat)
             "cosyvoice_mode": req.cosyvoice_mode,
             "cosyvoice_model_version": req.cosyvoice_model_version,
@@ -816,6 +883,8 @@ def _build_cli_args(req: RunRequest) -> list[str]:
         args.append("--skip-align")
     if req.align_lang:
         args.extend(["--align-lang", req.align_lang])
+    if req.enable_speaker_diarization:
+        args.append("--enable-speaker-diarization")
     return args
 
 
@@ -837,6 +906,11 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
     sse_handler = SSELogHandler(job.append_log)
     root_logger = logging.getLogger()
     root_logger.addHandler(sse_handler)
+
+    # 打开 workspace 日志文件
+    stem = os.path.splitext(os.path.basename(job.video_path))[0]
+    ws_dir = os.path.join(os.path.dirname(job.video_path), f"{stem}_project")
+    job.open_log_file(ws_dir)
 
     MAX_TRIES = 3
     try:
@@ -929,6 +1003,7 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
         _save_job(job)
     finally:
         root_logger.removeHandler(sse_handler)
+        job.close_log_file()
 
 
 # ---------------------------------------------------------------------------
@@ -1075,6 +1150,10 @@ async def get_status(job_id: str) -> StatusResponse:
 
 @app.get("/api/pipeline/{job_id}/logs")
 async def stream_logs(job_id: str, request: Request) -> StreamingResponse:
+    """SSE 实时日志流 — 只推送新日志，不重放历史。
+
+    前端先通过 /logs/tail 加载初始显示，再用此 SSE 收增量。
+    """
     job = _jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -1083,10 +1162,9 @@ async def stream_logs(job_id: str, request: Request) -> StreamingResponse:
 
     async def event_stream() -> AsyncIterator[str]:
         try:
-            # First, send all existing logs
-            for line in job.logs:
-                data = json.dumps({"message": line}, ensure_ascii=False)
-                yield f"data: {data}\n\n"
+            # 发送 log_file_path 供前端确认
+            if job.log_file_path:
+                yield f"event: meta\ndata: {json.dumps({'log_file': job.log_file_path})}\n\n"
 
             while True:
                 if await request.is_disconnected():
@@ -1128,6 +1206,81 @@ async def cancel_job(job_id: str) -> dict:
         job.append_log("[WARN] 任务已取消")
         _save_job(job)
     return {"ok": True}
+
+
+def _read_log_tail(file_path: str, limit: int = 200) -> list[str]:
+    """Read last N lines from a log file efficiently (seek from end)."""
+    if not os.path.isfile(file_path):
+        return []
+    with open(file_path, "rb") as f:
+        f.seek(0, 2)  # EOF
+        fsize = f.tell()
+        if fsize == 0:
+            return []
+        # Read last ~8KB or whole file, whichever is smaller
+        chunk_size = min(fsize, max(limit * 200, 8192))
+        f.seek(max(0, fsize - chunk_size))
+        raw = f.read().decode("utf-8", errors="replace")
+        lines = raw.split("\n")
+        # Strip empty trailing line from split
+        if lines and lines[-1] == "":
+            lines.pop()
+        # If we didn't read enough lines, re-read larger chunk
+        if len(lines) < limit and fsize > chunk_size:
+            chunk_size = min(fsize, chunk_size * 3)
+            f.seek(max(0, fsize - chunk_size))
+            raw = f.read().decode("utf-8", errors="replace")
+            lines = raw.split("\n")
+            if lines and lines[-1] == "":
+                lines.pop()
+        return lines[-limit:]
+
+
+def _read_log_range(file_path: str, before_line: int, limit: int = 200) -> tuple[list[str], int]:
+    """Read up to `limit` lines ending at `before_line` (0-indexed).
+
+    Returns (lines, first_line_index).
+    """
+    if not os.path.isfile(file_path):
+        return [], 0
+    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+        all_lines = f.read().split("\n")
+        if all_lines and all_lines[-1] == "":
+            all_lines.pop()
+    total = len(all_lines)
+    if before_line > total:
+        before_line = total
+    start = max(0, before_line - limit)
+    return all_lines[start:before_line], start
+
+
+@app.get("/api/pipeline/{job_id}/logs/tail")
+async def logs_tail(job_id: str, limit: int = 200) -> dict:
+    """Read last N lines from the workspace pipeline.log file."""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    file_path = job.log_file_path
+    if not file_path:
+        # Fallback to in-memory logs
+        return {"lines": job.logs[-limit:], "total": len(job.logs), "source": "memory"}
+    lines = _read_log_tail(file_path, limit)
+    # Count total lines
+    total = len(job.logs)  # approximate; for accurate count use file size
+    return {"lines": lines, "total": total, "source": "file"}
+
+
+@app.get("/api/pipeline/{job_id}/logs/range")
+async def logs_range(job_id: str, before: int = 0, limit: int = 200) -> dict:
+    """Read a range of lines before `before` index from the workspace log file."""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    file_path = job.log_file_path
+    if not file_path or not os.path.isfile(file_path):
+        return {"lines": [], "first": 0, "total": 0}
+    lines, first = _read_log_range(file_path, before, limit)
+    return {"lines": lines, "first": first, "total": len(job.logs)}
 
 
 @app.get("/api/jobs")
@@ -2170,6 +2323,17 @@ async def release_chattts_engine() -> dict:
     return {"status": "released"}
 
 
+@app.get("/api/tts/indextts-preset-audio")
+async def indextts_preset_audio(path: str) -> dict:
+    """Return base64 audio for an IndexTTS preset voice WAV file."""
+    import base64
+    if not path or not os.path.isfile(path):
+        raise HTTPException(404, f"preset not found: {path}")
+    with open(path, "rb") as f:
+        data = base64.b64encode(f.read()).decode()
+    return {"audio_base64": data, "path": path}
+
+
 # ---------------------------------------------------------------------------
 # Glossary CRUD
 # ---------------------------------------------------------------------------
@@ -3167,6 +3331,79 @@ async def media_mux(req: MuxRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Speaker Diarization API
+# ---------------------------------------------------------------------------
+
+class SpeakerLoadRequest(BaseModel):
+    workspace: str = ""
+
+
+@app.post("/api/speaker/diarization/load")
+async def speaker_load(req: SpeakerLoadRequest):
+    """加载说话人分离结果（时间线 + 验证报告）。"""
+    workspace = req.workspace
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    if not extract_dir or not os.path.isdir(extract_dir):
+        raise HTTPException(status_code=400, detail="无效的工作目录")
+    import json as _json
+    result = {"timeline": [], "verification": None, "speakers": []}
+    tl_path = os.path.join(extract_dir, "speaker_timeline.json")
+    if os.path.isfile(tl_path):
+        with open(tl_path, "r", encoding="utf-8") as f:
+            tl = _json.load(f)
+        result["timeline"] = tl.get("turns", [])
+        result["speakers"] = tl.get("speakers", [])
+    vf_path = os.path.join(extract_dir, "speaker_verification.json")
+    if os.path.isfile(vf_path):
+        with open(vf_path, "r", encoding="utf-8") as f:
+            result["verification"] = _json.load(f)
+    return result
+
+
+class SpeakerSaveRequest(BaseModel):
+    workspace: str = ""
+    timeline: list = []
+    corrections: list = []
+
+
+@app.post("/api/speaker/diarization/save")
+async def speaker_save(req: SpeakerSaveRequest):
+    """保存修正后的说话人时间线。"""
+    workspace = req.workspace
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    if not extract_dir or not os.path.isdir(extract_dir):
+        raise HTTPException(status_code=400, detail="无效的工作目录")
+    import json as _json
+    tl_path = os.path.join(extract_dir, "speaker_timeline.json")
+    turns = req.timeline
+    speakers = sorted(set(t.get("speaker", "?") for t in turns))
+    data = {"model": "pyannote/speaker-diarization-3.1", "speakers": speakers,
+            "turns": turns, "corrections": req.corrections}
+    with open(tl_path, "w", encoding="utf-8") as f:
+        _json.dump(data, f, ensure_ascii=False, indent=2)
+    return {"status": "ok", "speakers": speakers, "turns_count": len(turns)}
+
+
+@app.get("/api/speaker/audio/preview")
+async def speaker_audio_preview(path: str = "", start: float = 0, end: float = 0):
+    """返回指定时间范围的音频 base64（用于前端试听）。"""
+    if not path or not os.path.isfile(path):
+        raise HTTPException(status_code=400, detail="音频文件不存在")
+    dur = end - start
+    if dur <= 0 or dur > 10:
+        raise HTTPException(status_code=400, detail="时间范围应在 0-10s 之间")
+    import base64, subprocess
+    proc = subprocess.run(
+        ["ffmpeg", "-y", "-ss", str(start), "-t", str(dur),
+         "-i", path, "-f", "wav", "-"],
+        capture_output=True, timeout=15,
+    )
+    if proc.returncode != 0:
+        raise HTTPException(status_code=500, detail="ffmpeg 提取失败")
+    return {"audio_base64": base64.b64encode(proc.stdout).decode("ascii"), "format": "wav"}
 
 
 # ---------------------------------------------------------------------------

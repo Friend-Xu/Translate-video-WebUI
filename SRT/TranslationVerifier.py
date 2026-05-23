@@ -18,6 +18,7 @@ import logging
 import threading
 import numpy as np
 from typing import List, Tuple, Optional
+import torch  # must import before transformers to avoid DLL load-order segfault
 
 logger = logging.getLogger("TranslationVerifier")
 
@@ -63,29 +64,40 @@ class CrossLingualScorer:
                 model_path = self.model_name
             t0 = time.time()
             logger.info(f"加载跨语言语义模型: {model_path}")
-            from sentence_transformers import SentenceTransformer
-            self.model = SentenceTransformer(model_path)
+            from transformers import AutoModel, AutoTokenizer
+            self._tokenizer = AutoTokenizer.from_pretrained(model_path)
+            self.model = AutoModel.from_pretrained(model_path)
             self._load_time = time.time() - t0
             logger.info(f"  加载完成，耗时: {self._load_time:.1f}s")
 
+    def _encode(self, texts):
+        """Mean-pooling encode — equivalent to SentenceTransformer for this model."""
+        self._load()
+        import torch
+        inputs = self._tokenizer(texts, return_tensors="pt", padding=True, truncation=True)
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+        # Mean pooling over token dimension (model uses pooling_mode_mean_tokens)
+        attn = inputs["attention_mask"].unsqueeze(-1).float()
+        embeddings = (outputs.last_hidden_state * attn).sum(dim=1) / attn.sum(dim=1).clamp(min=1e-9)
+        # L2 normalize
+        embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+        return embeddings.cpu().numpy()
+
     def similarity(self, text_a: str, text_b: str) -> float:
         """计算跨语言语义相似度 (0.0 ~ 1.0)"""
-        self._load()
-        emb = self.model.encode([text_a, text_b])
-        vec_a, vec_b = emb[0], emb[1]
-        return float(np.dot(vec_a, vec_b) / (np.linalg.norm(vec_a) * np.linalg.norm(vec_b)))
+        emb = self._encode([text_a, text_b])
+        return float(np.dot(emb[0], emb[1]))
 
     def batch_similarity(self, pairs: List[Tuple[str, str]]) -> List[float]:
         """批量计算"""
-        self._load()
         all_texts = []
         for a, b in pairs:
             all_texts.extend([a, b])
-        embeddings = self.model.encode(all_texts)
+        embeddings = self._encode(all_texts)
         results = []
         for i in range(0, len(embeddings), 2):
-            va, vb = embeddings[i], embeddings[i + 1]
-            sim = float(np.dot(va, vb) / (np.linalg.norm(va) * np.linalg.norm(vb)))
+            sim = float(np.dot(embeddings[i], embeddings[i + 1]))
             results.append(sim)
         return results
 

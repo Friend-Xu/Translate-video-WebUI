@@ -237,6 +237,19 @@ def load_similarities(translate_log_path: str) -> Dict[int, float]:
     return sims
 
 
+def load_ppls(translate_log_path: str) -> Dict[int, dict]:
+    """Read per-entry PPL data from translate-log.json (computed during translation)."""
+    if not os.path.isfile(translate_log_path):
+        return {}
+    with open(translate_log_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    ppls: Dict[int, dict] = {}
+    for detail in data.get("details", []):
+        for k, v in detail.get("ppls", {}).items():
+            ppls[int(k)] = v  # {ppl, baseline, ratio}
+    return ppls
+
+
 def save_quality_report(report_path: str, report: dict) -> None:
     os.makedirs(os.path.dirname(report_path), exist_ok=True)
     with open(report_path, "w", encoding="utf-8") as f:
@@ -268,19 +281,14 @@ class QualityAssessor:
                  semantic_threshold: float = 0.70,
                  naturalness_threshold: float = 3.0,
                  structural_threshold: float = 0.80,
-                 naturalness_enabled: bool = True,
-                 min_naturalness_chars: int = 3,
                  source_lang: str = "auto"):
         self.ws_dir = ws_dir
         self.translate_dir = os.path.join(ws_dir, "02_translate")
         self.semantic_threshold = semantic_threshold
         self.naturalness_threshold = naturalness_threshold
         self.structural_threshold = structural_threshold
-        self.naturalness_enabled = naturalness_enabled
-        self.min_naturalness_chars = min_naturalness_chars
         self.source_lang = source_lang
 
-        self._ppl_evaluator = None
         self._srt_items: List[dict] = []
 
     # ── entry point ──────────────────────────────────────────
@@ -296,9 +304,9 @@ class QualityAssessor:
             return {}
 
         similarities = self._load_similarities()
-        baseline_ppl = self._compute_baseline_ppl() if self.naturalness_enabled else 60.0
-        entries = self._compute_all_scores(similarities, baseline_ppl)
-        summary = self._build_summary(entries, baseline_ppl)
+        ppls = self._load_ppls()
+        entries = self._compute_all_scores(similarities, ppls)
+        summary = self._build_summary(entries)
         report = self._build_report(entries, summary)
 
         report_path = os.path.join(self.translate_dir, "quality_report.json")
@@ -336,49 +344,16 @@ class QualityAssessor:
         log_path = os.path.join(self.translate_dir, "source-translate-log.json")
         return load_similarities(log_path)
 
-    # ── PPL baseline ────────────────────────────────────────
-
-    def _compute_baseline_ppl(self) -> float:
-        """Adaptive baseline from top-similarity entries."""
-        sims = self._load_similarities()
-        if not sims:
-            return 60.0
-        # Top 30% by similarity, min 5 entries
-        sorted_items = sorted(self._srt_items,
-                              key=lambda x: sims.get(x["index"], 0),
-                              reverse=True)
-        top_n = max(5, len(sorted_items) // 3)
-        top_texts = [it["text"] for it in sorted_items[:top_n]
-                     if len(it["text"]) >= self.min_naturalness_chars]
-
-        try:
-            from pipeline.ppl_evaluator import PPLEvaluator
-            self._ppl_evaluator = PPLEvaluator()
-        except Exception as e:
-            logger.warning(f"PPLEvaluator 加载失败: {e}")
-            self.naturalness_enabled = False
-            return 60.0
-
-        return self._ppl_evaluator.compute_baseline(
-            top_texts, min_entries=5, static_fallback=60.0,
-        )
+    def _load_ppls(self) -> Dict[int, dict]:
+        """Read per-entry PPL data from translate-log.json (pre-computed during translation)."""
+        log_path = os.path.join(self.translate_dir, "source-translate-log.json")
+        return load_ppls(log_path)
 
     # ── score computation ────────────────────────────────────
 
     def _compute_all_scores(self, similarities: Dict[int, float],
-                            baseline_ppl: float) -> List[QualityScores]:
-        texts = [it["text"] for it in self._srt_items]
-        ppls: Dict[int, float] = {}
-
-        if self.naturalness_enabled and self._ppl_evaluator:
-            try:
-                raw = self._ppl_evaluator.batch_perplexity(texts)
-                for i, it in enumerate(self._srt_items):
-                    if len(it["text"]) >= self.min_naturalness_chars:
-                        ppls[it["index"]] = raw[i]
-            except Exception as e:
-                logger.warning(f"PPL 批量推理失败: {e}")
-
+                            ppls: Dict[int, dict]) -> List[QualityScores]:
+        """Compute quality scores using pre-computed sim and PPL from translation phase."""
         entries: List[QualityScores] = []
         for i, it in enumerate(self._srt_items):
             idx = it["index"]
@@ -388,11 +363,19 @@ class QualityAssessor:
                 similarities.get(idx),
                 threshold=self.semantic_threshold,
             )
-            nat = naturalness_score(
-                ppls.get(idx, 0.0), baseline_ppl,
-                threshold_ratio=self.naturalness_threshold,
-                confidence=0.80 if idx in ppls else 0.0,
-            )
+            ppl_entry = ppls.get(idx)
+            if ppl_entry:
+                nat = naturalness_score(
+                    ppl_entry["ppl"], ppl_entry["baseline"],
+                    threshold_ratio=self.naturalness_threshold,
+                    confidence=0.80,
+                )
+            else:
+                nat = DimensionScore(
+                    value=1.0, threshold=self.naturalness_threshold,
+                    flagged=False, confidence=0.0,
+                    label="自然度(PPL比率)", detail="PPL unavailable",
+                )
             st = structural_score(
                 it["startMs"], it["endMs"], it["text"],
                 lang=self.source_lang,
@@ -413,8 +396,7 @@ class QualityAssessor:
 
     # ── summary ──────────────────────────────────────────────
 
-    def _build_summary(self, entries: List[QualityScores],
-                       baseline_ppl: float) -> dict:
+    def _build_summary(self, entries: List[QualityScores]) -> dict:
         tier_counts = {"pass": 0, "glance": 0, "review": 0, "critical": 0}
         for e in entries:
             tier_counts[e.tier.value] += 1
@@ -424,7 +406,6 @@ class QualityAssessor:
             "tier_glance": tier_counts["glance"],
             "tier_review": tier_counts["review"],
             "tier_critical": tier_counts["critical"],
-            "naturalness_baseline_ppl": round(baseline_ppl, 1),
             "dimension_coverage": {
                 "semantic": sum(1 for e in entries if e.semantic.confidence > 0),
                 "naturalness": sum(1 for e in entries if e.naturalness.confidence > 0),

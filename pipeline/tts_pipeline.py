@@ -16,7 +16,9 @@ import os
 import re
 from tqdm import tqdm
 from pipeline.utils import safe_replace
+import subprocess
 import sys
+import tempfile
 import queue
 import threading
 from dataclasses import dataclass, field
@@ -318,6 +320,209 @@ class TtsPipeline:
             logger.warning("Color_audio.WAV 提取失败: %s，回退到完整 vocals", e)
             return None
 
+    def _run_emotion_extraction(self, vocals_path: str,
+                                  subs_translated: list,
+                                  output_dir: str = "") -> tuple:
+        """Run emotion2vec per segment, return (prompts_dict, segments_meta).
+
+        prompts_dict: {(start_ms, end_ms): prompt_string}
+        segments_meta: [{key, start_ms, end_ms, prompt, top_emotion, top_score, scores}, ...]
+        """
+        prompts: dict = {}
+        segments_meta: list = []
+        from funasr import AutoModel
+
+        emo_dir = os.path.join(output_dir, "_emo") if output_dir else tempfile.mkdtemp()
+        os.makedirs(emo_dir, exist_ok=True)
+
+        logger.info("情感分析开始: %d 段字幕, 临时目录 %s", len(subs_translated), emo_dir)
+
+        _EMO_MAP = {
+            "生气/angry":(3,0,2),"厌恶/disgusted":(1,0,4),"恐惧/fearful":(2,0,4),
+            "开心/happy":(6,1,4),"中立/neutral":(2,0,5),"其他/other":(2,0,5),
+            "难过/sad":(1,0,6),"吃惊/surprised":(4,0,3),"<unk>":(2,0,5),
+        }
+        _LABELS = [
+            "生气/angry","厌恶/disgusted","恐惧/fearful","开心/happy",
+            "中立/neutral","其他/other","难过/sad","吃惊/surprised","<unk>",
+        ]
+
+        def _scores_to_prompt(scores):
+            oral = sum(_EMO_MAP[l][0]*s for l,s in zip(_LABELS,scores) if l in _EMO_MAP)
+            laugh = sum(_EMO_MAP[l][1]*s for l,s in zip(_LABELS,scores) if l in _EMO_MAP)
+            brk = sum(_EMO_MAP[l][2]*s for l,s in zip(_LABELS,scores) if l in _EMO_MAP)
+            oral_val = max(0, min(9, int(round(oral))))
+            # 笑声门控: happy 分 ≥ 0.8（仅高置信度）且 oral ≥ 4（足够口语化）
+            if laugh >= 0.8 and oral_val >= 4:
+                laugh_val = 1
+            elif laugh >= 1.5:
+                laugh_val = 2
+            else:
+                laugh_val = 0
+            brk_val = max(0, min(7, int(round(brk))))
+            return f"[oral_{oral_val}][laugh_{laugh_val}][break_{brk_val}]"
+
+        model = AutoModel(
+            model="iic/emotion2vec_plus_large", hub="ms", disable_update=True)
+
+        for start_ms, end_ms, text in subs_translated:
+            dur_s = (end_ms - start_ms) / 1000.0
+            key = f"{start_ms}_{end_ms}"
+            if dur_s < 1.0:
+                prompts[(start_ms, end_ms)] = "[oral_0][break_5]"
+                segments_meta.append({
+                    "key": key, "start_ms": start_ms, "end_ms": end_ms,
+                    "prompt": "[oral_0][break_5]",
+                    "top_emotion": "short", "top_score": 0, "scores": {},
+                })
+                continue
+            try:
+                seg_wav = os.path.join(emo_dir, f"emo_{start_ms}_{end_ms}.wav")
+                subprocess.run([
+                    "ffmpeg", "-y", "-v", "quiet",
+                    "-i", vocals_path,
+                    "-ss", str(start_ms / 1000),
+                    "-t", str(dur_s + 0.1),
+                    "-ac", "1", "-ar", "16000",
+                    seg_wav,
+                ], check=True)
+                result = model.generate(
+                    input=seg_wav, output_dir=None, granularity="utterance")
+                if result and len(result) > 0:
+                    scores = result[0]["scores"]
+                    labels = result[0]["labels"]
+                    prompt = _scores_to_prompt(scores)
+                    top_idx = max(range(len(scores)), key=lambda i: scores[i])
+                    prompts[(start_ms, end_ms)] = prompt
+                    segments_meta.append({
+                        "key": key, "start_ms": start_ms, "end_ms": end_ms,
+                        "prompt": prompt,
+                        "top_emotion": labels[top_idx],
+                        "top_score": round(scores[top_idx], 4),
+                        "scores": {l: round(s, 4) for l, s in zip(labels, scores)},
+                    })
+                else:
+                    prompts[(start_ms, end_ms)] = "[oral_0][break_5]"
+                    segments_meta.append({
+                        "key": key, "start_ms": start_ms, "end_ms": end_ms,
+                        "prompt": "[oral_0][break_5]",
+                        "top_emotion": "fail", "top_score": 0, "scores": {},
+                    })
+                os.unlink(seg_wav)
+            except Exception:
+                prompts[(start_ms, end_ms)] = "[oral_0][break_5]"
+                segments_meta.append({
+                    "key": key, "start_ms": start_ms, "end_ms": end_ms,
+                    "prompt": "[oral_0][break_5]",
+                    "top_emotion": "error", "top_score": 0, "scores": {},
+                })
+
+        try:
+            os.rmdir(emo_dir)
+        except OSError:
+            pass
+
+        n_unique = len(set(prompts.values()))
+        logger.info("情感分析完成: %d/%d 段, %d 种不同 prompt",
+                    len(prompts), len(subs_translated), n_unique)
+        return prompts, segments_meta
+
+    def _load_or_extract_emotion_prompts(self, vocals_path: str,
+                                          subs_translated: list,
+                                          output_dir: str = "") -> dict:
+        """Load cached emotion prompts or re-extract if missing/stale.
+
+        Returns dict mapping (start_ms, end_ms) -> prompt_string.
+        Caches to {output_dir}/emotion_prompts.json for checkpoint/resume.
+        """
+        json_path = os.path.join(output_dir, "emotion_prompts.json")
+        n_segments = len(subs_translated)
+
+        # Try loading cached file
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+                if (cached.get("segment_count") == n_segments
+                        and cached.get("version", 1) >= 2):
+                    prompts = {}
+                    for k, v in cached["segments"].items():
+                        prompts[(v["start_ms"], v["end_ms"])] = v["prompt"]
+                    logger.info("加载已缓存的情感 prompt: %s (%d 段)",
+                                json_path, len(prompts))
+                    return prompts
+                logger.info("情感缓存段数不匹配 (%d ≠ %d), 重新提取",
+                           cached.get("segment_count", 0), n_segments)
+            except Exception:
+                logger.warning("情感缓存读取失败, 重新提取", exc_info=True)
+
+        # Extract fresh
+        prompts, segments_meta = self._run_emotion_extraction(
+            vocals_path, subs_translated, output_dir)
+
+        # Save to disk
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            cached = {
+                "version": 2,
+                "engine": "emotion2vec",
+                "model": "iic/emotion2vec_plus_large",
+                "segment_count": n_segments,
+                "unique_prompts": len(set(v["prompt"] for v in segments_meta)),
+                "segments": {m["key"]: m for m in segments_meta},
+            }
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(cached, f, ensure_ascii=False, indent=2)
+            logger.info("情感分析结果已保存: %s", json_path)
+        except Exception:
+            logger.warning("情感缓存写入失败", exc_info=True)
+
+        return prompts
+    def _create_speaker_audio(
+        self, vocals_path: str, speaker_timeline: list,
+    ) -> dict[str, str]:
+        """为每个说话人提取参考音频（最长连续段）。
+
+        Returns: {speaker_id: audio_file_path}
+        """
+        import numpy as np
+        import soundfile as sf
+
+        speaker_dir = os.path.join(
+            self.config.video_output_dir, "..", "03_tts", "speakers"
+        )
+        os.makedirs(speaker_dir, exist_ok=True)
+        result = {}
+
+        try:
+            audio, sr = sf.read(vocals_path)
+            if audio.ndim > 1:
+                audio = audio.mean(axis=1)
+        except Exception as e:
+            logger.warning("无法读取人声文件: %s", e)
+            return result
+
+        by_spk: dict[str, list[tuple[float, float]]] = {}
+        for spk, start, end, _ in speaker_timeline:
+            by_spk.setdefault(spk, []).append((start, end))
+
+        for spk, segs in by_spk.items():
+            out_path = os.path.join(speaker_dir, f"{spk}.wav")
+            if os.path.isfile(out_path):
+                result[spk] = out_path
+                continue
+            best = max(segs, key=lambda x: x[1] - x[0])
+            s, e = best
+            si = max(0, int(s * sr))
+            ei = min(len(audio), int(e * sr))
+            if ei - si < int(0.5 * sr):
+                continue
+            sf.write(out_path, audio[si:ei], sr)
+            logger.info("说话人参考音频: %s (%.1fs)", spk, (ei - si) / sr)
+            result[spk] = out_path
+
+        return result
+
     # ── 默认组件工厂 ──────────────────────────────────
 
     def _default_engine(self):
@@ -536,8 +741,8 @@ class TtsPipeline:
         if not self.config.voice_clone_active:
             return NoopVoiceCloner()
 
-        if self.config.engine_type == "cosyvoice":
-            logger.info("TTS 引擎为 CosyVoice，自带 zero_shot 音色克隆，跳过独立 voice cloner")
+        if self.config.engine_type in ("cosyvoice", "indextts"):
+            logger.info("TTS 引擎为 %s，自带 zero_shot 音色克隆，跳过独立 voice cloner", self.config.engine_type)
             return NoopVoiceCloner()
 
         vc_config = VoiceCloneConfig(
@@ -611,6 +816,7 @@ class TtsPipeline:
                     _synth_kwargs['target_length_ms'] = float(end - start)
                 wav_time = engine.synthesize(
                     task["text_cn"], output_audio_path, f"+{self.config.base_speed}%",
+                    emotion=self._emo_prompts.get((start, end)),
                     **_synth_kwargs,
                 )
 
@@ -852,9 +1058,10 @@ class TtsPipeline:
             else:
                 logger.warning("CosyVoice TTS: 未配置参考音频且找不到 vocals.wav")
 
-        # ── IndexTTS 自动参考音频（用户未手动配置时） ──
+        # ── IndexTTS 自动参考音频（用户未手动配置且启用克隆时） ──
         if (
             self.config.engine_type == "indextts"
+            and self.config.indextts_enable_clone
             and not self.config.indextts_speaker_audio
         ):
             vocals = self._find_vocals(video_path)
@@ -927,14 +1134,32 @@ class TtsPipeline:
             video, instrumental_path, subs_translated, total_duration, _extract_instrumental_segment
         )
 
+        # ── 情感分析（可选，仅 ChatTTS）──
+        self._emo_prompts: dict = {}
+        if (self.config.enable_emotion
+                and self.config.engine_type == "chattts"):
+            vocals = self._find_vocals(video_path)
+            if vocals:
+                self._emo_prompts = self._load_or_extract_emotion_prompts(
+                    vocals, subs_translated,
+                    output_dir=self.config.output_dir)
+
         # ── Global 模式：全局统一调速 ─────────────────
         if self.config.speed_mode == "global":
             from pipeline.speed_strategy import create_strategy, StrategyContext
 
+            _emo_re = re.compile(r"^TTS_(\d+)_(\d+)")
+
             def _synth_fn(text: str, path: str, rate: str) -> float:
                 engine = self._borrow_engine()
                 try:
-                    return engine.synthesize(text, path, rate)
+                    emotion = None
+                    if self._emo_prompts:
+                        m = _emo_re.search(os.path.basename(path))
+                        if m:
+                            key = (int(m.group(1)), int(m.group(2)))
+                            emotion = self._emo_prompts.get(key)
+                    return engine.synthesize(text, path, rate, emotion=emotion)
                 finally:
                     self._return_engine(engine)
 

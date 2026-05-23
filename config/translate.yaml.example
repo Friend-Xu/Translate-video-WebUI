@@ -49,8 +49,11 @@ translate:
   # ── Quality checks ──────────────────────────────
   semantic_check: true                       # MiniLM cross-lingual verification
   semantic_threshold: 0.70                   # min cosine similarity
-  naturalness_check: true                    # PPL-based fluency check (Qwen2-0.5B)
+  naturalness_check: false                   # PPL-based fluency check (experimental, +1GB GPU)
   naturalness_threshold: 3.0                 # PPL ratio above baseline → re-translate
+  joint_verification: false                  # closed-loop MiniLM+PPL joint-score (needs naturalness_check)
+  verification_mode: "joint_formula"          # "joint_formula" | "logic_gate" — requires joint_verification
+  sim_drop_limit: 0.05                        # Gate C: max sim degradation for naturalness retry (0=disabled)
 
   # ── Glossary ────────────────────────────────────
   terms_dict:

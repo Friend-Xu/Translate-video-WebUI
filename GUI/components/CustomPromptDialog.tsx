@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   Button, TextField, Box, Typography, Chip, Paper, Divider,
-  FormControlLabel, Switch, Tabs, Tab,
+  FormControlLabel, Switch, Tabs, Tab, Tooltip,
 } from '@mui/material'
 import type { PipelineConfig } from '../types'
 
@@ -33,6 +33,7 @@ interface Props {
   onClose: () => void
   config: PipelineConfig
   onConfigChange: <K extends keyof PipelineConfig>(key: K, value: PipelineConfig[K]) => void
+  jointVerification?: boolean
 }
 
 const PROMPT_LEVELS = [
@@ -41,7 +42,7 @@ const PROMPT_LEVELS = [
   { key: 'naturalness_retry' as const, label: '自然度重翻', desc: 'PPL 自然度比率 > 3.0 时触发', trigger: '翻译腔（直译/不自然）', icon: '💬' },
 ] as const
 
-export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Props) {
+export function CustomPromptDialog({ open, onClose, config, onConfigChange, jointVerification }: Props) {
   const [localEnabled, setLocalEnabled] = useState(config.customPromptEnabled)
   const [tabIndex, setTabIndex] = useState(0)
   const textFieldRef = useRef<HTMLTextAreaElement>(null)
@@ -112,7 +113,7 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Pr
     '新译文：'
 
   const SYSTEM_DEFAULTS: Record<string, string> = {
-    'system': `你是专业${srcLabel}字幕翻译。请将以下${srcLabel}逐条翻译为${tgtLabel}。\n\n要求：\n1. 准确传达原文含义，上下文连贯\n2. 输出格式必须严格为 <index> 译文（如 <1> 大家好）\n   编号数量和顺序必须与输入完全一致\n   每条独立成行，不要合并\n   不要添加任何额外说明或标注\n\n【运行时】\n待翻译：\n<1> <第一条字幕原文>\n<2> <第二条字幕原文>\n...\n\n翻译：`,
+    'system': `你是专业${srcLabel}字幕翻译。请将以下${srcLabel}逐条翻译为${tgtLabel}。\n\n要求：\n1. 准确传达原文含义，上下文连贯\n2. 输出格式必须严格为 <index> 译文（如 <1> 大家好）\n   编号数量和顺序必须与输入完全一致\n   每条独立成行，不要合并\n   不要添加任何额外说明或标注\n3. 不要添加解释性内容：不在译文后加括号标注英文原文、不增补版本号或日期等解释性后缀\n4. 保持原文的叙述节奏和句式结构，直译优先，不要改写为说明书式语言\n\n【运行时】\n待翻译：\n<1> <第一条字幕原文>\n<2> <第二条字幕原文>\n...\n\n翻译：`,
     'semantic_retry': `你是专业翻译。请将以下${srcLabel}字幕翻译成${tgtLabel}。\n请结合上下文理解原文含义，用自然流畅的语言准确表达。\n输出只有译文本身，不要添加任何说明。${RUNTIME_CONTEXT_HINT}`,
     'naturalness_retry': `你是专业翻译。请将以下${srcLabel}字幕重新翻译成更自然、更地道的${tgtLabel}。\n用日常交流的口吻表达，避免翻译腔（直译/逐字翻译）。\n输出只有译文本身，不要添加任何说明。${RUNTIME_CONTEXT_HINT}`,
   }
@@ -160,16 +161,23 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange }: Pr
         {localEnabled && (
           <>
             <Tabs value={tabIndex} onChange={(_, v) => setTabIndex(v)} sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}>
-              {PROMPT_LEVELS.map((l, i) => (
-                <Tab key={l.key} label={
+              {PROMPT_LEVELS.map((l, i) => {
+                const disabled = l.key === 'naturalness_retry' && !jointVerification
+                return (
+                <Tab key={l.key}
+                  disabled={disabled}
+                  label={
+                  <Tooltip title={disabled ? '请先在翻译规则中启用"语义 + 自然度联合验证"' : ''}>
                   <Box sx={{ textAlign: 'left' }}>
-                    <Typography variant="body2">{l.label}</Typography>
+                    <Typography variant="body2" color={disabled ? 'text.disabled' : undefined}>{l.label}</Typography>
                     <Typography variant="caption" color={tabIndex === i ? 'primary' : 'text.disabled'} fontSize="0.65rem">
-                      {l.trigger}
+                      {disabled ? '需要联合翻译规则' : l.trigger}
                     </Typography>
                   </Box>
-                } />
-              ))}
+                  </Tooltip>
+                }
+                />
+              )})}
             </Tabs>
 
             <Paper variant="outlined" sx={{ p: 1.5, mb: 2, bgcolor: 'action.hover' }}>

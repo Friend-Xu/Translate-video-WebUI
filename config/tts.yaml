@@ -21,6 +21,7 @@ tts:
   cosyvoice_tts_lang: ""                   # cross_lingual 目标语言 (zh/en/ja/ko/yue, 留空=自动)
   # ── IndexTTS 配置 ────────────────────────────────
   indextts_fp16: true                       # FP16 推理 (~7.8GB VRAM), false=FP32
+  indextts_enable_clone: true                # 是否克隆原视频音色（false=使用预设音色）
   indextts_speaker_audio: ""                # 零样本音色克隆参考音频（留空从原视频人声自动提取）
   indextts_checkpoints_dir: ""              # 模型 checkpoint 目录（留空自动）
   # ── EdgeTTS 配置 ───────────────────────────────────

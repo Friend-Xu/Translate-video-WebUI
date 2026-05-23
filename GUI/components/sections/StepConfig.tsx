@@ -3,6 +3,7 @@ import {
   Box, Typography, Card, CardContent, Select, MenuItem, TextField, Divider, Alert,
   FormControlLabel, Checkbox, Switch, Slider, Stack, Button, Chip, CircularProgress,
   Dialog, DialogTitle, DialogContent, DialogActions,
+  ToggleButton, ToggleButtonGroup,
 } from '@mui/material'
 import Grid from '@mui/material/Grid'
 import { SectionHeader } from '../SectionHeader'
@@ -40,6 +41,8 @@ const TARGET_LANG_TO_VOICE: Record<string, string> = {
 }
 import { PROVIDER_PRESETS } from '../../types'
 import CosyVoiceTTSPanel from './CosyVoiceTTSPanel'
+import IndexTTSPanel from './IndexTTSPanel'
+
 
 interface StepConfigProps {
   config: PipelineConfig
@@ -438,6 +441,7 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
   const [glossaryDicts, setGlossaryDicts] = useState<{name: string, description: string, termCount: number}[]>([])
   const [customPromptOpen, setCustomPromptOpen] = useState(false)
   const [generalSettingsOpen, setGeneralSettingsOpen] = useState(false)
+  const [qualityDialogOpen, setQualityDialogOpen] = useState(false)
 
   useEffect(() => {
     fetch('/api/system/info')
@@ -506,6 +510,10 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                 <FormControlLabel
                   control={<Checkbox checked={config.enableDemucs} onChange={e => onConfigChange('enableDemucs', e.target.checked)} />}
                   label={<Box><Typography variant="body2">启用 Demucs 人声/背景音分离</Typography><Typography variant="caption" display="block">关闭时使用完整音轨作为背景乐，跳过 AI 分离</Typography></Box>}
+                />
+                <FormControlLabel
+                  control={<Checkbox checked={config.enableSpeakerDiarization} onChange={e => onConfigChange('enableSpeakerDiarization', e.target.checked)} />}
+                  label={<Box><Typography variant="body2">启用说话人分离</Typography><Typography variant="caption" display="block">使用 pyannote 识别多说话人，SRT 标注说话人标签</Typography></Box>}
                 />
 
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
@@ -593,6 +601,44 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                   </Box>
                   <Typography variant="caption" display="block" mb={1}>同时翻译的组数 (1=串行, 2~8=并行)</Typography>
                   <Slider value={config.concurrency} min={1} max={8} step={1} marks={[{ value: 1, label: '1' }, { value: 3, label: '3' }, { value: 5, label: '5' }, { value: 8, label: '8' }]} onChange={(_, v) => onConfigChange('concurrency', v as number)} />
+                </Box>
+                <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
+                  <Box display="flex" justifyContent="space-between" alignItems="center">
+                    <Typography variant="body2" fontWeight={500}>翻译验证模式</Typography>
+                    <Button size="small" variant="outlined" onClick={() => setQualityDialogOpen(true)}>
+                      高级参数
+                    </Button>
+                  </Box>
+                  <ToggleButtonGroup
+                    size="small"
+                    exclusive
+                    fullWidth
+                    value={config.verificationMode}
+                    onChange={(_, v) => { if (v !== null) onConfigChange('verificationMode', v) }}
+                    sx={{ mt: 1 }}
+                  >
+                    <ToggleButton value="joint_formula" sx={{ flex: 1 }}>
+                      <Box>
+                        <Typography variant="body2">联合公式</Typography>
+                        <Typography variant="caption" display="block" color="text.secondary">
+                          Gate A + Gate B
+                        </Typography>
+                      </Box>
+                    </ToggleButton>
+                    <ToggleButton value="logic_gate" sx={{ flex: 1 }}>
+                      <Box>
+                        <Typography variant="body2">逻辑门控</Typography>
+                        <Typography variant="caption" display="block" color="text.secondary">
+                          Gate A + Gate C + Gate B
+                        </Typography>
+                      </Box>
+                    </ToggleButton>
+                  </ToggleButtonGroup>
+                  <Typography variant="caption" display="block" mt={0.5} color="text.secondary">
+                    {config.verificationMode === 'logic_gate'
+                      ? 'MiniLM 语义 → 内容保真度 → PPL 自然度，逐级门控'
+                      : 'MiniLM 语义 + PPL 自然度，联合公式闭环'}
+                  </Typography>
                 </Box>
                 <Box sx={{ pt: 1, borderTop: '1px solid', borderColor: 'divider' }}>
                   <Typography variant="body2" fontWeight={500}>System Prompt</Typography>
@@ -700,6 +746,7 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                     <MenuItem value="edge">edge</MenuItem>
                     <MenuItem value="chattts">chattts</MenuItem>
                     <MenuItem value="cosyvoice">cosyvoice</MenuItem>
+                    <MenuItem value="indextts">indextts</MenuItem>
                   </Select>
                   <Typography variant="caption">选择用于语音合成的TTS引擎</Typography>
                 </Box>
@@ -708,6 +755,9 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
                 )}
                 {config.engine === 'cosyvoice' && (
                   <CosyVoiceTTSPanel config={config} onConfigChange={onConfigChange} />
+                )}
+                {config.engine === 'indextts' && (
+                  <IndexTTSPanel config={config} onConfigChange={onConfigChange} />
                 )}
                 {config.engine === 'edge' && (
                   <>
@@ -775,6 +825,40 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
           </Card>
         </Grid>
       </Grid>
+      <Dialog open={qualityDialogOpen} onClose={() => setQualityDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle>翻译质量高级参数</DialogTitle>
+        <DialogContent dividers>
+          <Box sx={{ mb: 3 }}>
+            <Box display="flex" justifyContent="space-between">
+              <Typography variant="body2" fontWeight={500}>PPL 自然度阈值</Typography>
+              <Typography variant="body2" fontWeight={600} color="primary">{config.naturalnessThreshold}x</Typography>
+            </Box>
+            <Typography variant="caption" display="block" mb={1}>超过此倍数判定为不自然，触发重翻</Typography>
+            <Slider value={config.naturalnessThreshold} min={1.5} max={6.0} step={0.5}
+              marks={[{ value: 2, label: '2x' }, { value: 3, label: '3x' }, { value: 4, label: '4x' }, { value: 5, label: '5x' }]}
+              onChange={(_, v) => onConfigChange('naturalnessThreshold', v as number)} />
+          </Box>
+          {config.verificationMode === 'logic_gate' && (
+            <Box sx={{ mb: 3 }}>
+              <Box display="flex" justifyContent="space-between" alignItems="center">
+                <Typography variant="body2" fontWeight={500}>Gate C: 内容保真度阈值</Typography>
+                <Typography variant="body2" fontWeight={600} color="primary">{(config.simDropLimit ?? 0.05).toFixed(2)}</Typography>
+              </Box>
+              <Typography variant="caption" display="block" mb={1}>允许的最大相似度下降 (0 = 禁用 Gate C)</Typography>
+              <Slider value={config.simDropLimit ?? 0.05} min={0} max={0.15} step={0.01}
+                marks={[{ value: 0, label: '0' }, { value: 0.05, label: '0.05' }, { value: 0.10, label: '0.10' }, { value: 0.15, label: '0.15' }]}
+                onChange={(_, v) => onConfigChange('simDropLimit', v as number)} />
+            </Box>
+          )}
+          <FormControlLabel
+            control={<Checkbox checked={config.jointVerification} onChange={e => onConfigChange('jointVerification', e.target.checked)} size="small" />}
+            label={<Typography variant="body2">闭环验证（重翻仍不合格时回退原译）</Typography>}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setQualityDialogOpen(false)}>关闭</Button>
+        </DialogActions>
+      </Dialog>
       <Dialog open={generalSettingsOpen} onClose={() => setGeneralSettingsOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>通用设置</DialogTitle>
         <DialogContent dividers>
@@ -818,6 +902,7 @@ export function StepConfig({ config, onConfigChange }: StepConfigProps) {
         onClose={() => setCustomPromptOpen(false)}
         config={config}
         onConfigChange={onConfigChange}
+        jointVerification={config.jointVerification}
       />
     </>
   )

@@ -142,7 +142,9 @@ class ChatTTSWorker:
                 spk_emb=self._spk_emb,
                 temperature=0.3, top_P=0.7, top_K=20,
             )
-            params_refine_text = Chat.RefineTextParams(prompt="[oral_0][break_5]")
+            params_refine_text = Chat.RefineTextParams(
+                prompt=req.get("refine_prompt", "[oral_0][break_5]")
+            )
 
             wavs = self._chat.infer(
                 text,

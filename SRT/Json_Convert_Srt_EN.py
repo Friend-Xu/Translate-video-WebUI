@@ -279,7 +279,8 @@ class EnglishProcessor:
                 'text': text,
                 'start': start,
                 'end': end,
-                'words': seg.get('words', [])
+                'words': seg.get('words', []),
+                'speaker': seg.get('speaker'),
             })
 
             prev_end = end
@@ -382,7 +383,8 @@ class EnglishProcessor:
                     processed.append({
                         'text': chunk_text,
                         'start': chunk_start,
-                        'end': chunk_end
+                        'end': chunk_end,
+                        'speaker': seg.get('speaker'),
                     })
 
                     consumed += chunk_size
@@ -425,7 +427,8 @@ class EnglishProcessor:
                     processed.append({
                         'text': " ".join(current_text).strip(),
                         'start': current_start,
-                        'end': current_end
+                        'end': current_end,
+                        'speaker': current_words[0].get('speaker') if current_words else seg.get('speaker'),
                     })
 
                     current_text = []
@@ -441,7 +444,8 @@ class EnglishProcessor:
             processed.append({
                 'text': " ".join(current_text).strip(),
                 'start': current_start,
-                'end': current_end
+                'end': current_end,
+                'speaker': current_words[0].get('speaker') if current_words else None,
             })
 
         return processed
@@ -461,10 +465,13 @@ class EnglishProcessor:
             cur_words = len(cur_text.split())
             nxt_words = len(nxt_text.split())
 
+            cur_speaker = current.get('speaker')
+            nxt_speaker = next_seg.get('speaker')
             can_merge = (
                 gap <= self.max_gap and
                 cur_words + nxt_words <= self.max_chars and
-                not (cur_text[-1] in self.sentence_end_punctuations if cur_text else False)
+                not (cur_text[-1] in self.sentence_end_punctuations if cur_text else False) and
+                (not cur_speaker or not nxt_speaker or cur_speaker == nxt_speaker)
             )
 
             if can_merge:
@@ -564,7 +571,8 @@ class EnglishProcessor:
                         'text': merged_text.strip(),
                         'start': current['start'],
                         'end': merged_end,
-                        'words': merged_words
+                        'words': merged_words,
+                        'speaker': current.get('speaker'),
                     })
                     i = j + 1
                     found_sentence = True
@@ -581,7 +589,8 @@ class EnglishProcessor:
                     'text': merged_text.strip() + '.',
                     'start': current['start'],
                     'end': merged_end,
-                    'words': merged_words
+                    'words': merged_words,
+                    'speaker': current.get('speaker'),
                 })
                 i = j + 1 if j > i else i + 1
                 continue
@@ -595,7 +604,8 @@ class EnglishProcessor:
                     'text': merged_text.strip() + '.',
                     'start': current['start'],
                     'end': merged_end,
-                    'words': merged_words
+                    'words': merged_words,
+                    'speaker': current.get('speaker'),
                 })
                 i = j
             continue
@@ -687,7 +697,8 @@ class EnglishProcessor:
                 "index": i,
                 "start": seg['start'],
                 "end": seg['end'],
-                "text": seg['text']
+                "text": seg['text'],
+                "speaker": seg.get('speaker'),
             })
         self.entry_count = len(self.srt_entries) + 1
 
