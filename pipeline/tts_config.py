@@ -124,6 +124,9 @@ class TTSConfig:
     indextts_fp16: bool = True
     """IndexTTS 推理精度: True=FP16 (~7.8GB VRAM), False=FP32"""
 
+    indextts_enable_clone: bool = True
+    """是否克隆原视频音色。关闭时使用预设音色"""
+
     indextts_speaker_audio: str = ""
     """IndexTTS 零样本音色克隆参考音频。留空时自动从原视频人声提取"""
 
@@ -581,6 +584,27 @@ def parse_srt(path: str) -> list[tuple[int, int, str]]:
     _fix_corrupted_timestamps(subs)
 
     return subs
+
+
+def parse_srt_with_speakers(
+    srt_path: str, speaker_map_path: str
+) -> list[tuple[int, int, str, str | None]]:
+    """解析 SRT + speaker_map.json，返回带说话人标签的字幕列表。
+
+    Returns: [(start_ms, end_ms, text, speaker_id), ...]
+    speaker_id 为 None 表示未分配说话人。
+    """
+    import json as _json
+
+    subs = parse_srt(srt_path)
+    speaker_map = {}
+    if speaker_map_path and os.path.isfile(speaker_map_path):
+        with open(speaker_map_path, "r", encoding="utf-8") as f:
+            speaker_map = {e["index"]: e.get("speaker") for e in _json.load(f)}
+    return [
+        (s, e, t, speaker_map.get(i + 1))
+        for i, (s, e, t) in enumerate(subs)
+    ]
 
 
 def create_default_config(path: str = "config/tts.yaml") -> TTSConfig:
