@@ -1,0 +1,37 @@
+模型: turbo | 时长: 1174s (19.6min)
+
+加载模型 (GPU)...
+
+============================================================
+  Group A: 外部 Silero VAD → whisper (vad_filter=False)
+============================================================
+
+  [外部 VAD] Silero VAD 分段...
+2026-05-17 15:54:19,339 - VAD_Segmenter - INFO - 长音频 1174s，分块 VAD 处理 [ONNX]...
+2026-05-17 15:54:20,986 - VAD_Segmenter - INFO -   块 1: 0s-300s, 检测到 27 段
+2026-05-17 15:54:22,191 - VAD_Segmenter - INFO -   块 2: 299s-599s, 检测到 24 段
+2026-05-17 15:54:23,694 - VAD_Segmenter - INFO -   块 3: 598s-898s, 检测到 47 段
+2026-05-17 15:54:25,041 - VAD_Segmenter - INFO -   块 4: 897s-1174s, 检测到 39 段
+2026-05-17 15:54:25,083 - VAD_Segmenter - INFO - VAD 原始结果: 137 段
+2026-05-17 15:54:25,083 - VAD_Segmenter - INFO - 后处理后: 5 段
+2026-05-17 15:54:25,084 - VAD_Segmenter - INFO - VAD 结果已缓存: C:\Users\Friend\AppData\Local\Temp\tmpuaddon2c_vad_segments.json
+  [外部 VAD] 段数: 5, 耗时: 5.9s
+    [    0.1s -   750.1s] dur= 750.1s
+    [  753.7s -   864.8s] dur= 111.1s
+    [  867.8s -  1008.4s] dur= 140.7s
+    [ 1011.5s -  1128.3s] dur= 116.9s
+    [ 1138.0s -  1173.7s] dur=  35.8s
+  [外部 VAD] 转录中...
+2026-05-17 15:54:25,093 - faster_whisper - INFO - Processing audio with duration 12:30.052
+2026-05-17 15:54:48,755 - faster_whisper - INFO - Processing audio with duration 01:51.092
+2026-05-17 15:54:57,319 - faster_whisper - INFO - Processing audio with duration 02:20.684
+2026-05-17 15:55:01,689 - faster_whisper - INFO - Processing audio with duration 01:56.884
+2026-05-17 15:55:05,165 - faster_whisper - INFO - Processing audio with duration 00:35.764
+
+============================================================
+  Group B: whisper 内置 VAD (vad_filter=True)
+============================================================
+
+  [内置 VAD] 转录中 (vad_filter=True)...
+2026-05-17 15:55:06,140 - faster_whisper - INFO - Processing audio with duration 19:34.020
+2026-05-17 15:55:08,294 - faster_whisper - INFO - VAD filter removed 01:10.884 of audio

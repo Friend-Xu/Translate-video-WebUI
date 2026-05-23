@@ -13,6 +13,12 @@ interface LogPanelProps {
   reviewEnabled?: boolean
   onStartReview?: () => void
   connectionState?: 'connected' | 'reconnecting' | 'closed'
+  /** Global index of logs[0] in the full log file (for virtual window scrolling) */
+  logFirstIndex?: number
+  /** Approximate total lines in the log file */
+  logTotal?: number
+  /** Callback when user scrolls to top — load older entries */
+  onLoadOlder?: () => void
 }
 
 const LEVEL_FILTERS = ['ALL', 'STAGE', 'WARN', 'ERROR'] as const
@@ -35,6 +41,7 @@ export function LogPanel({
   logs, showTitle = true, headerLabel,
   reviewEnabled = false, onStartReview,
   connectionState = 'connected',
+  logFirstIndex, logTotal: _logTotal, onLoadOlder,
 }: LogPanelProps) {
   const [isAtBottom, setIsAtBottom] = useState(true)
   const [filter, setFilter] = useState<LevelFilter>('ALL')
@@ -145,12 +152,15 @@ export function LogPanel({
                 <Virtuoso
                   ref={virtuosoRef}
                   data={filteredLogs}
+                  firstItemIndex={logFirstIndex ?? 0}
                   itemContent={itemContent}
-                  followOutput={isAtBottom ? 'smooth' : false}
+                  followOutput={isAtBottom ? 'auto' : false}
                   atBottomStateChange={setIsAtBottom}
                   atBottomThreshold={60}
+                  startReached={onLoadOlder}
                   style={{ height: '100%' }}
                   increaseViewportBy={{ top: 200, bottom: 200 }}
+                  computeItemKey={(_i, entry) => entry._id ?? `${entry.timestamp}-${_i}`}
                 />
               )}
             </Box>
