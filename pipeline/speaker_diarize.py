@@ -30,7 +30,9 @@ logger = logging.getLogger("pipeline.speaker_diarize")
 # 与 CTranslate2 串行的互斥锁
 _DIARIZATION_LOCK = threading.Lock()
 
-DEFAULT_MODEL = "pyannote/speaker-diarization-3.1"
+_MODELS_ROOT = Path(__file__).parent.parent / "models"
+DEFAULT_MODEL = str(_MODELS_ROOT / "pyannote" / "speaker-diarization-3.1" / "config.yaml")
+DEFAULT_MODEL_ID = "pyannote-diarization"  # ModelManager 注册 ID
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 DIAR_CACHE_DIR = MODELS_DIR / "pyannote"
 
@@ -65,17 +67,32 @@ class SpeakerDiarizer:
     def load_model(self) -> None:
         if self._loaded:
             return
-        # pyannote.audio 3.3.2 的 numpy 2.x 修复不彻底, 仍有 np.NaN 残留
+        # numpy 2.x: np.NaN 被移除
         import numpy as np
         np.NaN = np.nan
+
+        # hf_hub_download: use_auth_token -> token (pyannote 3.3.2 用旧 API)
+        import huggingface_hub
+        _orig_hf_hub = huggingface_hub.hf_hub_download
+        def _patched_hf_hub(*args, **kwargs):
+            if "use_auth_token" in kwargs:
+                kwargs["token"] = kwargs.pop("use_auth_token")
+            return _orig_hf_hub(*args, **kwargs)
+        huggingface_hub.hf_hub_download = _patched_hf_hub
+
         from pyannote.audio import Pipeline
 
+        # 走 ModelManager 取配置路径，fallback 到默认本地路径
+        try:
+            from pipeline.model_manager import ModelManager
+            ModelManager.ensure_hf_env()
+            config_path = str(ModelManager.get_path(DEFAULT_MODEL_ID) / "config.yaml")
+        except Exception:
+            config_path = self._model_name
+
         t0 = time.time()
-        logger.info("加载 pyannote: %s", self._model_name)
-        kwargs = {}
-        if self._hf_token:
-            kwargs["use_auth_token"] = self._hf_token
-        self._pipeline = Pipeline.from_pretrained(self._model_name, **kwargs)
+        logger.info("加载 pyannote: %s", config_path)
+        self._pipeline = Pipeline.from_pretrained(config_path)
         self._pipeline.to(torch.device(self._device))
         # 预热 CUDA JIT
         dummy = torch.randn(1, 16000, device=self._device)
