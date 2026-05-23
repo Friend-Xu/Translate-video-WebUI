@@ -509,7 +509,7 @@ class EnglishProcessor:
                     segments[i - 1]['end'],
                     prev_end + self.min_duration
                 )
-                # 不注入 [...] — TTS 会把它读出来，破坏语音质量
+                # 注释掉：TTS 会读出 "[...]", 影响语音质量
                 # if gap > 2.0:
                 #     curr['text'] = "[...] " + curr['text']
 

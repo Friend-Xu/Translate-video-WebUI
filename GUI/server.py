@@ -250,10 +250,7 @@ class Job:
         if not line.strip():
             return
         self.logs.append(line)
-        # 内存封顶 500 条
-        if len(self.logs) > 500:
-            self.logs = self.logs[-500:]
-
+        # 不裁剪 — SSE idx 依赖列表索引稳定
         # 写入 workspace pipeline.log（线程安全）
         if self._log_file is not None and self._log_lock is not None:
             with self._log_lock:
