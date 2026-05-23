@@ -12,6 +12,7 @@
   NODE 2.7 说话人分离(可选)  → pipeline/speaker_diarize.py
   NODE 2.75 说话人融合(可选)  → pipeline/speaker_fusion.py
   NODE 2.8  分离结果验证(可选) → pipeline/diarization_verify.py
+  NODE 3.75 Timeline Fusion     → timeline/ (统一时间轴 IR)
   NODE 4   JSON→SRT         → Json_Convert_Srt
 
 用法:
@@ -273,6 +274,12 @@ def main():
     log_node(3, f"首段: {vad_stats['first_segment']}, 末段: {vad_stats['last_segment']}")
     log_node(3, f"语音: {vad_stats['total_speech_dur']:.1f}s ({vad_stats['total_speech_dur']/max(vad_stats['audio_len'],1)*100:.1f}%)")
 
+    # 保存 VAD segments 标准化输出（M2：计划书 7.2 节规范）
+    vad_json_path = os.path.join(out_dir, "vad_segments.json")
+    with open(vad_json_path, "w", encoding="utf-8") as f:
+        json.dump([{"start": s, "end": e} for s, e in vad_segments], f, ensure_ascii=False, indent=2)
+    log_node(3, f"VAD 标准化输出: vad_segments.json")
+
     # 3b: 语言检测（打印日志）
     log_node(3, "检测音频语言...")
 
@@ -477,6 +484,37 @@ def main():
             print(f"  [WARN] 验证失败 ({e})，跳过")
             traceback.print_exc()
             log_node("2.8", f"跳过: 验证失败 — {e}")
+
+    # ════════════════════════════════════════════════════════
+    # NODE 3.75: Timeline Fusion（统一时间轴 IR 生成）
+    # ════════════════════════════════════════════════════════
+    hr("NODE 3.75: Timeline Fusion (统一时间轴 IR)")
+    timeline_path = os.path.join(out_dir, "timeline.json")
+    t0 = time.time()
+    try:
+        from timeline import from_extract_result, save_json as save_timeline
+
+        tl = from_extract_result(
+            segments=result.get("segments", []),
+            words=result.get("words"),
+            speaker_timeline=speaker_timeline,
+            audio_id=video_name,
+            metadata={
+                "lang": result.get("language", ""),
+                "duration": info.duration_sec,
+                "extract_model": f"faster-whisper-{args.model}",
+            },
+        )
+        save_timeline(tl, timeline_path)
+        log_node("3.75", f"Timeline IR: {len(tl.timeline)} segments, "
+                 f"{len(tl.speaker_map)} speakers")
+        log_node("3.75", f"保存: timeline.json ({os.path.getsize(timeline_path)} bytes)")
+        log_node("3.75", f"耗时: {time.time()-t0:.1f}s")
+    except Exception as e:
+        import traceback
+        print(f"  [WARN] Timeline Fusion 失败 ({e})，跳过")
+        traceback.print_exc()
+        log_node("3.75", f"跳过: Timeline 构建失败 — {e}")
 
     # ════════════════════════════════════════════════════════
     # NODE 4: JSON → SRT

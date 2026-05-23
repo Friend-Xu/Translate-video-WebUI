@@ -419,4 +419,26 @@ export interface DiarizationSession {
   speakers: string[]
   timeline: SpeakerTurn[]
   verification: SpeakerVerification | null
+  speakerNames: Record<string, string>
+}
+
+/** Speaker merge request */
+export interface SpeakerMergeRequest {
+  workspace: string
+  source: string
+  target: string
+}
+
+/** Speaker split request */
+export interface SpeakerSplitRequest {
+  workspace: string
+  speaker: string
+  split_index: number
+}
+
+/** Speaker rename request */
+export interface SpeakerRenameRequest {
+  workspace: string
+  speaker: string
+  display_name: string
 }

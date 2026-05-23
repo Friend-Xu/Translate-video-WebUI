@@ -3346,7 +3346,7 @@ async def speaker_load(req: SpeakerLoadRequest):
     if not extract_dir or not os.path.isdir(extract_dir):
         raise HTTPException(status_code=400, detail="无效的工作目录")
     import json as _json
-    result = {"timeline": [], "verification": None, "speakers": []}
+    result = {"timeline": [], "verification": None, "speakers": [], "speakerNames": {}}
     tl_path = os.path.join(extract_dir, "speaker_timeline.json")
     if os.path.isfile(tl_path):
         with open(tl_path, "r", encoding="utf-8") as f:
@@ -3357,6 +3357,10 @@ async def speaker_load(req: SpeakerLoadRequest):
     if os.path.isfile(vf_path):
         with open(vf_path, "r", encoding="utf-8") as f:
             result["verification"] = _json.load(f)
+    sn_path = os.path.join(extract_dir, "speaker_names.json")
+    if os.path.isfile(sn_path):
+        with open(sn_path, "r", encoding="utf-8") as f:
+            result["speakerNames"] = _json.load(f)
     return result
 
 
@@ -3382,6 +3386,288 @@ async def speaker_save(req: SpeakerSaveRequest):
     with open(tl_path, "w", encoding="utf-8") as f:
         _json.dump(data, f, ensure_ascii=False, indent=2)
     return {"status": "ok", "speakers": speakers, "turns_count": len(turns)}
+
+
+# ---------------------------------------------------------------------------
+# Speaker Merge / Split / Rename API (M4)
+# ---------------------------------------------------------------------------
+
+class SpeakerMergeRequest(BaseModel):
+    workspace: str = ""
+    source: str = ""     # 要合并掉的 speaker (如 SPEAKER_03)
+    target: str = ""     # 合并到的 speaker (如 SPEAKER_00)
+
+
+class SpeakerSplitRequest(BaseModel):
+    workspace: str = ""
+    speaker: str = ""    # 要切分的 speaker
+    split_index: int = 0 # 从此 turn（含）开始分配给新 speaker
+
+
+class SpeakerRenameRequest(BaseModel):
+    workspace: str = ""
+    speaker: str = ""       # 原始 ID (SPEAKER_00)
+    display_name: str = ""  # 新名称 ("主播")
+
+
+class SpeakerRegenerateRequest(BaseModel):
+    workspace: str = ""
+
+
+def _propagate_speaker_changes(workspace: str, mapping: dict[str, str]):
+    """同步更新 transcript.json + speaker_map.json + timeline.json 中的 speaker ID。
+    mapping: {old_speaker_id: new_speaker_id}
+    """
+    import json as _json
+    extract_dir = os.path.join(workspace, "01_extract")
+
+    # 1. transcript.json — segments + words
+    tj_path = os.path.join(extract_dir, "transcript.json")
+    if os.path.isfile(tj_path):
+        with open(tj_path, "r", encoding="utf-8") as f:
+            tj = _json.load(f)
+        for seg in tj.get("segments", []):
+            old = seg.get("speaker")
+            if old in mapping:
+                seg["speaker"] = mapping[old]
+            for w in seg.get("words", []):
+                old_w = w.get("speaker")
+                if old_w in mapping:
+                    w["speaker"] = mapping[old_w]
+        if "words" in tj:
+            for w in tj["words"]:
+                old_w = w.get("speaker")
+                if old_w in mapping:
+                    w["speaker"] = mapping[old_w]
+        with open(tj_path, "w", encoding="utf-8") as f:
+            _json.dump(tj, f, ensure_ascii=False, indent=2)
+
+    # 2. speaker_map.json — SRT 索引映射
+    sm_path = os.path.join(extract_dir, "speaker_map.json")
+    if os.path.isfile(sm_path):
+        with open(sm_path, "r", encoding="utf-8") as f:
+            sm = _json.load(f)
+        for entry in sm:
+            old = entry.get("speaker")
+            if old in mapping:
+                entry["speaker"] = mapping[old]
+        with open(sm_path, "w", encoding="utf-8") as f:
+            _json.dump(sm, f, ensure_ascii=False, indent=2)
+
+    # 3. timeline.json
+    tl_path = os.path.join(extract_dir, "timeline.json")
+    if os.path.isfile(tl_path):
+        with open(tl_path, "r", encoding="utf-8") as f:
+            tl = _json.load(f)
+        for seg in tl.get("timeline", []):
+            old = seg.get("speaker")
+            if old in mapping:
+                seg["speaker"] = mapping[old]
+            for w in seg.get("words", []):
+                old_w = w.get("speaker")
+                if old_w in mapping:
+                    w["speaker"] = mapping[old_w]
+        sm_data = tl.get("speaker_map", {})
+        new_sm = {}
+        for k, v in sm_data.items():
+            new_sm[mapping.get(k, k)] = v
+        tl["speaker_map"] = new_sm
+        with open(tl_path, "w", encoding="utf-8") as f:
+            _json.dump(tl, f, ensure_ascii=False, indent=2)
+
+    # 4. speaker_names.json（如存在）
+    sn_path = os.path.join(extract_dir, "speaker_names.json")
+    if os.path.isfile(sn_path):
+        with open(sn_path, "r", encoding="utf-8") as f:
+            sn = _json.load(f)
+        new_sn = {}
+        for k, v in sn.items():
+            new_sn[mapping.get(k, k)] = v
+        with open(sn_path, "w", encoding="utf-8") as f:
+            _json.dump(new_sn, f, ensure_ascii=False, indent=2)
+
+
+@app.post("/api/speaker/diarization/merge")
+async def speaker_merge(req: SpeakerMergeRequest):
+    """合并两个 speaker（source → target）。"""
+    workspace = req.workspace
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    if not extract_dir or not os.path.isdir(extract_dir):
+        raise HTTPException(status_code=400, detail="无效的工作目录")
+    if not req.source or not req.target or req.source == req.target:
+        raise HTTPException(status_code=400, detail="source 和 target 不能相同")
+    import json as _json
+
+    tl_path = os.path.join(extract_dir, "speaker_timeline.json")
+    if not os.path.isfile(tl_path):
+        raise HTTPException(status_code=404, detail="speaker_timeline.json 不存在")
+    with open(tl_path, "r", encoding="utf-8") as f:
+        tl = _json.load(f)
+    turns = tl.get("turns", [])
+    for t in turns:
+        if t.get("speaker") == req.source:
+            t["speaker"] = req.target
+    speakers = sorted(set(t.get("speaker", "?") for t in turns))
+    tl["speakers"] = speakers
+    tl["turns"] = turns
+    with open(tl_path, "w", encoding="utf-8") as f:
+        _json.dump(tl, f, ensure_ascii=False, indent=2)
+
+    _propagate_speaker_changes(workspace, {req.source: req.target})
+    return {"status": "ok", "speakers": speakers, "turns_count": len(turns)}
+
+
+@app.post("/api/speaker/diarization/split")
+async def speaker_split(req: SpeakerSplitRequest):
+    """从指定 turn 索引切分 speaker，后半段分配给新 speaker ID。"""
+    workspace = req.workspace
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    if not extract_dir or not os.path.isdir(extract_dir):
+        raise HTTPException(status_code=400, detail="无效的工作目录")
+    import json as _json
+
+    tl_path = os.path.join(extract_dir, "speaker_timeline.json")
+    if not os.path.isfile(tl_path):
+        raise HTTPException(status_code=404, detail="speaker_timeline.json 不存在")
+    with open(tl_path, "r", encoding="utf-8") as f:
+        tl = _json.load(f)
+
+    turns = tl.get("turns", [])
+    speakers = tl.get("speakers", [])
+    if req.split_index < 0 or req.split_index >= len(turns):
+        raise HTTPException(status_code=400, detail="split_index 超出范围")
+
+    max_id = 0
+    for s in speakers:
+        parts = s.rsplit("_", 1)
+        if len(parts) == 2 and parts[0] == "SPEAKER" and parts[1].isdigit():
+            max_id = max(max_id, int(parts[1]))
+    new_speaker = f"SPEAKER_{max_id + 1:02d}"
+
+    target_speaker = turns[req.split_index].get("speaker", "")
+    affected_indices = []
+    for i in range(req.split_index, len(turns)):
+        if turns[i].get("speaker") == target_speaker:
+            turns[i]["speaker"] = new_speaker
+            affected_indices.append(i)
+
+    speakers = sorted(set(t.get("speaker", "?") for t in turns))
+    tl["speakers"] = speakers
+    tl["turns"] = turns
+    with open(tl_path, "w", encoding="utf-8") as f:
+        _json.dump(tl, f, ensure_ascii=False, indent=2)
+
+    _split_propagate(workspace, target_speaker, new_speaker, turns, affected_indices)
+    return {"status": "ok", "new_speaker": new_speaker, "speakers": speakers,
+            "affected_turns": len(affected_indices)}
+
+
+def _split_propagate(workspace: str, old_spk: str, new_spk: str,
+                     turns: list, affected_indices: list):
+    """切分后按时间范围传播 speaker 变更到 transcript.json + timeline.json。"""
+    if not affected_indices:
+        return
+    import json as _json
+    affected_starts = {turns[i]["start"] for i in affected_indices if "start" in turns[i]}
+    affected_ends = {turns[i]["end"] for i in affected_indices if "end" in turns[i]}
+    min_t = min(affected_starts) if affected_starts else 0
+    max_t = max(affected_ends) if affected_ends else float("inf")
+
+    extract_dir = os.path.join(workspace, "01_extract")
+
+    def _update_segments(segs):
+        for seg in segs:
+            s_start = seg.get("start", 0)
+            s_end = seg.get("end", 0)
+            if s_start < max_t and s_end > min_t:
+                if seg.get("speaker") == old_spk:
+                    seg["speaker"] = new_spk
+            for w in seg.get("words", []):
+                w_start = w.get("start", 0)
+                w_end = w.get("end", 0)
+                if w_start < max_t and w_end > min_t:
+                    if w.get("speaker") == old_spk:
+                        w["speaker"] = new_spk
+
+    tj_path = os.path.join(extract_dir, "transcript.json")
+    if os.path.isfile(tj_path):
+        with open(tj_path, "r", encoding="utf-8") as f:
+            tj = _json.load(f)
+        _update_segments(tj.get("segments", []))
+        if "words" in tj:
+            _update_segments([{"words": tj["words"]}])
+        with open(tj_path, "w", encoding="utf-8") as f:
+            _json.dump(tj, f, ensure_ascii=False, indent=2)
+
+    tl_path = os.path.join(extract_dir, "timeline.json")
+    if os.path.isfile(tl_path):
+        with open(tl_path, "r", encoding="utf-8") as f:
+            tl = _json.load(f)
+        _update_segments(tl.get("timeline", []))
+        with open(tl_path, "w", encoding="utf-8") as f:
+            _json.dump(tl, f, ensure_ascii=False, indent=2)
+
+
+@app.post("/api/speaker/diarization/rename")
+async def speaker_rename(req: SpeakerRenameRequest):
+    """重命名 speaker 显示名 → speaker_names.json。"""
+    workspace = req.workspace
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    if not extract_dir or not os.path.isdir(extract_dir):
+        raise HTTPException(status_code=400, detail="无效的工作目录")
+    import json as _json
+    sn_path = os.path.join(extract_dir, "speaker_names.json")
+    names = {}
+    if os.path.isfile(sn_path):
+        with open(sn_path, "r", encoding="utf-8") as f:
+            names = _json.load(f)
+    if req.display_name:
+        names[req.speaker] = req.display_name
+    else:
+        names.pop(req.speaker, None)
+    with open(sn_path, "w", encoding="utf-8") as f:
+        _json.dump(names, f, ensure_ascii=False, indent=2)
+    return {"status": "ok", "speaker_names": names}
+
+
+@app.post("/api/speaker/diarization/regenerate-srt")
+async def speaker_regenerate_srt(req: SpeakerRegenerateRequest):
+    """从 timeline.json 重生成 SRT（应用 speaker 编辑后的最终版本）。"""
+    workspace = req.workspace
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    if not extract_dir or not os.path.isdir(extract_dir):
+        raise HTTPException(status_code=400, detail="无效的工作目录")
+    import json as _json
+    tl_path = os.path.join(extract_dir, "timeline.json")
+    if not os.path.isfile(tl_path):
+        raise HTTPException(status_code=404, detail="timeline.json 不存在")
+    with open(tl_path, "r", encoding="utf-8") as f:
+        tl = _json.load(f)
+
+    srt_lines = []
+    idx = 1
+    for seg in tl.get("timeline", []):
+        start_s = _seconds_to_srt(seg.get("start", 0))
+        end_s = _seconds_to_srt(seg.get("end", 0))
+        text = seg.get("text", "").strip()
+        if not text:
+            continue
+        srt_lines.append(f"{idx}\n{start_s} --> {end_s}\n{text}\n")
+        idx += 1
+
+    srt_path = os.path.join(extract_dir, "source.srt")
+    with open(srt_path, "w", encoding="utf-8") as f:
+        f.write("".join(srt_lines))
+    return {"status": "ok", "srt_path": srt_path, "entries": idx - 1}
+
+
+def _seconds_to_srt(seconds: float) -> str:
+    """秒数 → SRT 时间格式 HH:MM:SS,mmm"""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    ms = int((seconds % 1) * 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
 @app.get("/api/speaker/audio/preview")

@@ -130,6 +130,8 @@ def workspace_paths(video_path: str) -> dict | None:
         "machine_srt": os.path.join(ws, "02_translate", "machine.srt"),
         "reviewed_srt": os.path.join(ws, "02_translate", "reviewed.srt"),
         "translate_log": os.path.join(ws, "02_translate", "translate-log.json"),
+        "timeline": os.path.join(ws, "01_extract", "timeline.json"),
+        "timeline_translated": os.path.join(ws, "02_translate", "timeline.json"),
         "dubbed_mp4": os.path.join(ws, "04_output", "dubbed.mp4"),
     }
 
@@ -275,6 +277,7 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
         "instrumental_wav": os.path.join(extract_dir, "instrumental.wav"),
         "transcript_json": os.path.join(extract_dir, "transcript.json"),
         "vad_segments": os.path.join(extract_dir, "vad_segments.json"),
+        "timeline": os.path.join(extract_dir, "timeline.json"),
     })
 
     if ck.is_step_done("extract") and not force:
@@ -367,6 +370,7 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
         "vocals_wav": ws["vocals_wav"],
         "instrumental_wav": ws["instrumental_wav"],
         "vad_segments": ws["vad_segments"],
+        "timeline": ws["timeline"],
     }
     from pipeline.checkpoint import _file_sha256
     output_hashes = {k: _file_sha256(p) for k, p in file_map.items() if os.path.isfile(p)}
@@ -383,6 +387,7 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
         "vocals": "01_extract/vocals.wav",
         "instrumental": "01_extract/instrumental.wav",
         "vad_segments": "01_extract/vad_segments.json",
+        "timeline": "01_extract/timeline.json",
     })
     print("  [OK] 字幕提取完成")
 

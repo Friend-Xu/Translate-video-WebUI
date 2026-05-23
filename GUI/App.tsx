@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { ThemeProvider, CssBaseline, Box, Alert, Snackbar, Typography, Dialog, DialogTitle, DialogContent } from '@mui/material'
+import { ThemeProvider, CssBaseline, Box, Alert, Snackbar, Typography, Dialog, DialogTitle, DialogContent, Card } from '@mui/material'
 import CloudUploadOutlined from '@mui/icons-material/CloudUploadOutlined'
 import theme from './theme'
 import { Sidebar } from './components/Sidebar'
@@ -12,12 +12,14 @@ import { FilePickerDialog } from './components/FilePickerDialog'
 import { SubtitleOptimizerDialog } from './components/SubtitleOptimizerDialog'
 import { MediaMuxDialog } from './components/MediaMuxDialog'
 import { SubtitleReview } from './components/sections/SubtitleReview'
+import SpeakerReviewPanel from './components/sections/SpeakerReviewPanel'
 import { KeepAliveSection } from './components/KeepAliveSection'
+import { SectionHeader } from './components/SectionHeader'
 import { useConfig } from './hooks/useConfig'
 import { usePipeline } from './hooks/usePipeline'
 import { useSSE } from './hooks/useSSE'
 import { useBatch } from './hooks/useBatch'
-import type { PipelineMode } from './types'
+import type { PipelineMode, SpeakerTurn, SpeakerVerification } from './types'
 import { DEFAULT_CONFIG } from './types'
 
 export default function App() {
@@ -40,6 +42,10 @@ export default function App() {
     open: false, msg: '', severity: 'info',
   })
   const [reviewSaved, setReviewSaved] = useState(false)
+  const [speakerData, setSpeakerData] = useState<{
+    speakers: string[]; timeline: SpeakerTurn[];
+    verification: SpeakerVerification | null; speakerNames: Record<string, string>;
+  } | null>(null)
   const [prefillSrt, setPrefillSrt] = useState<{ source: string; translated: string; log: string; workspace: string } | null>(null)
   const [backendOnline, setBackendOnline] = useState(true)
   const [dragOverWindow, setDragOverWindow] = useState(false)
@@ -358,6 +364,21 @@ export default function App() {
               prefillTranslateLog={prefillSrt?.log}
               prefillWorkspace={prefillSrt?.workspace}
             />
+          </KeepAliveSection>
+          <KeepAliveSection active={activeTab === '说话人审核'}>
+            {speakerData && speakerData.speakers.length > 0 ? (
+              <SpeakerReviewPanel
+                workspace={prefillSrt?.workspace || ''}
+                speakers={speakerData.speakers}
+                timeline={speakerData.timeline}
+                verification={speakerData.verification}
+                speakerNames={speakerData.speakerNames}
+                onTimelineChange={(tl) => setSpeakerData(prev => prev ? { ...prev, timeline: tl } : null)}
+                onSaveCorrections={() => showMsg('说话人修正已保存', 'success')}
+              />
+            ) : (
+              <Card sx={{ p: 3 }}><SectionHeader title="说话人审核" /><Alert severity="info">当前工作目录未检测到说话人分离结果。请启用说话人分离后重新提取字幕。</Alert></Card>
+            )}
           </KeepAliveSection>
         </Box>
       </Box>

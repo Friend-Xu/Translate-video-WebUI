@@ -4,6 +4,7 @@ import TuneIcon from '@mui/icons-material/TuneOutlined'
 import SettingsIcon from '@mui/icons-material/SettingsOutlined'
 import BuildIcon from '@mui/icons-material/BuildOutlined'
 import RateReviewIcon from '@mui/icons-material/RateReviewOutlined'
+import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOverOutlined'
 
 interface SidebarProps {
   activeTab: string
@@ -16,6 +17,7 @@ const menuItems = [
   { icon: <SettingsIcon />, label: '高级设置' },
   { icon: <BuildIcon />, label: '工具栏' },
   { icon: <RateReviewIcon />, label: '字幕校准' },
+  { icon: <RecordVoiceOverIcon />, label: '说话人审核' },
 ]
 
 export function Sidebar({ activeTab, onTabChange }: SidebarProps) {
