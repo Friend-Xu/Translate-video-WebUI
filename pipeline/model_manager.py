@@ -274,6 +274,18 @@ class ModelManager:
             vram_gb=7.8,
             description="B站开源 IndexTTS 2.0，自回归 GPT + BigVGAN，支持零样本音色克隆和精确时长控制",
         ),
+        "pyannote-diarization": ModelEntry(
+            id="pyannote-diarization",
+            name="pyannote speaker-diarization-3.1",
+            function="说话人分离 — 多说话人识别和时间线标注",
+            category="subtitle",
+            repo_id="pyannote/speaker-diarization-3.1",
+            check_dir=MODELS_DIR / "pyannote",
+            check_files=("models--pyannote--speaker-diarization-3.1",),
+            size_gb=1.5,
+            vram_gb=2.0,
+            description="pyannote.audio 3.1 说话人分离 pipeline，支持多说话人识别、重叠语音检测",
+        ),
     }
 
     @classmethod

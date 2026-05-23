@@ -30,6 +30,7 @@ const AUTO_SAVE_INTERVAL = 30000
 const PRE_ROLL_MS = 500
 const MAX_UNDO_STEPS = 50
 const CPS_LIMITS: Record<string, number> = { zh: 12, ja: 12, ko: 12 }
+const SPEAKER_COLORS = ['#4CAF50', '#2196F3', '#FF9800', '#E91E63', '#9C27B0', '#00BCD4', '#FFEB3B', '#795548']
 
 // ── Helpers ──
 
@@ -1178,6 +1179,15 @@ export function SubtitleReview({ videoPath, onSuccess, isActive, prefillSourceSr
                 return (
                   <Card sx={{ p: 1.5 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                      {entry.speakerId && (
+                        <Box sx={{
+                          width: 8, height: 8, borderRadius: '50%',
+                          bgcolor: SPEAKER_COLORS[
+                            parseInt(entry.speakerId.replace('SPEAKER_', '')) % SPEAKER_COLORS.length
+                          ] || '#999',
+                          flexShrink: 0,
+                        }} title={entry.speakerId} />
+                      )}
                       <Chip label={`#${entry.index}`} size="small" color="primary" variant="outlined" />
                       <Typography variant="caption" color="text.secondary">
                         {entry.start} → {entry.end} ({getDuration(entry).toFixed(1)}s)

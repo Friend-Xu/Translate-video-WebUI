@@ -98,6 +98,9 @@ export interface PipelineConfig {
   multiAgentEnabled: boolean
   mqmEnabled: boolean
   mqmThreshold: number
+  /** 启用说话人分离 */
+  enableSpeakerDiarization: boolean
+  speakerOverlapStrategy: 'dominant_energy' | 'split_sequential' | 'mark_for_review'
 }
 
 export interface PipelineStatus {
@@ -227,6 +230,8 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   multiAgentEnabled: false,
   mqmEnabled: false,
   mqmThreshold: 0.6,
+  enableSpeakerDiarization: false,
+  speakerOverlapStrategy: 'dominant_energy' as const,
 }
 
 export interface SubtitleIssue {
@@ -276,6 +281,8 @@ export interface SubtitleEntry {
   quality?: QualityScores
   tier?: QualityTier
   tierReason?: string
+  /** 说话人 ID（多说话人视频） */
+  speakerId?: string
 }
 
 export interface ReviewSession {
@@ -349,4 +356,50 @@ export interface BatchStatus {
   videos: BatchVideoItem[]
   logs: string[]
   created_at: string
+}
+
+/** 单个说话人轮次 */
+export interface SpeakerTurn {
+  speaker: string
+  start: number
+  end: number
+  confidence: number
+}
+
+/** 说话人汇总 */
+export interface SpeakerInfo {
+  totalDur: number
+  segments: number
+  samplePath?: string
+}
+
+/** 说话人验证问题 */
+export interface SpeakerVerificationIssue {
+  layer: number
+  severity: 'error' | 'warning' | 'info'
+  message: string
+  detail: Record<string, unknown>
+}
+
+/** 说话人分离验证报告 */
+export interface SpeakerVerification {
+  passesAll: boolean
+  summary: {
+    totalIssues: number
+    errors: number
+    warnings: number
+    info: number
+    speakers: number
+    turns: number
+  }
+  issues: SpeakerVerificationIssue[]
+}
+
+/** 说话人审核会话 */
+export interface DiarizationSession {
+  workspace: string
+  vocalPath: string
+  speakers: string[]
+  timeline: SpeakerTurn[]
+  verification: SpeakerVerification | null
 }

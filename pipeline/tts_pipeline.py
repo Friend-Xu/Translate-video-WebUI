@@ -318,6 +318,51 @@ class TtsPipeline:
             logger.warning("Color_audio.WAV 提取失败: %s，回退到完整 vocals", e)
             return None
 
+    def _create_speaker_audio(
+        self, vocals_path: str, speaker_timeline: list,
+    ) -> dict[str, str]:
+        """为每个说话人提取参考音频（最长连续段）。
+
+        Returns: {speaker_id: audio_file_path}
+        """
+        import numpy as np
+        import soundfile as sf
+
+        speaker_dir = os.path.join(
+            self.config.video_output_dir, "..", "03_tts", "speakers"
+        )
+        os.makedirs(speaker_dir, exist_ok=True)
+        result = {}
+
+        try:
+            audio, sr = sf.read(vocals_path)
+            if audio.ndim > 1:
+                audio = audio.mean(axis=1)
+        except Exception as e:
+            logger.warning("无法读取人声文件: %s", e)
+            return result
+
+        by_spk: dict[str, list[tuple[float, float]]] = {}
+        for spk, start, end, _ in speaker_timeline:
+            by_spk.setdefault(spk, []).append((start, end))
+
+        for spk, segs in by_spk.items():
+            out_path = os.path.join(speaker_dir, f"{spk}.wav")
+            if os.path.isfile(out_path):
+                result[spk] = out_path
+                continue
+            best = max(segs, key=lambda x: x[1] - x[0])
+            s, e = best
+            si = max(0, int(s * sr))
+            ei = min(len(audio), int(e * sr))
+            if ei - si < int(0.5 * sr):
+                continue
+            sf.write(out_path, audio[si:ei], sr)
+            logger.info("说话人参考音频: %s (%.1fs)", spk, (ei - si) / sr)
+            result[spk] = out_path
+
+        return result
+
     # ── 默认组件工厂 ──────────────────────────────────
 
     def _default_engine(self):

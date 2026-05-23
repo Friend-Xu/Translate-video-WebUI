@@ -3170,6 +3170,79 @@ async def media_mux(req: MuxRequest):
 
 
 # ---------------------------------------------------------------------------
+# Speaker Diarization API
+# ---------------------------------------------------------------------------
+
+class SpeakerLoadRequest(BaseModel):
+    workspace: str = ""
+
+
+@app.post("/api/speaker/diarization/load")
+async def speaker_load(req: SpeakerLoadRequest):
+    """加载说话人分离结果（时间线 + 验证报告）。"""
+    workspace = req.workspace
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    if not extract_dir or not os.path.isdir(extract_dir):
+        raise HTTPException(status_code=400, detail="无效的工作目录")
+    import json as _json
+    result = {"timeline": [], "verification": None, "speakers": []}
+    tl_path = os.path.join(extract_dir, "speaker_timeline.json")
+    if os.path.isfile(tl_path):
+        with open(tl_path, "r", encoding="utf-8") as f:
+            tl = _json.load(f)
+        result["timeline"] = tl.get("turns", [])
+        result["speakers"] = tl.get("speakers", [])
+    vf_path = os.path.join(extract_dir, "speaker_verification.json")
+    if os.path.isfile(vf_path):
+        with open(vf_path, "r", encoding="utf-8") as f:
+            result["verification"] = _json.load(f)
+    return result
+
+
+class SpeakerSaveRequest(BaseModel):
+    workspace: str = ""
+    timeline: list = []
+    corrections: list = []
+
+
+@app.post("/api/speaker/diarization/save")
+async def speaker_save(req: SpeakerSaveRequest):
+    """保存修正后的说话人时间线。"""
+    workspace = req.workspace
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    if not extract_dir or not os.path.isdir(extract_dir):
+        raise HTTPException(status_code=400, detail="无效的工作目录")
+    import json as _json
+    tl_path = os.path.join(extract_dir, "speaker_timeline.json")
+    turns = req.timeline
+    speakers = sorted(set(t.get("speaker", "?") for t in turns))
+    data = {"model": "pyannote/speaker-diarization-3.1", "speakers": speakers,
+            "turns": turns, "corrections": req.corrections}
+    with open(tl_path, "w", encoding="utf-8") as f:
+        _json.dump(data, f, ensure_ascii=False, indent=2)
+    return {"status": "ok", "speakers": speakers, "turns_count": len(turns)}
+
+
+@app.get("/api/speaker/audio/preview")
+async def speaker_audio_preview(path: str = "", start: float = 0, end: float = 0):
+    """返回指定时间范围的音频 base64（用于前端试听）。"""
+    if not path or not os.path.isfile(path):
+        raise HTTPException(status_code=400, detail="音频文件不存在")
+    dur = end - start
+    if dur <= 0 or dur > 10:
+        raise HTTPException(status_code=400, detail="时间范围应在 0-10s 之间")
+    import base64, subprocess
+    proc = subprocess.run(
+        ["ffmpeg", "-y", "-ss", str(start), "-t", str(dur),
+         "-i", path, "-f", "wav", "-"],
+        capture_output=True, timeout=15,
+    )
+    if proc.returncode != 0:
+        raise HTTPException(status_code=500, detail="ffmpeg 提取失败")
+    return {"audio_base64": base64.b64encode(proc.stdout).decode("ascii"), "format": "wav"}
+
+
+# ---------------------------------------------------------------------------
 # Static file serving (production build)
 # ---------------------------------------------------------------------------
 
