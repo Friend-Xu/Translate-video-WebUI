@@ -124,25 +124,33 @@ class SpeakerDiarizer:
         # PyTorch 2.6 兼容 + hf_hub 本地拦截（仅 Pipeline.from_pretrained 期间生效）
         import torch, huggingface_hub
         _orig_load = torch.load
-        _orig_hf_hub = huggingface_hub.hf_hub_download
 
         def _patched_load(*args, **kwargs):
             kwargs["weights_only"] = False
             return _orig_load(*args, **kwargs)
 
-        def _patched_hf_hub(repo_id, filename, *args, **kwargs):
+        def _compat_hf_hub(repo_id, filename, *args, **kwargs):
+            """兼容新旧 huggingface_hub：use_auth_token → token"""
             if "use_auth_token" in kwargs:
                 kwargs["token"] = kwargs.pop("use_auth_token")
-            # 仅拦截 pyannote 仓库，避免劫持其他模型的 HF 下载
             if repo_id.startswith("pyannote/"):
                 local = model_dir.parent / repo_id.split("/")[-1] / filename
                 if local.is_file():
                     return str(local)
-            return _orig_hf_hub(repo_id, filename, *args, **kwargs)
+            return huggingface_hub.hf_hub_download(repo_id, filename, *args, **kwargs)
 
-        try:
-            torch.load = _patched_load
-            huggingface_hub.hf_hub_download = _patched_hf_hub
+        # Patch pyannote's local import references
+        _patched_modules = []
+        for mod_name in ("pyannote.audio.core.model", "pyannote.audio.pipelines.utils.getter"):
+            try:
+                mod = __import__(mod_name, fromlist=["hf_hub_download"])
+                if hasattr(mod, "hf_hub_download"):
+                    mod.hf_hub_download = _compat_hf_hub
+                    _patched_modules.append(mod_name)
+            except Exception:
+                pass
+        # Also patch hub level
+        huggingface_hub.hf_hub_download = _compat_hf_hub
 
             t0 = time.time()
             logger.info("加载 pyannote: %s", config_path)
@@ -155,7 +163,6 @@ class SpeakerDiarizer:
             logger.info("pyannote 加载完成 (%.1fs)", time.time() - t0)
         finally:
             torch.load = _orig_load
-            huggingface_hub.hf_hub_download = _orig_hf_hub
 
     def unload_model(self) -> None:
         if self._pipeline is not None:
