@@ -70,6 +70,50 @@ def _ensure_hf_cache(repo_id: str, local_dir: Path) -> None:
         logger.info("HF 缓存注入: %s → %s", repo_id, target)
 
 
+from contextlib import contextmanager
+
+@contextmanager
+def _pyannote_compat_context():
+    """pyannote 兼容层：torch.load + hf_hub_download 参数适配。
+    通过 context manager 限定补丁生命周期，退出时自动恢复。
+    """
+    import torch, huggingface_hub
+
+    _orig_load = torch.load
+    _saved_modules = {}
+
+    def _safe_load(*args, **kwargs):
+        kwargs["weights_only"] = False
+        return _orig_load(*args, **kwargs)
+
+    def _safe_hf_hub(repo_id, filename, *args, **kwargs):
+        kwargs.pop("use_auth_token", None)  # huggingface_hub >=1.0 移除了此参数
+        return huggingface_hub.hf_hub_download(repo_id, filename, *args, **kwargs)
+
+    # pyannote 内部 from huggingface_hub import hf_hub_download → 拿到的是本地引用
+    # 必须同时修补 pyannote 模块内的引用
+    for mod_name in ("pyannote.audio.core.model", "pyannote.audio.pipelines.utils.getter"):
+        try:
+            mod = __import__(mod_name, fromlist=["hf_hub_download"])
+            if hasattr(mod, "hf_hub_download"):
+                _saved_modules[mod_name] = mod.hf_hub_download
+                mod.hf_hub_download = _safe_hf_hub
+        except ImportError:
+            pass
+
+    torch.load = _safe_load
+    try:
+        yield
+    finally:
+        torch.load = _orig_load
+        for mod_name, orig_fn in _saved_modules.items():
+            try:
+                mod = __import__(mod_name, fromlist=["hf_hub_download"])
+                mod.hf_hub_download = orig_fn
+            except ImportError:
+                pass
+
+
 class SpeakerDiarizer:
     """pyannote 说话人分离引擎。每次 run() 加载模型 → 推理 → 卸载。"""
 
@@ -92,10 +136,11 @@ class SpeakerDiarizer:
     def load_model(self) -> None:
         if self._loaded:
             return
-        # numpy 2.x: np.NaN 被移除
+        # numpy 2.x 兼容: np.NaN 被移除
         import numpy as np
-        np.NaN = np.nan
-        np.NAN = np.nan
+        if not hasattr(np, "NaN"):
+            np.NaN = np.nan
+            np.NAN = np.nan
 
         from pyannote.audio import Pipeline
 
@@ -121,37 +166,7 @@ class SpeakerDiarizer:
             if repo_id and "/" in repo_id:
                 _ensure_hf_cache(repo_id, model_dir.parent / repo_id.split("/")[-1])
 
-        # PyTorch 2.6 兼容 + hf_hub 本地拦截（仅 Pipeline.from_pretrained 期间生效）
-        import torch, huggingface_hub
-        _orig_load = torch.load
-
-        def _patched_load(*args, **kwargs):
-            kwargs["weights_only"] = False
-            return _orig_load(*args, **kwargs)
-
-        def _compat_hf_hub(repo_id, filename, *args, **kwargs):
-            """兼容新旧 huggingface_hub：use_auth_token → token"""
-            if "use_auth_token" in kwargs:
-                kwargs["token"] = kwargs.pop("use_auth_token")
-            if repo_id.startswith("pyannote/"):
-                local = model_dir.parent / repo_id.split("/")[-1] / filename
-                if local.is_file():
-                    return str(local)
-            return huggingface_hub.hf_hub_download(repo_id, filename, *args, **kwargs)
-
-        # Patch pyannote's local import references
-        _patched_modules = []
-        for mod_name in ("pyannote.audio.core.model", "pyannote.audio.pipelines.utils.getter"):
-            try:
-                mod = __import__(mod_name, fromlist=["hf_hub_download"])
-                if hasattr(mod, "hf_hub_download"):
-                    mod.hf_hub_download = _compat_hf_hub
-                    _patched_modules.append(mod_name)
-            except Exception:
-                pass
-        # Also patch hub level
-        huggingface_hub.hf_hub_download = _compat_hf_hub
-
+        with _pyannote_compat_context():
             t0 = time.time()
             logger.info("加载 pyannote: %s", config_path)
             self._pipeline = Pipeline.from_pretrained(config_path)
@@ -161,8 +176,6 @@ class SpeakerDiarizer:
             self._pipeline({"waveform": dummy, "sample_rate": 16000})
             self._loaded = True
             logger.info("pyannote 加载完成 (%.1fs)", time.time() - t0)
-        finally:
-            torch.load = _orig_load
 
     def unload_model(self) -> None:
         if self._pipeline is not None:
