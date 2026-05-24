@@ -52,8 +52,11 @@ def dual_write_verify(
 
 def _build_v2_output(segments: list[dict], speaker_timeline: list | None) -> dict:
     """用 core/ 新系统构建输出"""
-    from core.ir import TimelineEventIR, SpeakerNodeIR, TimelineProjectIR
-    from core.runtime import TimelineProjectState, SynthesisEngine
+    from core.ir.timeline_event import TimelineEventIR
+    from core.ir.speaker import SpeakerNodeIR
+    from core.ir.project import TimelineProjectIR
+    from core.runtime.project_state import TimelineProjectState
+    from core.runtime.synthesis import SynthesisEngine
 
     # 收集 speaker
     speakers: dict[str, SpeakerNodeIR] = {}
