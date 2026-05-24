@@ -64,7 +64,29 @@ def apply_user_patch(
         with open(snap_path, "w", encoding="utf-8") as f:
             json.dump(snap, f, ensure_ascii=False, indent=2)
 
+    # ── 双写验证 ──
+    _dual_write_verify_patch(tl, patch)
+
     return {"status": "applied", "patch_id": patch.patch_id, "diff": diff}
+
+
+def _dual_write_verify_patch(tl, patch: TimelinePatch) -> None:
+    """双写验证：应用 patch 到新旧 IR 并比对。不阻断主路径。"""
+    import logging
+    _logger = logging.getLogger("timeline.api.dual_write")
+    try:
+        from timeline.dual_write import dual_write_patch
+        result = dual_write_patch(tl, patch)
+        if result["status"] == "ok":
+            _logger.info("双写验证 ok: patch=%s", patch.patch_id)
+        elif result["status"] == "diff":
+            _logger.warning("双写验证 diff: patch=%s count=%d",
+                            patch.patch_id, result.get("diff_count", 0))
+        else:
+            _logger.error("双写验证 error: patch=%s reason=%s",
+                          patch.patch_id, result.get("reason", "unknown"))
+    except Exception as e:
+        _logger.error("双写验证异常: patch=%s error=%s", patch.patch_id, e)
 
 
 def undo_last_patch(

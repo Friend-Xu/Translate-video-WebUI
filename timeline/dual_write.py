@@ -46,7 +46,7 @@ def dual_write_patch(
         id=patch.patch_id,
         target_id=core_target[0] if core_target else patch.targets[0],
         op=_map_opcode(patch.opcode.value),
-        value=patch.payload,
+        value=_map_payload(patch.opcode.value, patch.payload),
     )
 
     result = engine.apply(state, core_patch)
@@ -75,12 +75,31 @@ def _map_targets_to_new_ids(targets: list[str], old_segments: list[dict]) -> lis
 
 
 def _map_opcode(op: str) -> str:
+    """映射旧 OpCode 到新引擎 op 字符串"""
     mapping = {
         "MERGE": "merge", "SPLIT": "split",
         "RETAG_SPEAKER": "replace", "SET_TRANSLATION": "replace",
         "RELINK_WORDS": "propagate", "ANNOTATE": "replace",
     }
     return mapping.get(op, "replace")
+
+
+def _map_payload(op: str, payload: dict) -> dict:
+    """将旧 IR 的 patch payload 转换为新引擎期望的 value 格式。
+
+    RETAG_SPEAKER: new_speaker → speaker (写入 derivatives.speaker，被 SynthesisEngine 叠加)
+    SET_TRANSLATION: translation → translation (写入 derivatives.translation)
+    ANNOTATE: key/value → annotation (写入 derivatives.annotation)
+    MERGE/SPLIT/RELINK_WORDS: 保持原 payload 不变
+    """
+    if op == "RETAG_SPEAKER":
+        return {"speaker": payload.get("new_speaker", payload.get("speaker", ""))}
+    elif op == "SET_TRANSLATION":
+        return {"translation": payload.get("translation", "")}
+    elif op == "ANNOTATE":
+        return {"annotation": {payload.get("key", ""): payload.get("value")}}
+    else:
+        return dict(payload)
 
 
 def _segments_from_state(state) -> list[dict]:

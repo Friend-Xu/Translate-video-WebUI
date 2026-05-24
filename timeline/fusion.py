@@ -125,17 +125,30 @@ def to_project_ir(timeline_ir: TimelineIR):
     return TimelineProjectIR(events=events, speakers=speakers)
 
 
-def from_project_ir(project_ir) -> TimelineIR:
-    """新 IR → 旧 IR 反向迁移。"""
+def from_project_ir(project_ir, derivatives_map: dict[str, dict] | None = None) -> TimelineIR:
+    """新 IR → 旧 IR 反向迁移。
+
+    Args:
+        project_ir: 新引擎 TimelineProjectIR
+        derivatives_map: 可选，event_id → derivatives 映射。
+            包含 translation, words 等衍生数据，用于填充 TimelineSegment。
+            不传时行为不变（向后兼容）。
+    """
     segments = []
     speaker_ids = set()
 
     for evt in project_ir.event_list:
         spk = evt.speaker_ref
+        deriv = (derivatives_map or {}).get(evt.id, {})
+
+        translation = deriv.get("translation", "")
+        words_data = deriv.get("words", [])
+        words = [TimelineWord.from_dict(w) if isinstance(w, dict) else w for w in words_data]
+
         seg = TimelineSegment(
             id=evt.id, type="speech", speaker=spk,
             start=evt.start, end=evt.end, text=evt.text_ref,
-            translation="", overlap=False, words=[],
+            translation=translation, overlap=False, words=words,
         )
         segments.append(seg)
         if spk:
