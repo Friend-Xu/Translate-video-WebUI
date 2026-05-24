@@ -10,6 +10,7 @@ import SplitIcon from '@mui/icons-material/CallSplitRounded'
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesomeRounded'
 import ZoomInIcon from '@mui/icons-material/ZoomInRounded'
 import ZoomOutIcon from '@mui/icons-material/ZoomOutRounded'
+import RefreshIcon from '@mui/icons-material/RefreshRounded'
 import { SectionHeader } from '../SectionHeader'
 import type { TimelinePatchData, PatchGenerateResponse } from '../../types'
 
@@ -196,6 +197,9 @@ export default function SpeakerReviewPanel({
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
         <SectionHeader title={`说话人审核 (${lanes.length} 人, ${totalSegs} 段)`} />
         <Box sx={{ flexGrow: 1 }} />
+        <Tooltip title="刷新数据">
+          <IconButton onClick={loadData}><RefreshIcon /></IconButton>
+        </Tooltip>
         {aiCount > 0 && (
           <Badge badgeContent={aiCount} color="warning">
             <IconButton onClick={() => setAiOpen(true)} color="warning"><AutoAwesomeIcon /></IconButton>
