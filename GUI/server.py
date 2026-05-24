@@ -3392,6 +3392,7 @@ async def speaker_load(req: SpeakerLoadRequest):
             "text": seg.get("text", ""),
             "translation": seg.get("translation", ""),
             "overlap": seg.get("overlap", False),
+            "words": seg.get("words", []),
         })
 
     lanes = []
@@ -3409,6 +3410,42 @@ async def speaker_load(req: SpeakerLoadRequest):
 
     result["speaker_lanes"] = lanes
     result["metadata"] = tl.get("metadata", {})
+
+    # ── 新增: pass_trace + inspector_data ──
+    patch_log_data = result.get("patch_log", [])
+    pass_names_seen: set = set()
+    for p in patch_log_data:
+        op = p.get("opcode", "")
+        if op and op not in pass_names_seen:
+            pass_names_seen.add(op)
+    KNOWN_PASS_ORDER = ["MERGE", "RETAG_SPEAKER", "SET_TRANSLATION", "SPLIT", "ANNOTATE"]
+    result["pass_trace"] = [pn for pn in KNOWN_PASS_ORDER if pn in pass_names_seen]
+
+    inspector_data: dict = {}
+    for lane in lanes:
+        for seg in lane["segments"]:
+            inspector_data[seg["id"]] = {
+                "id": seg["id"], "start": seg["start"], "end": seg["end"],
+                "speaker": lane["speaker"], "displayName": lane["display_name"],
+                "text": seg["text"], "translation": seg.get("translation", ""),
+                "source": "asr", "confidence": 1.0,
+                "patches": [], "passTrace": result["pass_trace"],
+                "visualState": {
+                    "hasPatches": False, "hasAiSuggestion": False,
+                    "isSelected": False, "isMultiSelected": False,
+                },
+            }
+    for p in patch_log_data:
+        for tid in p.get("targets", []):
+            if tid in inspector_data:
+                inspector_data[tid]["visualState"]["hasPatches"] = True
+                inspector_data[tid]["patches"].append(p)
+    for cat in ("high", "medium"):
+        for p in result.get("patches", {}).get(cat, []):
+            for tid in p.get("targets", []):
+                if tid in inspector_data:
+                    inspector_data[tid]["visualState"]["hasAiSuggestion"] = True
+    result["inspector_data"] = inspector_data
 
     # 加载 speaker names
     sn_path = os.path.join(extract_dir, "speaker_names.json")
@@ -3459,6 +3496,107 @@ async def speaker_save(req: SpeakerSaveRequest):
     with open(tl_path, "w", encoding="utf-8") as f:
         _json.dump(data, f, ensure_ascii=False, indent=2)
     return {"status": "ok", "speakers": speakers, "turns_count": len(turns)}
+
+
+class SpeakerInspectRequest(BaseModel):
+    workspace: str = ""
+    event_id: str = ""
+
+
+@app.post("/api/speaker/diarization/inspect")
+async def speaker_inspect(req: SpeakerInspectRequest):
+    """返回单个 event 的完整 Inspector 数据"""
+    import json as _json
+    extract_dir = os.path.join(req.workspace, "01_extract")
+    tl_path = os.path.join(extract_dir, "timeline.json")
+    if not os.path.isfile(tl_path):
+        raise HTTPException(status_code=404, detail="timeline.json 不存在")
+
+    with open(tl_path, "r", encoding="utf-8") as f:
+        tl = _json.load(f)
+
+    seg = None
+    for s in tl.get("timeline", []):
+        if s.get("id") == req.event_id:
+            seg = s
+            break
+    if seg is None:
+        raise HTTPException(status_code=404, detail=f"Event {req.event_id} 不存在")
+
+    log_path = os.path.join(extract_dir, "timeline_patches.json")
+    all_patches = []
+    if os.path.isfile(log_path):
+        with open(log_path, "r", encoding="utf-8") as f:
+            all_patches = _json.load(f)
+
+    event_patches = [p for p in all_patches if req.event_id in p.get("targets", [])]
+
+    spk = seg.get("speaker", "")
+    sm = tl.get("speaker_map", {}).get(spk, {})
+    display_name = sm.get("alias", "") or spk
+
+    return {
+        "event": {
+            "id": seg["id"], "start": seg["start"], "end": seg["end"],
+            "speaker": spk, "displayName": display_name,
+            "text": seg.get("text", ""), "translation": seg.get("translation", ""),
+            "source": "asr", "confidence": 1.0,
+            "patches": event_patches,
+            "passTrace": _derive_pass_trace(all_patches),
+            "visualState": {
+                "hasPatches": len(event_patches) > 0,
+                "hasAiSuggestion": False,
+                "isSelected": False, "isMultiSelected": False,
+            },
+        },
+        "patches": event_patches,
+        "passTrace": _derive_pass_trace(all_patches),
+    }
+
+
+def _derive_pass_trace(patches: list) -> list:
+    seen = set()
+    trace = []
+    for p in patches:
+        op = p.get("opcode", "")
+        if op and op not in seen:
+            seen.add(op)
+            trace.append(op)
+    return trace
+
+
+@app.get("/api/speaker/diarization/waveform")
+async def speaker_waveform(workspace: str = ""):
+    """返回 vocals.wav 的波形峰值数据 (供 Canvas 渲染)"""
+    import numpy as np
+    import wave as _wave
+    extract_dir = os.path.join(workspace, "01_extract")
+    wav_path = os.path.join(extract_dir, "vocals.wav")
+    if not os.path.isfile(wav_path):
+        wav_path = os.path.join(extract_dir, "audio.wav")
+    if not os.path.isfile(wav_path):
+        raise HTTPException(status_code=404, detail="音频文件不存在")
+
+    with _wave.open(wav_path, "rb") as wf:
+        n_frames = wf.getnframes()
+        sample_rate = wf.getframerate()
+        raw = wf.readframes(n_frames)
+        dtype = np.int16 if wf.getsampwidth() == 2 else np.int32
+        samples = np.frombuffer(raw, dtype=dtype).astype(np.float32)
+        if wf.getnchannels() > 1:
+            samples = samples.reshape(-1, wf.getnchannels()).mean(axis=1)
+
+    window = max(1, int(sample_rate / 100))
+    peaks_list = []
+    for i in range(0, len(samples) - window, window):
+        chunk_max = float(np.max(np.abs(samples[i:i + window])))
+        peaks_list.append(chunk_max)
+
+    max_peak = max(peaks_list) if peaks_list else 1.0
+    if max_peak > 0:
+        peaks_list = [p / max_peak for p in peaks_list]
+
+    return {"peaks": peaks_list, "duration": n_frames / sample_rate, "sampleRate": sample_rate}
 
 
 # ---------------------------------------------------------------------------

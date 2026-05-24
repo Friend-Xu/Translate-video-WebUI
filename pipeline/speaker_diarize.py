@@ -174,6 +174,20 @@ class SpeakerDiarizer:
             logger.info("加载 pyannote: %s", config_path)
             self._pipeline = Pipeline.from_pretrained(config_path)
             self._pipeline.to(torch.device(self._device))
+
+            # 优化默认参数（针对视频/游戏场景）
+            # segmentation-3.0 只有 min_duration_off；clustering 可调 threshold
+            self._pipeline.instantiate({
+                "segmentation": {
+                    "min_duration_off": 0.0,
+                },
+                "clustering": {
+                    "threshold": 0.55,
+                    "min_cluster_size": 8,
+                },
+            })
+            logger.info("pyannote 参数: min_dur_off=0.0, cluster_threshold=0.55, min_cluster_size=8")
+
             # 预热 CUDA JIT
             dummy = torch.randn(1, 16000, device=self._device)
             self._pipeline({"waveform": dummy, "sample_rate": 16000})
@@ -188,9 +202,14 @@ class SpeakerDiarizer:
         torch.cuda.empty_cache()
 
     def run(
-        self, vocals_path: str, force: bool = False
+        self, vocals_path: str, force: bool = False,
+        min_speakers: int = 1, max_speakers: int = 10,
     ) -> List[Tuple[str, float, float, float]]:
         """对音频执行说话人分离。
+
+        Args:
+            min_speakers: 最少说话人数（用于约束聚类）
+            max_speakers: 最多说话人数（用于约束聚类）
 
         Returns: [(speaker_id, start_s, end_s, confidence), ...] 按时间排序
         """
@@ -206,7 +225,11 @@ class SpeakerDiarizer:
             self.load_model()
             t0 = time.time()
             logger.info("说话人分离: %s", os.path.basename(vocals_path))
-            output = self._pipeline(vocals_path)
+            output = self._pipeline(
+                vocals_path,
+                min_speakers=min_speakers,
+                max_speakers=max_speakers,
+            )
 
             timeline = []
             for turn, _, speaker in output.itertracks(yield_label=True):
@@ -274,10 +297,12 @@ class SpeakerDiarizer:
 def run_diarization(
     vocals_path: str, output_dir: str, force: bool = False,
     hf_token: Optional[str] = None,
+    min_speakers: int = 1, max_speakers: int = 10,
 ) -> Tuple[str, List[Tuple[str, float, float, float]]]:
     """一键运行说话人分离并导出。Returns: (json_path, timeline)"""
     diarizer = SpeakerDiarizer(hf_token=hf_token)
-    timeline = diarizer.run(vocals_path, force=force)
+    timeline = diarizer.run(vocals_path, force=force,
+                            min_speakers=min_speakers, max_speakers=max_speakers)
     json_path = os.path.join(output_dir, "speaker_timeline.json")
     diarizer.export_timeline_json(vocals_path, json_path, force=force)
     return json_path, timeline

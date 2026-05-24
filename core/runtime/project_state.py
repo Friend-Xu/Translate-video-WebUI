@@ -1,0 +1,36 @@
+"""
+TimelineProjectState — 项目级运行时状态
+
+持有 TimelineProjectIR 引用 + 全部 event_states + 全局 patches。
+整个 pipeline 唯一可变容器。
+"""
+from __future__ import annotations
+from core.ir.project import TimelineProjectIR
+from core.runtime.event_state import TimelineEventState
+from core.runtime.patch import Patch
+
+
+class TimelineProjectState:
+    """项目级运行时可变状态。
+
+    IR 引用只读。所有变更通过 event_states 和 global_patches 记录。
+    """
+    __slots__ = ("ir", "event_states", "global_patches")
+
+    def __init__(self, ir: TimelineProjectIR):
+        self.ir = ir
+        self.event_states: dict[str, TimelineEventState] = {
+            eid: TimelineEventState(evt) for eid, evt in ir.events.items()
+        }
+        self.global_patches: list[Patch] = []
+
+    def get_event(self, event_id: str) -> TimelineEventState | None:
+        return self.event_states.get(event_id)
+
+    def sorted_events(self) -> list[TimelineEventState]:
+        """按 start 时间排序的事件状态列表"""
+        return sorted(self.event_states.values(), key=lambda es: es.start)
+
+    def add_global_patch(self, patch: Patch) -> None:
+        self.global_patches.append(patch)
+        self.global_patches.sort(key=lambda p: p.timestamp)

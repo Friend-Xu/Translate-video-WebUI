@@ -3,17 +3,28 @@ import {
   Box, Typography, Card, IconButton, Tooltip, Alert, Chip,
   Button, Slider, Dialog, DialogTitle, DialogContent, DialogActions,
   Badge, Drawer, List, ListItem, ListItemText,
+  Menu, MenuItem, ListItemIcon, Divider as MuiDivider,
 } from '@mui/material'
 import PauseIcon from '@mui/icons-material/PauseRounded'
 import PlayIcon from '@mui/icons-material/PlayArrowRounded'
 import UndoIcon from '@mui/icons-material/UndoRounded'
 import SplitIcon from '@mui/icons-material/CallSplitRounded'
+import MergeIcon from '@mui/icons-material/MergeRounded'
+import EditIcon from '@mui/icons-material/EditRounded'
+import VoiceIcon from '@mui/icons-material/RecordVoiceOverRounded'
+import InfoIcon from '@mui/icons-material/InfoOutlined'
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesomeRounded'
 import ZoomInIcon from '@mui/icons-material/ZoomInRounded'
 import ZoomOutIcon from '@mui/icons-material/ZoomOutRounded'
 import RefreshIcon from '@mui/icons-material/RefreshRounded'
 import { SectionHeader } from '../SectionHeader'
-import type { TimelinePatchData, PatchGenerateResponse } from '../../types'
+import EventBlock from './EventBlock'
+import EventInspector from './EventInspector'
+import WaveformLayer from './WaveformLayer'
+import type {
+  TimelinePatchData, PatchGenerateResponse,
+  EventViewModel, ContextMenuState, WaveformData,
+} from '../../types'
 
 const LANE_HEIGHT = 52
 const LABEL_WIDTH = 110
@@ -21,6 +32,7 @@ const LABEL_WIDTH = 110
 interface SegmentData {
   id: string; start: number; end: number; text: string
   translation: string; overlap: boolean
+  words?: { word: string; start: number; end: number }[]
 }
 
 interface SpeakerLane {
@@ -60,6 +72,16 @@ export default function SpeakerReviewPanel({
   const [undoing, setUndoing] = useState(false)
   const [splitConfirm, setSplitConfirm] = useState<SegmentData | null>(null)
   const [mergeConfirm, setMergeConfirm] = useState<SegmentData[] | null>(null)
+  const [splitIdx, setSplitIdx] = useState(-1)
+  const [splitTime, setSplitTime] = useState<number | null>(null)
+
+  // ── v2 新增 state ──
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const [inspectorEvent, setInspectorEvent] = useState<EventViewModel | null>(null)
+  const [inspectorOpen, setInspectorOpen] = useState(false)
+  const [waveform, setWaveform] = useState<WaveformData | null>(null)
+  const [eventViewModels, setEventViewModels] = useState<Record<string, EventViewModel>>({})
+  const [passTrace, setPassTrace] = useState<string[]>([])
 
   const videoRef = useRef<HTMLVideoElement>(null)
 
@@ -81,6 +103,10 @@ export default function SpeakerReviewPanel({
         ))
         setTotalDuration(Math.ceil(maxEnd / 10) * 10 || 120)
       }
+      setPassTrace(data.pass_trace || [])
+      if (data.inspector_data) {
+        setEventViewModels(data.inspector_data)
+      }
       setError('')
       setLoading(false)
     }).catch(e => { setError(e.message); setLoading(false) })
@@ -101,6 +127,28 @@ export default function SpeakerReviewPanel({
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+
+  // ── Waveform 加载 ──
+  useEffect(() => {
+    if (!workspace) return
+    fetch(`/api/speaker/diarization/waveform?workspace=${encodeURIComponent(workspace)}`)
+      .then(r => r.json()).then(setWaveform).catch(() => setWaveform(null))
+  }, [workspace])
+
+  // ── EventViewModel 工厂 ──
+  const buildEventView = useCallback((seg: SegmentData, lane: SpeakerLane): EventViewModel => {
+    return eventViewModels[seg.id] || {
+      id: seg.id, start: seg.start, end: seg.end,
+      speaker: lane.speaker, displayName: lane.display_name,
+      text: seg.text, translation: seg.translation || '',
+      source: 'asr', confidence: 1.0,
+      visualState: {
+        hasPatches: false, hasAiSuggestion: false,
+        isSelected: false, isMultiSelected: false,
+      },
+      patches: [], passTrace,
+    }
+  }, [eventViewModels, passTrace])
 
   const pixelsPerSec = useMemo(() => {
     if (zoomSeconds <= 0 || containerWidth <= 0) return 1
@@ -195,15 +243,16 @@ export default function SpeakerReviewPanel({
   // ── Split ──
   const doSplit = async () => {
     if (!splitConfirm) return
-    const mid = splitConfirm.start + (splitConfirm.end - splitConfirm.start) / 2
+    const point = splitTime ?? (splitConfirm.start + (splitConfirm.end - splitConfirm.start) / 2)
     await applyPatch({
       patch_id: `sp_${Date.now()}`, opcode: 'SPLIT',
-      targets: [splitConfirm.id], payload: { split_point: mid },
+      targets: [splitConfirm.id], payload: { split_point: point },
       reason: ['user_split'], score: 1, confidence: 1,
       parent_version: '', idempotency_key: '', author: 'user',
       timestamp: new Date().toISOString(),
     })
     setSplitConfirm(null)
+    setSplitTime(null); setSplitIdx(-1)
   }
 
   // ── Merge ──
@@ -310,41 +359,60 @@ export default function SpeakerReviewPanel({
               bgcolor: selectedSeg && lane.segments.some(s => s.id === selectedSeg)
                 ? '#f5f5f5' : 'transparent',
             }}>
-              {/* Label */}
-              <Box sx={{
-                width: LABEL_WIDTH, minWidth: LABEL_WIDTH,
-                display: 'flex', alignItems: 'center', gap: 0.5,
-                px: 1, borderRight: '1px solid #e0e0e0', bgcolor: '#fafafa',
-              }}>
-                <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: lane.color, flexShrink: 0 }} />
-                <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {speakerNames[lane.speaker] || lane.display_name}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
-                  {lane.segment_count}
-                </Typography>
-              </Box>
+              {/* Label — 增强: Tooltip 信息卡 */}
+              <Tooltip title={
+                <Box>
+                  <Typography variant="body2"><b>{lane.speaker}</b></Typography>
+                  <Typography variant="caption" display="block">
+                    显示名: {speakerNames[lane.speaker] || lane.display_name}
+                  </Typography>
+                  <Typography variant="caption" display="block">
+                    voice_id: {lane.voice_id || '未配置'}
+                  </Typography>
+                  <Typography variant="caption" display="block">
+                    segments: {lane.segment_count}
+                  </Typography>
+                  <Typography variant="caption" display="block">
+                    时长: {lane.total_duration.toFixed(1)}s
+                  </Typography>
+                </Box>
+              } arrow placement="right">
+                <Box sx={{
+                  width: LABEL_WIDTH, minWidth: LABEL_WIDTH,
+                  display: 'flex', alignItems: 'center', gap: 0.5,
+                  px: 1, borderRight: '1px solid #e0e0e0', bgcolor: '#fafafa',
+                  position: 'sticky', left: 0, zIndex: 5,
+                }}>
+                  <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: lane.color, flexShrink: 0 }} />
+                  <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {speakerNames[lane.speaker] || lane.display_name}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
+                    {lane.segment_count}
+                  </Typography>
+                </Box>
+              </Tooltip>
 
-              {/* Segments */}
+              {/* Segments — 增强: 波形层 + EventBlock */}
               <Box sx={{ flexGrow: 1, position: 'relative', height: LANE_HEIGHT }}>
                 {playing && (
                   <Box sx={{ position: 'absolute', left: px(playTime), top: 0, bottom: 0,
                     width: 2, bgcolor: 'red', zIndex: 10, pointerEvents: 'none' }} />
                 )}
+                {waveform && (
+                  <WaveformLayer width={totalWidth} height={LANE_HEIGHT}
+                    peaks={waveform.peaks} duration={waveform.duration} pixelsPerSec={pixelsPerSec} />
+                )}
                 {lane.segments.map(seg => {
-                  const left = px(seg.start)
-                  const width = Math.max(px(seg.end) - left, 3)
-                  const sel = selectedSeg === seg.id || multiSelect.has(seg.id)
+                  const evm = buildEventView(seg, lane)
+                  evm.visualState.isSelected = selectedSeg === seg.id
+                  evm.visualState.isMultiSelected = multiSelect.has(seg.id)
                   return (
-                    <Box key={seg.id} sx={{
-                      position: 'absolute', left, top: 6, width, height: LANE_HEIGHT - 12,
-                      bgcolor: sel ? lane.color : `${lane.color}88`,
-                      borderRadius: 0.75, display: 'flex', alignItems: 'center',
-                      px: 0.75, overflow: 'hidden', cursor: 'pointer',
-                      border: sel ? '2px solid #333' : '1px solid transparent',
-                      '&:hover': { filter: 'brightness(1.2)', zIndex: 3 },
-                      opacity: seg.overlap ? 0.7 : 1,
-                    }}
+                    <EventBlock key={seg.id} event={evm} laneColor={lane.color}
+                      left={px(seg.start)} width={Math.max(px(seg.end) - px(seg.start), 3)}
+                      laneHeight={LANE_HEIGHT}
+                      isSelected={evm.visualState.isSelected}
+                      isMultiSelected={evm.visualState.isMultiSelected}
                       onClick={() => {
                         if (multiSelect.size > 0) {
                           const n = new Set(multiSelect)
@@ -352,20 +420,16 @@ export default function SpeakerReviewPanel({
                           setMultiSelect(n)
                         } else {
                           setSelectedSeg(s => s === seg.id ? null : seg.id)
+                          setInspectorEvent(evm); setInspectorOpen(true)
                           play(seg)
                         }
                       }}
                       onDoubleClick={() => setSplitConfirm(seg)}
-                      title={`${seg.text}\n${seg.translation || ''}\n${seg.start.toFixed(1)}s-${seg.end.toFixed(1)}s`}
-                    >
-                      {width > 30 && (
-                        <Typography sx={{ fontSize: '0.6rem', color: '#fff', whiteSpace: 'nowrap',
-                          overflow: 'hidden', textOverflow: 'ellipsis',
-                          textShadow: '0 1px 2px rgba(0,0,0,0.4)' }}>
-                          {width > 80 && seg.translation ? seg.translation : seg.text}
-                        </Typography>
-                      )}
-                    </Box>
+                      onContextMenu={(e: React.MouseEvent) => {
+                        e.preventDefault()
+                        setContextMenu({ mouseX: e.clientX - 2, mouseY: e.clientY - 4, event: evm })
+                      }}
+                    />
                   )
                 })}
               </Box>
@@ -374,34 +438,244 @@ export default function SpeakerReviewPanel({
         </Box>
       </Box>
 
-      {/* ── Detail bar ── */}
-      {selectedSeg && (() => {
-        const seg = lanes.flatMap(l => l.segments).find(s => s.id === selectedSeg)
-        if (!seg) return null
-        const lane = lanes.find(l => l.segments.some(s => s.id === seg!.id))
-        return (
-          <Box sx={{ mt: 1, p: 1, bgcolor: '#f9f9f9', borderRadius: 1, display: 'flex',
-            alignItems: 'center', gap: 1, flexWrap: 'wrap', fontSize: '0.8rem' }}>
-            <Chip size="small" label={lane?.display_name} sx={{ bgcolor: lane?.color, color: '#fff' }} />
-            <b>{seg.text}</b>
-            {seg.translation && <Typography variant="body2" color="text.secondary">{seg.translation}</Typography>}
-            <Typography variant="caption" color="text.secondary">
-              {seg.start.toFixed(1)}s - {seg.end.toFixed(1)}s ({(seg.end - seg.start).toFixed(1)}s)
-            </Typography>
-            <IconButton size="small" onClick={() => setSplitConfirm(seg)}><SplitIcon fontSize="small" /></IconButton>
-          </Box>
-        )
-      })()}
+      {/* ── Inspector panel (替换原 detail bar) ── */}
+      <EventInspector event={inspectorEvent} open={inspectorOpen}
+        onClose={() => setInspectorOpen(false)}
+        onSplit={() => {
+          const seg = lanes.flatMap(l => l.segments).find(s => s.id === inspectorEvent?.id)
+          if (seg) setSplitConfirm(seg)
+        }}
+        onMergePrev={() => {
+          if (!inspectorEvent) return
+          const all = lanes.flatMap(l => l.segments.map(s => ({ ...s, laneSpeaker: l.speaker })))
+          const idx = all.findIndex(s => s.id === inspectorEvent!.id)
+          if (idx > 0 && all[idx - 1].laneSpeaker === inspectorEvent!.speaker) {
+            setMergeConfirm([all[idx - 1], all[idx]])
+          }
+        }}
+        onEditTranslation={() => {
+          const newTrans = prompt('输入新翻译:', inspectorEvent?.translation || '')
+          if (newTrans !== null && inspectorEvent) {
+            applyPatch({
+              patch_id: `ed_${Date.now()}`, opcode: 'SET_TRANSLATION',
+              targets: [inspectorEvent.id],
+              payload: { translation: newTrans },
+              reason: ['user_edit'], score: 1, confidence: 1,
+              parent_version: '', idempotency_key: '', author: 'user',
+              timestamp: new Date().toISOString(),
+            })
+          }
+        }}
+        onRetagSpeaker={() => {
+          const newSpk = prompt('输入说话人 ID:', inspectorEvent?.speaker || '')
+          if (newSpk !== null && inspectorEvent) {
+            applyPatch({
+              patch_id: `rs_${Date.now()}`, opcode: 'RETAG_SPEAKER',
+              targets: [inspectorEvent.id],
+              payload: { new_speaker: newSpk },
+              reason: ['user_retag'], score: 1, confidence: 1,
+              parent_version: '', idempotency_key: '', author: 'user',
+              timestamp: new Date().toISOString(),
+            })
+          }
+        }}
+      />
 
-      {/* ── Dialogs ── */}
-      <Dialog open={!!splitConfirm} onClose={() => setSplitConfirm(null)}>
-        <DialogTitle>确认切分</DialogTitle>
+      {/* ── Context Menu ── */}
+      <Menu open={contextMenu !== null}
+        onClose={() => setContextMenu(null)}
+        anchorReference="anchorPosition"
+        anchorPosition={contextMenu ? { top: contextMenu.mouseY, left: contextMenu.mouseX } : undefined}>
+        <MenuItem onClick={() => {
+          if (contextMenu?.event) {
+            const seg = lanes.flatMap(l => l.segments).find(s => s.id === contextMenu!.event!.id)
+            if (seg) { setSplitConfirm(seg); setContextMenu(null) }
+          }
+        }}>
+          <ListItemIcon><SplitIcon fontSize="small" /></ListItemIcon> 在此切分 (SPLIT)
+        </MenuItem>
+        <MenuItem onClick={() => {
+          if (contextMenu?.event) {
+            const all = lanes.flatMap(l => l.segments.map(s => ({ ...s, laneSpeaker: l.speaker })))
+            const idx = all.findIndex(s => s.id === contextMenu!.event!.id)
+            if (idx > 0 && all[idx - 1].laneSpeaker === contextMenu!.event!.speaker) {
+              setMergeConfirm([all[idx - 1], all[idx]])
+            }
+            setContextMenu(null)
+          }
+        }}>
+          <ListItemIcon><MergeIcon fontSize="small" /></ListItemIcon> 与上段合并 (MERGE)
+        </MenuItem>
+        <MuiDivider />
+        <MenuItem onClick={() => {
+          const newTrans = prompt('输入新翻译:', contextMenu?.event?.translation || '')
+          if (newTrans !== null && contextMenu?.event) {
+            applyPatch({
+              patch_id: `ed_${Date.now()}`, opcode: 'SET_TRANSLATION',
+              targets: [contextMenu.event.id],
+              payload: { translation: newTrans },
+              reason: ['user_edit'], score: 1, confidence: 1,
+              parent_version: '', idempotency_key: '', author: 'user',
+              timestamp: new Date().toISOString(),
+            })
+          }
+          setContextMenu(null)
+        }}>
+          <ListItemIcon><EditIcon fontSize="small" /></ListItemIcon> 编辑翻译 (REPLACE)
+        </MenuItem>
+        <MenuItem onClick={() => {
+          const newSpk = prompt('输入说话人 ID:', contextMenu?.event?.speaker || '')
+          if (newSpk !== null && contextMenu?.event) {
+            applyPatch({
+              patch_id: `rs_${Date.now()}`, opcode: 'RETAG_SPEAKER',
+              targets: [contextMenu.event.id],
+              payload: { new_speaker: newSpk },
+              reason: ['user_retag'], score: 1, confidence: 1,
+              parent_version: '', idempotency_key: '', author: 'user',
+              timestamp: new Date().toISOString(),
+            })
+          }
+          setContextMenu(null)
+        }}>
+          <ListItemIcon><VoiceIcon fontSize="small" /></ListItemIcon> 重标说话人 (RETAG)
+        </MenuItem>
+        <MuiDivider />
+        <MenuItem onClick={() => {
+          setInspectorEvent(contextMenu?.event || null)
+          setInspectorOpen(true)
+          setContextMenu(null)
+        }}>
+          <ListItemIcon><InfoIcon fontSize="small" /></ListItemIcon> 查看 Inspector
+        </MenuItem>
+      </Menu>
+
+      {/* ── Minimap 缩略概览条 ── */}
+      {totalDuration > 0 && (
+        <Box sx={{ mx: 1, mt: 1, height: 20, bgcolor: '#f0f0f0', borderRadius: 1,
+          position: 'relative', overflow: 'hidden' }}>
+          {lanes.flatMap(l => l.segments).map(seg => (
+            <Box key={seg.id} sx={{
+              position: 'absolute', left: `${(seg.start / totalDuration) * 100}%`,
+              width: `${Math.max(((seg.end - seg.start) / totalDuration) * 100, 0.5)}%`,
+              height: '100%',
+              bgcolor: lanes.find(l => l.segments.some(s => s.id === seg.id))?.color || '#ccc',
+              opacity: 0.6, cursor: 'pointer',
+              '&:hover': { opacity: 1 },
+            }} onClick={() => {
+              const v = videoRef.current
+              if (v) { v.currentTime = seg.start; v.play().catch(() => {}) }
+            }} />
+          ))}
+          <Box sx={{ position: 'absolute',
+            left: `${(playTime / totalDuration) * 100}%`,
+            width: `${(zoomSeconds / totalDuration) * 100}%`,
+            height: '100%', border: '2px solid red', borderRadius: 0.5,
+            bgcolor: 'transparent', pointerEvents: 'none' }} />
+        </Box>
+      )}
+
+      {/* ── Split Dialog (词级选择) ── */}
+      <Dialog open={!!splitConfirm} onClose={() => { setSplitConfirm(null); setSplitTime(null); setSplitIdx(-1) }}
+        maxWidth="sm" fullWidth>
+        <DialogTitle>选择拆分位置</DialogTitle>
         <DialogContent>
-          <Typography>将 "{splitConfirm?.text}" 在中点切分为两段。</Typography>
+          {splitConfirm?.words && splitConfirm.words.length > 0 ? (
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.3, alignItems: 'center', my: 2 }}>
+              {splitConfirm.words.map((w, i) => (
+                <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 0 }}>
+                  {i > 0 && (
+                    <Box sx={{
+                      width: 6, height: 22, cursor: 'pointer', mx: 0.2,
+                      bgcolor: splitIdx === i - 1 ? '#FF5722' : '#ccc',
+                      borderRadius: 0.5,
+                      '&:hover': { bgcolor: '#FF5722', transform: 'scaleY(1.6)' },
+                      transition: 'all 0.15s',
+                    }}
+                      onClick={() => { setSplitIdx(i - 1); setSplitTime(w.start) }}
+                      title={`在此切分 (${w.start.toFixed(2)}s)`}
+                    />
+                  )}
+                  <Chip label={w.word} size="small"
+                    sx={{
+                      bgcolor: splitIdx === i - 1 ? '#FF9800' : splitIdx === i ? '#e0e0e0' : '#f5f5f5',
+                      color: splitIdx === i - 1 ? '#fff' : 'inherit',
+                    }} />
+                </Box>
+              ))}
+              {/* 最后一个词后的分隔符 */}
+              {splitConfirm.words.length > 0 && (() => {
+                const lastW = splitConfirm.words[splitConfirm.words.length - 1]
+                return (
+                  <Box sx={{
+                    width: 6, height: 22, cursor: 'pointer', mx: 0.2,
+                    bgcolor: splitIdx === splitConfirm.words.length - 1 ? '#FF5722' : '#ccc',
+                    borderRadius: 0.5,
+                    '&:hover': { bgcolor: '#FF5722', transform: 'scaleY(1.6)' },
+                    transition: 'all 0.15s',
+                  }}
+                    onClick={() => { setSplitIdx(splitConfirm.words!.length - 1); setSplitTime(lastW.end) }}
+                    title={`在此切分 (${lastW.end.toFixed(2)}s)`}
+                  />
+                )
+              })()}
+            </Box>
+          ) : (
+            <Box sx={{ my: 2 }}>
+              <Typography variant="caption" color="text.secondary">
+                无词级数据，拖动选择拆分时间:
+              </Typography>
+              <Slider min={splitConfirm?.start ?? 0} max={splitConfirm?.end ?? 0}
+                step={0.05}
+                value={splitTime ?? (splitConfirm ? (splitConfirm.start + splitConfirm.end) / 2 : 0)}
+                onChange={(_, v) => { setSplitTime(v as number); setSplitIdx(-1) }}
+                valueLabelDisplay="auto" valueLabelFormat={v => `${(v as number).toFixed(2)}s`}
+                sx={{ mt: 1 }} />
+            </Box>
+          )}
+
+          {splitTime !== null && (
+            <Box sx={{ mt: 1, p: 1, bgcolor: '#FFF3E0', borderRadius: 1 }}>
+              <Typography variant="caption" color="text.secondary">
+                拆分时间: <b>{splitTime.toFixed(2)}s</b>
+              </Typography>
+            </Box>
+          )}
+
+          {/* 左右预览 */}
+          <Box sx={{ display: 'flex', gap: 2, mt: 1.5 }}>
+            <Box sx={{ flex: 1, p: 1, bgcolor: '#f5f5f5', borderRadius: 1 }}>
+              <Typography variant="caption" color="text.secondary">左段</Typography>
+              <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>
+                {splitTime !== null && splitConfirm
+                  ? (splitConfirm.words
+                    ? splitConfirm.words.filter(w => w.end <= splitTime).map(w => w.word).join(' ')
+                    : splitConfirm.text.slice(0, Math.floor((splitTime - splitConfirm.start) / (splitConfirm.end - splitConfirm.start) * splitConfirm.text.length))
+                    )
+                  : splitConfirm?.text}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {splitConfirm?.start.toFixed(1)}s - {splitTime?.toFixed(1) ?? '?'}s
+              </Typography>
+            </Box>
+            <Box sx={{ flex: 1, p: 1, bgcolor: '#f5f5f5', borderRadius: 1 }}>
+              <Typography variant="caption" color="text.secondary">右段</Typography>
+              <Typography variant="body2" sx={{ fontSize: '0.8rem' }}>
+                {splitTime !== null && splitConfirm
+                  ? (splitConfirm.words
+                    ? splitConfirm.words.filter(w => w.start >= splitTime).map(w => w.word).join(' ')
+                    : splitConfirm.text.slice(Math.floor((splitTime - splitConfirm.start) / (splitConfirm.end - splitConfirm.start) * splitConfirm.text.length))
+                    )
+                  : ''}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {splitTime?.toFixed(1) ?? '?'}s - {splitConfirm?.end.toFixed(1)}s
+              </Typography>
+            </Box>
+          </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setSplitConfirm(null)}>取消</Button>
-          <Button variant="contained" onClick={doSplit}>确认</Button>
+          <Button onClick={() => { setSplitConfirm(null); setSplitTime(null); setSplitIdx(-1) }}>取消</Button>
+          <Button variant="contained" onClick={doSplit}>确认拆分</Button>
         </DialogActions>
       </Dialog>
       <Dialog open={!!mergeConfirm} onClose={() => setMergeConfirm(null)}>

@@ -482,3 +482,57 @@ export interface PatchLogResponse {
   patches: TimelinePatchData[]
   count: number
 }
+
+// ── Timeline IR v2 前端类型 (UI底层设计.md §二) ──
+
+/** EventBlock ViewModel — 渲染单个时间轴事件的完整视图模型 */
+export interface EventViewModel {
+  id: string
+  start: number; end: number
+  speaker: string | null
+  displayName: string
+  text: string
+  translation: string
+  source: string
+  confidence: number
+  visualState: {
+    hasPatches: boolean
+    hasAiSuggestion: boolean
+    isSelected: boolean
+    isMultiSelected: boolean
+  }
+  patches: TimelinePatchData[]
+  passTrace: string[]
+}
+
+/** 右键上下文菜单 */
+export interface ContextMenuState {
+  mouseX: number; mouseY: number
+  event: EventViewModel | null
+}
+
+/** Patch 预览 (before/after) */
+export interface PatchPreview {
+  draft: TimelinePatchData
+  before: Partial<EventViewModel>
+  after: Partial<EventViewModel>
+}
+
+/** 波形数据 */
+export interface WaveformData {
+  peaks: number[]
+  duration: number
+  sampleRate: number
+}
+
+/** SpeakerLoad 响应扩展 */
+export interface SpeakerLoadResponse {
+  audio_id: string; version: string
+  speaker_lanes: any[]
+  patches: PatchGenerateResponse | null
+  patch_log: TimelinePatchData[]
+  pass_trace: string[]
+  inspector_data: Record<string, EventViewModel>
+  speakerNames: Record<string, string>
+}
+

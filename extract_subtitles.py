@@ -359,11 +359,21 @@ def main():
                 for seg in result["segments"]:
                     all_words.extend(seg.get("words", []))
 
-            # 词级说话人分配
+            # 词级说话人分配 (优先 Word-level Probabilistic Refinement)
             n_assigned = 0
             if all_words:
-                all_words = assign_word_speakers(all_words, speaker_timeline)
-                n_assigned = sum(1 for w in all_words if w.get("speaker"))
+                try:
+                    from core.refiner import WordLevelRefiner
+                    refiner = WordLevelRefiner()
+                    refined = refiner.refine(all_words, speaker_timeline)
+                    all_words = refined["words"]
+                    stats = refined["stats"]
+                    n_assigned = sum(1 for w in all_words if w.get("speaker"))
+                    log_node("2.75", f"概率精修: {stats['refined_count']}/{stats['total']} words 调整 "
+                             f"({stats['refined_pct']}%), avg_entropy={stats['avg_entropy']:.3f}")
+                except ImportError:
+                    all_words = assign_word_speakers(all_words, speaker_timeline)
+                    n_assigned = sum(1 for w in all_words if w.get("speaker"))
 
             # 将全局词的 speaker 分配到 segment 内每个 word（时间重叠法）
             # whisper 词和 wav2vec2 对齐词粒度不同，直接匹配时间戳不可靠
@@ -388,7 +398,17 @@ def main():
             # 检测重叠
             overlaps = detect_overlaps(speaker_timeline)
 
-            # 段切分
+            # 预切分: 利用 pyannote turn 边界切分长 ASR segment
+            before_pre_split = len(result["segments"])
+            result["segments"] = _pre_split_by_pyannote_turns(
+                result["segments"], speaker_timeline, min_gap=0.3
+            )
+            after_pre_split = len(result["segments"])
+            if after_pre_split > before_pre_split:
+                log_node("2.75", f"预切分: {before_pre_split} → {after_pre_split} segments "
+                         f"(+{after_pre_split - before_pre_split})")
+
+            # 段切分 (词级 speaker 边界)
             original_count = len(result["segments"])
             result["segments"] = split_at_speaker_boundaries(result["segments"])
             new_count = len(result["segments"])
@@ -510,6 +530,26 @@ def main():
                  f"{len(tl.speaker_map)} speakers")
         log_node("3.75", f"保存: timeline.json ({os.path.getsize(timeline_path)} bytes)")
         log_node("3.75", f"耗时: {time.time()-t0:.1f}s")
+
+        # ═══ 双写验证：新 core/ IR v2 并行输出 ═══
+        try:
+            from core.runtime.verify import dual_write_verify
+            vrf = dual_write_verify(
+                old_timeline=tl,
+                segments=result.get("segments", []),
+                speaker_timeline=speaker_timeline,
+                output_dir=out_dir,
+            )
+            if vrf["status"] == "ok":
+                log_node("3.75", f"双写验证: 行为等价 ✓")
+            elif vrf["status"] == "diff":
+                log_node("3.75", f"双写验证: 发现 {vrf['diff_count']} 处差异 → {os.path.basename(vrf['diff_file'])}")
+            else:
+                log_node("3.75", f"双写验证: 错误 — {vrf.get('reason', 'unknown')}")
+        except ImportError:
+            log_node("3.75", "双写验证: core/ 模块未就绪，跳过")
+        except Exception as _dw_err:
+            log_node("3.75", f"双写验证: 异常 — {_dw_err}")
     except Exception as e:
         import traceback
         print(f"  [WARN] Timeline Fusion 失败 ({e})，跳过")
@@ -606,6 +646,90 @@ def main():
     print(f"  python -m SRT.SRT_Translator {relative}")
 
     return 0
+
+
+def _pre_split_by_pyannote_turns(
+    segments: list[dict],
+    speaker_timeline: list[tuple],
+    min_gap: float = 0.3,
+) -> list[dict]:
+    """利用 pyannote turn 边界预切分 ASR segment。
+
+    ASR 的 Silero VAD 可能把多个 speaker turn 合并成一个长段。
+    此函数检测 ASR segment 是否跨越 pyannote 的 turn 边界，
+    如果是则在边界处切分。
+
+    Args:
+        segments: ASR segments [{start, end, text, words, speaker, ...}]
+        speaker_timeline: [(speaker, start, end, confidence), ...]
+        min_gap: 两个 turn 之间的最小间隔才作为切分点
+
+    Returns:
+        新的 segments 列表（可能更长）
+    """
+    if not speaker_timeline or len(speaker_timeline) < 2:
+        return segments
+
+    # 收集所有合格的切分边界 (相邻 turn 间隔 >= min_gap)
+    split_boundaries: list[float] = []
+    for i in range(1, len(speaker_timeline)):
+        prev_end = speaker_timeline[i - 1][2]
+        cur_start = speaker_timeline[i][1]
+        gap = cur_start - prev_end
+        if gap >= min_gap:
+            split_boundaries.append(cur_start)
+
+    if not split_boundaries:
+        return segments
+
+    result: list[dict] = []
+    for seg in segments:
+        seg_start = seg.get("start", 0)
+        seg_end = seg.get("end", 0)
+
+        # 找该 segment 内的切分点
+        cuts = [bp for bp in split_boundaries if seg_start < bp < seg_end]
+        if not cuts:
+            result.append(seg)
+            continue
+
+        # 按切分点分割
+        cuts.sort()
+        all_points = [seg_start] + cuts + [seg_end]
+        words = seg.get("words", [])
+        text = seg.get("text", "").strip()
+        spk = seg.get("speaker")
+
+        for k in range(len(all_points) - 1):
+            sub_start = all_points[k]
+            sub_end = all_points[k + 1]
+            dur = sub_end - sub_start
+            if dur < 0.15:  # 跳过过短的片段
+                continue
+
+            # 分配该时间段的 word
+            sub_words = [
+                w for w in words
+                if w.get("start", 0) >= sub_start - 0.05
+                and w.get("end", 0) <= sub_end + 0.05
+            ]
+            sub_text = " ".join(w.get("word", "") for w in sub_words) if sub_words else text
+
+            sub_seg = {
+                "start": sub_start,
+                "end": sub_end,
+                "text": sub_text.strip() or text,
+                "speaker": spk,
+                "words": sub_words,
+            }
+            # 保留原始 segment 的其他字段
+            for k2, v in seg.items():
+                if k2 not in sub_seg:
+                    sub_seg[k2] = v
+
+            result.append(sub_seg)
+
+    return result
 
 
 if __name__ == "__main__":
