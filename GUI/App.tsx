@@ -297,13 +297,17 @@ export default function App() {
 
   // 切换到说话人审核 tab 时加载 speaker 数据
   useEffect(() => {
-    if (activeTab === '说话人审核' && prefillSrt?.workspace) {
-      fetch('/api/speaker/diarization/load', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspace: prefillSrt.workspace }),
-      }).then(r => r.ok ? r.json().then((d: any) => setSpeakerData(d)) : null).catch(() => {})
-    }
-  }, [activeTab, prefillSrt?.workspace])
+    if (activeTab !== '说话人审核' || !config.videoPath) return
+    const path = config.videoPath.replace(/\\/g, '/')
+    const dir = path.substring(0, path.lastIndexOf('/'))
+    const dot = path.lastIndexOf('.')
+    const stem = dot > path.lastIndexOf('/') ? path.substring(path.lastIndexOf('/') + 1, dot) : path.substring(path.lastIndexOf('/') + 1)
+    const workspace = `${dir}/${stem}_project`
+    fetch('/api/speaker/diarization/load', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace }),
+    }).then(r => r.ok ? r.json().then((d: any) => setSpeakerData(d)) : null).catch(() => {})
+  }, [activeTab, config.videoPath])
 
   return (
     <ThemeProvider theme={theme}>
@@ -380,7 +384,14 @@ export default function App() {
           <KeepAliveSection active={activeTab === '说话人审核'}>
             {speakerData?.speaker_lanes?.length > 0 ? (
               <SpeakerReviewPanel
-                workspace={prefillSrt?.workspace || ''}
+                workspace={((): string => {
+                  if (!config.videoPath) return ''
+                  const path = config.videoPath.replace(/\\/g, '/')
+                  const dir = path.substring(0, path.lastIndexOf('/'))
+                  const dot = path.lastIndexOf('.')
+                  const stem = dot > path.lastIndexOf('/') ? path.substring(path.lastIndexOf('/') + 1, dot) : path.substring(path.lastIndexOf('/') + 1)
+                  return `${dir}/${stem}_project`
+                })()}
                 speakers={speakerData.speaker_lanes?.map((l: any) => l.speaker) || []}
                 timeline={[]}
                 verification={null}
