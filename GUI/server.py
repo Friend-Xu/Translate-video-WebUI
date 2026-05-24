@@ -3340,19 +3340,46 @@ class SpeakerLoadRequest(BaseModel):
 
 @app.post("/api/speaker/diarization/load")
 async def speaker_load(req: SpeakerLoadRequest):
-    """加载说话人分离结果（时间线 + 验证报告）。"""
+    """加载说话人分离结果（时间线 + 验证报告）。
+    优先从 speaker_timeline.json + timeline.json 构建。
+    """
     workspace = req.workspace
     extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
     if not extract_dir or not os.path.isdir(extract_dir):
         raise HTTPException(status_code=400, detail="无效的工作目录")
     import json as _json
     result = {"timeline": [], "verification": None, "speakers": [], "speakerNames": {}}
-    tl_path = os.path.join(extract_dir, "speaker_timeline.json")
-    if os.path.isfile(tl_path):
-        with open(tl_path, "r", encoding="utf-8") as f:
-            tl = _json.load(f)
-        result["timeline"] = tl.get("turns", [])
-        result["speakers"] = tl.get("speakers", [])
+
+    # 优先从 speaker_timeline.json 读取
+    stl_path = os.path.join(extract_dir, "speaker_timeline.json")
+    if os.path.isfile(stl_path):
+        with open(stl_path, "r", encoding="utf-8") as f:
+            stl = _json.load(f)
+        result["timeline"] = stl.get("turns", [])
+        result["speakers"] = stl.get("speakers", [])
+    else:
+        # Fallback: 从 timeline.json 构建 speaker turns
+        tl_path = os.path.join(extract_dir, "timeline.json")
+        if os.path.isfile(tl_path):
+            with open(tl_path, "r", encoding="utf-8") as f:
+                tl = _json.load(f)
+            turns = []
+            speakers = set()
+            for seg in tl.get("timeline", []):
+                spk = seg.get("speaker", "UNKNOWN")
+                if not spk:
+                    spk = "UNKNOWN"
+                speakers.add(spk)
+                turns.append({
+                    "speaker": spk,
+                    "start": seg.get("start", 0),
+                    "end": seg.get("end", 0),
+                    "text": seg.get("text", ""),
+                    "duration": round(seg.get("end", 0) - seg.get("start", 0), 2),
+                })
+            result["timeline"] = turns
+            result["speakers"] = sorted(speakers)
+
     vf_path = os.path.join(extract_dir, "speaker_verification.json")
     if os.path.isfile(vf_path):
         with open(vf_path, "r", encoding="utf-8") as f:
