@@ -271,6 +271,11 @@ export default function App() {
     setPrefillSrt({ source: sourceSrt, translated: translatedSrt, log: translateLog, workspace })
     setActiveTab('字幕校准')
     setReviewSaved(false)
+    // 加载 speaker 数据
+    fetch('/api/speaker/diarization/load', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace }),
+    }).then(r => r.ok ? r.json().then((d: any) => setSpeakerData(d)) : null).catch(() => {})
   }, [config.videoPath])
 
   const handleOpenOutputFolder = useCallback(async () => {
