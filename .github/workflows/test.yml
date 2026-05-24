@@ -27,7 +27,10 @@ jobs:
           pip install pytest pytest-cov
 
       - name: Run tests with coverage
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
+          pip install pydantic
           pytest tests/test_core_ir.py tests/test_core_runtime.py \
             tests/test_timeline_ir.py tests/test_timeline_patch.py \
             tests/test_fusion.py tests/test_integration.py \
