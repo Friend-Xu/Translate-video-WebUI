@@ -3340,54 +3340,100 @@ class SpeakerLoadRequest(BaseModel):
 
 @app.post("/api/speaker/diarization/load")
 async def speaker_load(req: SpeakerLoadRequest):
-    """加载说话人分离结果（时间线 + 验证报告）。
-    优先从 speaker_timeline.json + timeline.json 构建。
+    """加载 Timeline IR + AI Patch 建议。
+
+    返回格式:
+      { audio_id, version, speaker_lanes, patches: {high, medium, low}, patch_log }
+    speaker_lanes: [{speaker, display_name, color, segments: [{id, start, end, text, translation}]}]
     """
     workspace = req.workspace
     extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
     if not extract_dir or not os.path.isdir(extract_dir):
         raise HTTPException(status_code=400, detail="无效的工作目录")
     import json as _json
-    result = {"timeline": [], "verification": None, "speakers": [], "speakerNames": {}}
 
-    # 优先从 speaker_timeline.json 读取
-    stl_path = os.path.join(extract_dir, "speaker_timeline.json")
-    if os.path.isfile(stl_path):
-        with open(stl_path, "r", encoding="utf-8") as f:
-            stl = _json.load(f)
-        result["timeline"] = stl.get("turns", [])
-        result["speakers"] = stl.get("speakers", [])
-    else:
-        # Fallback: 从 timeline.json 构建 speaker turns
-        tl_path = os.path.join(extract_dir, "timeline.json")
-        if os.path.isfile(tl_path):
-            with open(tl_path, "r", encoding="utf-8") as f:
-                tl = _json.load(f)
-            turns = []
-            speakers = set()
-            for seg in tl.get("timeline", []):
-                spk = seg.get("speaker", "UNKNOWN")
-                if not spk:
-                    spk = "UNKNOWN"
-                speakers.add(spk)
-                turns.append({
-                    "speaker": spk,
-                    "start": seg.get("start", 0),
-                    "end": seg.get("end", 0),
-                    "text": seg.get("text", ""),
-                    "duration": round(seg.get("end", 0) - seg.get("start", 0), 2),
-                })
-            result["timeline"] = turns
-            result["speakers"] = sorted(speakers)
+    result = {
+        "audio_id": "",
+        "version": "1.0",
+        "speaker_lanes": [],
+        "patches": {"high": [], "medium": [], "low": []},
+        "patch_log": [],
+        "speakerNames": {},
+    }
 
-    vf_path = os.path.join(extract_dir, "speaker_verification.json")
-    if os.path.isfile(vf_path):
-        with open(vf_path, "r", encoding="utf-8") as f:
-            result["verification"] = _json.load(f)
+    tl_path = os.path.join(extract_dir, "timeline.json")
+    if not os.path.isfile(tl_path):
+        # 回退到旧 speaker_timeline.json
+        stl_path = os.path.join(extract_dir, "speaker_timeline.json")
+        if os.path.isfile(stl_path):
+            with open(stl_path, "r", encoding="utf-8") as f:
+                stl = _json.load(f)
+            result["timeline"] = stl.get("turns", [])
+            result["speakers"] = stl.get("speakers", [])
+        return result
+
+    with open(tl_path, "r", encoding="utf-8") as f:
+        tl = _json.load(f)
+
+    result["audio_id"] = tl.get("audio_id", "")
+    result["version"] = tl.get("version", "1.0")
+
+    # 构建 speaker_lanes
+    SPEAKER_COLORS = ["#4CAF50","#2196F3","#FF9800","#E91E63","#9C27B0","#00BCD4"]
+    speaker_segments: dict[str, list] = {}
+    for seg in tl.get("timeline", []):
+        spk = seg.get("speaker") or "UNKNOWN"
+        if spk not in speaker_segments:
+            speaker_segments[spk] = []
+        speaker_segments[spk].append({
+            "id": seg.get("id", ""),
+            "start": seg.get("start", 0),
+            "end": seg.get("end", 0),
+            "text": seg.get("text", ""),
+            "translation": seg.get("translation", ""),
+            "overlap": seg.get("overlap", False),
+        })
+
+    lanes = []
+    for i, (spk, segs) in enumerate(sorted(speaker_segments.items())):
+        sm = tl.get("speaker_map", {}).get(spk, {})
+        lanes.append({
+            "speaker": spk,
+            "display_name": sm.get("alias", "") or spk,
+            "voice_id": sm.get("voice_id", ""),
+            "color": SPEAKER_COLORS[i % len(SPEAKER_COLORS)],
+            "segments": segs,
+            "segment_count": len(segs),
+            "total_duration": round(sum(s["end"] - s["start"] for s in segs), 1),
+        })
+
+    result["speaker_lanes"] = lanes
+    result["metadata"] = tl.get("metadata", {})
+
+    # 加载 speaker names
     sn_path = os.path.join(extract_dir, "speaker_names.json")
     if os.path.isfile(sn_path):
         with open(sn_path, "r", encoding="utf-8") as f:
             result["speakerNames"] = _json.load(f)
+
+    # AI Patch 建议
+    try:
+        from timeline.api.timeline import generate_candidate_patches
+        ai = generate_candidate_patches(tl_path)
+        result["patches"] = {
+            "high": ai.get("high", []),
+            "medium": ai.get("medium", []),
+            "low": ai.get("low", []),
+        }
+    except Exception:
+        pass
+
+    # Patch 历史
+    log_path = os.path.join(extract_dir, "timeline_patches.json")
+    if os.path.isfile(log_path):
+        with open(log_path, "r", encoding="utf-8") as f:
+            result["patch_log"] = _json.load(f)
+
     return result
 
 

@@ -1,361 +1,415 @@
-import React, { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import {
   Box, Typography, Card, IconButton, Tooltip, Alert, Chip,
-  Button, Select, MenuItem, FormControl, Dialog, DialogTitle,
-  DialogContent, DialogActions, TextField, Checkbox,
+  Button, Slider, Dialog, DialogTitle, DialogContent, DialogActions,
+  Badge, Drawer, List, ListItem, ListItemText,
 } from '@mui/material'
-import MergeIcon from '@mui/icons-material/CallMergeRounded'
+import PauseIcon from '@mui/icons-material/PauseRounded'
+import UndoIcon from '@mui/icons-material/UndoRounded'
 import SplitIcon from '@mui/icons-material/CallSplitRounded'
-import EditIcon from '@mui/icons-material/EditOutlined'
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesomeRounded'
+import ZoomInIcon from '@mui/icons-material/ZoomInRounded'
+import ZoomOutIcon from '@mui/icons-material/ZoomOutRounded'
 import { SectionHeader } from '../SectionHeader'
-import type { SpeakerTurn, SpeakerVerification, SpeakerMergeRequest, SpeakerSplitRequest, SpeakerRenameRequest } from '../../types'
+import type { TimelinePatchData, PatchGenerateResponse } from '../../types'
 
-const SPEAKER_COLORS = [
-  '#4CAF50', '#2196F3', '#FF9800', '#E91E63',
-  '#9C27B0', '#00BCD4', '#FFEB3B', '#795548',
-]
+const LANE_HEIGHT = 52
+const LABEL_WIDTH = 110
+
+interface SegmentData {
+  id: string; start: number; end: number; text: string
+  translation: string; overlap: boolean
+}
+
+interface SpeakerLane {
+  speaker: string; display_name: string; voice_id: string
+  color: string; segments: SegmentData[]; segment_count: number; total_duration: number
+}
 
 interface Props {
   workspace: string
   speakers: string[]
-  timeline: SpeakerTurn[]
-  verification: SpeakerVerification | null
+  timeline: any[]
+  verification: any | null
   speakerNames: Record<string, string>
-  onTimelineChange?: (timeline: SpeakerTurn[]) => void
-  onSaveCorrections?: (timeline: SpeakerTurn[], corrections: unknown[]) => void
+  onTimelineChange?: (tl: any[]) => void
+  onSaveCorrections?: (tl: any[], c: unknown[]) => void
 }
 
 export default function SpeakerReviewPanel({
-  workspace, speakers, timeline, verification, speakerNames,
-  onTimelineChange, onSaveCorrections,
+  workspace, speakerNames,
 }: Props) {
-  const [selectedSpeaker, setSelectedSpeaker] = useState<string | null>(null)
-  const [corrections, setCorrections] = useState<unknown[]>([])
-  const [dirty, setDirty] = useState(false)
-  const [mergeMode, setMergeMode] = useState(false)
-  const [mergeSelected, setMergeSelected] = useState<Set<string>>(new Set())
-  const [renameTarget, setRenameTarget] = useState<string | null>(null)
-  const [renameValue, setRenameValue] = useState('')
-  const [splitConfirm, setSplitConfirm] = useState<{ speaker: string; index: number } | null>(null)
-  const [mergeConfirm, setMergeConfirm] = useState<{ source: string; target: string } | null>(null)
-  const [saving, setSaving] = useState(false)
+  // ── Data ──
+  const [lanes, setLanes] = useState<SpeakerLane[]>([])
+  const [aiPatches, setAiPatches] = useState<PatchGenerateResponse | null>(null)
+  const [patchLog, setPatchLog] = useState<TimelinePatchData[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
-  const bySpeaker = React.useMemo(() => {
-    const map: Record<string, SpeakerTurn[]> = {}
-    for (const t of timeline) {
-      if (!map[t.speaker]) map[t.speaker] = []
-      map[t.speaker].push(t)
-    }
-    return map
-  }, [timeline])
+  // ── View ──
+  const [totalDuration, setTotalDuration] = useState(120)
+  const [zoomSeconds, setZoomSeconds] = useState(60)
+  const [selectedSeg, setSelectedSeg] = useState<string | null>(null)
+  const [multiSelect, setMultiSelect] = useState<Set<string>>(new Set())
+  const [playing, setPlaying] = useState(false)
+  const [playTime, setPlayTime] = useState(0)
+  const [aiOpen, setAiOpen] = useState(false)
+  const [undoing, setUndoing] = useState(false)
+  const [splitConfirm, setSplitConfirm] = useState<SegmentData | null>(null)
+  const [mergeConfirm, setMergeConfirm] = useState<SegmentData[] | null>(null)
 
-  const getColor = (spk: string) =>
-    SPEAKER_COLORS[speakers.indexOf(spk) % SPEAKER_COLORS.length]
+  const playRef = useRef<number | null>(null)
 
-  const getDisplayName = (spk: string) => speakerNames[spk] || spk
+  // ── Load ──
+  const loadData = useCallback(() => {
+    if (!workspace) return
+    setLoading(true)
+    fetch('/api/speaker/diarization/load', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace }),
+    }).then(r => r.json()).then(data => {
+      const l = data.speaker_lanes || []
+      setLanes(l)
+      setAiPatches(data.patches || null)
+      setPatchLog(data.patch_log || [])
+      if (l.length) {
+        const maxEnd = Math.max(...l.flatMap((ln: SpeakerLane) =>
+          ln.segments.map((s: SegmentData) => s.end)
+        ))
+        setTotalDuration(Math.ceil(maxEnd / 10) * 10 || 120)
+      }
+      setError('')
+      setLoading(false)
+    }).catch(e => { setError(e.message); setLoading(false) })
+  }, [workspace])
 
-  const apiCall = async (url: string, body: object) => {
-    const res = await fetch(url, {
+  useEffect(() => { loadData() }, [loadData])
+
+  // ── Zoom ──
+  const pixelsPerSec = useMemo(() => {
+    const w = Math.max(800, window.innerWidth - 200)
+    return w / zoomSeconds
+  }, [zoomSeconds])
+
+  const totalWidth = totalDuration * pixelsPerSec
+  const px = useCallback((s: number) => s * pixelsPerSec, [pixelsPerSec])
+
+  // ── API ──
+  const api = async (url: string, body: object) => {
+    const r = await fetch(url, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }))
-      throw new Error(err.detail || res.statusText)
-    }
-    return res.json()
+    if (!r.ok) throw new Error((await r.json().catch(() => ({ detail: r.statusText }))).detail)
+    return r.json()
   }
 
-  const handleMergeAdjacent = useCallback(() => {
-    const merged: SpeakerTurn[] = []
-    for (const t of timeline) {
-      const prev = merged[merged.length - 1]
-      if (prev && prev.speaker === t.speaker && t.start - prev.end < 1.0) {
-        prev.end = t.end
-      } else {
-        merged.push({ ...t })
-      }
-    }
-    onTimelineChange?.(merged)
-    setCorrections([...corrections, { action: 'merge-adjacent', timestamp: Date.now() }])
-    setDirty(true)
-  }, [timeline, corrections, onTimelineChange])
+  // ── Audio ──
+  const play = (seg: SegmentData) => {
+    stop()
+    setPlayTime(seg.start)
+    setPlaying(true)
+    const t0 = Date.now() - seg.start * 1000
+    playRef.current = window.setInterval(() => {
+      const t = (Date.now() - t0) / 1000
+      if (t > seg.end) { stop(); return }
+      setPlayTime(t)
+    }, 50)
+  }
+  const stop = () => {
+    setPlaying(false)
+    if (playRef.current) { clearInterval(playRef.current); playRef.current = null }
+  }
+  useEffect(() => () => stop(), [])
 
-  const toggleMergeMode = () => {
-    setMergeMode(!mergeMode)
-    setMergeSelected(new Set())
+  // ── Undo ──
+  const undo = async () => {
+    setUndoing(true)
+    try { await api('/api/timeline/patch/undo', { workspace }); loadData() }
+    catch (e: any) { alert(e.message) }
+    finally { setUndoing(false) }
   }
 
-  const toggleMergeSelect = (spk: string) => {
-    const next = new Set(mergeSelected)
-    if (next.has(spk)) next.delete(spk); else next.add(spk)
-    setMergeSelected(next)
+  // ── Apply patch ──
+  const applyPatch = async (p: TimelinePatchData) => {
+    try { await api('/api/timeline/patch/apply', { workspace, patch: p }); loadData() }
+    catch (e: any) { alert(e.message) }
   }
 
-  const handleIdentityMerge = () => {
-    const sel = Array.from(mergeSelected)
-    if (sel.length < 2) return
-    setMergeConfirm({ source: sel[1], target: sel[0] })
-  }
-
-  const doIdentityMerge = async () => {
-    if (!mergeConfirm) return
-    try {
-      await apiCall('/api/speaker/diarization/merge', {
-        workspace, source: mergeConfirm.source, target: mergeConfirm.target,
-      } as SpeakerMergeRequest)
-      const updated = timeline.map(t =>
-        t.speaker === mergeConfirm.source ? { ...t, speaker: mergeConfirm.target } : t
-      )
-      onTimelineChange?.(updated)
-      setCorrections([...corrections, { action: 'merge-identity', ...mergeConfirm, timestamp: Date.now() }])
-      setDirty(true)
-      setMergeMode(false)
-      setMergeSelected(new Set())
-      setMergeConfirm(null)
-    } catch (e: any) {
-      alert(`合并失败: ${e.message}`)
-    }
-  }
-
-  const handleSplitClick = (speaker: string, turnIndex: number) => {
-    const globalIndex = timeline.findIndex(
-      t => t.speaker === speaker && t === bySpeaker[speaker]?.find((_, i) => i === turnIndex)
-    )
-    if (globalIndex >= 0) setSplitConfirm({ speaker, index: globalIndex })
-  }
-
+  // ── Split ──
   const doSplit = async () => {
     if (!splitConfirm) return
-    try {
-      const result = await apiCall('/api/speaker/diarization/split', {
-        workspace, speaker: splitConfirm.speaker, split_index: splitConfirm.index,
-      } as SpeakerSplitRequest)
-      setDirty(true)
-      setSplitConfirm(null)
-      alert(`已切分为新 speaker: ${result.new_speaker}`)
-    } catch (e: any) {
-      alert(`切分失败: ${e.message}`)
-    }
+    const mid = splitConfirm.start + (splitConfirm.end - splitConfirm.start) / 2
+    await applyPatch({
+      patch_id: `sp_${Date.now()}`, opcode: 'SPLIT',
+      targets: [splitConfirm.id], payload: { split_point: mid },
+      reason: ['user_split'], score: 1, confidence: 1,
+      parent_version: '', idempotency_key: '', author: 'user',
+      timestamp: new Date().toISOString(),
+    })
+    setSplitConfirm(null)
   }
 
-  const startRename = (spk: string) => {
-    setRenameTarget(spk)
-    setRenameValue(speakerNames[spk] || '')
-  }
-
-  const doRename = async () => {
-    if (!renameTarget) return
-    try {
-      await apiCall('/api/speaker/diarization/rename', {
-        workspace, speaker: renameTarget, display_name: renameValue,
-      } as SpeakerRenameRequest)
-      setDirty(true)
-      setRenameTarget(null)
-    } catch (e: any) {
-      alert(`重命名失败: ${e.message}`)
+  // ── Merge ──
+  const startMerge = () => {
+    if (multiSelect.size >= 2) {
+      const allSegs = lanes.flatMap(l => l.segments)
+      const selected = allSegs.filter(s => multiSelect.has(s.id))
+      setMergeConfirm(selected)
     }
   }
-
-  const handleSave = useCallback(async () => {
-    setSaving(true)
-    try {
-      await apiCall('/api/speaker/diarization/save', { workspace, timeline, corrections })
-      onSaveCorrections?.(timeline, corrections)
-      setDirty(false)
-    } catch (e: any) {
-      alert(`保存失败: ${e.message}`)
-    } finally {
-      setSaving(false)
-    }
-  }, [workspace, timeline, corrections, onSaveCorrections])
-
-  const handleRegenerateSrt = async () => {
-    try {
-      const result = await apiCall('/api/speaker/diarization/regenerate-srt', { workspace })
-      alert(`SRT 已重生成: ${result.entries} 条字幕`)
-    } catch (e: any) {
-      alert(`重生成失败: ${e.message}`)
-    }
+  const doMerge = async () => {
+    if (!mergeConfirm || mergeConfirm.length < 2) return
+    await applyPatch({
+      patch_id: `mg_${Date.now()}`, opcode: 'MERGE',
+      targets: mergeConfirm.map(s => s.id),
+      payload: {}, reason: ['user_merge'], score: 1, confidence: 1,
+      parent_version: '', idempotency_key: '', author: 'user',
+      timestamp: new Date().toISOString(),
+    })
+    setMergeConfirm(null)
+    setMultiSelect(new Set())
   }
 
-  if (!speakers.length) {
+  const aiCount = (aiPatches?.high?.length || 0) + (aiPatches?.medium?.length || 0)
+  const totalSegs = lanes.reduce((s, l) => s + l.segment_count, 0)
+
+  // ── Render ──
+  if (loading) return <Card sx={{ p: 3 }}><Typography>加载中...</Typography></Card>
+  if (error) return <Card sx={{ p: 3 }}><Alert severity="error">{error}</Alert></Card>
+  if (!lanes.length) {
     return (
       <Card sx={{ p: 3 }}>
         <SectionHeader title="说话人审核" />
-        <Alert severity="info">未启用说话人分离，或未检测到多个说话人。</Alert>
+        <Alert severity="info">
+          {workspace
+            ? '当前工作目录未检测到 Timeline 数据。请先运行字幕提取。'
+            : '请先选择一个视频开始处理。'}
+        </Alert>
       </Card>
     )
   }
 
   return (
-    <Card sx={{ p: 3 }}>
-      <SectionHeader title={`说话人审核 (${speakers.length} 人, ${timeline.length} 段)`} />
-
-      {verification && (
-        <Alert severity={verification.passesAll ? 'success' : 'warning'} sx={{ mb: 2 }}>
-          验证: {verification.summary.errors} 错误, {verification.summary.warnings} 警告 —{' '}
-          {verification.passesAll ? '全部通过' : '存在问题'}
-        </Alert>
-      )}
-
-      <Box sx={{ display: 'flex', gap: 1, mb: 2, alignItems: 'center', flexWrap: 'wrap' }}>
-        <FormControl size="small" sx={{ minWidth: 120 }}>
-          <Select
-            value={selectedSpeaker || ''}
-            onChange={e => setSelectedSpeaker(e.target.value || null)}
-            displayEmpty
-          >
-            <MenuItem value="">全部说话人</MenuItem>
-            {speakers.map(spk => (
-              <MenuItem key={spk} value={spk}>
-                <Chip size="small" sx={{ bgcolor: getColor(spk), color: '#fff', mr: 1 }}
-                  label={getDisplayName(spk)} />
-                ({bySpeaker[spk]?.length || 0} 段)
-              </MenuItem>
-            ))}
-          </Select>
-        </FormControl>
-        <Tooltip title="合并相邻同说话人段">
-          <IconButton onClick={handleMergeAdjacent} size="small"><MergeIcon /></IconButton>
+    <Card sx={{ p: 2 }}>
+      {/* ── Header ── */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+        <SectionHeader title={`说话人审核 (${lanes.length} 人, ${totalSegs} 段)`} />
+        <Box sx={{ flexGrow: 1 }} />
+        {aiCount > 0 && (
+          <Badge badgeContent={aiCount} color="warning">
+            <IconButton onClick={() => setAiOpen(true)} color="warning"><AutoAwesomeIcon /></IconButton>
+          </Badge>
+        )}
+        <Tooltip title="撤销 (Ctrl+Z)">
+          <span><IconButton disabled={patchLog.length === 0 || undoing} onClick={undo}><UndoIcon /></IconButton></span>
         </Tooltip>
-        <Tooltip title={mergeMode ? '退出合并模式' : '合并说话人身份'}>
-          <Button size="small" variant={mergeMode ? 'contained' : 'outlined'}
-            color={mergeMode ? 'warning' : 'primary'}
-            onClick={toggleMergeMode}>
-            {mergeMode ? '退出合并' : '合并说话人'}
-          </Button>
-        </Tooltip>
-        <Tooltip title="从 timeline 重生成 SRT 字幕">
-          <Button size="small" variant="outlined" onClick={handleRegenerateSrt}>
-            重生成SRT
-          </Button>
-        </Tooltip>
-        <Button size="small" variant="contained" disabled={!dirty || saving}
-          onClick={handleSave} sx={{ ml: 'auto' }}>
-          {saving ? '保存中...' : '保存修正'}
+        <Button size="small" variant="outlined" startIcon={<AutoAwesomeIcon />}
+          onClick={() => setAiOpen(true)} disabled={aiCount === 0}>
+          AI 建议{aiCount > 0 ? ` (${aiCount})` : ''}
         </Button>
+        {multiSelect.size >= 2 && (
+          <Button size="small" variant="contained" color="warning" onClick={startMerge}>
+            合并选中 ({multiSelect.size})
+          </Button>
+        )}
       </Box>
 
-      {mergeMode && (
-        <Alert severity="warning" sx={{ mb: 2 }}
-          action={
-            <Button size="small" color="warning" variant="contained"
-              disabled={mergeSelected.size < 2}
-              onClick={handleIdentityMerge}>
-              合并为同一人 ({mergeSelected.size})
-            </Button>
-          }>
-          勾选两个或以上说话人，然后点击"合并为同一人"将后面的合并到第一个
-        </Alert>
-      )}
+      {/* ── Zoom + Playhead ── */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+        <ZoomOutIcon fontSize="small" />
+        <Slider size="small" min={10} max={Math.max(totalDuration, 30)} value={zoomSeconds}
+          onChange={(_, v) => setZoomSeconds(v as number)} sx={{ width: 200 }} />
+        <ZoomInIcon fontSize="small" />
+        <Typography variant="caption" color="text.secondary">
+          视口 {zoomSeconds}s / 总计 {totalDuration.toFixed(0)}s
+        </Typography>
+        {playing && (
+          <Chip size="small" icon={<PauseIcon />} label={`${playTime.toFixed(1)}s`}
+            onDelete={stop} color="primary" />
+        )}
+      </Box>
 
-      <Box sx={{
-        position: 'relative', minHeight: speakers.length * 36 + 20,
-        bgcolor: '#f5f5f5', borderRadius: 1, overflow: 'auto', mb: 2,
-      }}>
-        {speakers.map(spk => (
-          <Box key={spk} sx={{ display: 'flex', alignItems: 'center', height: 32, mb: '2px' }}>
-            <Box sx={{ width: 110, minWidth: 110, px: 1, display: 'flex',
-              alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
-              {mergeMode && speakers.length > 1 && (
-                <Checkbox size="small" sx={{ p: 0 }}
-                  checked={mergeSelected.has(spk)}
-                  onChange={() => toggleMergeSelect(spk)} />
-              )}
-              {renameTarget === spk ? (
-                <TextField size="small" variant="standard" value={renameValue}
-                  onChange={e => setRenameValue(e.target.value)}
-                  onBlur={doRename}
-                  onKeyDown={e => { if (e.key === 'Enter') doRename() }}
-                  autoFocus
-                  sx={{ width: 80, '& input': { fontSize: '0.75rem' } }} />
-              ) : (
-                <Typography sx={{ fontSize: '0.75rem', fontWeight: 'bold', color: getColor(spk) }}>
-                  {getDisplayName(spk)}
+      {/* ── Timeline ── */}
+      <Box sx={{ overflowX: 'auto', overflowY: 'hidden', border: '1px solid #e0e0e0', borderRadius: 1 }}>
+        <Box sx={{ minWidth: totalWidth, position: 'relative' }}>
+          {/* Time ruler */}
+          <Box sx={{ height: 18, borderBottom: '1px solid #e0e0e0', bgcolor: '#fafafa', position: 'relative' }}>
+            {Array.from({ length: Math.ceil(totalDuration / 10) }, (_, i) => (
+              <Typography key={i} variant="caption" sx={{
+                position: 'absolute', left: px(i * 10), top: 1,
+                fontSize: '0.55rem', color: '#aaa',
+              }}>{i * 10}s</Typography>
+            ))}
+          </Box>
+
+          {/* Lanes */}
+          {lanes.map(lane => (
+            <Box key={lane.speaker} sx={{
+              display: 'flex', height: LANE_HEIGHT,
+              borderBottom: '1px solid #f0f0f0',
+              bgcolor: selectedSeg && lane.segments.some(s => s.id === selectedSeg)
+                ? '#f5f5f5' : 'transparent',
+            }}>
+              {/* Label */}
+              <Box sx={{
+                width: LABEL_WIDTH, minWidth: LABEL_WIDTH,
+                display: 'flex', alignItems: 'center', gap: 0.5,
+                px: 1, borderRight: '1px solid #e0e0e0', bgcolor: '#fafafa',
+              }}>
+                <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: lane.color, flexShrink: 0 }} />
+                <Typography sx={{ fontSize: '0.72rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {speakerNames[lane.speaker] || lane.display_name}
                 </Typography>
-              )}
-              <IconButton size="small" sx={{ p: 0 }} onClick={() => startRename(spk)}>
-                <EditIcon sx={{ fontSize: 14 }} />
-              </IconButton>
-            </Box>
-            <Box sx={{ flexGrow: 1, position: 'relative', height: 24 }}>
-              {(selectedSpeaker && selectedSpeaker !== spk ? [] : bySpeaker[spk] || []).map((turn, i) => {
-                const maxEnd = Math.max(...timeline.map(t => t.end), 1)
-                return (
-                  <Box key={`${spk}-${i}`}
-                    sx={{
-                      position: 'absolute',
-                      left: `${(turn.start / maxEnd) * 100}%`,
-                      width: `${Math.max(((turn.end - turn.start) / maxEnd) * 100, 0.5)}%`,
-                      height: 22, bgcolor: getColor(spk), borderRadius: 0.5,
-                      display: 'flex', alignItems: 'center', px: 0.5,
-                      overflow: 'hidden', whiteSpace: 'nowrap',
-                      fontSize: '0.65rem', color: '#fff',
-                      cursor: 'pointer', '&:hover': { opacity: 0.85 },
+                <Typography variant="caption" color="text.secondary" sx={{ ml: 'auto' }}>
+                  {lane.segment_count}
+                </Typography>
+              </Box>
+
+              {/* Segments */}
+              <Box sx={{ flexGrow: 1, position: 'relative', height: LANE_HEIGHT }}>
+                {playing && (
+                  <Box sx={{ position: 'absolute', left: px(playTime), top: 0, bottom: 0,
+                    width: 2, bgcolor: 'red', zIndex: 10, pointerEvents: 'none' }} />
+                )}
+                {lane.segments.map(seg => {
+                  const left = px(seg.start)
+                  const width = Math.max(px(seg.end) - left, 3)
+                  const sel = selectedSeg === seg.id || multiSelect.has(seg.id)
+                  return (
+                    <Box key={seg.id} sx={{
+                      position: 'absolute', left, top: 6, width, height: LANE_HEIGHT - 12,
+                      bgcolor: sel ? lane.color : `${lane.color}88`,
+                      borderRadius: 0.75, display: 'flex', alignItems: 'center',
+                      px: 0.75, overflow: 'hidden', cursor: 'pointer',
+                      border: sel ? '2px solid #333' : '1px solid transparent',
+                      '&:hover': { filter: 'brightness(1.2)', zIndex: 3 },
+                      opacity: seg.overlap ? 0.7 : 1,
                     }}
-                    onClick={() => handleSplitClick(spk, i)}
-                    title={`${getDisplayName(spk)} ${turn.start.toFixed(1)}s-${turn.end.toFixed(1)}s (点击切分)`}
-                  >
-                    {turn.start.toFixed(1)}-{turn.end.toFixed(1)}
-                  </Box>
-                )
-              })}
+                      onClick={() => {
+                        if (multiSelect.size > 0) {
+                          const n = new Set(multiSelect)
+                          n.has(seg.id) ? n.delete(seg.id) : n.add(seg.id)
+                          setMultiSelect(n)
+                        } else {
+                          setSelectedSeg(s => s === seg.id ? null : seg.id)
+                          play(seg)
+                        }
+                      }}
+                      onDoubleClick={() => setSplitConfirm(seg)}
+                      title={`${seg.text}\n${seg.translation || ''}\n${seg.start.toFixed(1)}s-${seg.end.toFixed(1)}s`}
+                    >
+                      {width > 30 && (
+                        <Typography sx={{ fontSize: '0.6rem', color: '#fff', whiteSpace: 'nowrap',
+                          overflow: 'hidden', textOverflow: 'ellipsis',
+                          textShadow: '0 1px 2px rgba(0,0,0,0.4)' }}>
+                          {width > 80 && seg.translation ? seg.translation : seg.text}
+                        </Typography>
+                      )}
+                    </Box>
+                  )
+                })}
+              </Box>
             </Box>
-          </Box>
-        ))}
+          ))}
+        </Box>
       </Box>
 
-      <Box sx={{ maxHeight: 300, overflow: 'auto' }}>
-        {timeline.filter(t => !selectedSpeaker || t.speaker === selectedSpeaker).map((turn, i) => (
-          <Box key={i} sx={{
-            display: 'flex', alignItems: 'center', gap: 1, py: 0.5,
-            borderBottom: '1px solid #eee', fontSize: '0.85rem',
-          }}>
-            <Chip size="small" label={getDisplayName(turn.speaker)}
-              sx={{ bgcolor: getColor(turn.speaker), color: '#fff', minWidth: 80 }} />
-            <Typography variant="caption" sx={{ minWidth: 80, color: 'text.secondary' }}>
-              {turn.start.toFixed(1)}s - {turn.end.toFixed(1)}s
+      {/* ── Detail bar ── */}
+      {selectedSeg && (() => {
+        const seg = lanes.flatMap(l => l.segments).find(s => s.id === selectedSeg)
+        if (!seg) return null
+        const lane = lanes.find(l => l.segments.some(s => s.id === seg!.id))
+        return (
+          <Box sx={{ mt: 1, p: 1, bgcolor: '#f9f9f9', borderRadius: 1, display: 'flex',
+            alignItems: 'center', gap: 1, flexWrap: 'wrap', fontSize: '0.8rem' }}>
+            <Chip size="small" label={lane?.display_name} sx={{ bgcolor: lane?.color, color: '#fff' }} />
+            <b>{seg.text}</b>
+            {seg.translation && <Typography variant="body2" color="text.secondary">{seg.translation}</Typography>}
+            <Typography variant="caption" color="text.secondary">
+              {seg.start.toFixed(1)}s - {seg.end.toFixed(1)}s ({(seg.end - seg.start).toFixed(1)}s)
             </Typography>
-            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-              ({(turn.end - turn.start).toFixed(1)}s)
-            </Typography>
-            <Tooltip title="从此处切分为新说话人">
-              <IconButton size="small" onClick={() => handleSplitClick(turn.speaker, i)}>
-                <SplitIcon sx={{ fontSize: 16 }} />
-              </IconButton>
-            </Tooltip>
+            <IconButton size="small" onClick={() => setSplitConfirm(seg)}><SplitIcon fontSize="small" /></IconButton>
           </Box>
-        ))}
-      </Box>
+        )
+      })()}
 
+      {/* ── Dialogs ── */}
       <Dialog open={!!splitConfirm} onClose={() => setSplitConfirm(null)}>
-        <DialogTitle>确认切分说话人</DialogTitle>
+        <DialogTitle>确认切分</DialogTitle>
         <DialogContent>
-          <Typography>
-            将从 turn {splitConfirm?.index} 开始将 "{getDisplayName(splitConfirm?.speaker || '')}"
-            的后半段切分为新的 speaker ID。此操作不可撤销。
-          </Typography>
+          <Typography>将 "{splitConfirm?.text}" 在中点切分为两段。</Typography>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setSplitConfirm(null)}>取消</Button>
-          <Button variant="contained" color="primary" onClick={doSplit}>确认切分</Button>
+          <Button variant="contained" onClick={doSplit}>确认</Button>
         </DialogActions>
       </Dialog>
-
       <Dialog open={!!mergeConfirm} onClose={() => setMergeConfirm(null)}>
-        <DialogTitle>确认合并说话人</DialogTitle>
+        <DialogTitle>确认合并</DialogTitle>
         <DialogContent>
-          <Typography>
-            将 "{getDisplayName(mergeConfirm?.source || '')}" 合并到 "{getDisplayName(mergeConfirm?.target || '')}"。
-            合并后所有 source 的 turns 将归属于 target。此操作不可撤销。
-          </Typography>
+          <Typography>合并以下 {mergeConfirm?.length} 个 segments？</Typography>
+          {mergeConfirm?.map(s => (
+            <Typography key={s.id} variant="caption" display="block">
+              · {s.text} ({s.start.toFixed(1)}s-{s.end.toFixed(1)}s)
+            </Typography>
+          ))}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setMergeConfirm(null)}>取消</Button>
-          <Button variant="contained" color="primary" onClick={doIdentityMerge}>确认合并</Button>
+          <Button variant="contained" onClick={doMerge}>合并</Button>
         </DialogActions>
       </Dialog>
+
+      {/* ── AI Drawer ── */}
+      <Drawer anchor="right" open={aiOpen} onClose={() => setAiOpen(false)}>
+        <Box sx={{ width: 360, p: 2 }}>
+          <Typography variant="h6" sx={{ mb: 2 }}>
+            <AutoAwesomeIcon sx={{ mr: 1, verticalAlign: 'middle' }} color="warning" />
+            AI 建议
+          </Typography>
+          {(aiPatches?.high?.length || aiPatches?.medium?.length) ? (
+            <>
+              {aiPatches!.high!.map((p, i) => (
+                <Card key={`h${i}`} sx={{ p: 1, mb: 1, borderLeft: '4px solid #4CAF50' }}>
+                  <Typography variant="body2"><b>{p.opcode}</b> — {p.reason?.join(', ')}</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    置信度 {(p.confidence * 100).toFixed(0)}% | {p.targets?.join(', ')}
+                  </Typography>
+                  <Button size="small" variant="contained" color="success"
+                    onClick={() => applyPatch(p)} sx={{ mt: 0.5 }}>应用</Button>
+                </Card>
+              ))}
+              {aiPatches!.medium!.map((p, i) => (
+                <Card key={`m${i}`} sx={{ p: 1, mb: 1, borderLeft: '4px solid #FF9800' }}>
+                  <Typography variant="body2"><b>{p.opcode}</b> — {p.reason?.join(', ')}</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    置信度 {(p.confidence * 100).toFixed(0)}% | {p.targets?.join(', ')}
+                  </Typography>
+                  <Box sx={{ display: 'flex', gap: 0.5, mt: 0.5 }}>
+                    <Button size="small" variant="contained" onClick={() => applyPatch(p)}>应用</Button>
+                    <Button size="small" onClick={() => {}}>忽略</Button>
+                  </Box>
+                </Card>
+              ))}
+            </>
+          ) : <Alert severity="info">暂无可用的 AI 建议。</Alert>}
+
+          {patchLog.length > 0 && (
+            <Box sx={{ mt: 3 }}>
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>操作历史 ({patchLog.length})</Typography>
+              <List dense>
+                {[...patchLog].reverse().slice(0, 20).map((p, i) => (
+                  <ListItem key={i}>
+                    <ListItemText primary={`${p.opcode} → ${p.targets?.join(', ')}`}
+                      secondary={`${p.author} · ${new Date(p.timestamp).toLocaleTimeString()}`} />
+                  </ListItem>
+                ))}
+              </List>
+            </Box>
+          )}
+        </Box>
+      </Drawer>
     </Card>
   )
 }
