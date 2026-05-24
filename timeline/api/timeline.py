@@ -16,7 +16,7 @@ from timeline.scorer.scorer import score_all
 from timeline.safety.guard import gate_check
 from timeline.recovery.replay import undo_last
 from timeline.recovery.snapshot import create_snapshot, should_snapshot
-from timeline import load_json as load_timeline, save_json as save_timeline
+from timeline.io import load_json as load_timeline, save_json as save_timeline
 
 
 def generate_candidate_patches(timeline_path: str) -> dict:

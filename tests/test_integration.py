@@ -7,8 +7,10 @@ Phase 9 — 集成测试 (P0-P1)
 import copy
 import json
 import os
-from core.ir import TimelineProjectIR
-from core.runtime import TimelineProjectState, SynthesisEngine, PatchEngine
+from core.ir.project import TimelineProjectIR
+from core.runtime.project_state import TimelineProjectState
+from core.runtime.synthesis import SynthesisEngine
+from core.runtime.patch_engine import PatchEngine
 from core.runtime.patch import Patch
 from timeline.fusion import from_extract_result
 from timeline.patch.opcode import OpCode
