@@ -3577,6 +3577,25 @@ async def speaker_split(req: SpeakerSplitRequest):
         _json.dump(tl, f, ensure_ascii=False, indent=2)
 
     _split_propagate(workspace, target_speaker, new_speaker, turns, affected_indices)
+
+    # Patch Engine: 为新 speaker 生成 RETAG_SPEAKER patch
+    try:
+        from timeline.adapters.speaker import rename_speaker_patch
+        from timeline.api.timeline import apply_user_patch
+        timeline_path = os.path.join(extract_dir, "timeline.json")
+        patch_log_path = os.path.join(extract_dir, "timeline_patches.json")
+        if os.path.isfile(timeline_path):
+            from timeline import load_json
+            tl_ir = load_json(timeline_path)
+            affected_seg_ids = [
+                s.id for s in tl_ir.timeline if s.speaker == new_speaker
+            ]
+            if affected_seg_ids:
+                patch = rename_speaker_patch(affected_seg_ids, new_speaker, author="user")
+                apply_user_patch(timeline_path, patch.to_dict(), patch_log_path)
+    except Exception:
+        pass
+
     return {"status": "ok", "new_speaker": new_speaker, "speakers": speakers,
             "affected_turns": len(affected_indices)}
 
@@ -3646,6 +3665,23 @@ async def speaker_rename(req: SpeakerRenameRequest):
         names.pop(req.speaker, None)
     with open(sn_path, "w", encoding="utf-8") as f:
         _json.dump(names, f, ensure_ascii=False, indent=2)
+
+    # Patch Engine: 记录 rename 到 Patch 日志
+    try:
+        from timeline.adapters.speaker import rename_speaker_patch
+        from timeline.api.timeline import apply_user_patch
+        timeline_path = os.path.join(extract_dir, "timeline.json")
+        patch_log_path = os.path.join(extract_dir, "timeline_patches.json")
+        if os.path.isfile(timeline_path):
+            from timeline import load_json
+            tl_ir = load_json(timeline_path)
+            seg_ids = [s.id for s in tl_ir.timeline if s.speaker == req.speaker]
+            if seg_ids:
+                patch = rename_speaker_patch(seg_ids, req.display_name, author="user")
+                apply_user_patch(timeline_path, patch.to_dict(), patch_log_path)
+    except Exception:
+        pass
+
     return {"status": "ok", "speaker_names": names}
 
 

@@ -836,11 +836,19 @@ class SRTTranslator:
         ma_cfg = self.config.get("multi_agent", {})
         self.multi_agent_enabled = ma_cfg.get("enabled", False)
 
-    def translate(self, srt_path: str) -> Tuple[str, str]:
+    def translate(self, srt_path: str, timeline_path: str | None = None) -> Tuple[str, str]:
         """主入口
         返回: (translated_srt_path, pending_manual_path)
         pending_manual_path 为空表示全部自动翻译成功
+
+        timeline_path: 若提供，从 Timeline IR 读取 segments 进行翻译，
+                       翻译结果回写到 segment.translation。
         """
+        # ── Timeline 路径 ──
+        if timeline_path and os.path.isfile(timeline_path):
+            return self._translate_from_timeline(timeline_path, srt_path)
+
+        # ── SRT 路径（现有逻辑）──
         logger.info(f"开始翻译: {srt_path}")
         subs = pysrt.open(srt_path)
         self._all_subs = subs  # 保存全局字幕列表，供上下文提取使用
@@ -959,6 +967,83 @@ class SRTTranslator:
             return auto_path, pending_path
 
         # 全部成功
+        self.log.write(f"{base}-translate-log.json")
+        return auto_path, ""
+
+    def _translate_from_timeline(
+        self, timeline_path: str, srt_path: str
+    ) -> Tuple[str, str]:
+        """从 Timeline IR 读取 segments，翻译后回写 translation 字段。"""
+        from timeline import load_json, save_json as save_timeline
+        import pysrt, copy
+
+        logger.info(f"开始 Timeline 翻译: {timeline_path}")
+        tl = load_json(timeline_path)
+        self.log.video = tl.audio_id
+
+        # 构建 pysrt SubRipItem 列表（适配现有翻译管线）
+        subs = pysrt.SubRipFile()
+        for seg in tl.timeline:
+            if not seg.text.strip():
+                continue
+            item = pysrt.SubRipItem(
+                index=int(seg.id.split("_")[1]) if "_" in seg.id else 0,
+                start=pysrt.SubRipTime(seconds=seg.start),
+                end=pysrt.SubRipTime(seconds=seg.end),
+                text=seg.text,
+            )
+            subs.append(item)
+        # 重新编号
+        for i, sub in enumerate(subs, 1):
+            sub.index = i
+
+        self._all_subs = subs
+
+        # 语言检测
+        if self.source_lang == "auto":
+            self.source_lang = detect_source_language(subs)
+            logger.info(f"检测到源语言: {self.source_lang}")
+
+        # 语义分组（同 speaker 不强制切分，交给现有逻辑）
+        groups = group_semantically(
+            subs,
+            max_size=self.config.get("max_group_size", 8),
+            max_chars=self.config.get("max_group_chars", 500),
+            min_pause=self.config.get("min_pause_gap", 0.5),
+        )
+        self.log.total_groups = len(groups)
+
+        # 翻译每组
+        translate_fn = self._translate_group_with_fallback
+        if self.multi_agent_enabled:
+            translate_fn = self._translate_group_multi_agent
+        elif self.split_brain_enabled:
+            translate_fn = self._translate_group_split_brain
+
+        for gi, group in enumerate(groups, 1):
+            translate_fn(gi, group)
+
+        # 回写 translation 到 Timeline
+        for sub in subs:
+            for seg in tl.timeline:
+                if seg.text.strip() == "":
+                    continue
+                # 通过 index 映射翻译结果
+                idx = int(seg.id.split("_")[1]) if "_" in seg.id else 0
+                if idx == sub.index:
+                    seg.translation = sub.text
+                    break
+
+        # 保存翻译后的 timeline 到 02_translate/
+        out_dir = os.path.dirname(srt_path)
+        out_timeline = os.path.join(out_dir, "timeline.json")
+        save_timeline(tl, out_timeline)
+        logger.info(f"Timeline 翻译已保存: {out_timeline}")
+
+        # 同时输出 SRT（兼容下游 TTS）
+        base = os.path.splitext(srt_path)[0]
+        auto_path = f"{base}-auto.srt"
+        subs.save(auto_path, encoding="utf-8")
         self.log.write(f"{base}-translate-log.json")
         return auto_path, ""
 

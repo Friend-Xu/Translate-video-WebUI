@@ -441,7 +441,10 @@ def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
         translator.naturalness_check = False
     if verification_mode:
         translator.verification_mode = verification_mode
-    auto_srt, pending = translator.translate(srt_path)
+    auto_srt, pending = translator.translate(
+        srt_path,
+        timeline_path=ws["timeline"] if ws and os.path.isfile(ws.get("timeline", "")) else None,
+    )
 
     if pending:
         ck.fail_step("translate", "manual review pending", error_type="USER")
