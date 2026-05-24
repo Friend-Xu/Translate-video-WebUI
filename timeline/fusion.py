@@ -93,3 +93,63 @@ def _mark_overlaps(segments: list[TimelineSegment]) -> None:
         if a.end > b.start and a.speaker != b.speaker:
             a.overlap = True
             b.overlap = True
+
+
+# ── Migration Layer ───────────────────────────────────────
+
+def to_project_ir(timeline_ir: TimelineIR):
+    """旧 IR → 新 IR 深度迁移。"""
+    from core.ir.timeline_event import TimelineEventIR as NewEvent
+    from core.ir.speaker import SpeakerNodeIR
+    from core.ir.project import TimelineProjectIR
+
+    events: dict[str, NewEvent] = {}
+    speakers: dict[str, SpeakerNodeIR] = {}
+
+    for i, seg in enumerate(timeline_ir.timeline):
+        eid = seg.id if seg.id else f"evt_{i + 1:03d}"
+        spk = seg.speaker
+        if spk and spk not in speakers:
+            entry = timeline_ir.speaker_map.get(spk)
+            name = entry.alias if entry and entry.alias else None
+            speakers[spk] = SpeakerNodeIR(id=spk, name=name)
+
+        events[eid] = NewEvent(
+            id=eid, start=seg.start, end=seg.end,
+            speaker_ref=spk, text_ref=seg.text, source="asr",
+        )
+
+    metadata = dict(timeline_ir.metadata)
+    metadata.setdefault("_migrated_from", "timeline.ir")
+
+    return TimelineProjectIR(events=events, speakers=speakers)
+
+
+def from_project_ir(project_ir) -> TimelineIR:
+    """新 IR → 旧 IR 反向迁移。"""
+    segments = []
+    speaker_ids = set()
+
+    for evt in project_ir.event_list:
+        spk = evt.speaker_ref
+        seg = TimelineSegment(
+            id=evt.id, type="speech", speaker=spk,
+            start=evt.start, end=evt.end, text=evt.text_ref,
+            translation="", overlap=False, words=[],
+        )
+        segments.append(seg)
+        if spk:
+            speaker_ids.add(spk)
+
+    speaker_map = {}
+    for spk_id in speaker_ids:
+        spk_ir = project_ir.speakers.get(spk_id)
+        alias = spk_ir.name if spk_ir and spk_ir.name else ""
+        speaker_map[spk_id] = SpeakerMapEntry(alias=alias)
+
+    audio_id = "migrated"
+    return TimelineIR(
+        audio_id=audio_id, version="1.0",
+        timeline=segments, speaker_map=speaker_map,
+        metadata={},
+    )

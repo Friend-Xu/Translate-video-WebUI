@@ -126,3 +126,61 @@ def _hash_segments(segments: list[dict]) -> str:
     raw = json.dumps([{k: s[k] for k in keys if k in s} for s in segments],
                      sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(raw.encode()).hexdigest()[:12]
+
+
+# ── Migration Router ──────────────────────────────────────
+
+class TimelineMigrationRouter:
+    """Strangler Fig 渐进迁移路由 — feature flag 控制新旧 IR 切换。
+
+    Usage:
+        router = TimelineMigrationRouter()
+        view = router.get_view(workspace_path, use_new_ir=False)
+    """
+
+    def __init__(self, new_ir_ratio: float = 0.0):
+        self._ratio = max(0.0, min(1.0, new_ir_ratio))
+
+    @property
+    def ratio(self) -> float:
+        return self._ratio
+
+    def get_view(self, workspace: str, use_new_ir: bool = False):
+        """获取统一 TimelineView — 根据 feature flag 返回旧或新视图。"""
+        if use_new_ir:
+            return self._new_view(workspace)
+
+        import hashlib
+        if self._ratio >= 1.0:
+            return self._new_view(workspace)
+        if self._ratio <= 0.0:
+            return self._old_view(workspace)
+
+        h = int(hashlib.md5(workspace.encode()).hexdigest()[:8], 16)
+        if (h % 100) / 100.0 < self._ratio:
+            return self._new_view(workspace)
+        return self._old_view(workspace)
+
+    def _old_view(self, workspace: str):
+        from timeline.adapters.old_ir_adapter import OldTimelineView
+
+        tl_path = os.path.join(workspace, "01_extract", "timeline.json")
+        if not os.path.isfile(tl_path):
+            raise FileNotFoundError(f"timeline.json 不存在: {tl_path}")
+
+        tl = load_timeline(tl_path)
+        return OldTimelineView(tl)
+
+    def _new_view(self, workspace: str):
+        from timeline.adapters.new_ir_adapter import NewTimelineView
+        from timeline.fusion import to_project_ir
+
+        tl_path = os.path.join(workspace, "01_extract", "timeline.json")
+        if not os.path.isfile(tl_path):
+            raise FileNotFoundError(f"timeline.json 不存在: {tl_path}")
+
+        tl = load_timeline(tl_path)
+        project_ir = to_project_ir(tl)
+        from core.runtime.project_state import TimelineProjectState
+        state = TimelineProjectState(project_ir)
+        return NewTimelineView(state)
