@@ -73,8 +73,8 @@ def _ensure_hf_cache(repo_id: str, local_dir: Path) -> None:
 from contextlib import contextmanager
 
 @contextmanager
-def _pyannote_compat_context():
-    """pyannote 兼容层：torch.load + hf_hub_download 参数适配。
+def _pyannote_compat_context(model_dir: Path):
+    """pyannote 兼容层：torch.load + hf_hub_download 本地缓存优先。
     通过 context manager 限定补丁生命周期，退出时自动恢复。
     """
     import torch, huggingface_hub
@@ -87,11 +87,14 @@ def _pyannote_compat_context():
         return _orig_load(*args, **kwargs)
 
     def _safe_hf_hub(repo_id, filename, *args, **kwargs):
-        kwargs.pop("use_auth_token", None)  # huggingface_hub >=1.0 移除了此参数
+        kwargs.pop("use_auth_token", None)
+        # 优先本地缓存
+        if repo_id.startswith("pyannote/"):
+            local = model_dir.parent / repo_id.split("/")[-1] / filename
+            if local.is_file():
+                return str(local)
         return huggingface_hub.hf_hub_download(repo_id, filename, *args, **kwargs)
 
-    # pyannote 内部 from huggingface_hub import hf_hub_download → 拿到的是本地引用
-    # 必须同时修补 pyannote 模块内的引用
     for mod_name in ("pyannote.audio.core.model", "pyannote.audio.pipelines.utils.getter"):
         try:
             mod = __import__(mod_name, fromlist=["hf_hub_download"])
@@ -166,7 +169,7 @@ class SpeakerDiarizer:
             if repo_id and "/" in repo_id:
                 _ensure_hf_cache(repo_id, model_dir.parent / repo_id.split("/")[-1])
 
-        with _pyannote_compat_context():
+        with _pyannote_compat_context(model_dir):
             t0 = time.time()
             logger.info("加载 pyannote: %s", config_path)
             self._pipeline = Pipeline.from_pretrained(config_path)
