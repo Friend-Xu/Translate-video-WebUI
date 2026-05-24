@@ -3489,7 +3489,7 @@ def _propagate_speaker_changes(workspace: str, mapping: dict[str, str]):
 
 @app.post("/api/speaker/diarization/merge")
 async def speaker_merge(req: SpeakerMergeRequest):
-    """合并两个 speaker（source → target）。"""
+    """合并两个 speaker（source → target）— Patch-driven。"""
     workspace = req.workspace
     extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
     if not extract_dir or not os.path.isdir(extract_dir):
@@ -3498,6 +3498,7 @@ async def speaker_merge(req: SpeakerMergeRequest):
         raise HTTPException(status_code=400, detail="source 和 target 不能相同")
     import json as _json
 
+    # 1. 更新 speaker_timeline.json (pyannote output)
     tl_path = os.path.join(extract_dir, "speaker_timeline.json")
     if not os.path.isfile(tl_path):
         raise HTTPException(status_code=404, detail="speaker_timeline.json 不存在")
@@ -3514,6 +3515,24 @@ async def speaker_merge(req: SpeakerMergeRequest):
         _json.dump(tl, f, ensure_ascii=False, indent=2)
 
     _propagate_speaker_changes(workspace, {req.source: req.target})
+
+    # 2. Patch Engine: 生成 RETAG_SPEAKER patch 并记录
+    try:
+        from timeline.adapters.speaker import merge_speaker_patch
+        from timeline.api.timeline import apply_user_patch
+        timeline_path = os.path.join(extract_dir, "timeline.json")
+        patch_log_path = os.path.join(extract_dir, "timeline_patches.json")
+        if os.path.isfile(timeline_path):
+            # 找出 source speaker 的所有 segment
+            from timeline import load_json
+            tl_ir = load_json(timeline_path)
+            source_seg_ids = [s.id for s in tl_ir.timeline if s.speaker == req.source]
+            if source_seg_ids:
+                patch = merge_speaker_patch(source_seg_ids, req.target, author="user")
+                apply_user_patch(timeline_path, patch.to_dict(), patch_log_path)
+    except Exception:
+        pass  # Patch engine failure is non-fatal for existing speaker merge flow
+
     return {"status": "ok", "speakers": speakers, "turns_count": len(turns)}
 
 
@@ -3668,6 +3687,90 @@ def _seconds_to_srt(seconds: float) -> str:
     s = int(seconds % 60)
     ms = int((seconds % 1) * 1000)
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+# ---------------------------------------------------------------------------
+# Timeline Patch API (TASK 15)
+# ---------------------------------------------------------------------------
+
+class PatchApplyRequest(BaseModel):
+    workspace: str = ""
+    patch: dict = {}
+
+
+class PatchUndoRequest(BaseModel):
+    workspace: str = ""
+
+
+@app.post("/api/timeline/patch/generate")
+async def timeline_patch_generate(req: SpeakerRegenerateRequest):
+    """AI 生成候选 patches。只读，不修改 timeline。"""
+    workspace = req.workspace
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    if not extract_dir or not os.path.isdir(extract_dir):
+        raise HTTPException(status_code=400, detail="无效的工作目录")
+    tl_path = os.path.join(extract_dir, "timeline.json")
+    if not os.path.isfile(tl_path):
+        raise HTTPException(status_code=404, detail="timeline.json 不存在")
+    try:
+        from timeline.api.timeline import generate_candidate_patches
+        result = generate_candidate_patches(tl_path)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/timeline/patch/apply")
+async def timeline_patch_apply(req: PatchApplyRequest):
+    """应用一个 patch（系统生成或用户操作）。"""
+    workspace = req.workspace
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    if not extract_dir or not os.path.isdir(extract_dir):
+        raise HTTPException(status_code=400, detail="无效的工作目录")
+    tl_path = os.path.join(extract_dir, "timeline.json")
+    log_path = os.path.join(extract_dir, "timeline_patches.json")
+    if not os.path.isfile(tl_path):
+        raise HTTPException(status_code=404, detail="timeline.json 不存在")
+    try:
+        from timeline.api.timeline import apply_user_patch
+        result = apply_user_patch(tl_path, req.patch, log_path)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/timeline/patch/undo")
+async def timeline_patch_undo(req: PatchUndoRequest):
+    """回滚最近一个 patch。"""
+    workspace = req.workspace
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    if not extract_dir or not os.path.isdir(extract_dir):
+        raise HTTPException(status_code=400, detail="无效的工作目录")
+    tl_path = os.path.join(extract_dir, "timeline.json")
+    log_path = os.path.join(extract_dir, "timeline_patches.json")
+    if not os.path.isfile(tl_path):
+        raise HTTPException(status_code=404, detail="timeline.json 不存在")
+    try:
+        from timeline.api.timeline import undo_last_patch
+        result = undo_last_patch(tl_path, tl_path, log_path)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/timeline/patch/log")
+async def timeline_patch_log(workspace: str = ""):
+    """获取 patch 历史记录。"""
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    if not extract_dir or not os.path.isdir(extract_dir):
+        raise HTTPException(status_code=400, detail="无效的工作目录")
+    log_path = os.path.join(extract_dir, "timeline_patches.json")
+    try:
+        from timeline.api.timeline import get_patch_log
+        patches = get_patch_log(log_path)
+        return {"patches": patches, "count": len(patches)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/speaker/audio/preview")

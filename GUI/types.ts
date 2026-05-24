@@ -442,3 +442,43 @@ export interface SpeakerRenameRequest {
   speaker: string
   display_name: string
 }
+
+// ── Timeline Patch types (TASK 15) ──
+
+export interface TimelinePatchData {
+  patch_id: string
+  opcode: string
+  targets: string[]
+  payload: Record<string, any>
+  reason: string[]
+  score: number
+  confidence: number
+  parent_version: string
+  idempotency_key: string
+  author: string
+  timestamp: string
+}
+
+export interface PatchGenerateResponse {
+  patches: TimelinePatchData[]
+  high: TimelinePatchData[]
+  medium: TimelinePatchData[]
+  low: TimelinePatchData[]
+}
+
+export interface PatchApplyRequest {
+  workspace: string
+  patch: TimelinePatchData
+}
+
+export interface PatchApplyResponse {
+  status: string
+  patch_id?: string
+  diff?: Record<string, any>
+  reason?: string
+}
+
+export interface PatchLogResponse {
+  patches: TimelinePatchData[]
+  count: number
+}
