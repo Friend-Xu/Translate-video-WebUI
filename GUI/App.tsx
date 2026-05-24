@@ -298,6 +298,16 @@ export default function App() {
     setReviewSaved(true)
   }, [])
 
+  // 切换到说话人审核 tab 时加载 speaker 数据
+  useEffect(() => {
+    if (activeTab === '说话人审核' && prefillSrt?.workspace) {
+      fetch('/api/speaker/diarization/load', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace: prefillSrt.workspace }),
+      }).then(r => r.ok ? r.json().then((d: any) => setSpeakerData(d)) : null).catch(() => {})
+    }
+  }, [activeTab, prefillSrt?.workspace])
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
