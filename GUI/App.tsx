@@ -172,6 +172,7 @@ export default function App() {
             targetLang={config.targetLang}
             connectionState={connectionState}
             pipelineStage={status.state === 'running' ? status.currentStep : undefined}
+            backendOnline={backendOnline}
           />
         }
         railContent={railContent}

@@ -11,6 +11,7 @@ interface Props {
   targetLang?: string
   connectionState?: ConnectionState
   pipelineStage?: string
+  backendOnline?: boolean
   onExport?: () => void
 }
 
@@ -28,7 +29,7 @@ const SSE_LABELS: Record<ConnectionState, string> = {
 
 export default function PulseBar({
   videoName, sourceLang, targetLang,
-  connectionState = 'closed', pipelineStage, onExport,
+  connectionState = 'closed', pipelineStage, backendOnline = true, onExport,
 }: Props) {
   const mode = useAppStore(s => s.mode)
   const drafts = useAppStore(s => s.pendingDrafts)
@@ -73,13 +74,24 @@ export default function PulseBar({
 
       <Box sx={{ flexGrow: 1 }} />
 
-      {/* Right: SSE + Stage + Export */}
+      {/* Right: Status indicator */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          <FiberManualRecord sx={{ fontSize: 8, fill: SSE_COLORS[connectionState] }} />
-          <Typography variant="caption" sx={{ color: 'grey.400' }}>
-            {SSE_LABELS[connectionState]}
-          </Typography>
+          {pipelineStage ? (
+            <>
+              <FiberManualRecord sx={{ fontSize: 8, fill: SSE_COLORS[connectionState] }} />
+              <Typography variant="caption" sx={{ color: 'grey.400' }}>
+                {SSE_LABELS[connectionState]}
+              </Typography>
+            </>
+          ) : (
+            <>
+              <FiberManualRecord sx={{ fontSize: 8, fill: backendOnline ? '#4CAF50' : '#F44336' }} />
+              <Typography variant="caption" sx={{ color: 'grey.400' }}>
+                {backendOnline ? '后端在线' : '后端离线'}
+              </Typography>
+            </>
+          )}
         </Box>
 
         {pipelineStage && (
