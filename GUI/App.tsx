@@ -19,7 +19,7 @@ import { useConfig } from './hooks/useConfig'
 import { usePipeline } from './hooks/usePipeline'
 import { useSSE } from './hooks/useSSE'
 import { useBatch } from './hooks/useBatch'
-import type { PipelineMode, SpeakerTurn, SpeakerVerification } from './types'
+import type { PipelineMode } from './types'
 import { DEFAULT_CONFIG } from './types'
 
 export default function App() {
@@ -42,10 +42,7 @@ export default function App() {
     open: false, msg: '', severity: 'info',
   })
   const [reviewSaved, setReviewSaved] = useState(false)
-  const [speakerData, setSpeakerData] = useState<{
-    speakers: string[]; timeline: SpeakerTurn[];
-    verification: SpeakerVerification | null; speakerNames: Record<string, string>;
-  } | null>(null)
+  const [speakerData, setSpeakerData] = useState<any>(null)
   const [prefillSrt, setPrefillSrt] = useState<{ source: string; translated: string; log: string; workspace: string } | null>(null)
   const [backendOnline, setBackendOnline] = useState(true)
   const [dragOverWindow, setDragOverWindow] = useState(false)
@@ -381,15 +378,13 @@ export default function App() {
             />
           </KeepAliveSection>
           <KeepAliveSection active={activeTab === '说话人审核'}>
-            {speakerData && speakerData.speakers.length > 0 ? (
+            {speakerData?.speaker_lanes?.length > 0 ? (
               <SpeakerReviewPanel
                 workspace={prefillSrt?.workspace || ''}
-                speakers={speakerData.speakers}
-                timeline={speakerData.timeline}
-                verification={speakerData.verification}
-                speakerNames={speakerData.speakerNames}
-                onTimelineChange={(tl) => setSpeakerData(prev => prev ? { ...prev, timeline: tl } : null)}
-                onSaveCorrections={() => showMsg('说话人修正已保存', 'success')}
+                speakers={speakerData.speaker_lanes?.map((l: any) => l.speaker) || []}
+                timeline={[]}
+                verification={null}
+                speakerNames={speakerData.speakerNames || {}}
               />
             ) : (
               <Card sx={{ p: 3 }}><SectionHeader title="说话人审核" /><Alert severity="info">当前工作目录未检测到说话人分离结果。请启用说话人分离后重新提取字幕。</Alert></Card>
