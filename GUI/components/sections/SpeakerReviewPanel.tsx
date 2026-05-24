@@ -5,6 +5,7 @@ import {
   Badge, Drawer, List, ListItem, ListItemText,
 } from '@mui/material'
 import PauseIcon from '@mui/icons-material/PauseRounded'
+import PlayIcon from '@mui/icons-material/PlayArrowRounded'
 import UndoIcon from '@mui/icons-material/UndoRounded'
 import SplitIcon from '@mui/icons-material/CallSplitRounded'
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesomeRounded'
@@ -29,6 +30,7 @@ interface SpeakerLane {
 
 interface Props {
   workspace: string
+  videoPath: string
   speakers: string[]
   timeline: any[]
   verification: any | null
@@ -38,7 +40,7 @@ interface Props {
 }
 
 export default function SpeakerReviewPanel({
-  workspace, speakerNames,
+  workspace, videoPath, speakerNames,
 }: Props) {
   // ── Data ──
   const [lanes, setLanes] = useState<SpeakerLane[]>([])
@@ -59,7 +61,7 @@ export default function SpeakerReviewPanel({
   const [splitConfirm, setSplitConfirm] = useState<SegmentData | null>(null)
   const [mergeConfirm, setMergeConfirm] = useState<SegmentData[] | null>(null)
 
-  const playRef = useRef<number | null>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
 
   // ── Load ──
   const loadData = useCallback(() => {
@@ -86,11 +88,24 @@ export default function SpeakerReviewPanel({
 
   useEffect(() => { loadData() }, [loadData])
 
-  // ── Zoom ──
+  // ── Zoom (基于容器真实宽度) ──
+  const timelineRef = useRef<HTMLDivElement>(null)
+  const [containerWidth, setContainerWidth] = useState(800)
+
+  useEffect(() => {
+    const el = timelineRef.current
+    if (!el) return
+    const ro = new ResizeObserver(entries => {
+      for (const e of entries) setContainerWidth(e.contentRect.width)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
   const pixelsPerSec = useMemo(() => {
-    const w = Math.max(800, window.innerWidth - 200)
-    return w / zoomSeconds
-  }, [zoomSeconds])
+    if (zoomSeconds <= 0 || containerWidth <= 0) return 1
+    return containerWidth / zoomSeconds
+  }, [zoomSeconds, containerWidth])
 
   const totalWidth = totalDuration * pixelsPerSec
   const px = useCallback((s: number) => s * pixelsPerSec, [pixelsPerSec])
@@ -105,23 +120,63 @@ export default function SpeakerReviewPanel({
     return r.json()
   }
 
-  // ── Audio ──
-  const play = (seg: SegmentData) => {
-    stop()
-    setPlayTime(seg.start)
+  // ── Video playback ──
+  const [videoDuration, setVideoDuration] = useState(0)
+  const play = useCallback((seg: SegmentData) => {
+    const v = videoRef.current
+    if (!v) return
+    v.currentTime = Math.max(0, seg.start - 0.3)
+    v.play().catch(() => {})
     setPlaying(true)
-    const t0 = Date.now() - seg.start * 1000
-    playRef.current = window.setInterval(() => {
-      const t = (Date.now() - t0) / 1000
-      if (t > seg.end) { stop(); return }
-      setPlayTime(t)
-    }, 50)
-  }
-  const stop = () => {
+    setPlayTime(seg.start)
+  }, [])
+
+  const togglePlay = useCallback(() => {
+    const v = videoRef.current
+    if (!v) return
+    if (v.paused) { v.play().catch(() => {}); setPlaying(true) }
+    else { v.pause(); setPlaying(false) }
+  }, [])
+
+  const skip = useCallback((sec: number) => {
+    const v = videoRef.current
+    if (!v) return
+    v.currentTime = Math.max(0, Math.min(v.duration || 0, v.currentTime + sec))
+    setPlayTime(v.currentTime)
+  }, [])
+
+  const stop = useCallback(() => {
+    videoRef.current?.pause()
     setPlaying(false)
-    if (playRef.current) { clearInterval(playRef.current); playRef.current = null }
-  }
+  }, [])
+
+  const handleVideoTimeUpdate = useCallback(() => {
+    const v = videoRef.current
+    if (v && !v.paused) setPlayTime(v.currentTime)
+  }, [])
+
+  const handleVideoLoaded = useCallback(() => {
+    setVideoDuration(videoRef.current?.duration || 0)
+  }, [])
+
   useEffect(() => () => stop(), [])
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (e.code === 'Space') { e.preventDefault(); togglePlay() }
+      if (e.code === 'ArrowLeft') { e.preventDefault(); skip(-2) }
+      if (e.code === 'ArrowRight') { e.preventDefault(); skip(2) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [togglePlay, skip])
+
+  const fmtTime = (s: number) => {
+    const m = Math.floor(s / 60), sec = s % 60
+    return `${m}:${sec.toFixed(1).padStart(4, '0')}`
+  }
 
   // ── Undo ──
   const undo = async () => {
@@ -235,7 +290,7 @@ export default function SpeakerReviewPanel({
       </Box>
 
       {/* ── Timeline ── */}
-      <Box sx={{ overflowX: 'auto', overflowY: 'hidden', border: '1px solid #e0e0e0', borderRadius: 1 }}>
+      <Box ref={timelineRef} sx={{ overflowX: 'auto', overflowY: 'hidden', border: '1px solid #e0e0e0', borderRadius: 1 }}>
         <Box sx={{ minWidth: totalWidth, position: 'relative' }}>
           {/* Time ruler */}
           <Box sx={{ height: 18, borderBottom: '1px solid #e0e0e0', bgcolor: '#fafafa', position: 'relative' }}>
@@ -414,6 +469,48 @@ export default function SpeakerReviewPanel({
           )}
         </Box>
       </Drawer>
+
+      {/* Video player — compact, fixed width */}
+      {videoPath && (
+        <Box sx={{ mt: 1, display: 'flex', gap: 1, alignItems: 'flex-start' }}>
+          {/* Video panel */}
+          <Card sx={{ width: 340, minWidth: 340, bgcolor: '#111', borderRadius: 2,
+            overflow: 'hidden', position: 'relative' }}>
+            <video ref={videoRef} src={`/api/files/stream?path=${encodeURIComponent(videoPath)}`}
+              onTimeUpdate={handleVideoTimeUpdate} onEnded={stop}
+              onLoadedMetadata={handleVideoLoaded}
+              onClick={togglePlay}
+              style={{ width: '100%', display: 'block', cursor: 'pointer' }} />
+            {/* Custom controls overlay */}
+            <Box sx={{
+              display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5,
+              bgcolor: 'rgba(0,0,0,0.75)', color: '#fff',
+            }}>
+              <IconButton size="small" onClick={() => skip(-5)} sx={{ color: '#fff' }}>
+                <Typography variant="caption">-5s</Typography>
+              </IconButton>
+              <IconButton size="small" onClick={togglePlay} sx={{ color: '#fff' }}>
+                {playing ? <PauseIcon /> : <PlayIcon />}
+              </IconButton>
+              <IconButton size="small" onClick={() => skip(5)} sx={{ color: '#fff' }}>
+                <Typography variant="caption">+5s</Typography>
+              </IconButton>
+              <Typography variant="caption" sx={{ flexGrow: 1, textAlign: 'center', fontFamily: 'monospace' }}>
+                {fmtTime(playTime)} / {fmtTime(videoDuration)}
+              </Typography>
+            </Box>
+          </Card>
+          {/* Quick info */}
+          <Card sx={{ flex: 1, p: 1.5, minWidth: 180 }}>
+            <Typography variant="subtitle2" sx={{ mb: 0.5 }}>键盘快捷键</Typography>
+            <Typography variant="caption" display="block">Space — 播放/暂停</Typography>
+            <Typography variant="caption" display="block">← → — 快退/进 2s</Typography>
+            <Typography variant="caption" display="block">点击时间轴 — 定位播放</Typography>
+            <Typography variant="caption" display="block">双击片段 — 切分</Typography>
+            <Typography variant="caption" display="block">Ctrl+点击 — 多选合并</Typography>
+          </Card>
+        </Box>
+      )}
     </Card>
   )
 }

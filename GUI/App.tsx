@@ -393,6 +393,7 @@ export default function App() {
                   return `${dir}/${stem}_project`
                 })()}
                 speakers={speakerData.speaker_lanes?.map((l: any) => l.speaker) || []}
+                videoPath={config.videoPath}
                 timeline={[]}
                 verification={null}
                 speakerNames={speakerData.speakerNames || {}}
