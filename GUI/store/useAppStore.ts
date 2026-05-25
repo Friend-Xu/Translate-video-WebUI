@@ -297,7 +297,24 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   applyAllDrafts: () => {
-    set({ pendingDrafts: new Map() })
+    const drafts = get().pendingDrafts
+    if (drafts.size === 0) return
+    const now = new Date().toISOString()
+    const newPatches: TimelinePatchData[] = []
+    for (const [eventId, draft] of drafts) {
+      newPatches.push({
+        patch_id: `batch_${Date.now()}_${eventId}`,
+        opcode: draft.opcode,
+        targets: [draft.eventId],
+        payload: draft.payload,
+        reason: ['user batch apply'],
+        score: 1.0, confidence: 1.0,
+        parent_version: '', idempotency_key: `user_${Date.now()}`,
+        author: 'user', timestamp: now,
+      })
+    }
+    const history = [...get().appliedPatches, ...newPatches].slice(-50)
+    set({ pendingDrafts: new Map(), appliedPatches: history })
   },
 
   discardAllDrafts: () => {

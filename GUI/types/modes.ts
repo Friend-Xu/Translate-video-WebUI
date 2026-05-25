@@ -119,3 +119,25 @@ export interface ChatTTSSpeaker {
   id: string; name: string
   seed?: number; spk_emb?: string; speaker_pt?: string
 }
+
+// ── Patch Management 类型 ──
+
+export type PatchStatus = 'draft' | 'pending_review' | 'ready' | 'applied' | 'rolled_back' | 'failed' | 'conflict'
+export type PatchRiskLevel = 'low' | 'medium' | 'high'
+
+/** 统一的补丁视图项（PatchDraft + TimelinePatchData） */
+export interface PatchViewItem {
+  id: string
+  type: 'draft' | 'applied' | 'ai_suggestion'
+  opcode: string
+  targets: string[]
+  status: PatchStatus
+  riskLevel: PatchRiskLevel
+  author: string
+  timestamp: string | number
+  before?: Record<string, unknown>
+  after?: Record<string, unknown>
+  affectedEventCount: number
+  conflicts: string[]
+  isLocked: boolean
+}
