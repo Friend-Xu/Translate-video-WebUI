@@ -101,10 +101,14 @@ def workspace_paths(video_path: str) -> dict | None:
     工作目录布局::
 
         {video_dir}/{stem}_project/
-        ├── 01_extract/    ← 提取阶段
-        ├── 02_translate/  ← 翻译阶段
-        ├── 03_tts/        ← TTS 片段
-        └── 04_output/     ← 最终输出
+        ├── project.json
+        ├── checkpoint.json
+        ├── 01_extract/    ← 媒体抽取 + ASR
+        ├── 02_translate/  ← 翻译 + 质量评估
+        ├── 03_speaker/    ← 说话人分离 + 声线映射
+        ├── 04_patch/      ← 补丁历史
+        ├── 05_tts/        ← TTS 片段
+        └── 06_export/     ← 最终导出
 
     如果工作目录不存在则返回 None。
     """
@@ -118,8 +122,10 @@ def workspace_paths(video_path: str) -> dict | None:
         "workspace": ws,
         "extract_dir": os.path.join(ws, "01_extract"),
         "translate_dir": os.path.join(ws, "02_translate"),
-        "tts_dir": os.path.join(ws, "03_tts"),
-        "output_dir": os.path.join(ws, "04_output"),
+        "speaker_dir": os.path.join(ws, "03_speaker"),
+        "patch_dir": os.path.join(ws, "04_patch"),
+        "tts_dir": os.path.join(ws, "05_tts"),
+        "output_dir": os.path.join(ws, "06_export"),
         # 标准文件名
         "source_srt": os.path.join(ws, "01_extract", "source.srt"),
         "transcript_json": os.path.join(ws, "01_extract", "transcript.json"),
@@ -132,7 +138,10 @@ def workspace_paths(video_path: str) -> dict | None:
         "translate_log": os.path.join(ws, "02_translate", "translate-log.json"),
         "timeline": os.path.join(ws, "01_extract", "timeline.json"),
         "timeline_translated": os.path.join(ws, "02_translate", "timeline.json"),
-        "dubbed_mp4": os.path.join(ws, "04_output", "dubbed.mp4"),
+        "speaker_timeline": os.path.join(ws, "03_speaker", "speaker_timeline.json"),
+        "speaker_map": os.path.join(ws, "03_speaker", "speaker_map.json"),
+        "patch_log": os.path.join(ws, "04_patch", "timeline_patches.json"),
+        "dubbed_mp4": os.path.join(ws, "06_export", "dubbed.mp4"),
     }
 
 
@@ -390,6 +399,91 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
         "timeline": "01_extract/timeline.json",
     })
     print("  [OK] 字幕提取完成")
+
+
+def step_translate_core(video: str, force: bool = False) -> str:
+    """步骤 2 (core): 使用 core/ PassManager 完成翻译 + SRT 导出。"""
+    from core.passes import ASRToIRPass, SemanticMergePass, LLMTranslationPass, SRTExportPass
+    from core.engine import PassManager
+    from core.runtime import SynthesisEngine, TimelineProjectState
+    from core.ir import TimelineProjectIR
+
+    ws_dir = _workspace_dir(video)
+    ws = workspace_paths(video) or {}
+    ck = PipelineCheckpoint.load(ws_dir)
+
+    if ck.is_step_done("translate_core") and not force:
+        print("\n[2/3] 翻译 (core) — 已完成 (checkpoint)，跳过")
+        return ws.get("machine_srt") or os.path.join(ws_dir, "02_translate", "machine.srt")
+
+    logger.info("[STAGE] [2/4] core/ PassManager 翻译开始")
+    print("\n[2/3] 翻译 (core PassManager)...")
+    ck.start_step("translate_core")
+    ck.save()
+
+    transcript_path = os.path.join(ws_dir, "01_extract", "transcript.json")
+    speaker_timeline_path = os.path.join(ws_dir, "01_extract", "speaker_timeline.json")
+
+    with open(transcript_path, "r", encoding="utf-8") as f:
+        transcript = json.load(f)
+    segments = transcript.get("segments", [])
+
+    speaker_timeline = None
+    if os.path.exists(speaker_timeline_path):
+        with open(speaker_timeline_path, "r", encoding="utf-8") as f:
+            st_data = json.load(f)
+        speaker_timeline = [
+            (t["speaker"], t["start"], t["end"], t.get("confidence", 0.5))
+            for t in st_data.get("turns", [])
+        ]
+
+    asr_pass = ASRToIRPass(segments=segments, speaker_timeline=speaker_timeline)
+    pm = PassManager()
+    pm.register(asr_pass)
+    pm.register(SemanticMergePass())
+    # Real translate via DeepSeek
+    import yaml
+    cfg_path = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
+    with open(cfg_path, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f).get("translate", {})
+    api_key = cfg.get("api_key", "")
+    model = cfg.get("model", "deepseek-chat")
+
+    def _translate(tagged_text: str) -> str:
+        import requests
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": "你是专业字幕翻译器。输入是带标签的多行文本，每行: [event_id] 原文。请翻译为中文，保持完全相同标签格式。只返回翻译结果。"},
+                {"role": "user", "content": tagged_text},
+            ],
+            "temperature": 0.1, "max_tokens": 4000,
+        }
+        resp = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=120)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"].strip()
+
+    pm.register(LLMTranslationPass(translate_fn=_translate))
+    state = pm.run(TimelineProjectState(TimelineProjectIR({}, {})))
+    print(f"  PassManager 完成: {len(state.ir.events)} events")
+
+    machine_srt = os.path.join(ws_dir, "02_translate", "machine.srt")
+    os.makedirs(os.path.dirname(machine_srt), exist_ok=True)
+    srt_pass = SRTExportPass(output_path=machine_srt)
+    srt_pass.apply(state)
+
+    synth = SynthesisEngine()
+    rendered = synth.render_all(state)
+    timeline_v2_path = os.path.join(ws_dir, "02_translate", "timeline_v2.json")
+    with open(timeline_v2_path, "w", encoding="utf-8") as f:
+        json.dump(rendered, f, ensure_ascii=False, indent=2)
+
+    print(f"  SRT 导出: {machine_srt}")
+    ck.complete_step("translate_core")
+    ck.save()
+    print("  [OK] 翻译 (core) 完成")
+    return machine_srt
 
 
 def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
@@ -899,6 +993,8 @@ def main():
                         help="闭环验证模式: joint_formula (联合公式) | logic_gate (逻辑门控)")
     parser.add_argument("--skip-translate", action="store_true",
                         help="跳过翻译")
+    parser.add_argument("--use-core", action="store_true",
+                        help="使用 core/ PassManager 架构翻译（替代 SRT_Translator）")
     parser.add_argument("--skip-tts", action="store_true",
                         help="跳过 TTS 合成")
     parser.add_argument("--force", action="store_true",
@@ -1009,11 +1105,14 @@ def main():
         # ── 步骤 2: 翻译 ──
         srt_translated = srt_source
         if not args.skip_translate:
-            srt_translated = step_translate(video, srt_source, force=args.force, backup_dir=args.backup_dir,
-                                              checkpoint=ck,
-                                              skip_semantic_validation=args.skip_semantic_validation,
-                                              skip_naturalness_check=args.skip_naturalness_check,
-                                              verification_mode=args.verification_mode)
+            if args.use_core:
+                srt_translated = step_translate_core(video, force=args.force)
+            else:
+                srt_translated = step_translate(video, srt_source, force=args.force, backup_dir=args.backup_dir,
+                                                  checkpoint=ck,
+                                                  skip_semantic_validation=args.skip_semantic_validation,
+                                                  skip_naturalness_check=args.skip_naturalness_check,
+                                                  verification_mode=args.verification_mode)
         else:
             print("[2/3] 翻译 — 已跳过 (--skip-translate)")
             existing = guess_translated_srt(video)

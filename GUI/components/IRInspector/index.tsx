@@ -1,12 +1,14 @@
 import { useState, useCallback } from 'react'
 import {
   Box, Typography, Tabs, Tab, TextField, Button, Chip,
-  Divider, Breadcrumbs,
+  Divider, Breadcrumbs, List, ListItem,
 } from '@mui/material'
 import EditIcon from '@mui/icons-material/EditRounded'
 import SplitIcon from '@mui/icons-material/CallSplitRounded'
 import MergeIcon from '@mui/icons-material/MergeRounded'
 import VoiceIcon from '@mui/icons-material/RecordVoiceOverRounded'
+import OpenInNewIcon from '@mui/icons-material/OpenInNewRounded'
+import CheckCircleIcon from '@mui/icons-material/CheckCircleRounded'
 import { useAppStore } from '../../store/useAppStore'
 import { LAYOUT_PRESETS } from '../../types/modes'
 import DiagnosisCard from '../DiagnosisCard'
@@ -19,16 +21,18 @@ interface Props {
 }
 
 const TAB_LABELS: Record<InspectorTab, string> = {
-  text: '文本', time: '时间', speaker: '说话人',
-  tts: 'TTS', patch: 'Patch', history: '历史',
+  content: 'Content', timing: 'Timing', speaker: 'Speaker',
+  tts: 'TTS', patch: 'Patch', history: 'History',
 }
 
 export default function IRInspector({ event }: Props) {
   const mode = useAppStore(s => s.mode)
   const addDraft = useAppStore(s => s.addDraft)
+  const setMode = useAppStore(s => s.setMode)
+  const navigateToEvent = useAppStore(s => s.navigateToEvent)
   const preset = LAYOUT_PRESETS[mode]
   const visibleTabs = preset.inspectorTabs
-  const [activeTab, setActiveTab] = useState<InspectorTab>(visibleTabs[0] || 'text')
+  const [activeTab, setActiveTab] = useState<InspectorTab>(visibleTabs[0] || 'content')
 
   const [editText, setEditText] = useState('')
   const [editTranslation, setEditTranslation] = useState('')
@@ -85,8 +89,8 @@ export default function IRInspector({ event }: Props) {
       </Box>
 
       <Box sx={{ flexGrow: 1, overflow: 'hidden auto', p: 1.5 }}>
-        {/* Text tab */}
-        {activeTab === 'text' && (
+        {/* Content tab */}
+        {activeTab === 'content' && (
           <Box>
             <Box sx={{ display: 'flex', alignItems: 'center', mb: 1, gap: 0.5, flexWrap: 'wrap' }}>
               <Typography variant="subtitle2">{event.id}</Typography>
@@ -135,7 +139,6 @@ export default function IRInspector({ event }: Props) {
                   <Button size="small" variant="outlined" startIcon={<VoiceIcon />}>重标说话人</Button>
                 </Box>
 
-                {/* Diagnosis card for issues */}
                 {eventIssues.map(issue => (
                   <DiagnosisCard key={issue.eventId + issue.type} issue={issue} />
                 ))}
@@ -155,8 +158,8 @@ export default function IRInspector({ event }: Props) {
           </Box>
         )}
 
-        {/* Time tab */}
-        {activeTab === 'time' && (
+        {/* Timing tab */}
+        {activeTab === 'timing' && (
           <Box>
             <Typography variant="subtitle2" gutterBottom>时间信息</Typography>
             <Box sx={{ display: 'flex', gap: 2, mb: 1 }}>
@@ -168,18 +171,135 @@ export default function IRInspector({ event }: Props) {
                 <Typography>{(event.end - event.start).toFixed(2)}s</Typography></Box>
             </Box>
             <Divider sx={{ my: 1 }} />
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+              与相邻事件间距: {(event.start - (eventIssues.length > 0 ? eventIssues[0].start : 0)).toFixed(2)}s
+            </Typography>
             <Button size="small" variant="outlined" color="warning" fullWidth sx={{ mt: 1 }}>
               局部重算此片段
             </Button>
           </Box>
         )}
 
-        {/* Placeholder tabs */}
-        {['speaker', 'tts', 'patch', 'history'].includes(activeTab) && (
-          <Box sx={{ p: 2, textAlign: 'center' }}>
-            <Typography variant="body2" color="text.secondary">
-              {TAB_LABELS[activeTab as InspectorTab]} — 将在对应模式中完善
+        {/* Speaker tab */}
+        {activeTab === 'speaker' && (
+          <Box>
+            <Typography variant="subtitle2" gutterBottom>说话人信息</Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <Box>
+                <Typography variant="caption" color="text.secondary">说话人 ID</Typography>
+                <Typography variant="body2">{event.speaker || '(未知)'}</Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">显示名称</Typography>
+                <Typography variant="body2">{event.displayName || '(未命名)'}</Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">ASR 置信度</Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <Typography variant="body2">{event.confidence.toFixed(2)}</Typography>
+                  <Chip
+                    label={event.confidence < 0.7 ? '低' : event.confidence < 0.85 ? '中' : '高'}
+                    size="small"
+                    color={event.confidence < 0.7 ? 'error' : event.confidence < 0.85 ? 'warning' : 'success'}
+                    sx={{ fontSize: '0.6rem', height: 18 }}
+                  />
+                </Box>
+              </Box>
+            </Box>
+            <Divider sx={{ my: 1.5 }} />
+            <Button size="small" variant="outlined" startIcon={<OpenInNewIcon />}
+              onClick={() => { setMode('speaker'); navigateToEvent(event.id, event.start, 'timeline') }}>
+              切换到 Speaker Review 模式
+            </Button>
+          </Box>
+        )}
+
+        {/* TTS tab */}
+        {activeTab === 'tts' && (
+          <Box>
+            <Typography variant="subtitle2" gutterBottom>TTS 信息</Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <Box>
+                <Typography variant="caption" color="text.secondary">片段时长</Typography>
+                <Typography variant="body2">{(event.end - event.start).toFixed(2)}s</Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">预估语音时长</Typography>
+                <Typography variant="body2">
+                  {event.text ? (event.text.length * 0.25).toFixed(2) : '—'}s
+                  <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                    (按 {event.text ? (event.text.length * 0.25 / (event.end - event.start) * 100).toFixed(0) : '—'}% 速率)
+                  </Typography>
+                </Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">TTS 引擎</Typography>
+                <Chip label="edge-tts (默认)" size="small" variant="outlined" sx={{ fontSize: '0.65rem' }} />
+              </Box>
+            </Box>
+            <Divider sx={{ my: 1.5 }} />
+            <Typography variant="caption" color="text.secondary">
+              TTS 预览与语速调节将在集成真实引擎后可用
             </Typography>
+          </Box>
+        )}
+
+        {/* Patch tab */}
+        {activeTab === 'patch' && (
+          <Box>
+            <Typography variant="subtitle2" gutterBottom>补丁与草案</Typography>
+            {event.patches.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">此事件无关联补丁</Typography>
+            ) : (
+              <List dense disablePadding>
+                {event.patches.map(p => (
+                  <ListItem key={p.patch_id} sx={{ flexDirection: 'column', alignItems: 'flex-start', px: 1, py: 0.5, mb: 0.5, borderRadius: 1, bgcolor: 'action.hover' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, width: '100%' }}>
+                      <Chip label={p.opcode} size="small" color="primary" variant="outlined" sx={{ fontSize: '0.6rem', height: 18 }} />
+                      <Typography variant="caption" sx={{ flexGrow: 1 }}>{p.author}</Typography>
+                      <Typography variant="caption" color="text.secondary">{new Date(p.timestamp).toLocaleTimeString()}</Typography>
+                    </Box>
+                    {p.payload && (
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.25 }}>
+                        {JSON.stringify(p.payload).slice(0, 80)}{JSON.stringify(p.payload).length > 80 ? '...' : ''}
+                      </Typography>
+                    )}
+                  </ListItem>
+                ))}
+              </List>
+            )}
+            <Divider sx={{ my: 1.5 }} />
+            <Button size="small" variant="outlined" startIcon={<OpenInNewIcon />}
+              onClick={() => { setMode('patch'); navigateToEvent(event.id, event.start, 'timeline') }}>
+              切换到 Patch Management 模式
+            </Button>
+          </Box>
+        )}
+
+        {/* History tab */}
+        {activeTab === 'history' && (
+          <Box>
+            <Typography variant="subtitle2" gutterBottom>处理历史</Typography>
+            {event.passTrace.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">无处理记录</Typography>
+            ) : (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                {event.passTrace.map((name, idx) => (
+                  <Box key={idx} sx={{
+                    display: 'flex', alignItems: 'center', gap: 1,
+                    p: 1, borderRadius: 1, bgcolor: 'action.hover',
+                  }}>
+                    <CheckCircleIcon sx={{ fontSize: 16, color: 'success.main' }} />
+                    <Box>
+                      <Typography variant="body2" sx={{ fontSize: '0.75rem' }}>{name}</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Pass {idx + 1} of {event.passTrace.length}
+                      </Typography>
+                    </Box>
+                  </Box>
+                ))}
+              </Box>
+            )}
           </Box>
         )}
       </Box>

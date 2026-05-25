@@ -472,6 +472,7 @@ export interface SpeakerRenameRequest {
 // ── Timeline Patch types (TASK 15) ──
 
 export interface TimelinePatchData {
+  /** 对应 patch_log.schema.json §PatchEntry */
   patch_id: string
   opcode: string
   targets: string[]
@@ -483,6 +484,11 @@ export interface TimelinePatchData {
   idempotency_key: string
   author: string
   timestamp: string
+  /** v2.0 新增: schema 版本标识 */
+  schema_version?: string
+  status?: 'draft' | 'applied' | 'rolled_back' | 'failed' | 'conflict'
+  dependencies?: string[]
+  conflicts?: string[]
 }
 
 export interface PatchGenerateResponse {
@@ -531,6 +537,37 @@ export interface EventViewModel {
   passTrace: string[]
 }
 
+/** 磁盘 timeline.json v2.0 的结构（对应 schemas/timeline.schema.json） */
+export interface TimelineJsonV2 {
+  schema_version: '2.0'
+  project: {
+    id: string; source_video: string
+    source_lang: string; target_lang: string
+    created_at?: string; updated_at?: string
+  }
+  events: {
+    id: string; start: number; end: number
+    text: string; translation?: string
+    speaker?: string | null; tts_voice_id?: string | null
+    confidence?: number
+    words?: { word: string; start: number; end: number; confidence?: number }[]
+    review_status?: 'pending' | 'approved' | 'modified' | 'flagged'
+    patch_ids?: string[]
+    source?: 'asr' | 'alignment' | 'manual' | 'imported'
+    overlap?: { prev_event_id?: string | null; next_event_id?: string | null; overlap_duration?: number }
+  }[]
+  speakers?: Record<string, {
+    id: string; name?: string | null
+    voice_id?: string | null; color?: string
+    is_locked?: boolean
+    total_duration?: number; segment_count?: number
+  }>
+  metadata?: {
+    total_duration?: number; event_count?: number
+    speaker_count?: number; pipeline_version?: string
+  }
+}
+
 /** 右键上下文菜单 */
 export interface ContextMenuState {
   mouseX: number; mouseY: number
@@ -571,4 +608,161 @@ export interface SpeakerLoadResponse {
   inspector_data: Record<string, EventViewModel>
   speakerNames: Record<string, string>
 }
+
+// ── Export Settings 类型 (Phase 8) ──
+
+export interface VideoExportConfig {
+  container: 'mp4' | 'mkv'
+  videoCodec: 'libx264' | 'h265'
+  audioCodec: 'aac'
+  reencode: boolean
+  preserveResolution: boolean
+  preserveFramerate: boolean
+  targetWidth?: number
+  targetHeight?: number
+}
+
+export interface SubtitleExportConfig {
+  mode: 'burned' | 'soft' | 'none' | 'external'
+  bilingual: boolean
+  font: string
+  fontSizeMode: 'adaptive' | 'fixed'
+  fontSize: number
+  fontColor: string
+  strokeWidth: number
+  strokeColor: string
+  bgColor: string
+  alignment: 'center' | 'left' | 'right'
+  position: 'bottom' | 'top'
+  maxLines: number
+  maxFontSize: number
+  fontSizeFactor: number
+  widthRatio: number
+  externalFormat?: 'srt' | 'ass' | 'vtt'
+}
+
+export interface AudioExportConfig {
+  strategy: 'dubbed_only' | 'original_only' | 'mixed' | 'multi_track'
+  bgmVolume: number
+  preserveOriginal: boolean
+  separateTracks: boolean
+}
+
+export interface OutputNamingConfig {
+  baseDir: string
+  pattern: string
+  createDateSubdir: boolean
+  includeConfigSnapshot: boolean
+  includeExportLog: boolean
+}
+
+export interface QualityExportConfig {
+  videoBitrate: string
+  audioBitrate: string
+  crf: number
+  preset: 'ultrafast' | 'fast' | 'medium' | 'slow'
+  compatibility: 'desktop' | 'mobile' | 'both'
+}
+
+export interface ExportPreset {
+  id: string
+  name: string
+  description: string
+  isBuiltin: boolean
+  createdAt: string
+  updatedAt: string
+  video: VideoExportConfig
+  subtitle: SubtitleExportConfig
+  audio: AudioExportConfig
+  output: OutputNamingConfig
+  quality: QualityExportConfig
+}
+
+export interface ExportReadinessWarning {
+  severity: 'error' | 'warning' | 'info'
+  message: string
+  action?: { label: string; mode: import('./types/modes').Mode }
+}
+
+export interface ExportReadinessCheck {
+  totalEvents: number
+  lowConfidenceCount: number
+  unappliedPatches: number
+  unboundSpeakers: number
+  failedBatchTasks: number
+  warnings: ExportReadinessWarning[]
+  isReady: boolean
+}
+
+export interface ExportResult {
+  success: boolean
+  outputDir: string
+  files: { path: string; name: string; sizeMb: number; type: string }[]
+  durationSec: number
+  logPath?: string
+}
+
+export const DEFAULT_VIDEO_EXPORT: VideoExportConfig = {
+  container: 'mp4', videoCodec: 'libx264', audioCodec: 'aac',
+  reencode: false, preserveResolution: true, preserveFramerate: true,
+}
+
+export const DEFAULT_SUBTITLE_EXPORT: SubtitleExportConfig = {
+  mode: 'burned', bilingual: true,
+  font: '', fontSizeMode: 'adaptive', fontSize: 0,
+  fontColor: '#ffffff', strokeWidth: 0, strokeColor: '#000000',
+  bgColor: 'rgba(0,0,0,128)', alignment: 'center', position: 'bottom',
+  maxLines: 2, maxFontSize: 0, fontSizeFactor: 0.030, widthRatio: 0.85,
+}
+
+export const DEFAULT_AUDIO_EXPORT: AudioExportConfig = {
+  strategy: 'dubbed_only', bgmVolume: 1.0,
+  preserveOriginal: false, separateTracks: false,
+}
+
+export const DEFAULT_OUTPUT_NAMING: OutputNamingConfig = {
+  baseDir: '', pattern: '{project}_{lang}',
+  createDateSubdir: false, includeConfigSnapshot: true, includeExportLog: true,
+}
+
+export const DEFAULT_QUALITY_EXPORT: QualityExportConfig = {
+  videoBitrate: '8M', audioBitrate: '192k', crf: 23,
+  preset: 'medium', compatibility: 'desktop',
+}
+
+export const BUILTIN_EXPORT_PRESETS: ExportPreset[] = [
+  {
+    id: 'builtin-release',
+    name: '平台发布版', description: '烧录硬字幕 + H.264 + 仅配音轨，适合最终发布',
+    isBuiltin: true,
+    createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z',
+    video: { ...DEFAULT_VIDEO_EXPORT, container: 'mp4', videoCodec: 'libx264', reencode: false },
+    subtitle: { ...DEFAULT_SUBTITLE_EXPORT, mode: 'burned', bilingual: false },
+    audio: { ...DEFAULT_AUDIO_EXPORT, strategy: 'dubbed_only', bgmVolume: 1.0 },
+    output: { ...DEFAULT_OUTPUT_NAMING, pattern: '{project}_{lang}_release' },
+    quality: { ...DEFAULT_QUALITY_EXPORT, videoBitrate: '8M', crf: 23, preset: 'medium', compatibility: 'desktop' },
+  },
+  {
+    id: 'builtin-review',
+    name: '内部审校版', description: '软字幕 + 双语 + 保留原声，适合团队审校',
+    isBuiltin: true,
+    createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z',
+    video: { ...DEFAULT_VIDEO_EXPORT, container: 'mp4', videoCodec: 'libx264', reencode: false },
+    subtitle: { ...DEFAULT_SUBTITLE_EXPORT, mode: 'soft', bilingual: true },
+    audio: { ...DEFAULT_AUDIO_EXPORT, strategy: 'multi_track', preserveOriginal: true, bgmVolume: 0.8 },
+    output: { ...DEFAULT_OUTPUT_NAMING, pattern: '{project}_{lang}_review' },
+    quality: { ...DEFAULT_QUALITY_EXPORT, videoBitrate: '4M', crf: 26, preset: 'fast', compatibility: 'both' },
+  },
+  {
+    id: 'builtin-preview',
+    name: '低码率预览版', description: '720p + CRF 28 + 快速编码，适合快速预览分享',
+    isBuiltin: true,
+    createdAt: '2025-01-01T00:00:00Z', updatedAt: '2025-01-01T00:00:00Z',
+    video: { ...DEFAULT_VIDEO_EXPORT, container: 'mp4', videoCodec: 'libx264', reencode: true, preserveResolution: false, targetWidth: 1280, targetHeight: 720 },
+    subtitle: { ...DEFAULT_SUBTITLE_EXPORT, mode: 'burned', bilingual: false },
+    audio: { ...DEFAULT_AUDIO_EXPORT, strategy: 'dubbed_only', bgmVolume: 1.0 },
+    output: { ...DEFAULT_OUTPUT_NAMING, pattern: '{project}_{lang}_preview' },
+    quality: { ...DEFAULT_QUALITY_EXPORT, videoBitrate: '2M', crf: 28, preset: 'ultrafast', compatibility: 'mobile' },
+  },
+]
 

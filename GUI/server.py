@@ -4040,6 +4040,28 @@ async def speaker_audio_preview(path: str = "", start: float = 0, end: float = 0
 
 
 # ---------------------------------------------------------------------------
+# Schema validation endpoint
+# ---------------------------------------------------------------------------
+
+class ValidateRequest(BaseModel):
+    workspace: str = ""
+
+@app.post("/api/validate")
+async def validate_workspace_artifacts(req: ValidateRequest):
+    """验证指定 workspace 下所有关键 JSON 工件是否符合 schema。"""
+    if not req.workspace or not Path(req.workspace).is_dir():
+        raise HTTPException(status_code=400, detail="工作目录不存在")
+    try:
+        from pipeline.schema_validator import validate_workspace
+        results = validate_workspace(req.workspace)
+        all_ok = all(results.values()) and len(results) > 0
+        return {"ok": all_ok, "results": results,
+                "message": "所有工件通过校验" if all_ok else "存在校验失败项，请查看 results"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"校验失败: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Static file serving (production build)
 # ---------------------------------------------------------------------------
 

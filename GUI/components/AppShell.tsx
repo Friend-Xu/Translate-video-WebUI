@@ -10,8 +10,8 @@ interface Props {
   dockContent?: React.ReactNode
 }
 
-const PULSE_HEIGHT = 48
-const RAIL_WIDTH = 220
+const PULSE_HEIGHT = 56
+const RAIL_WIDTH = 72
 const INSPECTOR_DEFAULT = 360
 const INSPECTOR_MIN = 240
 const DOCK_DEFAULT = 200

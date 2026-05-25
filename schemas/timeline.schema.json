@@ -1,0 +1,108 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://translate-video/schemas/timeline.schema.json",
+  "title": "Unified Timeline IR",
+  "description": "统一时间轴 IR 的 JSON Schema 定义 (v2.0)。每个项目工作目录中 01_extract/timeline.json 的结构合约。",
+  "type": "object",
+  "required": ["schema_version", "project", "events"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "2.0" },
+    "project": {
+      "type": "object",
+      "required": ["id", "source_video", "source_lang", "target_lang"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "source_video": { "type": "string" },
+        "source_lang": { "type": "string", "minLength": 2, "maxLength": 10 },
+        "target_lang": { "type": "string", "minLength": 2, "maxLength": 10 },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/TimelineEvent" }
+    },
+    "speakers": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/Speaker" }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "total_duration": { "type": "number", "minimum": 0 },
+        "event_count": { "type": "integer", "minimum": 0 },
+        "speaker_count": { "type": "integer", "minimum": 0 },
+        "pipeline_version": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "TimelineEvent": {
+      "type": "object",
+      "required": ["id", "start", "end", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "start": { "type": "number", "minimum": 0 },
+        "end": { "type": "number", "minimum": 0 },
+        "text": { "type": "string" },
+        "translation": { "type": "string", "default": "" },
+        "speaker": { "type": ["string", "null"], "default": null },
+        "tts_voice_id": { "type": ["string", "null"], "default": null },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1, "default": 1.0 },
+        "words": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["word", "start", "end"],
+            "additionalProperties": false,
+            "properties": {
+              "word": { "type": "string" },
+              "start": { "type": "number" },
+              "end": { "type": "number" },
+              "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          }
+        },
+        "review_status": {
+          "type": "string",
+          "enum": ["pending", "approved", "modified", "flagged"],
+          "default": "pending"
+        },
+        "patch_ids": { "type": "array", "items": { "type": "string" } },
+        "source": {
+          "type": "string",
+          "enum": ["asr", "alignment", "manual", "imported"],
+          "default": "asr"
+        },
+        "overlap": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "prev_event_id": { "type": ["string", "null"] },
+            "next_event_id": { "type": ["string", "null"] },
+            "overlap_duration": { "type": "number", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "Speaker": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": ["string", "null"], "default": null },
+        "voice_id": { "type": ["string", "null"], "default": null },
+        "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$", "default": "#808080" },
+        "is_locked": { "type": "boolean", "default": false },
+        "total_duration": { "type": "number", "minimum": 0 },
+        "segment_count": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

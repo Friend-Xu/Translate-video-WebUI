@@ -38,27 +38,22 @@ export const DEFAULT_TRACKS: TrackDefinition[] = [
 
 export const TRACK_VISIBILITY_MAP: Record<Mode, Partial<Record<TrackType, { visible: boolean; locked: boolean; solo?: boolean; muted?: boolean }>>> = {
   timeline: {},
-  review: {
-    source: { visible: true, locked: true },
-    diff: { visible: false, locked: true },
-    speaker: { visible: true, locked: false, muted: true },
-    tts: { visible: false, locked: true },
-  },
-  patch: {
-    diff: { visible: true, locked: false, solo: true },
-    speaker: { visible: false, locked: true },
-  },
   speaker: {
     speaker: { visible: true, locked: false, solo: true },
     source: { visible: true, locked: true, muted: true },
     translation: { visible: false, locked: true },
   },
-  ops: {
+  patch: {
+    diff: { visible: true, locked: false, solo: true },
+    speaker: { visible: false, locked: true },
+  },
+  batch: {
     source: { visible: false, locked: true },
     translation: { visible: false, locked: true },
     speaker: { visible: false, locked: true },
     tts: { visible: false, locked: true },
   },
+  export: {},
 }
 
 // ── Snap ──

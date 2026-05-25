@@ -22,6 +22,13 @@ class Patch:
     value: dict                     # 与 op 对应的 payload
     timestamp: float = 0.0
     author: str = "system"          # "system" | "user" | "ai"
+    # v2.0 新增（对应 patch_log.schema.json §PatchEntry，向前端 TimelinePatchData 对齐）
+    targets: list[str] | None = None  # 多目标事件 ID 列表
+    reason: list[str] | None = None   # 变更原因描述
+    score: float = 1.0                # AI 评分 [0,1]
+    confidence: float = 1.0           # 置信度 [0,1]
+    parent_version: str = ''          # 父版本标识
+    idempotency_key: str = ''         # 幂等键
 
     def __post_init__(self):
         if self.timestamp == 0.0:

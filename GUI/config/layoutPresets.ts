@@ -16,6 +16,6 @@ export function getRailComponent(mode: Mode): string | null {
 }
 
 /** 根据模式获取默认激活的 Dock 视图 */
-export function getDefaultDockView(mode: Mode): 'log' | 'execution' | 'patchHistory' {
+export function getDefaultDockView(mode: Mode): 'log' | 'aiTrace' | 'patchDiff' | 'taskOutput' | 'debug' {
   return LAYOUT_PRESETS[mode]?.defaultDockView ?? 'log'
 }

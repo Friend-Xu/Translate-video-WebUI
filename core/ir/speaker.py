@@ -15,3 +15,7 @@ class SpeakerNodeIR:
     """
     id: str                         # "SPEAKER_00" — 来自 diarization 的稳定 ID
     name: str | None = None         # 显示名，None 表示未命名
+    # v2.0 新增（对应 speaker_map.schema.json §SpeakerMapping）
+    voice_id: str | None = None     # 绑定的 TTS 声线 ID
+    color: str | None = None        # UI 轨道颜色 (#RRGGBB)
+    is_locked: bool = False         # 禁止自动合并/拆分

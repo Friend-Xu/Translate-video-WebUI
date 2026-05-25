@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://translate-video/schemas/export_config.schema.json",
+  "title": "Export Config Snapshot",
+  "description": "导出配置快照的 JSON Schema (v2.0)。位于 06_export/{version}/export_config.json。",
+  "type": "object",
+  "required": ["schema_version", "video", "subtitle", "audio", "output", "quality"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "2.0" },
+    "export_id": { "type": "string" },
+    "preset_name": { "type": "string" },
+    "exported_at": { "type": "string", "format": "date-time" },
+    "source_project": { "type": "string" },
+    "video": { "$ref": "#/$defs/VideoConfig" },
+    "subtitle": { "$ref": "#/$defs/SubtitleConfig" },
+    "audio": { "$ref": "#/$defs/AudioConfig" },
+    "output": { "$ref": "#/$defs/OutputConfig" },
+    "quality": { "$ref": "#/$defs/QualityConfig" }
+  },
+  "$defs": {
+    "VideoConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "container": { "enum": ["mp4", "mkv"] },
+        "video_codec": { "enum": ["libx264", "h265"] },
+        "audio_codec": { "enum": ["aac"] },
+        "reencode": { "type": "boolean" },
+        "preserve_resolution": { "type": "boolean" },
+        "preserve_framerate": { "type": "boolean" },
+        "target_width": { "type": "integer", "minimum": 0 },
+        "target_height": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "SubtitleConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["burned", "soft", "none", "external"] },
+        "bilingual": { "type": "boolean" },
+        "font": { "type": "string" },
+        "font_size_mode": { "enum": ["adaptive", "fixed"] },
+        "font_size": { "type": "integer", "minimum": 0 },
+        "font_color": { "type": "string" },
+        "stroke_width": { "type": "number", "minimum": 0 },
+        "stroke_color": { "type": "string" },
+        "bg_color": { "type": "string" },
+        "alignment": { "enum": ["center", "left", "right"] },
+        "position": { "enum": ["bottom", "top"] },
+        "max_lines": { "type": "integer", "minimum": 1 },
+        "max_font_size": { "type": "integer", "minimum": 0 },
+        "font_size_factor": { "type": "number" },
+        "width_ratio": { "type": "number" },
+        "external_format": { "enum": ["srt", "ass", "vtt"] }
+      }
+    },
+    "AudioConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy": { "enum": ["dubbed_only", "original_only", "mixed", "multi_track"] },
+        "bgm_volume": { "type": "number", "minimum": 0, "maximum": 2 },
+        "preserve_original": { "type": "boolean" },
+        "separate_tracks": { "type": "boolean" }
+      }
+    },
+    "OutputConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "base_dir": { "type": "string" },
+        "pattern": { "type": "string" },
+        "create_date_subdir": { "type": "boolean" },
+        "include_config_snapshot": { "type": "boolean" },
+        "include_export_log": { "type": "boolean" }
+      }
+    },
+    "QualityConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "video_bitrate": { "type": "string" },
+        "audio_bitrate": { "type": "string" },
+        "crf": { "type": "integer", "minimum": 0, "maximum": 51 },
+        "preset": { "enum": ["ultrafast", "fast", "medium", "slow"] },
+        "compatibility": { "enum": ["desktop", "mobile", "both"] }
+      }
+    }
+  }
+}

@@ -17,6 +17,6 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["*.ts", "*.tsx", "components", "hooks", "store", "types", "mocks", "config"],
-  "exclude": ["vite.config.ts"],
+  "exclude": ["vite.config.ts", "vitest.config.ts", "__tests__", "test-setup.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { PatchPreview, SpeakerInfo, TimelinePatchData } from '../types'
+import type { PatchPreview, SpeakerInfo, TimelinePatchData, ExportPreset } from '../types'
 import type { Mode, PatchDraft, IssueFilter, JobState, CrossModeContext, SpeakerLaneData, SpeakerQuality, VoiceCard } from '../types/modes'
 import type { TrackDefinition } from '../types/timeline'
 import { DEFAULT_TRACKS, TRACK_VISIBILITY_MAP } from '../types/timeline'
@@ -37,6 +37,11 @@ export interface AppState {
   selectedSpeakerId: string | null
   selectedSpeakerIds: string[]
   voicePresets: VoiceCard[]
+
+  // Export state
+  exportPresets: ExportPreset[]
+  activePresetId: string | null
+  exportPreviewText: { zh: string; en: string }
 
   // Actions — Mode
   setMode: (mode: Mode) => void
@@ -89,6 +94,14 @@ export interface AppState {
   setVoicePresets: (presets: VoiceCard[]) => void
   setSpeakerQualities: (qualities: Record<string, SpeakerQuality>) => void
   bindVoice: (speakerId: string, voiceId: string) => void
+
+  // Actions — Export
+  setExportPresets: (presets: ExportPreset[]) => void
+  savePreset: (preset: ExportPreset) => void
+  deletePreset: (id: string) => void
+  duplicatePreset: (id: string) => void
+  setActivePreset: (id: string | null) => void
+  setExportPreviewText: (text: { zh: string; en: string }) => void
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -121,6 +134,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedSpeakerId: null,
   selectedSpeakerIds: [],
   voicePresets: [],
+
+  exportPresets: [],
+  activePresetId: null,
+  exportPreviewText: { zh: 'Minecraft我的世界 村民交易', en: 'Minecraft Villager Trade x64' },
 
   // ── Mode ──
   setMode: (mode) => {
@@ -366,4 +383,44 @@ export const useAppStore = create<AppState>((set, get) => ({
     )
     set({ speakerLanes: lanes })
   },
+
+  // ── Export ──
+  setExportPresets: (presets) => set({ exportPresets: presets }),
+
+  savePreset: (preset) => {
+    const now = new Date().toISOString()
+    const saved = { ...preset, updatedAt: now, createdAt: preset.createdAt || now }
+    const presets = get().exportPresets
+    const idx = presets.findIndex(p => p.id === saved.id)
+    const next = idx >= 0
+      ? presets.map(p => p.id === saved.id ? saved : p)
+      : [...presets, saved]
+    set({ exportPresets: next, activePresetId: saved.id })
+    try { localStorage.setItem('export-presets', JSON.stringify(next.filter(p => !p.isBuiltin))) } catch { /* quota */ }
+  },
+
+  deletePreset: (id) => {
+    const presets = get().exportPresets.filter(p => p.id !== id)
+    set({ exportPresets: presets, activePresetId: get().activePresetId === id ? null : get().activePresetId })
+    try { localStorage.setItem('export-presets', JSON.stringify(presets.filter(p => !p.isBuiltin))) } catch { /* quota */ }
+  },
+
+  duplicatePreset: (id) => {
+    const source = get().exportPresets.find(p => p.id === id)
+    if (!source) return
+    const now = new Date().toISOString()
+    const copy: ExportPreset = {
+      ...source, id: `preset_${Date.now()}`,
+      name: `${source.name} (副本)`, isBuiltin: false,
+      createdAt: now, updatedAt: now,
+      video: { ...source.video }, subtitle: { ...source.subtitle },
+      audio: { ...source.audio }, output: { ...source.output }, quality: { ...source.quality },
+    }
+    const next = [...get().exportPresets, copy]
+    set({ exportPresets: next, activePresetId: copy.id })
+    try { localStorage.setItem('export-presets', JSON.stringify(next.filter(p => !p.isBuiltin))) } catch { /* quota */ }
+  },
+
+  setActivePreset: (id) => set({ activePresetId: id }),
+  setExportPreviewText: (text) => set({ exportPreviewText: text }),
 }))
