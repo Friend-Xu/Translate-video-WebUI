@@ -51,7 +51,7 @@ export default function SpeakerLane({
             <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: lane.color, flexShrink: 0 }} />
             <Typography variant="caption" noWrap
               sx={{
-                fontSize: '0.65rem', color: '#fff', cursor: 'pointer',
+                fontSize: '0.65rem', color: 'common.white', cursor: 'pointer',
                 '&:hover': { textDecoration: 'underline' },
               }}
               onClick={() => onRenameSpeaker?.(lane.speaker)}>

@@ -92,7 +92,7 @@ export default function IRInspector({ event }: Props) {
               <Typography variant="subtitle2">{event.id}</Typography>
               <Chip label={`${event.start.toFixed(1)}s - ${event.end.toFixed(1)}s`} size="small" variant="outlined" />
               <Chip label={event.displayName || event.speaker || '?'} size="small"
-                sx={{ bgcolor: '#9E9E9E', color: '#fff' }} />
+                sx={{ bgcolor: 'grey.500', color: 'common.white' }} />
             </Box>
             <Divider sx={{ mb: 1 }} />
 

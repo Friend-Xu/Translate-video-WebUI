@@ -144,3 +144,68 @@ export const MOCK_SPEAKER_LOAD: SpeakerLoadResponse = {
     [SPEAKER_B]: '嘉宾李',
   },
 }
+
+// ── Factory: generate N events for stress testing ──
+
+export function generateManyEvents(count: number, totalDuration: number): EventViewModel[] {
+  const speakers = ['SPEAKER_00', 'SPEAKER_01', 'SPEAKER_02']
+  const names = ['主持人', '嘉宾A', '嘉宾B']
+  const texts = [
+    '现在我们可以看到这个数据非常有意思。',
+    '人工智能的发展速度超出了很多人的预期。',
+    '深度学习在图像识别领域取得了突破性进展。',
+    '自然语言处理技术正在改变我们与机器交互的方式。',
+    '联邦学习是一种保护隐私的机器学习方法。',
+    '强化学习在游戏和机器人控制中有广泛应用。',
+    '迁移学习可以减少训练模型所需的数据量。',
+    '生成式对抗网络可以创造出逼真的图像和声音。',
+    '注意力机制是Transformer架构的核心创新。',
+    '预训练模型已经成为了自然语言处理的标准范式。',
+  ]
+  const translations = [
+    'Now we can see this data is very interesting.',
+    'The speed of AI development has exceeded many expectations.',
+    'Deep learning has made breakthroughs in image recognition.',
+    'NLP technology is changing how we interact with machines.',
+    'Federated learning is a privacy-preserving ML approach.',
+    'Reinforcement learning has wide applications in games and robotics.',
+    'Transfer learning can reduce the data needed to train models.',
+    'GANs can create realistic images and sounds.',
+    'Attention mechanism is the core innovation of Transformer.',
+    'Pre-trained models have become the standard NLP paradigm.',
+  ]
+
+  const spacing = totalDuration / count
+  const events: EventViewModel[] = []
+  for (let i = 0; i < count; i++) {
+    const si = i % speakers.length
+    const ti = i % texts.length
+    events.push({
+      id: `seg_${String(i + 1).padStart(4, '0')}`,
+      start: parseFloat((i * spacing).toFixed(2)),
+      end: parseFloat(((i + 1) * spacing - 0.01).toFixed(2)),
+      speaker: speakers[si],
+      displayName: names[si],
+      text: texts[ti],
+      translation: translations[ti],
+      source: 'asr',
+      confidence: parseFloat((0.7 + Math.random() * 0.3).toFixed(2)),
+      visualState: {
+        hasPatches: Math.random() > 0.85,
+        hasAiSuggestion: Math.random() > 0.9,
+        isSelected: false,
+        isMultiSelected: false,
+      },
+      patches: [],
+      passTrace: ['ASR', 'Alignment'],
+    })
+  }
+  return events
+}
+
+export const MOCK_EVENTS_500 = generateManyEvents(500, 120)
+
+export const MOCK_TTS_WAVEFORMS: import('../types').TrackWaveformData[] = [
+  { trackId: 'trk_tts', peaks: generatePeaks(80), duration: 80, sampleRate: 44100, engine: 'edge' },
+  { trackId: 'trk_tts', peaks: generatePeaks(80), duration: 80, sampleRate: 44100, engine: 'chattts' },
+]

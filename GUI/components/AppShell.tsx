@@ -79,8 +79,8 @@ export default function AppShell({
     >
       {/* Pulse Bar */}
       <Box gridArea="pulse" role="banner" sx={{
-        borderBottom: 1, borderColor: 'divider', bgcolor: 'grey.900',
-        color: '#fff', display: 'flex', alignItems: 'center',
+        borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper',
+        color: 'text.primary', display: 'flex', alignItems: 'center',
       }}>
         {pulseBar || <RegionPlaceholder name="PulseBar" role="banner" />}
       </Box>

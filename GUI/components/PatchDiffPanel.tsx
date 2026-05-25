@@ -54,7 +54,7 @@ export default function PatchDiffPanel({ draft, onApply, onReject }: Props) {
           </Typography>
           <Typography variant="body2" sx={{
             fontSize: '0.72rem', p: 0.5, mt: 0.25, borderRadius: 0.5,
-            bgcolor: '#e8f5e9', wordBreak: 'break-word',
+            bgcolor: 'success.light', wordBreak: 'break-word',
             border: '1px solid #c8e6c9',
           }}>
             → {String(draft.after[key] || '(空)')}

@@ -27,7 +27,7 @@ export default function ImpactIndicator({
       }} />
       <Box sx={{
         position: 'absolute', top: 4, left: 4,
-        bgcolor: 'rgba(0,0,0,0.7)', color: '#fff',
+        bgcolor: 'rgba(0,0,0,0.7)', color: 'common.white',
         px: 0.75, py: 0.25, borderRadius: 0.5,
       }}>
         <Typography variant="caption" sx={{ fontSize: '0.6rem' }}>

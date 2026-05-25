@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { Box, Typography } from '@mui/material'
 import type { EventViewModel } from '../../types'
 
@@ -10,6 +11,7 @@ interface Props {
   isSelected: boolean
   isMultiSelected: boolean
   hasDraft?: boolean
+  readOnly?: boolean
   onClick: (e: React.MouseEvent) => void
   onDoubleClick: (e: React.MouseEvent) => void
   onContextMenu: (e: React.MouseEvent) => void
@@ -19,9 +21,9 @@ const DENSE_THRESHOLD = 80
 const COMPACT_THRESHOLD = 40
 const MINI_THRESHOLD = 20
 
-export default function EventBlock({
+function EventBlock({
   event, laneColor, left, width, laneHeight,
-  isSelected, isMultiSelected, hasDraft,
+  isSelected, isMultiSelected, hasDraft, readOnly,
   onClick, onDoubleClick, onContextMenu,
 }: Props) {
   const margin = 6
@@ -37,7 +39,7 @@ export default function EventBlock({
     <Box sx={{
       position: 'absolute', left, top: margin, width: Math.max(width, 3), height: h,
       bgcolor: sel ? laneColor : `${laneColor}88`,
-      borderRadius: 0.75, overflow: 'hidden', cursor: 'pointer',
+      borderRadius: 0.75, overflow: 'hidden', cursor: readOnly ? 'default' : 'pointer',
       border: `${borderWidth}px solid ${borderColor}`,
       '&:hover': { filter: 'brightness(1.2)', zIndex: 3 },
       opacity: isMultiSelected ? 0.6 : 1,
@@ -52,7 +54,7 @@ export default function EventBlock({
         <Box sx={{
           position: 'absolute', top: 1, right: 1,
           width: 8, height: 8, borderRadius: '50%',
-          bgcolor: '#FF9800', border: '1px solid #fff', zIndex: 5,
+          bgcolor: '#FF9800', border: '1px solid', borderColor: 'common.white', zIndex: 5,
         }} />
       )}
 
@@ -61,7 +63,7 @@ export default function EventBlock({
         <Box sx={{
           position: 'absolute', top: 1, left: 1,
           width: 7, height: 7, borderRadius: '50%', bgcolor: '#FF9800',
-          border: '1px solid #fff', zIndex: 5,
+          border: '1px solid', borderColor: 'common.white', zIndex: 5,
         }} />
       )}
 
@@ -70,7 +72,7 @@ export default function EventBlock({
         <Box sx={{
           position: 'absolute', top: 1, left: 1,
           width: 7, height: 7, borderRadius: '50%', bgcolor: '#FFEB3B',
-          border: '1px solid #fff', zIndex: 5,
+          border: '1px solid', borderColor: 'common.white', zIndex: 5,
         }} />
       )}
 
@@ -82,7 +84,7 @@ export default function EventBlock({
         }}>
           {width > DENSE_THRESHOLD && event.translation && (
             <Typography sx={{
-              fontSize: '0.58rem', color: '#fff', whiteSpace: 'nowrap',
+              fontSize: '0.58rem', color: 'common.white', whiteSpace: 'nowrap',
               overflow: 'hidden', textOverflow: 'ellipsis',
               textShadow: '0 1px 2px rgba(0,0,0,0.4)', lineHeight: 1.1,
             }}>
@@ -106,7 +108,7 @@ export default function EventBlock({
         <Box sx={{
           height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
-          <Typography sx={{ fontSize: '0.45rem', color: '#fff', fontWeight: 700 }}>
+          <Typography sx={{ fontSize: '0.45rem', color: 'common.white', fontWeight: 700 }}>
             {width <= 6 ? '' : event.id.replace('seg_', '')}
           </Typography>
         </Box>
@@ -123,3 +125,5 @@ export default function EventBlock({
     </Box>
   )
 }
+
+export default memo(EventBlock)

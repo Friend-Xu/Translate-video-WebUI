@@ -1,14 +1,21 @@
 import { create } from 'zustand'
 import type { PatchPreview, SpeakerInfo, TimelinePatchData } from '../types'
 import type { Mode, PatchDraft, IssueFilter, JobState } from '../types/modes'
+import type { TrackDefinition } from '../types/timeline'
+import { DEFAULT_TRACKS, TRACK_VISIBILITY_MAP } from '../types/timeline'
 
 export type { Mode, PatchDraft, IssueFilter, JobState }
 
 export interface AppState {
   mode: Mode
+  selectedEventIds: string[]
   selectedEventId: string | null
   playheadPosition: number
   currentProjectId: string | null
+
+  tracks: TrackDefinition[]
+  snapEnabled: boolean
+  trackScrollLeft: number
 
   unappliedPatches: PatchPreview[]
   pendingDrafts: Map<string, PatchDraft>
@@ -20,12 +27,32 @@ export interface AppState {
   modeSessions: Partial<Record<Mode, Record<string, unknown>>>
   localJobStatus: Record<string, JobState>
 
-  // Actions
+  // Actions — Mode
   setMode: (mode: Mode) => void
-  selectEvent: (eventId: string | null) => void
+
+  // Actions — Selection
+  selectEvent: (eventId: string | null, multi?: boolean) => void
+  toggleEventSelection: (eventId: string) => void
+  selectEventRange: (eventId: string) => void
+  selectAllVisible: (ids: string[]) => void
+  clearSelection: () => void
   setPlayhead: (position: number) => void
+
+  // Actions — Project
   setCurrentProject: (projectId: string | null) => void
 
+  // Actions — Tracks
+  setTracks: (tracks: TrackDefinition[]) => void
+  updateTrack: (id: string, partial: Partial<TrackDefinition>) => void
+  resizeTrack: (id: string, height: number) => void
+  toggleTrackVisibility: (id: string) => void
+  toggleTrackLock: (id: string) => void
+  toggleTrackSolo: (id: string) => void
+  toggleTrackMute: (id: string) => void
+  setSnapEnabled: (v: boolean) => void
+  setTrackScrollLeft: (px: number) => void
+
+  // Actions — Drafts
   addDraft: (draft: PatchDraft) => void
   removeDraft: (eventId: string) => void
   applyDraft: (eventId: string) => void
@@ -34,6 +61,7 @@ export interface AppState {
   discardAllDrafts: () => void
   undoLastPatch: () => TimelinePatchData | null
 
+  // Actions — Patches / Filters / Jobs
   setUnappliedPatches: (patches: PatchPreview[]) => void
   setIssueFilter: (filter: IssueFilter | null) => void
   setSpeakerFocus: (speaker: SpeakerInfo | null) => void
@@ -43,9 +71,14 @@ export interface AppState {
 
 export const useAppStore = create<AppState>((set, get) => ({
   mode: 'timeline',
+  selectedEventIds: [],
   selectedEventId: null,
   playheadPosition: 0,
   currentProjectId: null,
+
+  tracks: DEFAULT_TRACKS,
+  snapEnabled: true,
+  trackScrollLeft: 0,
 
   unappliedPatches: [],
   pendingDrafts: new Map(),
@@ -59,29 +92,111 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // ── Mode ──
   setMode: (mode) => {
-    const { mode: oldMode, modeSessions } = get()
+    const { mode: oldMode, modeSessions, tracks } = get()
     if (oldMode === mode) return
 
     const currentSession = {
-      selectedEventId: get().selectedEventId,
+      selectedEventIds: get().selectedEventIds,
       issueFilter: get().issueFilter,
       speakerFocus: get().speakerFocus,
+      trackOverrides: (modeSessions[oldMode]?.trackOverrides as Record<string, Partial<TrackDefinition>>) || {},
     }
     const restored = modeSessions[mode] || {}
 
+    // Apply track visibility preset for the new mode
+    const preset = TRACK_VISIBILITY_MAP[mode] || {}
+    const overrides = (restored.trackOverrides as Record<string, Partial<TrackDefinition>>) || {}
+    const newTracks = tracks.map(track => {
+      const modePreset = preset[track.type]
+      const userOverride = overrides[track.id]
+      return { ...track, ...(modePreset || {}), ...(userOverride || {}) }
+    })
+
     set({
       mode,
+      tracks: newTracks,
       modeSessions: { ...modeSessions, [oldMode]: currentSession },
-      selectedEventId: (restored.selectedEventId as string | null) ?? get().selectedEventId,
+      selectedEventIds: (restored.selectedEventIds as string[]) ?? get().selectedEventIds,
+      selectedEventId: (restored.selectedEventIds as string[])?.[0] ?? get().selectedEventIds[0] ?? null,
       issueFilter: (restored.issueFilter as IssueFilter | null) ?? null,
       speakerFocus: (restored.speakerFocus as SpeakerInfo | null) ?? null,
     })
   },
 
   // ── Selection ──
-  selectEvent: (eventId) => set({ selectedEventId: eventId }),
+  selectEvent: (eventId, multi) => {
+    if (eventId === null) {
+      set({ selectedEventIds: [], selectedEventId: null })
+      return
+    }
+    if (multi) {
+      const ids = get().selectedEventIds
+      const idx = ids.indexOf(eventId)
+      const next = idx >= 0 ? ids.filter(id => id !== eventId) : [...ids, eventId]
+      set({ selectedEventIds: next, selectedEventId: next[0] ?? null })
+    } else {
+      set({ selectedEventIds: [eventId], selectedEventId: eventId })
+    }
+  },
+  toggleEventSelection: (eventId) => {
+    const ids = get().selectedEventIds
+    const idx = ids.indexOf(eventId)
+    const next = idx >= 0 ? ids.filter(id => id !== eventId) : [...ids, eventId]
+    set({ selectedEventIds: next, selectedEventId: next[0] ?? null })
+  },
+  selectEventRange: (_eventId) => {
+    // Range select requires event array — implemented in TimelineArena call site
+    const ids = get().selectedEventIds
+    set({ selectedEventIds: ids, selectedEventId: ids[0] ?? null })
+  },
+  selectAllVisible: (ids) => set({ selectedEventIds: ids, selectedEventId: ids[0] ?? null }),
+  clearSelection: () => set({ selectedEventIds: [], selectedEventId: null }),
   setPlayhead: (position) => set({ playheadPosition: position }),
   setCurrentProject: (projectId) => set({ currentProjectId: projectId }),
+
+  // ── Tracks ──
+  setTracks: (tracks) => set({ tracks }),
+  updateTrack: (id, partial) => {
+    const tracks = get().tracks.map(t => t.id === id ? { ...t, ...partial } : t)
+    // Save override to current mode session
+    const mode = get().mode
+    const sessions = { ...get().modeSessions }
+    const session = (sessions[mode] || {}) as Record<string, unknown>
+    const overrides = (session.trackOverrides as Record<string, Partial<TrackDefinition>>) || {}
+    overrides[id] = { ...overrides[id], ...partial }
+    session.trackOverrides = overrides
+    sessions[mode] = session
+    set({ tracks, modeSessions: sessions })
+  },
+  resizeTrack: (id, height) => {
+    const tracks = get().tracks.map(t => t.id === id ? { ...t, height: Math.max(t.minHeight, Math.min(t.maxHeight ?? 300, height)) } : t)
+    set({ tracks })
+  },
+  toggleTrackVisibility: (id) => {
+    const track = get().tracks.find(t => t.id === id)
+    if (track) get().updateTrack(id, { visible: !track.visible })
+  },
+  toggleTrackLock: (id) => {
+    const track = get().tracks.find(t => t.id === id)
+    if (track) get().updateTrack(id, { locked: !track.locked })
+  },
+  toggleTrackSolo: (id) => {
+    const track = get().tracks.find(t => t.id === id)
+    if (!track) return
+    const newSolo = !track.solo
+    const tracks = get().tracks.map(t => {
+      if (t.id === id) return { ...t, solo: newSolo }
+      if (newSolo) return { ...t, solo: false }
+      return t
+    })
+    set({ tracks })
+  },
+  toggleTrackMute: (id) => {
+    const track = get().tracks.find(t => t.id === id)
+    if (track) get().updateTrack(id, { muted: !track.muted })
+  },
+  setSnapEnabled: (v) => set({ snapEnabled: v }),
+  setTrackScrollLeft: (px) => set({ trackScrollLeft: px }),
 
   // ── Drafts ──
   addDraft: (draft) => {

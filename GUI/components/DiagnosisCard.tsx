@@ -44,7 +44,7 @@ export default function DiagnosisCard({ issue, onFix }: Props) {
       mt: 1.5, p: 1.5, borderRadius: 1.5,
       border: '1px solid',
       borderColor: issue.severity === 'error' ? 'error.light' : 'warning.light',
-      bgcolor: issue.severity === 'error' ? '#ffebee' : '#fff8e1',
+      bgcolor: issue.severity === 'error' ? 'error.50' : 'warning.50',
     }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
         <Icon sx={{

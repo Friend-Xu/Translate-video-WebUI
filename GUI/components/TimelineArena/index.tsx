@@ -1,10 +1,11 @@
-import { useRef, useCallback, useState } from 'react'
+import { useRef, useCallback, useState, useEffect } from 'react'
 import { Box, Typography } from '@mui/material'
 import CloudUploadOutlined from '@mui/icons-material/CloudUploadOutlined'
 import { useTimelineCoordinates } from '../../hooks/useTimelineCoordinates'
 import { useAppStore } from '../../store/useAppStore'
-import WaveformLayer from '../sections/WaveformLayer'
-import EventBlock from '../sections/EventBlock'
+import TrackSystem from './TrackSystem'
+import ZoomScrollbar from './ZoomScrollbar'
+import ZoomPresets from './ZoomPresets'
 import ImpactIndicator from '../ImpactIndicator'
 import type { EventViewModel, WaveformData } from '../../types'
 
@@ -15,24 +16,18 @@ interface Props {
   onDropVideo?: (file: File) => void
 }
 
-const LANE_HEIGHT = 40
-const LANE_COLORS = ['#2196F3', '#4CAF50', '#FF9800', '#9C27B0', '#00BCD4', '#E91E63']
-
-export default function TimelineArena({ events, waveform, totalDuration, onDropVideo }: Props) {
+export default function TimelineArena({ events, totalDuration, onDropVideo }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [canvasW, setCanvasW] = useState(1200)
   const [dragOver, setDragOver] = useState(false)
 
-  const selectedEventId = useAppStore(s => s.selectedEventId)
+  const selectedEventIds = useAppStore(s => s.selectedEventIds)
   const selectEvent = useAppStore(s => s.selectEvent)
-  const playheadPosition = useAppStore(s => s.playheadPosition)
-  const mode = useAppStore(s => s.mode)
-  const speakerFocus = useAppStore(s => s.speakerFocus)
   const pendingDrafts = useAppStore(s => s.pendingDrafts)
+  const setTrackScrollLeft = useAppStore(s => s.setTrackScrollLeft)
 
   const coord = useTimelineCoordinates(totalDuration || 80, canvasW)
 
-  // Resize observer
   const containerCallback = useCallback((node: HTMLDivElement | null) => {
     containerRef.current = node
     if (node) {
@@ -48,27 +43,47 @@ export default function TimelineArena({ events, waveform, totalDuration, onDropV
   const onWheel = useCallback((e: React.WheelEvent) => {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault()
-      if (e.deltaY < 0) coord.zoomIn()
-      else coord.zoomOut()
+      const rect = containerRef.current?.getBoundingClientRect()
+      const mouseX = rect ? e.clientX - rect.left : canvasW / 2
+      const centerTime = coord.pixelToTime(mouseX)
+      if (e.deltaY < 0) coord.zoomIn(centerTime)
+      else coord.zoomOut(centerTime)
     } else {
-      coord.setScroll(coord.timeToPixel(0) + e.deltaY)
+      const newScroll = coord.timeToPixel(0) + e.deltaY
+      const totalW = totalDuration * coord.pixelsPerSec
+      const maxS = Math.max(0, totalW - canvasW)
+      const clamped = Math.max(0, Math.min(maxS, newScroll))
+      setTrackScrollLeft(clamped)
     }
-  }, [coord])
+  }, [coord, totalDuration, canvasW, setTrackScrollLeft])
 
   // Click arena background → deselect
   const handleArenaClick = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement
-    if (target === containerRef.current || target.dataset?.arena === 'true') {
+    if (target === containerRef.current || (target as HTMLElement).dataset?.arena === 'true') {
       selectEvent(null)
     }
   }, [selectEvent])
 
   // Event click
-  const handleEventClick = useCallback((eventId: string, _e: React.MouseEvent) => {
-    selectEvent(selectedEventId === eventId ? null : eventId)
+  const handleEventClick = useCallback((eventId: string, e: React.MouseEvent) => {
+    if (e.ctrlKey || e.metaKey) {
+      useAppStore.getState().toggleEventSelection(eventId)
+    } else if (e.shiftKey && selectedEventIds.length > 0) {
+      const anchor = events.find(ev => ev.id === selectedEventIds[0])
+      const clicked = events.find(ev => ev.id === eventId)
+      if (anchor && clicked) {
+        const minT = Math.min(anchor.start, clicked.start)
+        const maxT = Math.max(anchor.end, clicked.end)
+        const rangeIds = events.filter(ev => ev.start >= minT && ev.start <= maxT).map(ev => ev.id)
+        useAppStore.getState().selectAllVisible(rangeIds)
+      }
+    } else {
+      selectEvent(eventId)
+    }
     const ev = events.find(x => x.id === eventId)
     if (ev) coord.scrollToTime(ev.start)
-  }, [selectedEventId, selectEvent, events, coord])
+  }, [selectedEventIds, selectEvent, events, coord])
 
   // Double click
   const handleEventDoubleClick = useCallback((eventId: string) => {
@@ -76,21 +91,35 @@ export default function TimelineArena({ events, waveform, totalDuration, onDropV
     if (ev) useAppStore.getState().setPlayhead(ev.start)
   }, [events])
 
-  // Drag & drop
-  const onDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setDragOver(true)
-  }, [])
+  // Drag & drop video
+  const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setDragOver(true) }, [])
   const onDragLeave = useCallback(() => setDragOver(false), [])
   const onDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setDragOver(false)
+    e.preventDefault(); setDragOver(false)
     const file = e.dataTransfer.files[0]
     if (file && onDropVideo) onDropVideo(file)
   }, [onDropVideo])
 
-  const playheadX = coord.timeToPixel(playheadPosition)
   const isEmpty = events.length === 0
+
+  // Keyboard shortcuts for zoom
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Don't intercept when focus is in an input
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (e.key === '\\') { e.preventDefault(); coord.zoomToFit(0.05) }
+      if (e.key === '+' || e.key === '=') { e.preventDefault(); coord.zoomIn() }
+      if (e.key === '-') { e.preventDefault(); coord.zoomOut() }
+      if (e.key === '0' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); coord.zoomTo(1) }
+      if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault()
+        useAppStore.getState().selectAllVisible(events.map(ev => ev.id))
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [coord, events])
 
   return (
     <Box
@@ -103,106 +132,45 @@ export default function TimelineArena({ events, waveform, totalDuration, onDropV
       onDrop={onDrop}
       sx={{
         height: '100%', width: '100%', position: 'relative',
-        overflow: 'hidden', bgcolor: '#1a1a2e',
+        overflow: 'hidden', bgcolor: 'background.default',
         cursor: dragOver ? 'copy' : 'default',
       }}
     >
-      {/* Waveform layer */}
-      {waveform && waveform.peaks.length > 0 && (
-        <WaveformLayer
-          width={canvasW}
-          height={60}
-          peaks={waveform.peaks}
-          duration={totalDuration || 80}
-          pixelsPerSec={coord.pixelsPerSec}
-        />
-      )}
+      {!isEmpty ? (
+        <>
+          <TrackSystem
+            events={events}
+            totalDuration={totalDuration || 80}
+            canvasWidth={canvasW}
+            coord={coord}
+            onEventClick={handleEventClick}
+            onEventDblClick={handleEventDoubleClick}
+          />
 
-      {/* Event layer */}
-      <Box sx={{ position: 'absolute', top: 64, left: 0, right: 0, bottom: 0 }}>
-        {events.map(evt => {
-          const left = coord.timeToPixel(evt.start)
-          const width = Math.max(3, (evt.end - evt.start) * coord.pixelsPerSec)
-          if (left + width < -50 || left > canvasW + 50) return null
-
-          const laneIdx = evt.speaker === 'SPEAKER_00' ? 0 : evt.speaker === 'SPEAKER_01' ? 1 : 0
-          const hasDraft = pendingDrafts.has(evt.id)
-          const dimmed = mode === 'speaker' && speakerFocus != null && evt.speaker !== (speakerFocus as any)?.speaker
-
-          return (
-            <EventBlock
-              key={evt.id}
-              event={evt}
-              laneColor={LANE_COLORS[laneIdx % LANE_COLORS.length]}
-              left={left}
-              width={width}
-              laneHeight={LANE_HEIGHT}
-              isSelected={selectedEventId === evt.id}
-              isMultiSelected={dimmed}
-              hasDraft={hasDraft}
-              onClick={(e) => handleEventClick(evt.id, e)}
-              onDoubleClick={() => handleEventDoubleClick(evt.id)}
-              onContextMenu={(e) => { e.preventDefault() }}
-            />
-          )
-        })}
-      </Box>
-
-      {/* Playhead */}
-      {playheadX >= 0 && playheadX <= canvasW && (
-        <Box sx={{
-          position: 'absolute', top: 0, bottom: 0, left: playheadX,
-          width: 2, bgcolor: '#FF5252', zIndex: 20, pointerEvents: 'none',
-          boxShadow: '0 0 6px rgba(255,82,82,0.6)',
-        }} />
-      )}
-
-      {/* Impact indicators for time-shifting drafts */}
-      {Array.from(pendingDrafts.values())
-        .filter(d => d.opcode === 'SPLIT' || d.payload.start || d.payload.end)
-        .map(d => {
-          const evt = events.find(e => e.id === d.eventId)
-          if (!evt) return null
-          const startX = coord.timeToPixel(evt.end)
-          const affectedIds = events
-            .filter(e => e.start >= evt.end)
-            .slice(0, 5)
-            .map(e => e.id)
-          return (
-            <ImpactIndicator
-              key={d.eventId}
-              affectedEventIds={affectedIds}
-              offsetSeconds={0.5}
-              startX={startX}
-              width={60}
-              arenaHeight={typeof window !== 'undefined' ? window.innerHeight - 300 : 400}
-            />
-          )
-        })}
-
-      {/* Time ruler */}
-      <Box sx={{
-        position: 'absolute', top: 0, left: 0, right: 0, height: 20,
-        display: 'flex', alignItems: 'center', px: 1,
-        bgcolor: 'rgba(0,0,0,0.4)', zIndex: 10,
-        borderBottom: '1px solid rgba(255,255,255,0.1)',
-      }}>
-        {Array.from({ length: Math.ceil(totalDuration) }).map((_, i) => {
-          const x = coord.timeToPixel(i)
-          if (x < -10 || x > canvasW + 10) return null
-          return (
-            <Typography key={i} sx={{
-              position: 'absolute', left: x,
-              fontSize: '0.55rem', color: 'rgba(255,255,255,0.5)',
-            }}>
-              {i}s
-            </Typography>
-          )
-        })}
-      </Box>
-
-      {/* Empty state */}
-      {isEmpty && (
+          {/* Impact indicators for time-shifting drafts */}
+          {Array.from(pendingDrafts.values())
+            .filter(d => d.opcode === 'SPLIT' || d.payload.start || d.payload.end)
+            .map(d => {
+              const evt = events.find(e => e.id === d.eventId)
+              if (!evt) return null
+              const startX = coord.timeToPixel(evt.end)
+              const affectedIds = events
+                .filter(e => e.start >= evt.end)
+                .slice(0, 5)
+                .map(e => e.id)
+              return (
+                <ImpactIndicator
+                  key={d.eventId}
+                  affectedEventIds={affectedIds}
+                  offsetSeconds={0.5}
+                  startX={startX}
+                  width={60}
+                  arenaHeight={typeof window !== 'undefined' ? window.innerHeight - 300 : 400}
+                />
+              )
+            })}
+        </>
+      ) : (
         <Box sx={{
           position: 'absolute', inset: 0, display: 'flex',
           flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
@@ -220,16 +188,22 @@ export default function TimelineArena({ events, waveform, totalDuration, onDropV
 
       {/* Zoom controls */}
       <Box sx={{
-        position: 'absolute', bottom: 8, right: 8, zIndex: 25,
-        display: 'flex', gap: 0.5,
+        position: 'absolute', bottom: 20, left: 0, right: 0, zIndex: 25,
+        display: 'flex', alignItems: 'center', gap: 1, px: 1,
       }}>
-        <Box component="button" onClick={() => coord.zoomOut()} aria-label="缩小"
-          sx={{ width: 28, height: 28, border: '1px solid rgba(255,255,255,0.3)', borderRadius: 1, bgcolor: 'rgba(0,0,0,0.6)', color: '#fff', cursor: 'pointer', fontSize: '1rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          −
+        <ZoomPresets coord={coord} />
+        <Box sx={{ flexGrow: 1 }}>
+          <ZoomScrollbar coord={coord} totalDuration={totalDuration || 80} canvasWidth={canvasW} />
         </Box>
-        <Box component="button" onClick={() => coord.zoomIn()} aria-label="放大"
-          sx={{ width: 28, height: 28, border: '1px solid rgba(255,255,255,0.3)', borderRadius: 1, bgcolor: 'rgba(0,0,0,0.6)', color: '#fff', cursor: 'pointer', fontSize: '1rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          +
+        <Box sx={{ display: 'flex', gap: 0.5 }}>
+          <Box component="button" onClick={() => coord.zoomOut()} aria-label="缩小"
+            sx={{ width: 28, height: 28, border: '1px solid rgba(255,255,255,0.3)', borderRadius: 1, bgcolor: 'rgba(0,0,0,0.6)', color: '#fff', cursor: 'pointer', fontSize: '1rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            −
+          </Box>
+          <Box component="button" onClick={() => coord.zoomIn()} aria-label="放大"
+            sx={{ width: 28, height: 28, border: '1px solid rgba(255,255,255,0.3)', borderRadius: 1, bgcolor: 'rgba(0,0,0,0.6)', color: '#fff', cursor: 'pointer', fontSize: '1rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            +
+          </Box>
         </Box>
       </Box>
     </Box>

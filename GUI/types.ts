@@ -525,6 +525,16 @@ export interface WaveformData {
   sampleRate: number
 }
 
+/** 按轨道的波形数据（TTS 引擎独立波形） */
+export interface TrackWaveformData {
+  trackId: string
+  peaks: number[]
+  duration: number
+  sampleRate: number
+  engine?: 'edge' | 'chattts' | 'cosyvoice'
+  silenceRanges?: { start: number; end: number }[]
+}
+
 /** SpeakerLoad 响应扩展 */
 export interface SpeakerLoadResponse {
   audio_id: string; version: string

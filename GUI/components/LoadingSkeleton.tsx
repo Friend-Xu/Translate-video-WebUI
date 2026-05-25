@@ -32,13 +32,13 @@ export function ErrorBanner({ message, onDismiss }: { message: string; onDismiss
   return (
     <Box sx={{
       position: 'fixed', top: 48, left: 0, right: 0, zIndex: 3000,
-      bgcolor: 'error.main', color: '#fff', px: 2, py: 1,
+      bgcolor: 'error.main', color: 'common.white', px: 2, py: 1,
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     }}>
       <Typography variant="body2">{message}</Typography>
       {onDismiss && (
         <Box component="button" onClick={onDismiss} aria-label="关闭错误提示"
-          sx={{ bg: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '1rem' }}>
+          sx={{ bg: 'none', border: 'none', color: 'common.white', cursor: 'pointer', fontSize: '1rem' }}>
           ✕
         </Box>
       )}
