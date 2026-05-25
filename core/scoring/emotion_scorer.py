@@ -8,10 +8,10 @@ from core.emotion.emotion_space import EmotionVector
 
 @dataclass
 class EmotionScore:
-    emotion_consistency: float = 1.0
-    emotion_intensity_match: float = 1.0
-    speaker_emotion_fit: float = 1.0
-    translation_emotion_alignment: float = 1.0
+    emotion_consistency: float = 0.5
+    emotion_intensity_match: float = 0.5
+    speaker_emotion_fit: float = 0.5
+    translation_emotion_alignment: float = 0.5
     accepted: bool = False
     composite: float = 0.0
     gate_decision: str = ""

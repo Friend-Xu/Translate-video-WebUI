@@ -179,11 +179,12 @@ class PatchEngine:
             start=split_at,
             end=target.end,
             speaker_ref=target.speaker_ref,
-            text_ref="",
+            text_ref=target.ir.text_ref,
             source=target.ir.source,
         )
         es_b = TimelineEventState(ir_b)
         es_b.derivatives.update(target.derivatives)
+        es_b.patches = list(target.patches)
         es_b.derivatives["_split_from"] = patch.target_id
 
         ir_a = TimelineEventIR(
@@ -334,6 +335,7 @@ class PatchEngine:
                 es_new.patches = list(es.patches)
                 state.event_states[es.ir.id] = es_new
                 remapped += 1
+                es = es_new
             if es.speaker.get("speaker_id") in from_ids:
                 es.speaker["speaker_id"] = into_id
 

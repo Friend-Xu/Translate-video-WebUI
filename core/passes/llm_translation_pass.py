@@ -62,9 +62,13 @@ class LLMTranslationPass(TimelinePass):
                 es = state.get_event(event_id)
                 if es:
                     es.provenance["translation_engine"] = quality_meta.get("engine", "llm")
+                    trans = es.translation
+                    if isinstance(trans, str):
+                        trans = {"text": trans}
                     for k in ("similarity", "ppl", "gate_decision"):
                         if k in quality_meta:
-                            es.translation[k] = quality_meta[k]
+                            trans[k] = quality_meta[k]
+                    es._data["translation"] = trans
 
         return state
 

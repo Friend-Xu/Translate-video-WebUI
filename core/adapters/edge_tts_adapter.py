@@ -105,6 +105,7 @@ class EdgeTTSAdapter:
 
     def _get_or_create_engine(self, voice: str):
         if self._engine is not None:
+            self._engine._voice = voice
             return self._engine
         from pipeline.tts_edge import EdgeTTSEngine
         self._engine = EdgeTTSEngine(voice=voice or "zh-CN-XiaoxiaoNeural")

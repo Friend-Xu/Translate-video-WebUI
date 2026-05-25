@@ -85,6 +85,7 @@ class RecomputeEngine:
         )]
 
     def _plan_safe(self, invalidated, reason, priority):
+        saved_invalidated = set(self.dep_graph._invalidated)
         tasks = self._plan_window(invalidated, reason, priority, 2)
         for task in tasks:
             for sid in task.segment_ids:
@@ -94,6 +95,7 @@ class RecomputeEngine:
                     if len(cascaded) > len(downstream) * 0.5:
                         task.scope = RecomputeScope.FULL
                         break
+        self.dep_graph._invalidated = saved_invalidated
         return tasks
 
     def estimate_cost(self, tasks: list[RecomputeTask]) -> dict:

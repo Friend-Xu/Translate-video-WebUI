@@ -58,11 +58,6 @@ class ConflictDetector:
 
     def _check_pair(self, a: Patch, b: Patch) -> Conflict | None:
         if a.target_id != b.target_id:
-            if a.op == b.op:
-                return Conflict(
-                    ConflictType.TEMPORAL, a, b, "",
-                    f"temporal overlap: {a.target_id} vs {b.target_id}",
-                )
             return None
 
         if a.op in _OVERWRITE_OPS and b.op in _OVERWRITE_OPS:

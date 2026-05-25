@@ -86,7 +86,7 @@ class TranslationScorer:
             + self.weights["fluency"] * s.fluency_score
             + self.weights["faithfulness"] * faithfulness
             + self.weights["temporal_fit"] * s.temporal_fit
-            + self.weights["length_ratio"] * s.temporal_fit,
+            + self.weights["length_ratio"] * s.length_ratio,
             4,
         )
 

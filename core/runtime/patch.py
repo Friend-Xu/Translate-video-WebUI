@@ -64,5 +64,5 @@ class Patch:
     idempotency_key: str = ''         # 幂等键
 
     def __post_init__(self):
-        if self.timestamp == 0.0:
+        if self.timestamp is None or abs(self.timestamp) < 1e-9:
             self.timestamp = time.time()

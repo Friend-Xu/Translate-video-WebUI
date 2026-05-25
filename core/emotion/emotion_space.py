@@ -39,7 +39,7 @@ class EmotionVector:
     intensity: float = 0.0
 
     def __post_init__(self):
-        if self.intensity == 0.0:
+        if self.intensity is None or abs(self.intensity) < 1e-9:
             self.intensity = round(math.sqrt(
                 self.valence**2 + self.arousal**2 + self.dominance**2
             ) / math.sqrt(3), 4)

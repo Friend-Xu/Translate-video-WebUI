@@ -127,6 +127,7 @@ class IndexTTSEngine:
             "output_path": output_path,
             "spk_audio_prompt": self._speaker_audio or "",
             "target_length_ms": target_length_ms,
+            "emotion": emotion,
         })
 
         if resp.get("status") != "ok":

@@ -28,7 +28,15 @@ class EmotionRecognizerAdapter:
     def recognize_from_text(self, ctx: EmotionRecognizerContext) -> Patch:
         try:
             from core.tts.emotion import EmotionModeler
-            result = EmotionModeler().infer_emotion(ctx.text)
+            tts_ctx = type("TTSSegmentContext", (), {
+                "translation_text": ctx.text,
+                "source_text": "",
+                "speaker_id": "",
+                "segment_id": ctx.segment_id,
+                "start": ctx.start,
+                "end": ctx.end,
+            })()
+            result = EmotionModeler().infer_emotion(tts_ctx)
             ev = EmotionVector.from_label(result.get("emotion_hint", "neutral"))
         except Exception:
             ev = EmotionVector()

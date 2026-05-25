@@ -146,7 +146,7 @@ class OpenVoiceCompositePass(TimelinePass):
     def _build_prompt_map(state: TimelineProjectState) -> dict[str, str]:
         """从 speaker registry 构建 speaker_id → reference_audio 映射。"""
         pmap: dict[str, str] = {}
-        for spk in state.ir.speaker_registry:
+        for spk in state.ir.speakers.values():
             if spk.id and spk.embedding_ref:
                 import os
                 if os.path.isfile(spk.embedding_ref):

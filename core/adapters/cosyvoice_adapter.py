@@ -82,6 +82,8 @@ class CosyVoiceAdapter:
         lang = self._normalize_lang(ctx.lang) or self._lang
         if lang:
             engine._lang = lang
+        if ctx.mode:
+            engine._tts_mode = ctx.mode
 
         duration = engine.synthesize(
             text=ctx.translation_text,
