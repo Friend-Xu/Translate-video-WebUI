@@ -126,6 +126,7 @@ export default function App() {
             memUsage={sysStatus?.memUsage}
             gpuUsage={sysStatus?.gpuUsage}
             modelsOnline={sysStatus?.modelsOnline || []}
+            onStartBatch={() => showMsg('请先将视频文件拖拽到窗口以开始批处理', 'info')}
             onCancelBatch={cancelBatch}
             onSkipCurrent={skipCurrent}
           />

@@ -375,6 +375,32 @@ export interface BatchStatus {
   created_at: string
 }
 
+export type PipelineStage =
+  | 'media_analysis' | 'audio_extract' | 'asr' | 'translation'
+  | 'speaker_diarization' | 'tts' | 'alignment' | 'render' | 'package'
+
+export interface StageProgress {
+  stage: PipelineStage
+  label: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
+  startedAt?: string
+  completedAt?: string
+  durationMs?: number
+  retryCount: number
+}
+
+export const PIPELINE_STAGES: { stage: PipelineStage; label: string; order: number }[] = [
+  { stage: 'media_analysis', label: '媒体分析', order: 0 },
+  { stage: 'audio_extract', label: '音频抽取', order: 1 },
+  { stage: 'asr', label: 'ASR', order: 2 },
+  { stage: 'speaker_diarization', label: '说话人识别', order: 3 },
+  { stage: 'translation', label: '翻译', order: 4 },
+  { stage: 'alignment', label: '对齐', order: 5 },
+  { stage: 'tts', label: 'TTS', order: 6 },
+  { stage: 'render', label: '渲染', order: 7 },
+  { stage: 'package', label: '打包', order: 8 },
+]
+
 /** 单个说话人轮次 */
 export interface SpeakerTurn {
   speaker: string
