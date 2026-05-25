@@ -15,6 +15,9 @@ interface Props {
   isMultiSelected: boolean
   hasDraft: boolean
   readOnly: boolean
+  allEvents: EventViewModel[]
+  hasAppliedPatch?: boolean
+  isOverlong?: boolean
   onClick: (e: React.MouseEvent) => void
   onDoubleClick: () => void
   onContextMenu: (e: React.MouseEvent) => void
@@ -24,7 +27,7 @@ type DragMode = 'none' | 'move' | 'resize-left' | 'resize-right'
 
 export default function EventDragHandler({
   event, coord, laneColor, laneHeight,
-  isSelected, isMultiSelected, hasDraft, readOnly,
+  isSelected, isMultiSelected, hasDraft, readOnly, allEvents, hasAppliedPatch, isOverlong,
   onClick, onDoubleClick, onContextMenu,
 }: Props) {
   const snapEnabled = useAppStore(s => s.snapEnabled)
@@ -38,9 +41,6 @@ export default function EventDragHandler({
     startX: 0, origStart: event.start, origEnd: event.end,
   })
 
-  const allEvents = useAppStore.getState().selectedEventIds.length >= 0
-    ? [] // Populated from caller context — we need access to all events
-    : []
   const { findNearestSnapTarget } = useSnapSystem({
     events: allEvents,
     playheadTime: playheadPosition,
@@ -197,6 +197,8 @@ export default function EventDragHandler({
           isSelected={isSelected}
           isMultiSelected={isMultiSelected}
           hasDraft={hasDraft}
+          hasAppliedPatch={hasAppliedPatch}
+          isOverlong={isOverlong}
           readOnly={readOnly}
           onClick={onClick}
           onDoubleClick={onDoubleClick}

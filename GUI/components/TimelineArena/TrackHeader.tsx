@@ -20,7 +20,7 @@ const ICON_SIZE = 14
 
 export default function TrackHeader({ tracks, onToggleVisibility, onToggleLock, onToggleSolo, onToggleMute }: Props) {
   return (
-    <Box sx={{ width: HEADER_W, minWidth: HEADER_W, bgcolor: 'rgba(0,0,0,0.4)' }}>
+    <Box sx={{ width: HEADER_W, minWidth: HEADER_W, bgcolor: 'rgba(0,0,0,0.4)' }} data-track-header="true">
       {tracks.map(track => (
         <Box key={track.id} sx={{
           height: track.height, display: 'flex', flexDirection: 'column',

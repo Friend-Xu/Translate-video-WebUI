@@ -1,7 +1,7 @@
 import { Box } from '@mui/material'
 import { useAppStore } from '../../store/useAppStore'
 import type { TrackDefinition } from '../../types/timeline'
-import type { EventViewModel } from '../../types'
+import type { EventViewModel, WaveformData, TrackWaveformData } from '../../types'
 import type { TimelineCoordAPI } from '../../hooks/useTimelineCoordinates'
 import SpeakerLane from '../SpeakerLane'
 import WaveformLayer from '../sections/WaveformLayer'
@@ -15,19 +15,26 @@ interface Props {
   events: EventViewModel[]
   totalDuration: number
   canvasWidth: number
+  waveformData?: WaveformData | null
+  ttsWaveforms?: TrackWaveformData[]
+  dimmedEventIds?: Set<string>
   onEventClick: (eventId: string, e: React.MouseEvent) => void
   onEventDblClick: (eventId: string) => void
+  onEventContextMenu: (eventId: string, e: React.MouseEvent) => void
 }
 
 const LANE_COLORS = ['#2196F3', '#4CAF50', '#FF9800', '#9C27B0', '#00BCD4', '#E91E63']
 
-export default function TrackLayer({ track, coord, events, totalDuration, canvasWidth, onEventClick, onEventDblClick }: Props) {
+export default function TrackLayer({ track, coord, events, totalDuration, canvasWidth, waveformData, ttsWaveforms, dimmedEventIds, onEventClick, onEventDblClick, onEventContextMenu }: Props) {
   const selectedEventIds = useAppStore(s => s.selectedEventIds)
   const speakerFocus = useAppStore(s => s.speakerFocus)
   const mode = useAppStore(s => s.mode)
   const pendingDrafts = useAppStore(s => s.pendingDrafts)
+  const appliedPatches = useAppStore(s => s.appliedPatches)
   const trackScrollLeft = useAppStore(s => s.trackScrollLeft)
   const tracks = useAppStore(s => s.tracks)
+
+  const appliedEventIds = new Set(appliedPatches.flatMap(p => p.targets))
 
   const hasSoloTrack = tracks.some(t => t.solo)
   const isDimmed = hasSoloTrack && !track.solo
@@ -63,6 +70,7 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
               const hasDraft = pendingDrafts.has(evt.id)
               const isSelected = selectedEventIds.includes(evt.id)
               const dimmed = mode === 'speaker' && speakerFocus != null && evt.speaker !== (speakerFocus as any)?.speaker
+              const filtered = dimmedEventIds?.has(evt.id) ?? false
 
               return (
                 <EventDragHandler
@@ -72,12 +80,15 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
                   laneColor={LANE_COLORS[laneIdx % LANE_COLORS.length]}
                   laneHeight={track.height}
                   isSelected={isSelected}
-                  isMultiSelected={dimmed || isDimmed}
+                  isMultiSelected={dimmed || isDimmed || filtered}
                   hasDraft={hasDraft}
+                  allEvents={events}
+                  hasAppliedPatch={appliedEventIds.has(evt.id)}
+                  isOverlong={evt.end - evt.start > 8}
                   readOnly={track.locked}
                   onClick={(e) => onEventClick(evt.id, e)}
                   onDoubleClick={() => onEventDblClick(evt.id)}
-                  onContextMenu={(e) => { e.preventDefault() }}
+                  onContextMenu={(e) => { e.preventDefault(); onEventContextMenu(evt.id, e) }}
                 />
               )
             })}
@@ -114,7 +125,7 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
           <WaveformLayer
             width={canvasWidth}
             height={track.height}
-            peaks={[]}
+            peaks={waveformData?.peaks || []}
             duration={totalDuration}
             pixelsPerSec={coord.pixelsPerSec}
           />
@@ -126,7 +137,7 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
             track={track}
             coord={coord}
             canvasWidth={canvasWidth}
-            waveforms={[]}
+            waveforms={ttsWaveforms || []}
             onToggleMute={(id) => useAppStore.getState().toggleTrackMute(id)}
           />
         )

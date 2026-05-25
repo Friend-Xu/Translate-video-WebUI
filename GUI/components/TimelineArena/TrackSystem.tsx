@@ -1,7 +1,7 @@
 import { Box } from '@mui/material'
 import { useAppStore } from '../../store/useAppStore'
 import type { TimelineCoordAPI } from '../../hooks/useTimelineCoordinates'
-import type { EventViewModel } from '../../types'
+import type { EventViewModel, WaveformData, TrackWaveformData } from '../../types'
 import TimeRuler from './TimeRuler'
 import TrackHeader from './TrackHeader'
 import TrackLayer from './TrackLayer'
@@ -11,11 +11,15 @@ interface Props {
   totalDuration: number
   canvasWidth: number
   coord: TimelineCoordAPI
+  waveformData?: WaveformData | null
+  ttsWaveforms?: TrackWaveformData[]
+  dimmedEventIds?: Set<string>
   onEventClick: (eventId: string, e: React.MouseEvent) => void
   onEventDblClick: (eventId: string) => void
+  onEventContextMenu: (eventId: string, e: React.MouseEvent) => void
 }
 
-export default function TrackSystem({ events, totalDuration, canvasWidth, coord, onEventClick, onEventDblClick }: Props) {
+export default function TrackSystem({ events, totalDuration, canvasWidth, coord, waveformData, ttsWaveforms, dimmedEventIds, onEventClick, onEventDblClick, onEventContextMenu }: Props) {
   const tracks = useAppStore(s => s.tracks)
   const playheadPosition = useAppStore(s => s.playheadPosition)
   const toggleTrackVisibility = useAppStore(s => s.toggleTrackVisibility)
@@ -55,8 +59,12 @@ export default function TrackSystem({ events, totalDuration, canvasWidth, coord,
               events={events}
               totalDuration={totalDuration}
               canvasWidth={canvasWidth}
+              waveformData={waveformData}
+              ttsWaveforms={ttsWaveforms}
+              dimmedEventIds={dimmedEventIds}
               onEventClick={onEventClick}
               onEventDblClick={onEventDblClick}
+              onEventContextMenu={onEventContextMenu}
             />
           ))}
         </Box>

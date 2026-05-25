@@ -3,13 +3,15 @@ import { ThemeProvider, CssBaseline, Box, Alert, Snackbar, Typography } from '@m
 import CloudUploadOutlined from '@mui/icons-material/CloudUploadOutlined'
 import theme from './theme'
 import AppShell from './components/AppShell'
-import PulseBar from './components/PulseBar/index'
+import GlobalBar from './components/GlobalBar/index'
 import EvidenceDock from './components/EvidenceDock/index'
-import ModeSwitcher from './components/ModeSwitcher'
+import NavRail from './components/NavRail/index'
 import TimelineArena from './components/TimelineArena/index'
 import IRInspector from './components/IRInspector/index'
-import IssueQueue from './components/IssueQueue'
 import OpsDashboard from './components/OpsDashboard'
+import SpeakerReviewView from './components/ModeViews/SpeakerReviewView'
+import PatchManagementView from './components/ModeViews/PatchManagementView'
+import ExportView from './components/ModeViews/ExportView'
 import CommandPalette from './components/CommandPalette'
 import { useConfig } from './hooks/useConfig'
 import { usePipeline } from './hooks/usePipeline'
@@ -17,7 +19,7 @@ import { useSSE } from './hooks/useSSE'
 import { useBatch } from './hooks/useBatch'
 import { useAppStore } from './store/useAppStore'
 import { ErrorBanner } from './components/LoadingSkeleton'
-import { MOCK_EVENTS, MOCK_WAVEFORM } from './mocks/mockData'
+import { MOCK_EVENTS, MOCK_WAVEFORM, MOCK_TTS_WAVEFORMS } from './mocks/mockData'
 import { mockSystemStatus } from './mocks/mockHandlers'
 
 export default function App() {
@@ -114,49 +116,39 @@ export default function App() {
 
   const selectedEvent = MOCK_EVENTS.find(e => e.id === selectedEventId) || null
 
-  const railContent = (
-    <Box>
-      <ModeSwitcher />
-      {mode === 'review' && <IssueQueue events={MOCK_EVENTS} />}
-      {mode === 'patch' && (
-        <Box sx={{ p: 1 }}>
-          <Typography variant="subtitle2" sx={{ fontSize: '0.8rem', mb: 1 }}>草案列表</Typography>
-          {Array.from(useAppStore.getState().pendingDrafts.values()).map(d => (
-            <Box key={d.eventId} sx={{ p: 0.5, mb: 0.5, bgcolor: 'action.hover', borderRadius: 1 }}>
-              <Typography variant="caption" noWrap>{d.eventId}: {d.opcode}</Typography>
-            </Box>
-          ))}
-        </Box>
-      )}
-      {mode === 'speaker' && (
-        <Box sx={{ p: 1 }}>
-          <Typography variant="subtitle2" sx={{ fontSize: '0.8rem', mb: 1 }}>说话人</Typography>
-          <Typography variant="caption" color="text.secondary">SpeakerLane 已渲染在时间轴中</Typography>
-        </Box>
-      )}
-    </Box>
-  )
-
-  const arenaContent = mode === 'ops'
-    ? (
-      <OpsDashboard
-        batch={batch}
-        cpuUsage={sysStatus?.cpuUsage}
-        memUsage={sysStatus?.memUsage}
-        gpuUsage={sysStatus?.gpuUsage}
-        modelsOnline={sysStatus?.modelsOnline || []}
-        onCancelBatch={cancelBatch}
-        onSkipCurrent={skipCurrent}
-      />
-    )
-    : (
-      <TimelineArena
-        events={MOCK_EVENTS}
-        waveform={MOCK_WAVEFORM}
-        totalDuration={80}
-        onDropVideo={handleFileDropped}
-      />
-    )
+  const arenaContent = (() => {
+    switch (mode) {
+      case 'batch':
+        return (
+          <OpsDashboard
+            batch={batch}
+            cpuUsage={sysStatus?.cpuUsage}
+            memUsage={sysStatus?.memUsage}
+            gpuUsage={sysStatus?.gpuUsage}
+            modelsOnline={sysStatus?.modelsOnline || []}
+            onCancelBatch={cancelBatch}
+            onSkipCurrent={skipCurrent}
+          />
+        )
+      case 'speaker':
+        return <SpeakerReviewView events={MOCK_EVENTS} totalDuration={80} />
+      case 'patch':
+        return <PatchManagementView events={MOCK_EVENTS} />
+      case 'export':
+        return <ExportView events={MOCK_EVENTS} />
+      case 'timeline':
+      default:
+        return (
+          <TimelineArena
+            events={MOCK_EVENTS}
+            waveform={MOCK_WAVEFORM}
+            totalDuration={80}
+            ttsWaveforms={MOCK_TTS_WAVEFORMS}
+            onDropVideo={handleFileDropped}
+          />
+        )
+    }
+  })()
 
   return (
     <ThemeProvider theme={theme}>
@@ -166,16 +158,15 @@ export default function App() {
 
       <AppShell
         pulseBar={
-          <PulseBar
-            videoName={config.videoPath ? config.videoPath.split(/[/\\]/).pop() : undefined}
-            sourceLang={config.lang}
-            targetLang={config.targetLang}
-            connectionState={connectionState}
-            pipelineStage={status.state === 'running' ? status.currentStep : undefined}
-            backendOnline={backendOnline}
+          <GlobalBar
+            projectName={config.videoPath ? config.videoPath.split(/[/\\]/).pop() : undefined}
+            workspace={config.videoPath ? config.videoPath.split(/[/\\]/).slice(0, -1).join('/') : undefined}
+            cpuUsage={sysStatus?.cpuUsage}
+            memUsage={sysStatus?.memUsage}
+            gpuUsage={sysStatus?.gpuUsage}
           />
         }
-        railContent={railContent}
+        railContent={<NavRail />}
         arenaContent={arenaContent}
         inspectorContent={<IRInspector event={selectedEvent} />}
         dockContent={
@@ -185,6 +176,9 @@ export default function App() {
             logFirstIndex={logFirstIndex.current}
             logTotal={logTotal.current}
             onLoadOlder={() => loadOlderLogs(status.jobId)}
+            events={MOCK_EVENTS}
+            passTrace={MOCK_EVENTS.length > 0 ? MOCK_EVENTS[0].passTrace : undefined}
+            batchStatus={batch}
           />
         }
       />
