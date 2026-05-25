@@ -2,11 +2,14 @@
 TimelineProjectIR — 不可变项目容器
 
 events 和 speakers 以 dict 索引，O(1) 按 ID 查找。
+v2.1: timelines 引用 + 版本字段。
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
 from core.ir.timeline_event import TimelineEventIR
 from core.ir.speaker import SpeakerNodeIR
+from core.ir.timeline import TimelineIR
+from core.ir.version import SCHEMA_VERSION, IR_VERSION
 
 
 @dataclass(frozen=True)
@@ -15,9 +18,17 @@ class TimelineProjectIR:
 
     events:  event_id → TimelineEventIR
     speakers: speaker_id → SpeakerNodeIR
+    timelines: timeline_id → TimelineIR
     """
     events: dict[str, TimelineEventIR] = field(default_factory=dict)
     speakers: dict[str, SpeakerNodeIR] = field(default_factory=dict)
+    timelines: dict[str, TimelineIR] = field(default_factory=dict)
+    # v2.1: 全局元信息
+    schema_version: str = SCHEMA_VERSION
+    ir_version: str = IR_VERSION
+    source_video: str | None = None
+    audio_sample_rate: int | None = None
+    language: str | None = None
 
     @property
     def event_list(self) -> list[TimelineEventIR]:

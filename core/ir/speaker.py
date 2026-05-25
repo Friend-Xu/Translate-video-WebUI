@@ -2,6 +2,7 @@
 SpeakerNodeIR — 不可变说话人节点
 
 说话人从字符串标签升级为独立实体，通过 speaker_ref 与事件关联。
+v2.1: 新增 embedding/confidence/profile 字段以承载 pyannote + voice cloning 输出。
 """
 from __future__ import annotations
 from dataclasses import dataclass
@@ -15,7 +16,12 @@ class SpeakerNodeIR:
     """
     id: str                         # "SPEAKER_00" — 来自 diarization 的稳定 ID
     name: str | None = None         # 显示名，None 表示未命名
-    # v2.0 新增（对应 speaker_map.schema.json §SpeakerMapping）
+    # v2.0 (speaker_map.schema.json §SpeakerMapping)
     voice_id: str | None = None     # 绑定的 TTS 声线 ID
     color: str | None = None        # UI 轨道颜色 (#RRGGBB)
     is_locked: bool = False         # 禁止自动合并/拆分
+    # v2.1: speaker identity 字段 (Chapter 4 §4.4)
+    embedding_ref: str | None = None  # speaker embedding 存储路径
+    gender_prob: float | None = None  # 性别概率 [0,1]
+    voice_style: str | None = None    # "neutral" | "energetic" | "calm" | "authoritative"
+    confidence: float | None = None   # pyannote diarization 置信度 [0,1]

@@ -1,27 +1,28 @@
 """
-LLMTranslationPass — 标签化纯文本 LLM 翻译
+LLMTranslationPass — 标签化纯文本 LLM 翻译 + 质量元数据 (v2, Ch14)
 
-提取事件的 [id] text_ref 拼成标签化纯文本发送给 LLM，
-通过正则匹配返回结果，将翻译写入 derivatives["translation"]。
+translate_fn 可返回 dict 携带质量元数据，结果写入 provenance 槽位。
 """
 from __future__ import annotations
 import re
 from core.engine.pass_base import TimelinePass
-from core.runtime import TimelineProjectState, Patch, PatchEngine, SynthesisEngine
+from core.runtime import TimelineProjectState, Patch, PatchEngine, SynthesisEngine, OpCode
 
 
 class LLMTranslationPass(TimelinePass):
     """标签化纯文本翻译 Pass。
 
-    发送格式: [evt_001] 原文\\n[evt_002] 原文\\n...
-    LLM 返回相同格式，正则匹配后写入 derivatives["translation"]。
+    translate_fn 签名:
+      - str: 向后兼容（纯文本）
+      - dict: {"text": "...", "similarity": 0.85, "ppl": 45.2, ...}
     """
 
     name = "llm_translation"
     depends_on = ["asr_to_ir"]
 
-    def __init__(self, translate_fn=None):
+    def __init__(self, translate_fn=None, quality_gate_enabled: bool = False):
         self._translate_fn = translate_fn or self._mock_translate
+        self.quality_gate_enabled = quality_gate_enabled
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         synth = SynthesisEngine()
@@ -38,21 +39,32 @@ class LLMTranslationPass(TimelinePass):
             return state
 
         try:
-            translated_text = self._translate_fn(tagged_text)
+            result = self._translate_fn(tagged_text)
         except Exception:
             return state
+
+        if isinstance(result, dict):
+            translated_text = result.get("text", "")
+            quality_meta = {k: v for k, v in result.items() if k != "text"}
+        else:
+            translated_text = result
+            quality_meta = {}
 
         translations = self._parse_tagged_response(translated_text)
         engine = PatchEngine()
         for event_id, trans_text in translations.items():
-            patch = Patch(
-                id=f"trans_{event_id}",
-                target_id=event_id,
-                op="replace",
-                value={"translation": trans_text},
-                author="ai",
-            )
-            engine.apply(state, patch)
+            engine.apply(state, Patch(
+                id=f"trans_{event_id}", target_id=event_id,
+                op=OpCode.UPDATE_TRANSLATION,
+                value={"translation": trans_text}, author="ai",
+            ))
+            if quality_meta:
+                es = state.get_event(event_id)
+                if es:
+                    es.provenance["translation_engine"] = quality_meta.get("engine", "llm")
+                    for k in ("similarity", "ppl", "gate_decision"):
+                        if k in quality_meta:
+                            es.translation[k] = quality_meta[k]
 
         return state
 
@@ -60,9 +72,7 @@ class LLMTranslationPass(TimelinePass):
         result = {}
         pattern = re.compile(r'\[(evt_\d+)\]\s*(.+?)(?=\[evt_|$)', re.DOTALL)
         for match in pattern.finditer(response):
-            eid = match.group(1)
-            text = match.group(2).strip()
-            result[eid] = text
+            result[match.group(1)] = match.group(2).strip()
         return result
 
     @staticmethod
@@ -73,8 +83,7 @@ class LLMTranslationPass(TimelinePass):
             if line.startswith("[evt_"):
                 bracket_end = line.index("] ")
                 eid = line[:bracket_end + 1]
-                text = line[bracket_end + 2:]
-                translated.append(f"{eid} [TR] {text}")
+                translated.append(f"{eid} [TR] {line[bracket_end + 2:]}")
             else:
                 translated.append(line)
         return "\n".join(translated)

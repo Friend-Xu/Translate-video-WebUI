@@ -41,8 +41,9 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
   const selectEvent = useAppStore(s => s.selectEvent)
   const pendingDrafts = useAppStore(s => s.pendingDrafts)
   const setTrackScrollLeft = useAppStore(s => s.setTrackScrollLeft)
+  const trackScrollLeft = useAppStore(s => s.trackScrollLeft)
 
-  const coord = useTimelineCoordinates(totalDuration || 80, canvasW)
+  const coord = useTimelineCoordinates(totalDuration || 80, canvasW, trackScrollLeft)
 
   const containerCallback = useCallback((node: HTMLDivElement | null) => {
     containerRef.current = node

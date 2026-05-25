@@ -1,0 +1,61 @@
+"""
+EmotionRecognizerAdapter — 双路径情感识别 (audio/text) → EmotionVector → ANNOTATE patch
+"""
+from __future__ import annotations
+from dataclasses import dataclass
+from core.runtime.patch import Patch, OpCode
+from core.emotion.emotion_space import EmotionVector
+
+
+@dataclass
+class EmotionRecognizerContext:
+    audio_path: str = ""
+    text: str = ""
+    segment_id: str = ""
+    start: float = 0.0
+    end: float = 0.0
+
+
+class EmotionRecognizerAdapter:
+
+    def recognize(self, ctx: EmotionRecognizerContext) -> Patch:
+        if ctx.audio_path:
+            return self.recognize_from_audio(ctx)
+        if ctx.text:
+            return self.recognize_from_text(ctx)
+        return self._neutral(ctx.segment_id)
+
+    def recognize_from_text(self, ctx: EmotionRecognizerContext) -> Patch:
+        try:
+            from core.tts.emotion import EmotionModeler
+            result = EmotionModeler().infer_emotion(ctx.text)
+            ev = EmotionVector.from_label(result.get("emotion_hint", "neutral"))
+        except Exception:
+            ev = EmotionVector()
+        return self._patch(ctx.segment_id, ev)
+
+    def recognize_from_audio(self, ctx: EmotionRecognizerContext) -> Patch:
+        ev = EmotionVector()
+        try:
+            import os
+            if os.path.exists(ctx.audio_path):
+                from funasr import AutoModel
+                model = AutoModel(model="iic/emotion2vec_plus_large")
+                result = model.generate(ctx.audio_path, output_dir="./tmp_emo")
+                if result and len(result) > 0:
+                    ev = EmotionVector.from_9class_scores(result[0].get("scores", {}))
+        except Exception:
+            if ctx.text:
+                return self.recognize_from_text(ctx)
+        return self._patch(ctx.segment_id, ev)
+
+    def _patch(self, seg_id: str, ev: EmotionVector) -> Patch:
+        return Patch(
+            id=f"emo_{seg_id}", target_id=seg_id,
+            op=OpCode.UPDATE_EMOTION,
+            value={"emotion": ev.to_dict()},
+            confidence=ev.confidence, author="system",
+        )
+
+    def _neutral(self, seg_id: str) -> Patch:
+        return self._patch(seg_id, EmotionVector())

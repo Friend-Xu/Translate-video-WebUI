@@ -31,18 +31,19 @@ function isOnTrackHeader(target: HTMLElement): boolean {
 }
 
 export default function RubberBandSelect({
-  events, children, pixelToTime, containerRef,
+  events, children, pixelToTime, containerRef: _containerRef,
 }: Props) {
   const [rubberBand, setRubberBand] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const [dragging, setDragging] = useState(false)
   const startRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  const selfRef = useRef<HTMLDivElement | null>(null)
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return
     const target = e.target as HTMLElement
     if (isOnEventBlock(target) || isOnTrackHeader(target)) return
 
-    const rect = containerRef.current?.getBoundingClientRect()
+    const rect = selfRef.current?.getBoundingClientRect()
     if (!rect) return
 
     const x = e.clientX - rect.left
@@ -50,13 +51,13 @@ export default function RubberBandSelect({
     startRef.current = { x, y }
     setRubberBand({ x, y, w: 0, h: 0 })
     setDragging(true)
-  }, [containerRef])
+  }, [])
 
   useEffect(() => {
     if (!dragging) return
 
     const onMove = (e: MouseEvent) => {
-      const rect = containerRef.current?.getBoundingClientRect()
+      const rect = selfRef.current?.getBoundingClientRect()
       if (!rect) return
 
       const x = e.clientX - rect.left
@@ -76,7 +77,7 @@ export default function RubberBandSelect({
       setDragging(false)
       setRubberBand(null)
 
-      const rect = containerRef.current?.getBoundingClientRect()
+      const rect = selfRef.current?.getBoundingClientRect()
       if (!rect) return
 
       const endX = e.clientX - rect.left
@@ -118,10 +119,10 @@ export default function RubberBandSelect({
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
     }
-  }, [dragging, events, pixelToTime, containerRef])
+  }, [dragging, events, pixelToTime])
 
   return (
-    <Box onMouseDown={handleMouseDown} sx={{ position: 'relative', height: '100%', width: '100%' }}>
+    <Box ref={selfRef} onMouseDown={handleMouseDown} sx={{ position: 'relative', height: '100%', width: '100%' }}>
       {children}
 
       {rubberBand && rubberBand.w > 2 && rubberBand.h > 2 && (

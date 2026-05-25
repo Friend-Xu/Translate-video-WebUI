@@ -26,6 +26,7 @@ const ZOOM_STEP = 1.3
 export function useTimelineCoordinates(
   totalDuration: number,
   canvasWidth: number,
+  externalScrollLeft: number = 0,
 ): TimelineCoordAPI {
   const [zoomLevel, setZoomLevel] = useState(1)
   const [scrollLeft, setScrollLeft] = useState(0)
@@ -38,13 +39,13 @@ export function useTimelineCoordinates(
   }, [pixelsPerSec, scrollLeft])
 
   const pixelToTime = useCallback((pixel: number) => {
-    return Math.max(0, (pixel + scrollLeft) / pixelsPerSec)
-  }, [pixelsPerSec, scrollLeft])
+    return Math.max(0, (pixel + scrollLeft + externalScrollLeft) / pixelsPerSec)
+  }, [pixelsPerSec, scrollLeft, externalScrollLeft])
 
   const visibleRange = useMemo(() => ({
-    startTime: Math.max(0, scrollLeft / pixelsPerSec),
-    endTime: Math.min(totalDuration, (scrollLeft + canvasWidth) / pixelsPerSec),
-  }), [scrollLeft, canvasWidth, pixelsPerSec, totalDuration])
+    startTime: Math.max(0, (scrollLeft + externalScrollLeft) / pixelsPerSec),
+    endTime: Math.min(totalDuration, (scrollLeft + externalScrollLeft + canvasWidth) / pixelsPerSec),
+  }), [scrollLeft, externalScrollLeft, canvasWidth, pixelsPerSec, totalDuration])
 
   const zoomTo = useCallback((newZoom: number, centerTime?: number) => {
     const clamped = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, newZoom))
