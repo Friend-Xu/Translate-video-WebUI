@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { PatchPreview, SpeakerInfo, TimelinePatchData } from '../types'
-import type { Mode, PatchDraft, IssueFilter, JobState } from '../types/modes'
+import type { Mode, PatchDraft, IssueFilter, JobState, CrossModeContext, SpeakerLaneData, SpeakerQuality, VoiceCard } from '../types/modes'
 import type { TrackDefinition } from '../types/timeline'
 import { DEFAULT_TRACKS, TRACK_VISIBILITY_MAP } from '../types/timeline'
 
@@ -27,8 +27,20 @@ export interface AppState {
   modeSessions: Partial<Record<Mode, Record<string, unknown>>>
   localJobStatus: Record<string, JobState>
 
+  crossModeContext: CrossModeContext | null
+  dockCollapsed: boolean
+  debugMode: boolean
+
+  // Speaker Review state
+  speakerLanes: SpeakerLaneData[]
+  speakerQualities: Record<string, SpeakerQuality>
+  selectedSpeakerId: string | null
+  selectedSpeakerIds: string[]
+  voicePresets: VoiceCard[]
+
   // Actions — Mode
   setMode: (mode: Mode) => void
+  navigateToEvent: (eventId: string, startTime: number, sourceMode?: Mode) => void
 
   // Actions — Selection
   selectEvent: (eventId: string | null, multi?: boolean) => void
@@ -67,6 +79,16 @@ export interface AppState {
   setSpeakerFocus: (speaker: SpeakerInfo | null) => void
   setJobStatus: (eventId: string, state: JobState) => void
   removeJobStatus: (eventId: string) => void
+  toggleDockCollapsed: () => void
+  toggleDebugMode: () => void
+
+  // Actions — Speaker Review
+  setSpeakerLanes: (lanes: SpeakerLaneData[]) => void
+  setSelectedSpeaker: (speakerId: string | null) => void
+  toggleSpeakerSelection: (speakerId: string) => void
+  setVoicePresets: (presets: VoiceCard[]) => void
+  setSpeakerQualities: (qualities: Record<string, SpeakerQuality>) => void
+  bindVoice: (speakerId: string, voiceId: string) => void
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -89,6 +111,16 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   modeSessions: {},
   localJobStatus: {},
+
+  crossModeContext: null,
+  dockCollapsed: false,
+  debugMode: false,
+
+  speakerLanes: [],
+  speakerQualities: {},
+  selectedSpeakerId: null,
+  selectedSpeakerIds: [],
+  voicePresets: [],
 
   // ── Mode ──
   setMode: (mode) => {
@@ -121,6 +153,27 @@ export const useAppStore = create<AppState>((set, get) => ({
       issueFilter: (restored.issueFilter as IssueFilter | null) ?? null,
       speakerFocus: (restored.speakerFocus as SpeakerInfo | null) ?? null,
     })
+
+    // 跨模式跳转覆盖: 若 crossModeContext 在 5s 内，覆盖恢复的选中状态
+    const ctx = get().crossModeContext
+    if (ctx && Date.now() - ctx.timestamp < 5000) {
+      set({
+        selectedEventIds: [ctx.eventId],
+        selectedEventId: ctx.eventId,
+        playheadPosition: ctx.playheadTarget,
+      })
+    }
+  },
+
+  navigateToEvent: (eventId, startTime, sourceMode) => {
+    const ctx = {
+      eventId,
+      sourceMode: sourceMode ?? get().mode,
+      playheadTarget: startTime,
+      timestamp: Date.now(),
+    }
+    set({ crossModeContext: ctx, selectedEventIds: [eventId], selectedEventId: eventId, playheadPosition: startTime })
+    if (get().mode !== 'timeline') get().setMode('timeline')
   },
 
   // ── Selection ──
@@ -274,5 +327,26 @@ export const useAppStore = create<AppState>((set, get) => ({
     const next = { ...get().localJobStatus }
     delete next[eventId]
     set({ localJobStatus: next })
+  },
+
+  toggleDockCollapsed: () => set({ dockCollapsed: !get().dockCollapsed }),
+  toggleDebugMode: () => set({ debugMode: !get().debugMode }),
+
+  // ── Speaker Review ──
+  setSpeakerLanes: (lanes) => set({ speakerLanes: lanes }),
+  setSelectedSpeaker: (speakerId) => set({ selectedSpeakerId: speakerId, selectedSpeakerIds: speakerId ? [speakerId] : [] }),
+  toggleSpeakerSelection: (speakerId) => {
+    const ids = get().selectedSpeakerIds
+    const idx = ids.indexOf(speakerId)
+    const next = idx >= 0 ? ids.filter(id => id !== speakerId) : [...ids, speakerId]
+    set({ selectedSpeakerIds: next, selectedSpeakerId: next[0] ?? null })
+  },
+  setVoicePresets: (presets) => set({ voicePresets: presets }),
+  setSpeakerQualities: (qualities) => set({ speakerQualities: qualities }),
+  bindVoice: (speakerId, voiceId) => {
+    const lanes = get().speakerLanes.map(l =>
+      l.speaker === speakerId ? { ...l, voice_id: voiceId } : l
+    )
+    set({ speakerLanes: lanes })
   },
 }))
