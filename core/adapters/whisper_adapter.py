@@ -32,6 +32,12 @@ class WhisperAdapter:
     def __init__(self, context: EngineContext):
         self.ctx = context
 
+    def configure(self, event_config = None):
+        if not event_config: return
+        if "model" in event_config: self.ctx.model_name = event_config["model"]
+        if "device" in event_config: self.ctx.device = event_config["device"]
+        if "language" in event_config: self.ctx.language = event_config["language"]
+
     def run(self) -> list[Patch]:
         """执行完整转录流程，返回 Patch 列表。
 

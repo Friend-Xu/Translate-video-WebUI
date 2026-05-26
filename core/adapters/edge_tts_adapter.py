@@ -60,6 +60,10 @@ class EdgeTTSAdapter:
         self._output_dir = output_dir
         self._engine = None
 
+    def configure(self, event_config = None):
+        if not event_config: return
+        if "voice" in event_config: self._voice = event_config["voice"]
+
     def synthesize(self, ctx: EdgeTTSSegmentContext) -> Patch:
         """对单个 segment 合成语音，返回 UPDATE_TTS_AUDIO patch。
 

@@ -43,6 +43,10 @@ class ChatTTSAdapter:
         self._output_dir = output_dir
         self._engine = None
 
+    def configure(self, event_config = None):
+        if not event_config: return
+        if "speaker_seed" in event_config: self._speaker_seed = event_config["speaker_seed"]
+
     def synthesize(self, ctx: TTSSegmentContext) -> Patch:
         """对单个 segment 合成语音，返回 UPDATE_TTS_AUDIO patch。"""
         from pipeline.tts_chattts import ChatTTSEngine
