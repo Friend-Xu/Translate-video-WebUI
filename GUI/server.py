@@ -4020,6 +4020,118 @@ async def timeline_patch_log(workspace: str = ""):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+
+
+# ── Config Parameter API (v3.0 — 定稿 §11.2) ─────────────────────────────────
+
+class ConfigApplyRequest(BaseModel):
+    workspace: str = ""
+    event_id: str = ""
+    slot: str = "tts"
+    field: str = ""
+    value: object = None
+    op: str = "override"  # "override" | "set" | "reset"
+
+class ConfigBatchRequest(BaseModel):
+    workspace: str = ""
+    event_ids: list[str] = []
+    slot: str = "tts"
+    config_block: dict = {}
+
+class ConfigResolveResponse(BaseModel):
+    event_id: str = ""
+    slot: str = ""
+    resolved: dict = {}
+    inherited_from: str = "global"  # "event" | "speaker" | "global"
+
+@app.post("/api/timeline/config/apply")
+async def timeline_config_apply(req: ConfigApplyRequest):
+    """Apply a config override to a single event."""
+    try:
+        from timeline.ui_adapter.patch_factory import make_override_config, make_set_config, make_reset_config
+        from core.runtime.patch_engine import PatchEngine
+        from core.runtime.project_state import TimelineProjectState
+
+        if req.op == "override":
+            patch = make_override_config(req.event_id, req.slot, req.field, req.value)
+        elif req.op == "set":
+            patch = make_set_config(req.event_id, req.slot, req.config_block if hasattr(req, 'config_block') else {req.field: req.value})
+        elif req.op == "reset":
+            patch = make_reset_config(req.event_id, req.slot, [req.field] if req.field else None)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown op: {req.op}")
+
+        return {
+            "status": "patch_created",
+            "patch": {
+                "id": patch.id,
+                "op": patch.op.value,
+                "target_id": patch.target_id,
+                "value": patch.value,
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/timeline/config/batch")
+async def timeline_config_batch(req: ConfigBatchRequest):
+    """Batch apply config to multiple events."""
+    try:
+        from timeline.ui_adapter.patch_factory import make_batch_set_config
+        patch = make_batch_set_config(req.event_ids, req.slot, req.config_block)
+        return {
+            "status": "batch_patch_created",
+            "patch": {
+                "id": patch.id,
+                "op": patch.op.value,
+                "targets": patch.targets,
+                "value": patch.value,
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/timeline/config/resolve")
+async def timeline_config_resolve(event_id: str, slot: str, workspace: str = ""):
+    """Resolve the effective config for an event slot (Event > Speaker > Global)."""
+    try:
+        from core.runtime.config_resolver import ConfigResolver
+        from core.config.global_config import GlobalConfig
+
+        gc = GlobalConfig()
+        resolver = ConfigResolver(gc)
+
+        # For now, return global defaults as baseline
+        resolved = gc.get_slot_defaults(slot)
+        inherited = "global"
+
+        return {
+            "event_id": event_id,
+            "slot": slot,
+            "resolved": resolved,
+            "inherited_from": inherited,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/config/slots")
+async def config_slots_list():
+    """List all configurable slots and their schema info."""
+    import os
+    from core.config.schema_loader import SchemaLoader
+    schema_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "schemas", "ir_v2")
+    loader = SchemaLoader(schema_dir)
+    slots = {}
+    for slot_name in loader.SLOT_TO_SCHEMA:
+        schema = loader.get_schema(slot_name)
+        if schema:
+            slots[slot_name] = {
+                "title": schema.get("title", slot_name),
+                "description": schema.get("description", ""),
+                "properties": list(schema.get("properties", {}).keys()),
+            }
+    return {"slots": slots}
+
 @app.get("/api/speaker/audio/preview")
 async def speaker_audio_preview(path: str = "", start: float = 0, end: float = 0):
     """返回指定时间范围的音频 base64（用于前端试听）。"""
