@@ -22,6 +22,7 @@ class PassManager:
     def __init__(self):
         self._passes: dict[str, TimelinePass] = {}
         self._order: list[str] = []
+        self._config_resolver = None  # ConfigResolver | None — StageExecutor 注入
 
     def register(self, p: TimelinePass) -> None:
         if not p.name:
@@ -86,3 +87,17 @@ class PassManager:
             raise ValueError(f"循环依赖检测: {remaining}")
 
         self._order = resolved
+
+    def set_config_resolver(self, resolver) -> None:
+        """设置配置解析器，用于在 Pass 执行前注入配置。
+
+        StageExecutor 在每个阶段开始时调用此方法，
+        确保本阶段的所有 Pass 都能接收到解析后的配置。
+        """
+        self._config_resolver = resolver
+
+    def reset(self) -> None:
+        """清空已注册的 Pass，准备复用。"""
+        self._passes.clear()
+        self._order.clear()
+        self._config_resolver = None

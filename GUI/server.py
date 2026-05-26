@@ -728,6 +728,7 @@ class RunRequest(BaseModel):
     align_lang: str = "ja"
     enable_emotion: bool = False
     enable_speaker_diarization: bool = False
+    use_core: bool = False  # 启用 core/ Adapter-Pass-Gate 新架构
 
 
 class RunResponse(BaseModel):
@@ -882,6 +883,8 @@ def _build_cli_args(req: RunRequest) -> list[str]:
         args.extend(["--align-lang", req.align_lang])
     if req.enable_speaker_diarization:
         args.append("--enable-speaker-diarization")
+    if req.use_core:
+        args.append("--use-core")
     return args
 
 

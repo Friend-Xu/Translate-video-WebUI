@@ -25,12 +25,20 @@ class TTSCompositePass(TimelinePass):
     def __init__(self, output_dir: str = "", speaker_seed: int | None = None):
         self.output_dir = output_dir
         self.speaker_seed = speaker_seed
+        self._resolved_config: dict | None = None
+
+    def configure(self, resolved_config: dict | None = None) -> None:
+        """接收 ConfigResolver 解析后的 tts 槽位配置。"""
+        self._resolved_config = resolved_config or {}
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         engine = PatchEngine()
         adapter = ChatTTSAdapter(
             speaker_seed=self.speaker_seed, output_dir=self.output_dir,
         )
+        # 配置注入 (批次 B): ConfigResolver → Pass → Adapter
+        if self._resolved_config:
+            adapter.configure(self._resolved_config)
         emotion_modeler = EmotionModeler()
         duration_ctrl = DurationController()
         scorer = TTSScorer()
