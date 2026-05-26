@@ -44,14 +44,14 @@ Models download automatically to `models/` on first run.
 
 ---
 
-## What's New in v1.4.0
+## What's New in v2.0.0
 
-- **ChatTTS Persistent Worker** — Isolated subprocess with JSON protocol, eliminates STATUS_HEAP_CORRUPTION crashes on Windows CUDA
-- **SSE Real-time Streaming** — asyncio.Queue instant delivery + react-virtuoso virtual scrolling (500 DOM nodes → ~30), smooth log display even with 1000+ lines
-- **Text Normalization** — WeTextProcessing (wetext) integration for Chinese number/date normalization, fixed Minecraft version number pronunciation ("1.19" → "一点一九")
-- **Glossary Safety** — Auto-filter Minecraft formatting codes (§l, §r) from glossary values, preventing subtitle corruption
-- **Per-segment LUFS** — Automatic loudness normalization per TTS segment, eliminates volume jumps between ChatTTS/CosyVoice segments
-- **UTF-8 Everywhere** — Enforced UTF-8 encoding for all subprocess calls, no more GBK decode crashes on Chinese Windows
+- **core/ Adapter-Pass-Gate Architecture** — 3-tier engine: 14 Pass + 11 Adapter + 8 Scorer + 2 Gate, type-safe composable pipeline
+- **Timeline IR v2** — 9-slot event state + OpCode enum + version system, immutable data model
+- **Patch Engine (Ch12)** — Full OpCode dispatch (merge/split/annotate), conflict detection, recompute engine, rollback & snapshot
+- **Translation Quality Gate (Ch14)** — TextGate A/C/B triage + joint formula, TranslationScorer 5-dim weighted, MiniLM + PPL adapters
+- **Emotion Control Axis (Ch15)** — Audio+text dual-path emotion recognition, EmotionGate E1/E2/E3, VAD-space emotion vectors
+- **Unified Timeline Workbench** — React 19 + MUI 7 + Zustand, 5-mode WebUI (Import/Review/Speaker/Patch/Export), TimelineArena with rubber-band select, waveform, multi-track
 
 ---
 ## Features
@@ -178,6 +178,7 @@ Full architecture → [`ARCHITECTURE.md`](ARCHITECTURE.md)
 | `--caption-position` | bottom | Position (`bottom`/`top`) |
 | `--caption-max-lines` | 2 | Max subtitle lines |
 | `--export-external-srt` | — | Export external subtitle file |
+| `--use-core` | — | Use core/ Adapter-Pass-Gate pipeline (new architecture) |
 
 ---
 
@@ -292,8 +293,19 @@ test_project/
 
 ```
 Translate_video/
-├── main.py                  # Entry point: 3-step pipeline
+├── main.py                  # Entry point: 3-step pipeline + --use-core flag
 ├── extract_subtitles.py     # Subtitle extraction (standalone)
+├── core/                    # Adapter-Pass-Gate architecture (NEW)
+│   ├── engine/              # PassManager + PassBase
+│   ├── ir/                  # Timeline IR v2 (immutable data model)
+│   ├── adapters/            # 11 external engine wrappers
+│   ├── passes/              # 14 orchestration passes
+│   ├── gates/               # 2 quality gates (TextGate, EmotionGate)
+│   ├── scoring/             # 8 scorers (Translation, Emotion, ASR, TTS×5)
+│   ├── runtime/             # Patch engine + state management
+│   ├── emotion/             # Emotion space + alignment
+│   ├── speaker/             # Speaker diarization modules
+│   └── tts/                 # TTS control modules
 ├── pipeline/                # Core modules
 │   ├── audio.py             # Audio extraction + C2 defect fix
 │   ├── transcriber.py       # Silero VAD + faster-whisper + wav2vec2

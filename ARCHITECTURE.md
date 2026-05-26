@@ -507,6 +507,225 @@ pipeline/
 3. **SRT 时间戳质量问题**：`extract_subtitles.py` 生成的 SRT 首条偶有反转时间戳，`parse_srt()` 已自动修正
 4. **Windows 路径兼容**：TimingAdjuster 原用 Unix `/` 路径拼接，已改为 `os.path.join`
 
+## core/ — Adapter-Pass-Gate 三层架构（新 🆕）
+
+`core/` 是新一代 pipeline 引擎，采用 **Adapter-Pass-Gate** 三层分离架构，
+目标：类型安全、可独立测试、可线性编排的全流程引擎。
+
+### 架构概览
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        PassManager                               │
+│  按 depends_on DAG 拓扑排序，线性执行 14 个 Pass                  │
+└─────────────────────────────────────────────────────────────────┘
+        │                    │                    │
+        ▼                    ▼                    ▼
+┌───────────────┐   ┌───────────────┐   ┌───────────────┐
+│   Adapter 层   │   │    Pass 层     │   │    Gate 层     │
+│  (11 adapters) │   │  (14 passes)   │   │   (2 gates)    │
+│                │   │                │   │                │
+│ • Whisper      │   │ • ASR          │   │ • TextGate     │
+│ • Wav2Vec2     │   │ • Speaker      │   │   A/C/B 决策   │
+│ • PyAnnote     │   │ • Translation  │   │ • EmotionGate  │
+│ • ChatTTS      │   │ • TTS ×5       │   │   E1/E2/E3     │
+│ • CosyVoice    │   │ • Emotion      │   │                │
+│ • IndexTTS     │   │ • Quality      │   │                │
+│ • OpenVoice    │   │ • AudioPre     │   │                │
+│ • EdgeTTS      │   │ • SRTExport    │   │                │
+│ • MiniLM       │   │ • SemanticMerge│   │                │
+│ • PPL          │   │ • ASRToIR      │   │                │
+│ • EmotionRecog │   │                │   │                │
+└───────────────┘   └───────────────┘   └───────────────┘
+        │                    │                    │
+        └────────────────────┼────────────────────┘
+                             │
+                             ▼
+              ┌──────────────────────────┐
+              │     TimelineProjectState  │
+              │  ┌──────────────────────┐ │
+              │  │  IR (immutable)      │ │
+              │  │  events[], speakers{}│ │
+              │  ├──────────────────────┤ │
+              │  │  EventState × N      │ │
+              │  │  _data (9 slots)     │ │
+              │  │  patches[]           │ │
+              │  ├──────────────────────┤ │
+              │  │  Global patches[]    │ │
+              │  └──────────────────────┘ │
+              └──────────────────────────┘
+                             │
+                             ▼
+              ┌──────────────────────────┐
+              │    SynthesisEngine        │
+              │  5-layer render:          │
+              │  L1 raw IR → L2 deriv.   │
+              │  → L3 patches →          │
+              │  L4 speakers → L5 output │
+              └──────────────────────────┘
+```
+
+### Adapter 层 — 外部引擎封装
+
+每个 Adapter 封装一个外部引擎（Whisper, ChatTTS, MiniLM 等），
+统一返回 `Patch` 对象写入 `TimelineProjectState`。
+
+**11 个 Adapter：**
+
+| Adapter | 封装引擎 | 输出 Patch |
+|---------|---------|-----------|
+| `WhisperAdapter` | faster-whisper (CTranslate2) | UPDATE_TRANSCRIPTION |
+| `Wav2Vec2Adapter` | Wav2Vec2ForCTC | REFINE_ALIGNMENT |
+| `PyAnnoteAdapter` | pyannote.audio | UPDATE_SPEAKER |
+| `ChatTTSAdapter` | ChatTTS subprocess | UPDATE_TTS |
+| `CosyVoiceAdapter` | CosyVoice subprocess | UPDATE_TTS |
+| `IndexTTSAdapter` | IndexTTS subprocess | UPDATE_TTS |
+| `OpenVoiceAdapter` | OpenVoiceCloner | UPDATE_TTS (fallback) |
+| `EdgeTTSAdapter` | EdgeTTSEngine | UPDATE_TTS (last resort) |
+| `MiniLMAdapter` | SentenceTransformer | ANNOTATE (similarity) |
+| `PPLAdapter` | GPT-2 PPL | ANNOTATE (ppl_ratio) |
+| `EmotionRecognizerAdapter` | EmotionModeler + funasr | UPDATE_EMOTION |
+
+### Pass 层 — 编排标准操作
+
+每个 Pass 是一个 `apply(state) → state` 函数，通过 `depends_on` 声明依赖，
+`PassManager` 自动拓扑排序执行。
+
+**14 个 Pass：**
+
+| Pass | 依赖 | 功能 |
+|------|------|------|
+| `AudioPreprocessCompositePass` | — | MediaValidator + Demucs + VAD |
+| `ASRToIRPass` | — | ASR 输出 → Timeline IR |
+| `ASRCompositePass` | audio_preprocess | Whisper + Wav2Vec2 → Patch |
+| `SpeakerCompositePass` | asr_composite | PyAnnote → Speaker Patch |
+| `LLMTranslationPass` | asr_to_ir | LLM 翻译 → UPDATE_TRANSLATION |
+| `TranslationQualityPass` | llm_translation | TranslationScorer + TextGate |
+| `EmotionCompositePass` | speaker_composite, llm_translation | EmotionRecognizer + EmotionGate |
+| `TTSCompositePass` | llm_translation | ChatTTS → UPDATE_TTS |
+| `CosyVoiceCompositePass` | llm_translation | CosyVoice → UPDATE_TTS |
+| `IndexTTSCompositePass` | llm_translation | IndexTTS → UPDATE_TTS |
+| `OpenVoiceCompositePass` | tts_composite | OpenVoice fallback |
+| `EdgeTTSCompositePass` | openvoice_composite | EdgeTTS last resort |
+| `SemanticMergePass` | asr_to_ir | 语义合并相邻 segment |
+| `SRTExportPass` | (末端) | State → SRT 文件 |
+
+### Gate 层 — 质量门控
+
+**TextGate** (Ch14) — 翻译质量门控：
+
+```
+A 门: new_sim < old_sim - sim_drop_limit → reject (退化)
+C 门: new_ppl_ratio > old_ppl_ratio → reject (流畅度下降)
+B 门: new_sim - old_sim > 0.05 → accept (质量提升)
+      否则 → reject (无提升)
+
+Joint Formula 模式:
+  score = 0.4 × (1 - PPL_ratio_norm) + 0.4 × sim_gain + 0.2 × (1 - length_err)
+  score > 0.5 → accept
+```
+
+**EmotionGate** (Ch15) — 情感一致性门控：
+
+```
+E2 (硬门槛): current.confidence < 0.3 → review
+E1 (连续性): |current.intensity - previous.intensity| > 0.7 → repair
+E3 (说话人): current.distance(speaker_baseline) > 1.5 → repair
+```
+
+### Timeline IR v2 — 9 槽位事件状态
+
+`TimelineEventState` 管理 9 个语义槽位，每个槽位惰性初始化为 `dict`：
+
+| 槽位 | 内容 | 写入者 |
+|------|------|--------|
+| `audio` | 音频路径、VAD 边界 | AudioPreprocess |
+| `asr` | 转录文本、词级时间戳 | ASRComposite |
+| `speaker` | speaker_id、嵌入向量 | SpeakerComposite |
+| `semantic` | 语义分组 | SemanticMerge |
+| `translation` | 翻译文本、质量评分 | LLMTranslation + Quality |
+| `tts` | TTS 输出路径、时长 | TTS Composite |
+| `emotion` | valence/arousal/dominance | EmotionComposite |
+| `review` | 人工审校标记 | WebUI |
+| `runtime` | 重算标记、版本 | PatchEngine |
+
+**OpCode 枚举** — 20+ 操作码：
+
+```
+REPLACE, MERGE, SPLIT, INSERT, DELETE,
+UPDATE_TRANSCRIPTION, UPDATE_TRANSLATION, UPDATE_SPEAKER,
+UPDATE_TTS, UPDATE_EMOTION, REFINE_ALIGNMENT,
+ASSIGN_SPEAKER, MERGE_SPEAKERS, ANNOTATE, ...
+```
+
+### Patch Engine (Ch12) — 补丁状态机
+
+`PatchEngine` 是整个 core/ 的运行时核心，将 Patch 应用到 State：
+
+```
+Patch.apply(state) → 分发到 handler
+  ├── _replace    → target.derivatives.update(value)
+  ├── _seg_split  → 创建 2 个新 EventState
+  ├── _seg_merge  → 合并 N 个 EventState
+  ├── _seg_insert → 创建 1 个新 EventState
+  ├── _assign_speaker → 更新 speaker_ref
+  ├── _merge_speakers → 重映射 speaker_id
+  ├── _annotate   → 写入指定槽位
+  └── _propagate  → 批量更新多个 target
+```
+
+**配套子系统：**
+
+| 模块 | 功能 |
+|------|------|
+| `DependencyGraph` | 段间时间依赖图，级联失效检测 |
+| `RecomputeEngine` | 增量重算，最小化重处理范围 |
+| `ConflictDetector` | OVERWRITE/IDENTITY/TEMPORAL 冲突检测 |
+| `ConflictResolver` | 规则优先级 + 置信度仲裁 |
+| `RollbackManager` | Patch undo/redo，版本回退 |
+| `SnapshotManager` | State 快照，崩溃恢复 |
+| `PatchStore` | 三层存储（内存→磁盘→远程） |
+| `Reducer` | 确定性重放至指定时间戳 |
+| `GateValidator` | 预应用校验（幂等性、置信度、必填字段） |
+
+### 评分器 — 8 个 Scorer
+
+| Scorer | 评估维度 | 输出 |
+|--------|---------|------|
+| `TranslationScorer` | semantic + fluency + faithfulness + temporal + length | composite ∈ [0,1] |
+| `EmotionScorer` | consistency + intensity + speaker_fit + translation_alignment | composite ∈ [0,1] |
+| `ASRScorer` | confidence + alignment + coverage | score ∈ [0,1] |
+| `TTSScorer` | duration_fit + quality + naturalness | score ∈ [0,1] |
+| `CosyVoiceScorer` | duration_fit + cross_lingual + quality | score ∈ [0,1] |
+| `IndexTTSScorer` | duration_fit + voice_match + emotion_fit | score ∈ [0,1] |
+| `OpenVoiceScorer` | duration_fit + transfer_quality | score ∈ [0,1] |
+| `EdgeTTSScorer` | duration_fit + fallback_reason | score ∈ [0,1] |
+
+### 与旧架构关系
+
+```
+旧架构: main.py → extract_subtitles.py → SRT_Translator → TtsPipeline
+新架构: main.py --use-core → PassManager → 14 Pass → SynthesisEngine
+
+迁移策略: 渐进，双系统共存。--use-core 默认不启用。
+```
+
+### core/ 模块布局
+
+```
+core/
+├── engine/           # PassManager + PassBase
+├── ir/               # Timeline IR (不可变数据模型)
+├── adapters/         # 11 个外部引擎封装
+├── passes/           # 14 个编排 Pass
+├── gates/            # 2 个质量门控
+├── scoring/          # 8 个评分器
+├── runtime/          # 补丁引擎 + 状态管理
+├── emotion/          # 情感空间
+├── speaker/          # 说话人识别
+└── tts/              # TTS 控制
+```
+
 ## 配置参考 (`config/translate.yaml`)
 
 ```yaml
