@@ -24,6 +24,11 @@ _REQUIRED: dict[OpCode, list[str]] = {
     OpCode.ASSIGN_SPEAKER: ["speaker_id"],
     OpCode.MERGE_SPEAKERS: ["from_ids", "into_id"],
     OpCode.SPLIT_SEGMENT_BY_SPEAKER: ["boundaries"],
+    # v3.0: 配置 OpCode (定稿 §10.5)
+    OpCode.SET_CONFIG: ["slot", "config_block"],
+    OpCode.OVERRIDE_CONFIG: ["slot", "partial_config"],
+    OpCode.RESET_CONFIG: ["slot"],
+    OpCode.BATCH_SET_CONFIG: ["slot", "config_block"],
 }
 
 _NO_TARGET = {OpCode.SEGMENT_INSERT}

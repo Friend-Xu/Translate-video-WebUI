@@ -13,6 +13,8 @@ from core.runtime.patch import Patch, OpCode
 from core.runtime.event_state import TimelineEventState
 from core.runtime.project_state import TimelineProjectState
 from core.ir.timeline_event import TimelineEventIR
+from core.runtime.config_resolver import deep_merge
+from core.runtime.slot_dependency import SlotLevelDependencyGraph
 
 
 class PatchEngine:
@@ -40,7 +42,13 @@ class PatchEngine:
             OpCode.UPDATE_TRANSLATION: self._replace,
             OpCode.UPDATE_EMOTION: self._replace,
             OpCode.ANNOTATE: self._annotate,
+            # v3.0: 配置 OpCode (定稿 §10.5, §12.3)
+            OpCode.SET_CONFIG: self._set_config,
+            OpCode.OVERRIDE_CONFIG: self._override_config,
+            OpCode.RESET_CONFIG: self._reset_config,
+            OpCode.BATCH_SET_CONFIG: self._batch_set_config,
         }
+        self._slot_dep_graph = SlotLevelDependencyGraph()
 
     # ── public API ──────────────────────────────────────
 
@@ -430,4 +438,175 @@ class PatchEngine:
             "target": patch.target_id,
             "slots_updated": list(before_snap.keys()),
             "before": before_snap,
+        }
+
+    # ── config ops (v3.0 — 定稿 §12.3) ────────────────────
+
+    def _override_config(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """OVERRIDE_CONFIG — 深度合并覆盖 config 指定字段。
+
+        最常用的配置操作码（对应 WebUI 单字段微调）。
+        使用增量快照（JSON Pointer 路径）记录 previous_state。
+        """
+        event_id = patch.target_id
+        slot = patch.value.get("slot", "")
+        partial = patch.value.get("partial_config", {})
+
+        es = state.get_event(event_id)
+        if es is None:
+            return {"status": "error", "reason": "target not found: %s" % event_id}
+
+        slot_dict = getattr(es, slot, None)
+        if slot_dict is None:
+            return {"status": "error", "reason": "unknown slot: %s" % slot}
+
+        if "config" not in slot_dict:
+            slot_dict["config"] = {}
+
+        # 增量快照：仅记录被修改字段的路径和旧值
+        previous_state = {}
+        for key, new_value in partial.items():
+            old_value = slot_dict["config"].get(key)
+            if old_value != new_value:
+                previous_state[key] = old_value
+
+        # 深度合并
+        deep_merge(slot_dict["config"], partial)
+        es.add_patch(patch)
+
+        # 标记脏并传播
+        dirty_slots = self._slot_dep_graph.propagate_dirty(event_id, slot, state)
+
+        return {
+            "status": "applied",
+            "op": "override_config",
+            "target": event_id,
+            "slot": slot,
+            "previous_state": previous_state,
+            "dirty_slots": [(eid, s) for eid, s in dirty_slots],
+        }
+
+    def _set_config(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """SET_CONFIG — 全量替换目标槽位的 config 块。
+
+        用于 Import 模式批量初始化和"从预设加载"操作。
+        记录完整旧 config 作为 previous_state。
+        """
+        event_id = patch.target_id
+        slot = patch.value.get("slot", "")
+        config_block = patch.value.get("config_block", {})
+
+        es = state.get_event(event_id)
+        if es is None:
+            return {"status": "error", "reason": "target not found: %s" % event_id}
+
+        slot_dict = getattr(es, slot, None)
+        if slot_dict is None:
+            return {"status": "error", "reason": "unknown slot: %s" % slot}
+
+        # 完整快照旧 config
+        old_config = dict(slot_dict.get("config", {}))
+        slot_dict["config"] = dict(config_block)  # 全量替换
+        es.add_patch(patch)
+
+        dirty_slots = self._slot_dep_graph.propagate_dirty(event_id, slot, state)
+
+        return {
+            "status": "applied",
+            "op": "set_config",
+            "target": event_id,
+            "slot": slot,
+            "previous_state": {"_full_config": old_config},
+            "dirty_slots": [(eid, s) for eid, s in dirty_slots],
+        }
+
+    def _reset_config(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """RESET_CONFIG — 移除事件级覆盖，恢复继承。
+
+        支持两种模式:
+          - 无 fields 参数: 删除整个槽位的 config（完全恢复继承）
+          - 有 fields 参数: 仅删除指定字段的覆盖（部分恢复继承）
+        """
+        event_id = patch.target_id
+        slot = patch.value.get("slot", "")
+        fields = patch.value.get("fields")
+
+        es = state.get_event(event_id)
+        if es is None:
+            return {"status": "error", "reason": "target not found: %s" % event_id}
+
+        slot_dict = getattr(es, slot, None)
+        if slot_dict is None:
+            return {"status": "error", "reason": "unknown slot: %s" % slot}
+
+        config = slot_dict.get("config", {})
+        previous_state = {}
+
+        if fields is None:
+            previous_state = {"_full_config": dict(config)}
+            slot_dict["config"] = {}
+        else:
+            for field in fields:
+                if field in config:
+                    previous_state[field] = config.pop(field)
+            if not slot_dict["config"]:
+                slot_dict["config"] = {}
+
+        es.add_patch(patch)
+        dirty_slots = self._slot_dep_graph.propagate_dirty(event_id, slot, state)
+
+        return {
+            "status": "applied",
+            "op": "reset_config",
+            "target": event_id,
+            "slot": slot,
+            "fields": fields,
+            "previous_state": previous_state,
+            "dirty_slots": [(eid, s) for eid, s in dirty_slots],
+        }
+
+    def _batch_set_config(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """BATCH_SET_CONFIG — 批量执行相同配置操作。
+
+        对每个 target 独立执行 SET_CONFIG 逻辑，合并依赖计算（去重）。
+        并发重算由 RecomputeScheduler 管理。
+        """
+        targets = patch.targets or [patch.target_id]
+        slot = patch.value.get("slot", "")
+        config_block = patch.value.get("config_block", {})
+
+        results = []
+        all_dirty: set[tuple[str, str]] = set()
+
+        for eid in targets:
+            es = state.get_event(eid)
+            if es is None:
+                results.append({"target": eid, "status": "error", "reason": "not found"})
+                continue
+
+            slot_dict = getattr(es, slot, None)
+            if slot_dict is None:
+                results.append({"target": eid, "status": "error", "reason": "unknown slot"})
+                continue
+
+            old_config = dict(slot_dict.get("config", {}))
+            slot_dict["config"] = dict(config_block)
+            es.add_patch(patch)
+
+            dirty = self._slot_dep_graph.propagate_dirty(eid, slot, state)
+            all_dirty.update(dirty)
+
+            results.append({
+                "target": eid,
+                "status": "applied",
+                "previous_state": {"_full_config": old_config},
+            })
+
+        return {
+            "status": "applied",
+            "op": "batch_set_config",
+            "targets": targets,
+            "slot": slot,
+            "results": results,
+            "dirty_slots": [(eid, s) for eid, s in all_dirty],
         }
