@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "schemas/ir_v2/tts_config_cosyvoice.schema.json",
+  "title": "CosyVoice Engine Options",
+  "description": "CosyVoice 引擎专属参数 — 零样本克隆、子进程隔离、版本选择 (定稿 §6.2)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "clone_ref": {
+      "type": "string",
+      "description": "参考音频文件路径。通常继承自 speaker.clone_ref，事件级可覆盖。"
+    },
+    "prompt_text": {
+      "type": "string",
+      "default": "",
+      "description": "参考音频对应的文本内容，CosyVoice 用此文本作为语言和音色提示。"
+    },
+    "version": {
+      "type": "string",
+      "enum": ["v2", "v3"],
+      "default": "v2",
+      "description": "CosyVoice 模型版本。v3 跨语言克隆更稳定但推理稍慢。"
+    },
+    "lang": {
+      "type": "string",
+      "enum": ["zh", "en", "ja", "ko", "yue"],
+      "description": "目标语言标签。必须是 CosyVoice 支持的 5 种语言之一。"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["cross_lingual"],
+      "default": "cross_lingual",
+      "description": "合成模式。cross_lingual 是唯一验证过的最佳模式。"
+    },
+    "num_norm": {
+      "type": "boolean",
+      "default": true,
+      "description": "数字归一化开关。开启时'2024年'→'二零二四年'。股票代码、数学公式等场景应关闭。"
+    },
+    "speed": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 2.0,
+      "default": 1.0,
+      "description": "CosyVoice 原生 speed 控制倍率"
+    },
+    "subprocess_timeout": {
+      "type": "number",
+      "minimum": 1.0,
+      "default": 30.0,
+      "description": "单次合成请求超时时间（秒）"
+    },
+    "max_retries": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 5,
+      "default": 2,
+      "description": "子进程调用失败后最大重试次数"
+    },
+    "warm_up": {
+      "type": "boolean",
+      "default": true,
+      "description": "首次合成前预热推理，增加约 2s 启动延迟但显著降低首次合成延迟。"
+    },
+    "device": {
+      "type": "string",
+      "default": "cuda",
+      "description": "CosyVoice 模型运行设备。可与全局 ASR 设备独立（如 cuda:1）。"
+    },
+    "fp16": {
+      "type": "boolean",
+      "default": true,
+      "description": "半精度推理。开启减少显存占用约 40%，对音质影响微乎其微。"
+    },
+    "similarity_threshold": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 0.75,
+      "description": "克隆音色嵌入相似度阈值"
+    }
+  }
+}

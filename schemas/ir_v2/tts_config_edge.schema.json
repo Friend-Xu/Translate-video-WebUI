@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "schemas/ir_v2/tts_config_edge.schema.json",
+  "title": "Edge TTS Engine Options",
+  "description": "Edge TTS 引擎专属参数 — 网络容错、语音列表、代理配置 (定稿 §6.4)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "voice": {
+      "type": "string",
+      "default": null,
+      "description": "指定具体语音名（如 zh-CN-XiaoxiaoNeural）。为 null 时自动匹配。"
+    },
+    "fallback_voice_list": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": null,
+      "description": "首选 voice 不可用时的降级语音列表。默认使用同语言可用语音。"
+    },
+    "timeout": {
+      "type": "number",
+      "minimum": 1.0,
+      "default": 15.0,
+      "description": "单次 HTTP 请求超时（秒）"
+    },
+    "max_retries": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10,
+      "default": 3,
+      "description": "失败重试次数（指数退避）"
+    },
+    "retry_delay": {
+      "type": "number",
+      "minimum": 0.1,
+      "default": 1.0,
+      "description": "重试间隔基值（秒）"
+    },
+    "proxy": {
+      "type": "string",
+      "default": null,
+      "description": "HTTP 代理地址，格式 http://host:port。适合企业内网环境。"
+    },
+    "pitch": {
+      "type": "string",
+      "default": "+0Hz",
+      "description": "音高调整（如 -5Hz 或 +10%），遵循 SSML 规范。"
+    },
+    "volume": {
+      "type": "string",
+      "default": "+0%",
+      "description": "音量调整（如 +20% 或 -10%）。"
+    }
+  }
+}

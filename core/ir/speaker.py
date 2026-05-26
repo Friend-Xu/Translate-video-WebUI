@@ -25,3 +25,5 @@ class SpeakerNodeIR:
     gender_prob: float | None = None  # 性别概率 [0,1]
     voice_style: str | None = None    # "neutral" | "energetic" | "calm" | "authoritative"
     confidence: float | None = None   # pyannote diarization 置信度 [0,1]
+    # v3.0: 说话人级配置覆盖 (定稿 §8.3, §10.4)
+    config: dict | None = None       # 说话人级 config，如 {"tts": {"engine": "cosyvoice"}}

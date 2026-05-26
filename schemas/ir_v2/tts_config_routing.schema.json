@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "schemas/ir_v2/tts_config_routing.schema.json",
+  "title": "TTS Routing Config",
+  "description": "tts 槽位路由级 config — 引擎选择、音色、语速、时序、降级链参数 (定稿 §5.4)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "engine": {
+      "type": "string",
+      "enum": ["edge", "chattts", "cosyvoice"],
+      "default": "chattts",
+      "description": "TTS 引擎选择。事件级覆盖 > 说话人偏好 > 全局默认。不可用时沿降级链自动切换。"
+    },
+    "voice_gender": {
+      "type": "string",
+      "enum": ["auto", "male", "female"],
+      "default": "auto",
+      "description": "音色性别。auto 时根据 speaker.gender 自动选择。"
+    },
+    "speed_factor": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 2.0,
+      "default": 1.0,
+      "description": "基础语速倍率。1.0 为原始速度。注意每个引擎的有效范围不同。"
+    },
+    "timing_adaptive": {
+      "type": "boolean",
+      "default": true,
+      "description": "启用后自动微调语速以匹配原始片段时长。"
+    },
+    "timing_threshold": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 0.5,
+      "default": 0.15,
+      "description": "时序对齐容差（比例）。实际时长与目标时长偏差超过此值且 timing_adaptive=true 时触发微调。"
+    },
+    "max_speed_adjustment": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 1.0,
+      "description": "最大语速微调幅度（相对于 speed_factor）"
+    },
+    "fallback_chain": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["cosyvoice", "chattts", "edge"] },
+      "default": ["cosyvoice", "chattts", "edge"],
+      "description": "引擎降级链。当指定引擎不可用时按此顺序尝试。"
+    },
+    "auto_switch_on_low_quality": {
+      "type": "boolean",
+      "default": false,
+      "description": "（前瞻）启用后，若 TTS Scorer 评分低于 quality_threshold 且降级链有候选，自动切换引擎重合成。"
+    },
+    "quality_threshold": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 0.60,
+      "description": "（前瞻）auto_switch_on_low_quality 的质量触发阈值。"
+    }
+  }
+}

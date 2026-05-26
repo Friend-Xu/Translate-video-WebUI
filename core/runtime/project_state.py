@@ -15,7 +15,7 @@ class TimelineProjectState:
 
     IR 引用只读。所有变更通过 event_states 和 global_patches 记录。
     """
-    __slots__ = ("ir", "event_states", "global_patches")
+    __slots__ = ("ir", "event_states", "global_patches", "global_config")
 
     def __init__(self, ir: TimelineProjectIR):
         self.ir = ir
@@ -23,6 +23,7 @@ class TimelineProjectState:
             eid: TimelineEventState(evt) for eid, evt in ir.events.items()
         }
         self.global_patches: list[Patch] = []
+        self.global_config = None  # GlobalConfig | None — 项目级全局配置
 
     def get_event(self, event_id: str) -> TimelineEventState | None:
         return self.event_states.get(event_id)

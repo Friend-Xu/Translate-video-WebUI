@@ -68,60 +68,60 @@ class TimelineEventState:
 
     @property
     def audio(self) -> dict:
-        """{vocals_ref, bgm_ref, sample_rate, channels}"""
+        """{vocals_ref, bgm_ref, sample_rate, channels, config}"""
         if "audio" not in self._data:
-            self._data["audio"] = {}
+            self._data["audio"] = {"config": {}}
         return self._data["audio"]
 
     @property
     def asr(self) -> dict:
-        """{words, confidence, language}"""
+        """{words, confidence, language, config}"""
         if "asr" not in self._data:
-            self._data["asr"] = {}
+            self._data["asr"] = {"config": {}}
         return self._data["asr"]
 
     @property
     def speaker(self) -> dict:
-        """{speaker_id, embedding_ref, confidence}"""
+        """{speaker_id, embedding_ref, confidence, config}"""
         if "speaker" not in self._data:
-            self._data["speaker"] = {}
+            self._data["speaker"] = {"config": {}}
         return self._data["speaker"]
 
     @property
     def semantic(self) -> dict:
-        """{embedding_ref, tokens, speech_rate_vector}"""
+        """{embedding_ref, tokens, speech_rate_vector, config}"""
         if "semantic" not in self._data:
-            self._data["semantic"] = {}
+            self._data["semantic"] = {"config": {}}
         return self._data["semantic"]
 
     @property
     def translation(self) -> dict:
-        """{text, engine, score}"""
+        """{text, engine, score, config}"""
         if "translation" not in self._data:
-            self._data["translation"] = {}
+            self._data["translation"] = {"config": {}}
         return self._data["translation"]
 
     @property
     def tts(self) -> dict:
-        """{audio_ref, duration, engine, quality_score}"""
+        """{audio_ref, duration, engine, quality_score, config}"""
         if "tts" not in self._data:
-            self._data["tts"] = {}
+            self._data["tts"] = {"config": {}}
         return self._data["tts"]
 
     @property
     def emotion(self) -> dict:
-        """{valence, arousal, dominance, emotion_label, confidence, intensity} (Ch15)"""
+        """{valence, arousal, dominance, emotion_label, confidence, intensity, config} (Ch15)"""
         if "emotion" not in self._data:
-            self._data["emotion"] = {}
+            self._data["emotion"] = {"config": {}}
         return self._data["emotion"]
 
     # ── 九语义槽位 (Decision State) ─────────────────────────
 
     @property
     def review(self) -> dict:
-        """{flags, notes, needs_human_review}"""
+        """{flags, notes, needs_human_review, config}"""
         if "review" not in self._data:
-            self._data["review"] = {}
+            self._data["review"] = {"config": {}}
         return self._data["review"]
 
     @property

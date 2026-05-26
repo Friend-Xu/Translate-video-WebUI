@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "schemas/ir_v2/tts_config_chattts.schema.json",
+  "title": "ChatTTS Engine Options",
+  "description": "ChatTTS 引擎专属参数 — VRAM 管理、采样控制、韵律表达 (定稿 §6.3)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "speaker_seed": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 2,
+      "description": "说话人音色种子。不同值产生不同音色，实现多角色效果。"
+    },
+    "temperature": {
+      "type": "number",
+      "minimum": 0.01,
+      "maximum": 2.0,
+      "default": 0.8,
+      "description": "控制随机性。越低越稳定，越高越多样。种子复现需 temperature≤0.1。"
+    },
+    "top_k": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "default": 50,
+      "description": "Top-K 采样，限制候选 token 数量。"
+    },
+    "top_p": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 1.0,
+      "default": 0.9,
+      "description": "核心采样阈值 (nucleus sampling)。"
+    },
+    "repetition_penalty": {
+      "type": "number",
+      "minimum": 1.0,
+      "maximum": 2.0,
+      "default": 1.2,
+      "description": "重复惩罚，减少不自然的重复音节。"
+    },
+    "seed": {
+      "type": "integer",
+      "default": null,
+      "description": "随机种子。设定后可复现合成结果（需 temperature≤0.1）。"
+    },
+    "enable_denoise": {
+      "type": "boolean",
+      "default": true,
+      "description": "输出音频轻量降噪，可减少电音感。"
+    },
+    "emotion_injection": {
+      "type": "boolean",
+      "default": true,
+      "description": "是否启用情感注入。从 event.emotion.vector 构建韵律控制字符串。"
+    },
+    "vram_mode": {
+      "type": "string",
+      "enum": ["auto", "low", "medium", "high"],
+      "default": "auto",
+      "description": "VRAM 自适应模式: auto=自动检测, low=<4GB, medium=4-6GB, high=≥6GB"
+    },
+    "vram_limit_mb": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "手动限制 ChatTTS 最大显存使用量（MB）。设为 0 使用自动检测。"
+    }
+  }
+}

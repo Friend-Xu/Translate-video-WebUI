@@ -1,0 +1,145 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "schemas/ir_v2/emotion_config.schema.json",
+  "title": "Emotion Slot Config",
+  "description": "emotion 槽位 config 子字段 — 情感识别双通路、融合权重、门控阈值参数 (定稿 §7.4)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "是否启用情感识别。关闭后所有事件使用 neutral 向量。"
+    },
+    "audio_model": {
+      "type": "string",
+      "default": "iic/emotion2vec_plus_large",
+      "description": "声学情感识别模型"
+    },
+    "audio_context_window": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "default": 3,
+      "description": "提取特征时参考前后多少个相邻 VAD 片段"
+    },
+    "energy_normalize": {
+      "type": "boolean",
+      "default": true,
+      "description": "音频能量句子级归一化，消除音量差异带来的 Arousal 偏差"
+    },
+    "pitch_range_hz": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 2,
+      "maxItems": 2,
+      "default": [50, 500],
+      "description": "基频提取的有效范围 (Hz)"
+    },
+    "text_model": {
+      "type": "string",
+      "enum": ["distiluse", "bert-base", "roberta-emotion"],
+      "default": "distiluse",
+      "description": "文本情感分析模型。distiluse 适合多语言。"
+    },
+    "text_label_mapping": {
+      "type": "string",
+      "enum": ["ekman", "plutchik"],
+      "default": "ekman",
+      "description": "情感标签体系: ekman=6类基本情感, plutchik=8类轮盘"
+    },
+    "text_confidence_threshold": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 0.5,
+      "description": "文本情感分类置信度低于此值时忽略文本通路输出"
+    },
+    "text_emotion_injection": {
+      "type": "boolean",
+      "default": true,
+      "description": "是否将文本通路情感标签作为 TTS 韵律提示"
+    },
+    "fusion_strategy": {
+      "type": "string",
+      "enum": ["weighted_average", "max_confidence", "audio_primary", "text_primary"],
+      "default": "weighted_average",
+      "description": "双通路融合策略"
+    },
+    "audio_weight": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 0.7,
+      "description": "音频通路权重。语音情感通常比文本情感更直接准确。"
+    },
+    "text_weight": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 0.3,
+      "description": "文本通路权重。与 audio_weight 自动归一化。"
+    },
+    "fallback_threshold": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 0.4,
+      "description": "主通路策略中，主通路置信度低于此值时启用辅通路"
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["strict", "relaxed"],
+          "default": "strict",
+          "description": "Gate 模式: strict=E1+E2+E3全判, relaxed=仅E2。"
+        },
+        "max_break": {
+          "type": "number",
+          "minimum": 0.0,
+          "default": 1.5,
+          "description": "E1 情感断裂阈值。相邻事件VAD向量余弦距离超过此值视为情感突变。"
+        },
+        "min_confidence": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.3,
+          "description": "E2 置信度硬门槛。低于此值直接降级。"
+        },
+        "max_conflict": {
+          "type": "number",
+          "minimum": 0.0,
+          "default": 1.0,
+          "description": "E3 说话人冲突阈值。当前事件情感向量与说话人基线距离超过此值视为异常。"
+        }
+      },
+      "default": {}
+    },
+    "scorer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "weights": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "consistency": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.30 },
+            "intensity": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.25 },
+            "speaker_fit": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.25 },
+            "translation_alignment": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.20 }
+          }
+        },
+        "accept_threshold": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.60
+        }
+      }
+    }
+  }
+}

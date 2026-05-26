@@ -1,0 +1,224 @@
+"""
+GlobalConfig — 全局配置数据模型 (定稿 §1.4, §1.6)
+
+三层配置体系:
+  ProjectPolicy — 项目级默认配置 (What)
+  EnginePolicy  — 引擎能力默认值 (How)
+  GlobalConfig  — 顶层容器
+
+所有字段均提供合理默认值，确保新用户零配置即可跑通完整流水线。
+"""
+from __future__ import annotations
+from dataclasses import dataclass, field
+
+
+@dataclass
+class ProjectPolicy:
+    """项目级默认配置 — 用户可逐项覆盖的全局参数。
+
+    所有槽位的默认值集中于此。新项目创建时从 project_config.yaml
+    加载，未指定的字段使用类默认值。
+    """
+    audio: dict = field(default_factory=lambda: {
+        "skip_demucs": False,
+        "vad_threshold": 0.5,
+        "silence_handling": {"policy": "keep"},
+        "loudness_compensation": True,
+        "target_loudness": -23.0,
+        "high_pass_filter": False,
+        "demucs_model": "htdemucs",
+    })
+
+    asr: dict = field(default_factory=lambda: {
+        "model": "turbo",
+        "device": "cuda",
+        "compute_type": "float16",
+        "language": "auto",
+        "alignment_enabled": True,
+        "num_workers": 1,
+        "beam_size": 5,
+        "word_timestamps": True,
+    })
+
+    speaker: dict = field(default_factory=lambda: {
+        "clustering_threshold": 0.65,
+        "min_speakers": None,
+        "max_speakers": None,
+        "clustering_method": "agglomerative",
+        "gender": "auto",
+        "embedding_model": "pyannote/embedding",
+        "min_segment_duration": 0.5,
+        "merge_similar_speakers_threshold": 0.85,
+    })
+
+    translation: dict = field(default_factory=lambda: {
+        "lang": "zh",
+        "backend": "deepseek",
+        "glossary": {"mode": "OFF"},
+        "custom_prompt": "",
+        "gate": {
+            "mode": "logic_gate",
+            "threshold_accept": 0.80,
+            "threshold_reject": 0.60,
+            "beta": 0.6,
+            "gamma": 0.4,
+            "sim_drop_limit": 0.05,
+        },
+    })
+
+    tts: dict = field(default_factory=lambda: {
+        "engine": "chattts",
+        "voice_gender": "auto",
+        "speed_factor": 1.0,
+        "timing_adaptive": True,
+        "timing_threshold": 0.15,
+        "max_speed_adjustment": 1.0,
+        "fallback_chain": ["cosyvoice", "chattts", "edge"],
+        "auto_switch_on_low_quality": False,
+        "quality_threshold": 0.60,
+    })
+
+    emotion: dict = field(default_factory=lambda: {
+        "enabled": True,
+        "audio_model": "iic/emotion2vec_plus_large",
+        "audio_context_window": 3,
+        "energy_normalize": True,
+        "text_model": "distiluse",
+        "text_label_mapping": "ekman",
+        "text_confidence_threshold": 0.5,
+        "text_emotion_injection": True,
+        "fusion_strategy": "weighted_average",
+        "audio_weight": 0.7,
+        "text_weight": 0.3,
+        "fallback_threshold": 0.4,
+        "gate": {
+            "mode": "strict",
+            "max_break": 1.5,
+            "min_confidence": 0.3,
+            "max_conflict": 1.0,
+        },
+        "scorer": {
+            "weights": {
+                "consistency": 0.30,
+                "intensity": 0.25,
+                "speaker_fit": 0.25,
+                "translation_alignment": 0.20,
+            },
+            "accept_threshold": 0.60,
+        },
+    })
+
+    review: dict = field(default_factory=lambda: {
+        "force_accept": False,
+        "notes": "",
+    })
+
+    def get_slot_defaults(self, slot: str) -> dict:
+        """获取指定槽位的全局默认配置（深拷贝）。"""
+        from copy import deepcopy
+        slot_config = getattr(self, slot, {})
+        return deepcopy(slot_config) if slot_config else {}
+
+
+@dataclass
+class EnginePolicy:
+    """引擎能力默认值 — 基于运行时环境自动推导。
+
+    这些值由 gpu_detect.py 自动检测，用户也可手动覆盖。
+    """
+    device: str = "cuda"
+    compute_type: str = "float16"
+    num_workers: int = 1
+    # CosyVoice 专属
+    cosyvoice_device: str = "cuda"
+    cosyvoice_fp16: bool = True
+    # ChatTTS 专属
+    chattts_vram_mode: str = "auto"
+    chattts_vram_limit_mb: int = 0
+    # 并发控制
+    max_concurrent_tts: int = 2
+    max_concurrent_translation: int = 3
+
+
+@dataclass
+class GlobalConfig:
+    """全局配置顶层容器。
+
+    用法:
+        config = GlobalConfig()                            # 全部默认值
+        config = GlobalConfig.load("project_config.yaml")  # 从文件加载
+        resolved = config.get_slot_defaults("asr")         # 获取某槽位全局默认
+    """
+    project: ProjectPolicy = field(default_factory=ProjectPolicy)
+    engine: EnginePolicy = field(default_factory=EnginePolicy)
+
+    def get_slot_defaults(self, slot: str) -> dict:
+        """获取指定槽位的全局默认配置（深拷贝）。"""
+        return self.project.get_slot_defaults(slot)
+
+    @classmethod
+    def load(cls, path: str) -> "GlobalConfig":
+        """从 YAML 文件加载配置，未指定的字段使用默认值。
+
+        project_config.yaml 格式:
+            project:
+              asr:
+                model: large-v3
+              tts:
+                engine: cosyvoice
+            engine:
+              device: cuda
+        """
+        import os
+        import yaml
+
+        config = cls()
+        if not os.path.exists(path):
+            return config
+
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+
+        if "project" in data:
+            for slot, overrides in data["project"].items():
+                if hasattr(config.project, slot) and isinstance(overrides, dict):
+                    target = getattr(config.project, slot)
+                    _deep_update(target, overrides)
+
+        if "engine" in data:
+            for key, value in data["engine"].items():
+                if hasattr(config.engine, key):
+                    setattr(config.engine, key, value)
+
+        return config
+
+    def save(self, path: str) -> None:
+        """保存当前配置到 YAML 文件。"""
+        import os
+        import yaml
+
+        data = {
+            "project": {
+                slot: getattr(self.project, slot)
+                for slot in ["audio", "asr", "speaker", "translation", "tts", "emotion", "review"]
+            },
+            "engine": {
+                "device": self.engine.device,
+                "compute_type": self.engine.compute_type,
+                "num_workers": self.engine.num_workers,
+                "max_concurrent_tts": self.engine.max_concurrent_tts,
+            },
+        }
+
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f, allow_unicode=True, default_flow_style=False)
+
+
+def _deep_update(target: dict, source: dict) -> None:
+    """深度更新 target dict，递归合并嵌套结构。"""
+    for key, value in source.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _deep_update(target[key], value)
+        else:
+            target[key] = value

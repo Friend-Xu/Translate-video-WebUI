@@ -1,0 +1,70 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "schemas/ir_v2/audio_config.schema.json",
+  "title": "Audio Slot Config",
+  "description": "audio 槽位 config 子字段 — 音频预处理、Demucs、VAD、静音处理参数 (定稿 §9.4)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "skip_demucs": {
+      "type": "boolean",
+      "default": false,
+      "description": "跳过 Demucs 人声分离。干净音频可开启以加速处理。"
+    },
+    "vad_threshold": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 0.5,
+      "description": "Silero VAD 语音活动检测阈值。越高越保守（更多静音）。"
+    },
+    "silence_handling": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "policy": {
+          "type": "string",
+          "enum": ["keep", "trim", "expand"],
+          "default": "keep",
+          "description": "静音处理策略: keep=保留, trim=裁剪首尾, expand=基于静音扩展片段边界"
+        },
+        "min_silence_duration": {
+          "type": "number",
+          "minimum": 0.0,
+          "default": 0.3,
+          "description": "最小静音持续时长（秒），低于此值不视为静音段"
+        },
+        "max_silence_duration": {
+          "type": "number",
+          "minimum": 0.0,
+          "default": 0.0,
+          "description": "最大允许静音时长（秒），0=不限制。trim 模式下超过此时长的静音被裁剪"
+        }
+      },
+      "default": { "policy": "keep" }
+    },
+    "loudness_compensation": {
+      "type": "boolean",
+      "default": true,
+      "description": "是否启用 EBU R128 响度归一化"
+    },
+    "target_loudness": {
+      "type": "number",
+      "minimum": -40.0,
+      "maximum": 0.0,
+      "default": -23.0,
+      "description": "目标响度 (LUFS)。-23 为 EBU R128 广播标准。"
+    },
+    "high_pass_filter": {
+      "type": "boolean",
+      "default": false,
+      "description": "是否启用高通滤波（移除低频噪声）。大多数情况不需要。"
+    },
+    "demucs_model": {
+      "type": "string",
+      "enum": ["htdemucs", "htdemucs_ft", "htdemucs_6s"],
+      "default": "htdemucs",
+      "description": "Demucs 模型选择"
+    }
+  }
+}

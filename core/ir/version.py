@@ -10,9 +10,9 @@ MAJOR 不同 = 不兼容, MINOR 不同 = 向前兼容。
 """
 from __future__ import annotations
 
-SCHEMA_VERSION = "2.1"
-IR_VERSION = "2.1"
-PATCH_VERSION = "2.0"
+SCHEMA_VERSION = "3.0"  # v3.0: 槽位新增 config 子字段 (定稿 §10.3)
+IR_VERSION = "3.0"      # v3.0: 配置注入 + 三级继承
+PATCH_VERSION = "2.0"   # Patch 协议未变
 
 
 def check_schema_compatible(data_version: str) -> bool:

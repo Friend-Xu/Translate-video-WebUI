@@ -31,6 +31,11 @@ class OpCode(str, Enum):
     UPDATE_TRANSLATION = "update_translation"
     # Emotion 类 (Ch15)
     UPDATE_EMOTION = "update_emotion"
+    # 配置类 (v3.0 — 定稿 §10.5)
+    SET_CONFIG = "set_config"
+    OVERRIDE_CONFIG = "override_config"
+    RESET_CONFIG = "reset_config"
+    BATCH_SET_CONFIG = "batch_set_config"
     # 通用
     ANNOTATE = "annotate"
     # v1.0 向后兼容别名 — 现有 patch_engine 和 pass 使用
