@@ -46,6 +46,10 @@ class OpenVoiceTransferAdapter:
         self._output_dir = output_dir
         self._cloner = None
 
+    def configure(self, event_config = None):
+        if not event_config: return
+        if "speed_factor" in event_config: self._speed = event_config["speed_factor"]
+
     def transfer(self, ctx: OpenVoiceTransferContext) -> Patch:
         """对已有 TTS 音频做音色迁移，返回 UPDATE_TTS_AUDIO patch。
 

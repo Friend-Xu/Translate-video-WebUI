@@ -29,7 +29,8 @@ class PPLAdapter:
 
     def configure(self, event_config = None):
         if not event_config: return
-        pass
+        if "gate_beta" in event_config: self._beta = event_config["gate_beta"]
+        if "gate_gamma" in event_config: self._gamma = event_config["gate_gamma"]
     def evaluate(self, ctx: PPLContext) -> Patch:
         ev = self._get_evaluator()
         try:

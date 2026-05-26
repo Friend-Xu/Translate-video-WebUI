@@ -46,6 +46,12 @@ class ChatTTSAdapter:
     def configure(self, event_config = None):
         if not event_config: return
         if "speaker_seed" in event_config: self._speaker_seed = event_config["speaker_seed"]
+        if "chattts_speaker_seed" in event_config: self._speaker_seed = event_config["chattts_speaker_seed"]
+        if "chattts_temperature" in event_config: self._temperature = event_config["chattts_temperature"]
+        if "chattts_top_k" in event_config: self._top_k = event_config["chattts_top_k"]
+        if "chattts_top_p" in event_config: self._top_p = event_config["chattts_top_p"]
+        if "chattts_emotion_injection" in event_config: self._emotion_inject = event_config["chattts_emotion_injection"]
+        if "speed_factor" in event_config: self._speed_factor = event_config["speed_factor"]
 
     def synthesize(self, ctx: TTSSegmentContext) -> Patch:
         """对单个 segment 合成语音，返回 UPDATE_TTS_AUDIO patch。"""
