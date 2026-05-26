@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 
 interface UseConfigInspectorReturn {
   config: Record<string, any>;
@@ -42,6 +42,8 @@ export function useConfigInspector(eventId: string | null): UseConfigInspectorRe
       setLoading(false);
     }
   }, [eventId]);
+
+  useEffect(() => { fetchConfig(); }, [fetchConfig]);
 
   const handleConfigChange = useCallback(async (slot: string, field: string, value: any) => {
     if (!eventId) return;
