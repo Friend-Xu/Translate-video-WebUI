@@ -765,46 +765,220 @@ Layer 4 (Speakers):      注入 speaker 元数据 (name, embedding_ref)
 Layer 5 (Output):        合并所有层，输出 dict
 ```
 
-## timeline/ — Timeline 中间层 + 迁移系统
+## timeline/ — Timeline 中间层 + Strangler Fig 迁移系统
 
-`timeline/` 是新旧 IR 之间的桥接层，提供统一消费协议和双写基础设施：
+`timeline/` 是**新旧 IR 之间的桥接层**，实现 Strangler Fig 渐进迁移模式。
+目标是让所有消费端（API、WebUI、CLI）不直接依赖具体 IR 实现，
+而是通过统一 Protocol 消费，实现新旧 IR 的透明切换。
+
+### 统一消费协议 (abstract.py)
+
+核心是两个 `@runtime_checkable` Protocol，消费端**只依赖协议，不依赖实现**：
+
+```python
+class SegmentView(Protocol):
+    id: str; start: float; end: float
+    speaker: str | None; text: str; type: str
+    @property
+    def duration(self) -> float: ...
+
+class TimelineView(Protocol):
+    segments: list[SegmentView]
+    speakers: list[dict]
+    def to_dict(self) -> dict: ...        # → WebUI JSON
+    def to_project_ir(self) -> ...: ...   # → 新引擎 TimelineProjectIR
+```
+
+### 数据流全景
+
+```
+extract_subtitles.py 输出
+        │
+        ├── transcript.json (旧格式)
+        │       │
+        │       ▼
+        │   timeline/fusion.py
+        │   from_extract_result() → TimelineIR (旧 IR)
+        │       │
+        │       ├─── to_project_ir() → TimelineProjectIR (新 IR) → core/
+        │       │
+        │       └─── to_dict() → WebUI JSON
+        │
+        └── project.json (旧格式)
+                │
+                ▼
+           旧架构消费 (SRT_Translator, TtsPipeline)
+```
+
+### Fusion 引擎 (fusion.py) — 新旧 IR 数据合并
+
+```
+VAD segments  ─┐
+ASR words      ─┤
+Speaker info   ─┼──→ from_extract_result() → TimelineIR
+Alignment      ─┤                                   │
+Metadata       ─┘                                   │
+                                          ┌─────────┴──────────┐
+                                          │                    │
+                                    to_project_ir()    from_project_ir()
+                                          │                    │
+                                          ▼                    ▼
+                                  TimelineProjectIR      TimelineIR
+                                    (新 core/ IR)        (旧 timeline IR)
+```
+
+**关键函数：**
+
+| 函数 | 方向 | 功能 |
+|------|------|------|
+| `from_extract_result()` | 旧输出 → 旧 IR | VAD/ASR/Speaker 片段 → TimelineIR，自动检测 overlap |
+| `to_project_ir()` | 旧 IR → 新 IR | 深度迁移：TimelineSegment → TimelineEventIR，Speaker → SpeakerNodeIR |
+| `from_project_ir()` | 新 IR → 旧 IR | 反向迁移：含 derivatives_map 填充 translation/words |
+
+### 双写基础设施 (dual_write.py) — Strangler Fig 核心
+
+补丁同步应用到新旧两套 IR，比对结果确保行为等价：
+
+```
+WebUI 用户操作
+      │
+      ▼
+  TimelinePatch (旧 OpCode: MERGE, SPLIT, RETAG_SPEAKER, ...)
+      │
+      ├──→ apply_patch(old_segments)  → 旧 IR 结果
+      │
+      ├──→ _map_opcode() → CorePatch  → PatchEngine.apply() → 新 IR 结果
+      │
+      └──→ _compare(old, new)  → {"status": "ok"|"diff", "diffs": [...]}
+```
+
+**OpCode 映射** (dual_write.py:77-84)：
+
+| 旧 OpCode | 新引擎 OpCode |
+|-----------|--------------|
+| MERGE | merge |
+| SPLIT | split |
+| RETAG_SPEAKER | replace |
+| SET_TRANSLATION | replace |
+| RELINK_WORDS | propagate |
+| ANNOTATE | replace |
+
+### 灰度路由 (api/timeline.py)
+
+API 层根据配置开关，在 `TimelineView` 协议的两种实现间透明切换：
+
+```
+GET /api/timeline/{project_id}
+      │
+      ├── use_new_ir=True  → NewIRAdapter  → TimelineView (新 core/ IR)
+      └── use_new_ir=False → OldIRAdapter  → TimelineView (旧 timeline IR)
+```
+
+消费端代码只依赖 `TimelineView` Protocol，不感知底层是哪种 IR。
+
+### 适配器层 (adapters/)
+
+| 适配器 | 功能 |
+|--------|------|
+| `OldIRAdapter` | 旧 `TimelineIR` → `TimelineView` Protocol |
+| `NewIRAdapter` | 新 `TimelineProjectState` → `TimelineView` Protocol |
+| `speaker.py` | Speaker 数据在新旧格式间的映射 |
+
+### UI 适配器 (ui_adapter/mapper.py)
+
+将 IR 数据映射为前端 Zustand store 消费的格式：
+
+```
+TimelineView.to_dict() → mapper → {
+    events: TimelineEvent[],    # EventBlock 直接渲染
+    speakers: SpeakerInfo[],    # SpeakerReviewPanel 使用
+    patches: PatchDraft[],      # PatchManagementView 使用
+}
+```
+
+### 迁移配置 (config.py)
+
+```python
+# 灰度开关
+USE_NEW_IR = os.getenv("USE_NEW_IR", "false").lower() == "true"
+
+# 双写开关
+DUAL_WRITE_ENABLED = True  # 新旧同时写入, 差异仅记录不阻断
+```
+
+### 补丁与恢复系统
+
+```
+timeline/patch/
+├── model.py      # TimelinePatch — OpCode + payload + targets
+├── opcode.py     # OpCode 枚举 (MERGE, SPLIT, RETAG_SPEAKER, SET_TRANSLATION, ...)
+├── apply.py      # apply_patch() — 基于索引的语义级补丁应用
+├── conflict.py   # 冲突检测
+└── planner.py    # 补丁规划
+
+timeline/recovery/
+├── graph.py      # 补丁依赖图
+├── replay.py     # 确定性重放到指定检查点
+└── snapshot.py   # 时间轴状态快照
+
+timeline/rules/
+└── extractor.py  # 从补丁历史中提取规则 (speaker 偏好、分段模式)
+
+timeline/safety/
+└── guard.py      # 补丁安全边界 (禁止删除全部 segment、禁止负时间等)
+
+timeline/scorer/
+└── scorer.py     # AI 补丁质量评分
+```
+
+### 新旧 IR 对比
+
+| 维度 | 旧 IR (timeline/ir.py) | 新 IR (core/ir/) |
+|------|----------------------|-------------------|
+| 核心类型 | TimelineSegment (mutable dataclass) | TimelineEventIR (frozen dataclass) |
+| 状态管理 | 直接修改 segment 字段 | Patch + EventState 9 槽位 |
+| 说话人 | speaker_map: dict | SpeakerNodeIR (frozen) |
+| 版本 | "1.0" 字符串 | Version 系统 (MAJOR.MINOR) |
+| OpCode | 自定义字符串 | OpCode 枚举 (20+ 成员) |
+| 可逆性 | 无内置回滚 | RollbackManager + SnapshotManager |
+
+### 目录布局
 
 ```
 timeline/
-├── abstract.py          # TimelineConsumer Protocol — 统一消费接口
-├── ir.py                # 旧版 TimelineIR (兼容层)
+├── abstract.py          # TimelineView / SegmentView Protocol
+├── ir.py                # 旧版 TimelineIR + TimelineSegment
 ├── schema.py            # JSON Schema 定义 + 结构校验
-├── fusion.py            # FusionEngine — 新旧 IR 数据合并
-├── dual_write.py        # 双写基础设施 — 同时写入新旧 IR
-├── config.py            # 迁移配置 + 灰度开关
-├── io.py                # 文件 I/O 辅助
+├── fusion.py            # 新旧 IR 双向迁移 (from_extract_result / to_project_ir / from_project_ir)
+├── dual_write.py        # 双写: 补丁同步应用到新旧 IR + 结果比对
+├── config.py            # 灰度开关 (USE_NEW_IR, DUAL_WRITE_ENABLED)
+├── io.py                # 文件 I/O
 ├── api/
-│   └── timeline.py      # API 层 — 灰度路由 (新旧 IR 切换)
+│   └── timeline.py      # API 灰度路由
 ├── adapters/
-│   ├── old_ir_adapter.py    # 旧 IR → 统一协议
-│   ├── new_ir_adapter.py    # 新 IR → 统一协议
-│   └── speaker.py           # 说话人映射适配器
+│   ├── old_ir_adapter.py    # 旧 IR → TimelineView Protocol
+│   ├── new_ir_adapter.py    # 新 IR → TimelineView Protocol
+│   └── speaker.py           # Speaker 映射适配器
 ├── patch/
-│   ├── model.py         # 补丁数据模型
-│   ├── opcode.py        # 操作码定义
+│   ├── model.py         # TimelinePatch 模型
+│   ├── opcode.py        # OpCode 枚举
 │   ├── apply.py         # 补丁应用引擎
 │   ├── conflict.py      # 冲突检测
 │   └── planner.py       # 补丁规划
 ├── recovery/
 │   ├── graph.py         # 依赖图
-│   ├── replay.py        # 重放引擎
-│   └── snapshot.py      # 快照系统
+│   ├── replay.py        # 确定性重放
+│   └── snapshot.py      # 快照
 ├── rules/
 │   └── extractor.py     # 规则特征提取
 ├── safety/
 │   └── guard.py         # 安全边界守卫
 ├── scorer/
-│   └── scorer.py        # 评分系统
+│   └── scorer.py        # AI 补丁评分
 ├── speaker/
 │   └── model.py         # 说话人模型
 └── ui_adapter/
-    └── mapper.py        # 前端数据映射 (IR → UI)
-```
+    └── mapper.py        # IR → 前端 Zustand store 映射
 
 ## schemas/ — JSON Schema 数据规范
 
