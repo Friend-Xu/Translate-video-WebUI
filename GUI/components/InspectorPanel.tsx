@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import { Accordion, AccordionSummary, AccordionDetails, Typography, Box, Select, MenuItem, Slider, Switch, Button, Chip, Tooltip, IconButton, CircularProgress, TextField } from "@mui/material";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import RestoreIcon from "@mui/icons-material/Restore";
@@ -36,7 +36,7 @@ const VOLUMES = ["+0%", "+10%", "+20%", "-10%"];
 const InheritanceChip: React.FC<{ from: string }> = ({ from }) => {
   const color = from === "event" ? "primary" as const : from === "speaker" ? "secondary" as const : "default" as const;
   const label = from === "event" ? "Override" : from === "speaker" ? "Speaker" : "Global";
-  return React.createElement(Chip, { size: "small", color, label, sx: { ml: 1 } });
+  return <Chip size="small" color={color} label={label} sx={{ ml: 1 }} />;
 };
 
 const InspectorPanel: React.FC<InspectorPanelProps> = ({
@@ -44,37 +44,50 @@ const InspectorPanel: React.FC<InspectorPanelProps> = ({
   onConfigChange, onResetField, onResetSlot, onPreviewTTS,
 }) => {
   if (!eventId)
-    return React.createElement(Typography, { color: "text.secondary" }, "Select an event to inspect config");
+    return <Typography color="text.secondary">Select an event to inspect config</Typography>;
   if (loading)
-    return React.createElement(Box, { sx: { display: "flex", justifyContent: "center", p: 4 } }, React.createElement(CircularProgress));
+    return <Box sx={{ display: "flex", justifyContent: "center", p: 4 }}><CircularProgress /></Box>;
 
   const engine = config.tts?.engine || "chattts";
 
-  const fld = (slot: string, field: string, label: string, type: string, opts?: Record<string, any>) => {
+  const renderField = (slot: string, field: string, label: string, type: string, opts?: Record<string, any>) => {
     const value = config[slot]?.[field];
     const inh = inheritedFrom[slot] || "global";
     const isOver = overriddenFields.has(slot + "." + field);
-    return React.createElement(Box, { key: slot + "." + field, sx: { mb: 1.5 } },
-      React.createElement(Box, { sx: { display: "flex", alignItems: "center", mb: 0.5 } },
-        React.createElement(Typography, { variant: "body2" }, label),
-        React.createElement(InheritanceChip, { from: isOver ? "event" : inh })),
-      type === "select" ? React.createElement(Select, {
-        size: "small", fullWidth: true, value: value ?? "",
-        onChange: (e: any) => onConfigChange(slot, field, e.target.value) },
-        (opts?.values || []).map((v: string) => React.createElement(MenuItem, { key: v, value: v }, v))) : null,
-      type === "toggle" ? React.createElement(Switch, {
-        size: "small", checked: !!value,
-        onChange: (e: any) => onConfigChange(slot, field, e.target.checked) }) : null,
-      type === "slider" ? React.createElement(Slider, {
-        size: "small", value: value ?? 0, min: opts?.min ?? 0, max: opts?.max ?? 1,
-        step: opts?.step ?? 0.01, valueLabelDisplay: "auto",
-        onChange: (_: any, v: any) => onConfigChange(slot, field, v as number) }) : null,
-      type === "number" ? React.createElement(TextField, {
-        size: "small", type: "number", fullWidth: true, value: value ?? "",
-        onChange: (e: any) => onConfigChange(slot, field, parseInt(e.target.value) || 0) }) : null,
-      isOver ? React.createElement(Tooltip, { title: "Reset to inherit" },
-        React.createElement(IconButton, { size: "small", onClick: () => onResetField(slot, field) },
-          React.createElement(RestoreIcon, { fontSize: "small" }))) : null);
+    return (
+      <Box key={slot + "." + field} sx={{ mb: 1.5 }}>
+        <Box sx={{ display: "flex", alignItems: "center", mb: 0.5 }}>
+          <Typography variant="body2">{label}</Typography>
+          <InheritanceChip from={isOver ? "event" : inh} />
+        </Box>
+        {type === "select" && (
+          <Select size="small" fullWidth value={value ?? ""}
+            onChange={(e: any) => onConfigChange(slot, field, e.target.value)}>
+            {(opts?.values || []).map((v: string) => <MenuItem key={v} value={v}>{v}</MenuItem>)}
+          </Select>
+        )}
+        {type === "toggle" && (
+          <Switch size="small" checked={!!value}
+            onChange={(e: any) => onConfigChange(slot, field, e.target.checked)} />
+        )}
+        {type === "slider" && (
+          <Slider size="small" value={value ?? 0} min={opts?.min ?? 0} max={opts?.max ?? 1}
+            step={opts?.step ?? 0.01} valueLabelDisplay="auto"
+            onChange={(_: any, v: any) => onConfigChange(slot, field, v as number)} />
+        )}
+        {type === "number" && (
+          <TextField size="small" type="number" fullWidth value={value ?? ""}
+            onChange={(e: any) => onConfigChange(slot, field, parseInt(e.target.value) || 0)} />
+        )}
+        {isOver && (
+          <Tooltip title="Reset to inherit">
+            <IconButton size="small" onClick={() => onResetField(slot, field)}>
+              <RestoreIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        )}
+      </Box>
+    );
   };
 
   const zones = [
@@ -84,87 +97,121 @@ const InspectorPanel: React.FC<InspectorPanelProps> = ({
     { id: "translation", label: "Translation & Gate" },
     { id: "tts", label: "TTS Synthesis" },
     { id: "emotion", label: "Emotion Control" },
-    { id: "review", label: "Review" }];
+    { id: "review", label: "Review" },
+  ];
 
-  return React.createElement(Box, { sx: { width: "100%", maxWidth: 400 } },
-    React.createElement(Typography, { variant: "h6", sx: { mb: 1 } }, "Config - " + eventId),
-    ...zones.map(zone => React.createElement(Accordion, { key: zone.id, defaultExpanded: zone.id === "tts" },
-      React.createElement(AccordionSummary, { expandIcon: React.createElement(ExpandMoreIcon) },
-        React.createElement(Typography, null, zone.label),
-        overriddenFields.has(zone.id) ? React.createElement(Chip, { size: "small", color: "primary", label: "modified", sx: { ml: 1 } }) : null),
-      React.createElement(AccordionDetails, null,
-
-        zone.id === "audio" && React.createElement(React.Fragment, null,
-          fld("audio", "skip_demucs", "Skip Demucs", "toggle"),
-          fld("audio", "demucs_model", "Demucs Model", "select", { values: DEMUCS_MODELS }),
-          fld("audio", "vad_threshold", "VAD Threshold", "slider", { min: 0, max: 1, step: 0.05 }),
-          fld("audio", "silence_handling", "Silence Policy", "select", { values: SILENCE_POLICIES }),
-          fld("audio", "loudness_compensation", "Loudness Norm", "toggle"),
-          React.createElement(Button, { size: "small", color: "warning", onClick: () => onResetSlot("audio"), sx: { mt: 1 } }, "Reset All")),
-
-        zone.id === "asr" && React.createElement(React.Fragment, null,
-          fld("asr", "model", "Whisper Model", "select", { values: ASR_MODELS }),
-          fld("asr", "language", "Language", "select", { values: ["auto", "en", "zh", "ja"] }),
-          fld("asr", "alignment_enabled", "Word Alignment", "toggle"),
-          React.createElement(Button, { size: "small", color: "warning", onClick: () => onResetSlot("asr"), sx: { mt: 1 } }, "Reset All")),
-
-        zone.id === "speaker" && React.createElement(React.Fragment, null,
-          fld("speaker", "clustering_threshold", "Cluster Threshold", "slider", { min: 0, max: 1, step: 0.05 }),
-          fld("speaker", "clustering_method", "Cluster Method", "select", { values: CLUSTERING_METHODS }),
-          fld("speaker", "min_speakers", "Min Speakers", "number"),
-          fld("speaker", "max_speakers", "Max Speakers", "number"),
-          fld("speaker", "gender", "Gender Override", "select", { values: GENDERS.concat("neutral") }),
-          React.createElement(Button, { size: "small", color: "warning", onClick: () => onResetSlot("speaker"), sx: { mt: 1 } }, "Reset All")),
-
-        zone.id === "translation" && React.createElement(React.Fragment, null,
-          fld("translation", "lang", "Target Language", "select", { values: LANGS }),
-          fld("translation", "backend", "LLM Backend", "select", { values: BACKENDS }),
-          fld("translation", "glossary_mode", "Glossary Mode", "select", { values: GLOSSARY_MODES }),
-          React.createElement(Typography, { variant: "subtitle2", sx: { mt: 1, mb: 0.5 } }, "TextGate (§4.4)"),
-          fld("translation", "gate_mode", "Gate Mode", "select", { values: GATE_MODES }),
-          fld("translation", "gate_threshold_accept", "Threshold Accept (A)", "slider", { min: 0, max: 1, step: 0.01 }),
-          fld("translation", "gate_threshold_reject", "Threshold Reject (C)", "slider", { min: 0, max: 1, step: 0.01 }),
-          React.createElement(Button, { size: "small", color: "warning", onClick: () => onResetSlot("translation"), sx: { mt: 1 } }, "Reset All")),
-
-        zone.id === "tts" && React.createElement(React.Fragment, null,
-          fld("tts", "engine", "TTS Engine", "select", { values: TTS_ENGINES }),
-          fld("tts", "voice_gender", "Voice Gender", "select", { values: GENDERS }),
-          fld("tts", "speed_factor", "Speed Factor", "slider", { min: 0.5, max: 2.0, step: 0.05 }),
-          fld("tts", "timing_adaptive", "Timing Adaptive", "toggle"),
-          fld("tts", "timing_threshold", "Timing Tolerance", "slider", { min: 0, max: 0.5, step: 0.01 }),
-          React.createElement(Typography, { variant: "subtitle2", sx: { mt: 1.5, mb: 0.5 } }, "Engine Options: " + engine),
-          engine === "cosyvoice" && React.createElement(React.Fragment, null,
-            fld("tts", "cosy_version", "Model Version", "select", { values: ["v2", "v3"] }),
-            fld("tts", "cosy_lang", "Target Language", "select", { values: COSY_LANGS }),
-            fld("tts", "cosy_num_norm", "Number Normalize", "toggle"),
-            fld("tts", "cosy_fp16", "FP16 Inference", "toggle")),
-          engine === "chattts" && React.createElement(React.Fragment, null,
-            fld("tts", "chattts_speaker_seed", "Speaker Seed", "number"),
-            fld("tts", "chattts_temperature", "Temperature", "slider", { min: 0.01, max: 2.0, step: 0.05 }),
-            fld("tts", "chattts_top_k", "Top-K", "slider", { min: 1, max: 100, step: 1 }),
-            fld("tts", "chattts_top_p", "Top-P", "slider", { min: 0.5, max: 1.0, step: 0.01 }),
-            fld("tts", "chattts_emotion_injection", "Emotion Injection", "toggle")),
-          engine === "edge" && React.createElement(React.Fragment, null,
-            fld("tts", "edge_voice", "Voice Name", "select", { values: EDGE_VOICES }),
-            fld("tts", "edge_pitch", "Pitch", "select", { values: PITCHES }),
-            fld("tts", "edge_volume", "Volume", "select", { values: VOLUMES })),
-          React.createElement(Button, { size: "small", variant: "outlined", startIcon: React.createElement(PlayArrowIcon), onClick: onPreviewTTS, sx: { mt: 2 } }, "Preview TTS"),
-          React.createElement(Button, { size: "small", color: "warning", onClick: () => onResetSlot("tts"), sx: { mt: 2, ml: 1 } }, "Reset All")),
-
-        zone.id === "emotion" && React.createElement(React.Fragment, null,
-          fld("emotion", "enabled", "Emotion Enabled", "toggle"),
-          fld("emotion", "fusion_strategy", "Fusion Strategy", "select", { values: EMOTION_STRATEGIES }),
-          fld("emotion", "audio_weight", "Audio Weight", "slider", { min: 0, max: 1, step: 0.05 }),
-          fld("emotion", "text_weight", "Text Weight", "slider", { min: 0, max: 1, step: 0.05 }),
-          fld("emotion", "text_model", "Text Model", "select", { values: TEXT_MODELS }),
-          React.createElement(Typography, { variant: "subtitle2", sx: { mt: 1, mb: 0.5 } }, "EmotionGate (§7.3.4)"),
-          fld("emotion", "gate_max_break", "Max Break (E1)", "slider", { min: 0, max: 3, step: 0.1 }),
-          fld("emotion", "gate_min_confidence", "Min Confidence (E2)", "slider", { min: 0, max: 1, step: 0.05 }),
-          fld("emotion", "gate_max_conflict", "Max Conflict (E3)", "slider", { min: 0, max: 3, step: 0.1 }),
-          React.createElement(Button, { size: "small", color: "warning", onClick: () => onResetSlot("emotion"), sx: { mt: 1 } }, "Reset All")),
-
-        zone.id === "review" && React.createElement(React.Fragment, null,
-          fld("review", "force_accept", "Force Accept", "toggle")))))));
+  return (
+    <Box sx={{ width: "100%", maxWidth: 400 }}>
+      <Typography variant="h6" sx={{ mb: 1 }}>Config - {eventId}</Typography>
+      {zones.map(zone => (
+        <Accordion key={zone.id} defaultExpanded={zone.id === "tts"}>
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography>{zone.label}</Typography>
+            {overriddenFields.has(zone.id) && (
+              <Chip size="small" color="primary" label="modified" sx={{ ml: 1 }} />
+            )}
+          </AccordionSummary>
+          <AccordionDetails>
+            {zone.id === "audio" && (
+              <>
+                {renderField("audio", "skip_demucs", "Skip Demucs", "toggle")}
+                {renderField("audio", "demucs_model", "Demucs Model", "select", { values: DEMUCS_MODELS })}
+                {renderField("audio", "vad_threshold", "VAD Threshold", "slider", { min: 0, max: 1, step: 0.05 })}
+                {renderField("audio", "silence_handling", "Silence Policy", "select", { values: SILENCE_POLICIES })}
+                {renderField("audio", "loudness_compensation", "Loudness Norm", "toggle")}
+                <Button size="small" color="warning" onClick={() => onResetSlot("audio")} sx={{ mt: 1 }}>Reset All</Button>
+              </>
+            )}
+            {zone.id === "asr" && (
+              <>
+                {renderField("asr", "model", "Whisper Model", "select", { values: ASR_MODELS })}
+                {renderField("asr", "language", "Language", "select", { values: ["auto", "en", "zh", "ja"] })}
+                {renderField("asr", "alignment_enabled", "Word Alignment", "toggle")}
+                <Button size="small" color="warning" onClick={() => onResetSlot("asr")} sx={{ mt: 1 }}>Reset All</Button>
+              </>
+            )}
+            {zone.id === "speaker" && (
+              <>
+                {renderField("speaker", "clustering_threshold", "Cluster Threshold", "slider", { min: 0, max: 1, step: 0.05 })}
+                {renderField("speaker", "clustering_method", "Cluster Method", "select", { values: CLUSTERING_METHODS })}
+                {renderField("speaker", "min_speakers", "Min Speakers", "number")}
+                {renderField("speaker", "max_speakers", "Max Speakers", "number")}
+                {renderField("speaker", "gender", "Gender Override", "select", { values: GENDERS.concat("neutral") })}
+                <Button size="small" color="warning" onClick={() => onResetSlot("speaker")} sx={{ mt: 1 }}>Reset All</Button>
+              </>
+            )}
+            {zone.id === "translation" && (
+              <>
+                {renderField("translation", "lang", "Target Language", "select", { values: LANGS })}
+                {renderField("translation", "backend", "LLM Backend", "select", { values: BACKENDS })}
+                {renderField("translation", "glossary_mode", "Glossary Mode", "select", { values: GLOSSARY_MODES })}
+                <Typography variant="subtitle2" sx={{ mt: 1, mb: 0.5 }}>TextGate (§4.4)</Typography>
+                {renderField("translation", "gate_mode", "Gate Mode", "select", { values: GATE_MODES })}
+                {renderField("translation", "gate_threshold_accept", "Threshold Accept (A)", "slider", { min: 0, max: 1, step: 0.01 })}
+                {renderField("translation", "gate_threshold_reject", "Threshold Reject (C)", "slider", { min: 0, max: 1, step: 0.01 })}
+                <Button size="small" color="warning" onClick={() => onResetSlot("translation")} sx={{ mt: 1 }}>Reset All</Button>
+              </>
+            )}
+            {zone.id === "tts" && (
+              <>
+                {renderField("tts", "engine", "TTS Engine", "select", { values: TTS_ENGINES })}
+                {renderField("tts", "voice_gender", "Voice Gender", "select", { values: GENDERS })}
+                {renderField("tts", "speed_factor", "Speed Factor", "slider", { min: 0.5, max: 2.0, step: 0.05 })}
+                {renderField("tts", "timing_adaptive", "Timing Adaptive", "toggle")}
+                {renderField("tts", "timing_threshold", "Timing Tolerance", "slider", { min: 0, max: 0.5, step: 0.01 })}
+                <Typography variant="subtitle2" sx={{ mt: 1.5, mb: 0.5 }}>Engine Options: {engine}</Typography>
+                {engine === "cosyvoice" && (
+                  <>
+                    {renderField("tts", "cosy_version", "Model Version", "select", { values: ["v2", "v3"] })}
+                    {renderField("tts", "cosy_lang", "Target Language", "select", { values: COSY_LANGS })}
+                    {renderField("tts", "cosy_num_norm", "Number Normalize", "toggle")}
+                    {renderField("tts", "cosy_fp16", "FP16 Inference", "toggle")}
+                  </>
+                )}
+                {engine === "chattts" && (
+                  <>
+                    {renderField("tts", "chattts_speaker_seed", "Speaker Seed", "number")}
+                    {renderField("tts", "chattts_temperature", "Temperature", "slider", { min: 0.01, max: 2.0, step: 0.05 })}
+                    {renderField("tts", "chattts_top_k", "Top-K", "slider", { min: 1, max: 100, step: 1 })}
+                    {renderField("tts", "chattts_top_p", "Top-P", "slider", { min: 0.5, max: 1.0, step: 0.01 })}
+                    {renderField("tts", "chattts_emotion_injection", "Emotion Injection", "toggle")}
+                  </>
+                )}
+                {engine === "edge" && (
+                  <>
+                    {renderField("tts", "edge_voice", "Voice Name", "select", { values: EDGE_VOICES })}
+                    {renderField("tts", "edge_pitch", "Pitch", "select", { values: PITCHES })}
+                    {renderField("tts", "edge_volume", "Volume", "select", { values: VOLUMES })}
+                  </>
+                )}
+                <Button size="small" variant="outlined" startIcon={<PlayArrowIcon />} onClick={onPreviewTTS} sx={{ mt: 2 }}>Preview TTS</Button>
+                <Button size="small" color="warning" onClick={() => onResetSlot("tts")} sx={{ mt: 2, ml: 1 }}>Reset All</Button>
+              </>
+            )}
+            {zone.id === "emotion" && (
+              <>
+                {renderField("emotion", "enabled", "Emotion Enabled", "toggle")}
+                {renderField("emotion", "fusion_strategy", "Fusion Strategy", "select", { values: EMOTION_STRATEGIES })}
+                {renderField("emotion", "audio_weight", "Audio Weight", "slider", { min: 0, max: 1, step: 0.05 })}
+                {renderField("emotion", "text_weight", "Text Weight", "slider", { min: 0, max: 1, step: 0.05 })}
+                {renderField("emotion", "text_model", "Text Model", "select", { values: TEXT_MODELS })}
+                <Typography variant="subtitle2" sx={{ mt: 1, mb: 0.5 }}>EmotionGate (§7.3.4)</Typography>
+                {renderField("emotion", "gate_max_break", "Max Break (E1)", "slider", { min: 0, max: 3, step: 0.1 })}
+                {renderField("emotion", "gate_min_confidence", "Min Confidence (E2)", "slider", { min: 0, max: 1, step: 0.05 })}
+                {renderField("emotion", "gate_max_conflict", "Max Conflict (E3)", "slider", { min: 0, max: 3, step: 0.1 })}
+                <Button size="small" color="warning" onClick={() => onResetSlot("emotion")} sx={{ mt: 1 }}>Reset All</Button>
+              </>
+            )}
+            {zone.id === "review" && (
+              <>
+                {renderField("review", "force_accept", "Force Accept", "toggle")}
+              </>
+            )}
+          </AccordionDetails>
+        </Accordion>
+      ))}
+    </Box>
+  );
 };
 
 export default InspectorPanel;
