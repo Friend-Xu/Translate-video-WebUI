@@ -710,21 +710,129 @@ Patch.apply(state) → 分发到 handler
 迁移策略: 渐进，双系统共存。--use-core 默认不启用。
 ```
 
+### Config 层 — 参数配置体系（v3.0 新增 🆕）
+
+四层对象域 + 三级优先级 + 配置注入，将所有引擎参数从 CLI 扁平化提升为
+分层、可覆盖、可追溯的配置系统。详见 `计划开发/工作流参数新架构设计-定稿.md` 第 1 章。
+
+#### 四层对象域
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    ProjectPolicy                            │
+│  全局策略：target_lang、quality_profile、default_tts_engine   │
+│  作用域：整个项目，所有事件继承                                │
+├─────────────────────────────────────────────────────────────┤
+│                    WorkflowPolicy                           │
+│  工作流路径选择：启用的 Pass 列表、skip_demucs、glossary_mode │
+│  作用域：单次工作流运行                                      │
+├─────────────────────────────────────────────────────────────┤
+│                    EnginePolicy                             │
+│  引擎运行方式：model_size、device、compute_type、temperature  │
+│  作用域：特定 Adapter，由系统自动检测 + 用户调优               │
+├─────────────────────────────────────────────────────────────┤
+│                    SegmentRuntimeState                      │
+│  事件级运行时决策：event.tts.config.engine=cosyvoice          │
+│  作用域：单个事件，最高优先级，覆盖以上三层                     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 三级配置优先级
+
+```
+Event.config  >  Speaker.config  >  Global.config
+   (最高)           (中间)            (最低)
+```
+
+**关键规则：**
+1. **只有显式设定的值才参与覆盖** — `event.asr.config = {"model": "large-v3"}` 只覆盖 model，其余字段继承
+2. **深度合并（deep_merge）** — 嵌套对象递归合并，非浅层替换
+3. **null = 删除覆盖** — 显式设 null 恢复继承，语义不同于"字段不存在"
+4. **差异化存储（delta storage）** — 事件级 config 仅序列化与上级默认值的差异
+
+#### ConfigResolver (`core/runtime/config_resolver.py`)
+
+三级合并引擎，`resolve_event_config(event_id, slot, state)` 按优先级深度合并：
+```python
+def resolve_event_config(event_id, slot, state) -> dict:
+    base = deep_merge(global_config[slot], speaker.config[slot])  # L3+L2
+    return deep_merge(base, event.config[slot])                    # +L1
+```
+
+`deep_merge(base, override)` 实现了 null 语义：
+- `override[key] = null` → 从结果中删除 key（恢复继承）
+- 嵌套 dict 递归合并，非 dict 值直接替换
+- `serialize_event_config()` 输出差异化存储（仅保存与默认值的差异）
+
+#### SlotLevelDependencyGraph (`core/runtime/slot_dependency.py`)
+
+细粒度脏传播：改变某槽位的特定字段只传播到受影响的下游槽位。
+```
+audio.config.vad_threshold  →  audio, asr, speaker  (VAD 影响 ASR 分段)
+asr.config.model            →  asr                   (只影响 ASR 自身)
+tts.config.speed_factor     →  tts                   (只影响 TTS)
+translation.config.lang     →  translation           (只影响翻译)
+```
+
+#### Config OpCodes
+
+| OpCode | 语义 | 合并方式 |
+|--------|------|---------|
+| `SET_CONFIG` | 全量替换槽位配置 | 完全替换 |
+| `OVERRIDE_CONFIG` | 深度合并部分字段 | deep_merge |
+| `RESET_CONFIG` | 恢复继承（删除事件级覆盖） | 移除槽位 config |
+| `BATCH_SET_CONFIG` | 批量应用多个槽位配置 | 逐槽位 OVERRIDE |
+
+每个 config patch 通过 `SnapshotManager` 自动记录 `previous_state`（仅变更字段），
+支持 undo/redo。`GateValidator` 在 pre-apply 阶段校验 JSON Schema + 跨槽位约束。
+
+#### 跨槽位约束（6 规则）
+
+| 规则ID | 条件 | 约束 | 级别 |
+|--------|------|------|------|
+| ASR-C01 | language=auto + alignment_enabled=true | alignment 强制中文 | WARN |
+| TR-C02 | glossary_mode=CONTEXTUAL + backend=local_dict | local_dict 不支持上下文 | ERROR |
+| GATE-C03 | gate_mode=joint_formula + gate_threshold_accept < gate_threshold_reject | 阈值倒挂 | ERROR |
+| TTS-C01 | engine=cosyvoice + cosy_lang not in speakers | 语言不在说话人语言集 | WARN |
+| EMO-C01 | emotion.enabled=true + text_model=distiluse + fusion_strategy=text_primary | 轻量模型不适合主策略 | WARN |
+| ENG-C02 | engine=chattts + chattts_temperature > 1.5 | 高温可能产生不稳定输出 | WARN |
+
+#### 配置注入流程
+
+```
+main.py / CLI args
+      │
+      ▼
+GlobalConfig.load("config/global.yaml")  ──→ ProjectPolicy + EnginePolicy
+      │
+      ▼
+WorkflowOrchestrator.run(video, policy)
+      │
+      ├── 1. 加载 GlobalConfig，derive_engine_policy() 自动检测 GPU
+      ├── 2. 每个 Stage 前：ConfigResolver.resolve_event_config(event_id, slot, state)
+      ├── 3. 注入 Adapter：adapter.configure(resolved_config)
+      └── 4. 用户修改 → InspectorPanel → OVERRIDE_CONFIG patch → GateValidator → PatchEngine
+```
+
 ### core/ 模块布局
 
 ```
 core/
 ├── engine/           # PassManager + PassBase
 ├── ir/               # Timeline IR (不可变数据模型)
-├── adapters/         # 11 个外部引擎封装
+├── adapters/         # 11 个外部引擎封装 (均含 configure() 方法)
 ├── passes/           # 14 个编排 Pass
 ├── gates/            # 2 个质量门控
 ├── scoring/          # 8 个评分器
-├── runtime/          # 补丁引擎 + 状态管理
+├── runtime/          # 补丁引擎 + 状态管理 + 配置解析
+├── config/           # 全局配置 + Schema 加载 + EnginePolicy 推导 🆕
+│   ├── global_config.py    # GlobalConfig + ProjectPolicy + EnginePolicy
+│   ├── schema_loader.py    # SchemaLoader — 10 槽位 JSON Schema 校验
+│   └── engine_policy.py    # derive_engine_policy() — GPU 自动检测
 ├── emotion/          # 情感空间
 ├── speaker/          # 说话人识别
-└── tts/              # TTS 控制
-└── refiner/           # 翻译结果精炼
+├── tts/              # TTS 控制
+└── refiner/          # 翻译结果精炼
     ├── engine.py
     └── prob_builder.py
 ```
@@ -735,10 +843,10 @@ core/
 
 ```
 runtime/
-├── patch.py              # Patch 数据类 + OpCode 枚举 (20+ 操作码)
+├── patch.py              # Patch 数据类 + OpCode 枚举 (14+4 操作码)
 ├── event_state.py        # TimelineEventState — 9 槽位惰性初始化
-├── project_state.py      # TimelineProjectState — 项目级状态容器
-├── patch_engine.py       # PatchEngine — 核心补丁状态机 (9 个 handler)
+├── project_state.py      # TimelineProjectState — 项目级状态容器 (+ global_config)
+├── patch_engine.py       # PatchEngine — 核心补丁状态机 (14 handler, v3.0)
 ├── synthesis.py          # SynthesisEngine — 5 层渲染 (IR→衍生→补丁→说话人→输出)
 ├── index.py              # 统一导出入口
 ├── dependency_graph.py   # DependencyGraph — 段间时间依赖图
@@ -747,9 +855,12 @@ runtime/
 ├── reducer.py            # Reducer — 确定性补丁重放
 ├── rollback.py           # RollbackManager — undo/redo + 版本回退
 ├── snapshot.py           # SnapshotManager — State 快照
+├── snapshot_manager.py   # SnapshotManager — 配置 undo 增量快照 (v3.0 🆕)
+├── slot_dependency.py    # SlotLevelDependencyGraph — 槽位级脏传播 (v3.0 🆕)
+├── config_resolver.py    # ConfigResolver — 三级合并引擎 + deep_merge (v3.0 🆕)
+├── gate_validator.py     # GateValidator — 预应用校验 + Schema + 跨槽位约束 (v3.0)
 ├── patch_store.py        # PatchStore — 三层存储 (内存/磁盘/远程)
 ├── patch_planner.py      # PatchPlanner — 补丁策略规划
-├── gate_validator.py     # GateValidator — 预应用校验
 └── verify.py             # 结构校验 + OpCode 兼容性
 ```
 
@@ -986,9 +1097,22 @@ timeline/
 schemas/
 ├── timeline.schema.json         # Timeline IR Schema
 ├── export_config.schema.json    # 导出配置 Schema
-├── patch_log.schema.json        # 补丁日志 Schema
-└── speaker_map.schema.json      # 说话人映射 Schema
+├── patch_log.schema.json        # 补丁日志 Schema (v3.0)
+├── speaker_map.schema.json      # 说话人映射 Schema (v3.0)
+└── ir_v2/                       # 槽位级 JSON Schema (v3.0 🆕)
+    ├── audio_config.schema.json          # 音频预处理参数
+    ├── asr_config.schema.json            # ASR 引擎参数
+    ├── speaker_config.schema.json        # 说话人识别参数
+    ├── semantic_config.schema.json       # 语义分析参数
+    ├── translation_config.schema.json    # 翻译引擎参数
+    ├── tts_routing.schema.json           # TTS 路由参数
+    ├── tts_cosyvoice.schema.json         # CosyVoice 专属参数
+    ├── tts_chattts.schema.json           # ChatTTS 专属参数
+    ├── tts_edge.schema.json              # Edge TTS 专属参数
+    └── emotion_config.schema.json        # 情感控制参数
 ```
+
+所有 ir_v2 Schema 均为 JSON Schema Draft-07，由 `SchemaLoader` 加载校验。
 
 ## core/refiner/ — 翻译结果精炼
 
@@ -1113,6 +1237,54 @@ Translate_video/models/
 ```
 
 注: whisperx_local/ 是代码（~10KB），不是模型。Wav2Vec2 模型运行时自动从 HF 镜像下载缓存。
+
+## WebUI — 参数配置面板与 Config API（v3.0 🆕）
+
+### InspectorPanel — 7 区手风琴组件
+
+`GUI/components/InspectorPanel.tsx`（170 行）提供事件级参数检查与覆盖，
+7 个可折叠区域覆盖全部 9 语义槽位中的可配置参数：
+
+| 区域 | 控件数 | 关键参数 |
+|------|--------|---------|
+| **Audio Preprocess** | 5 | skip_demucs, demucs_model, vad_threshold, silence_handling, loudness_compensation |
+| **ASR Transcription** | 3 | model (tiny→large-v3), language, alignment_enabled |
+| **Speaker** | 5 | clustering_threshold, clustering_method, min/max_speakers, gender |
+| **Translation & Gate** | 7 | lang, backend, glossary_mode, gate_mode, gate_threshold_accept/reject |
+| **TTS Synthesis** | 5+ | engine, voice_gender, speed_factor, timing_adaptive + 引擎专属子面板 |
+| **Emotion Control** | 8 | enabled, fusion_strategy, audio/text_weight, text_model, EmotionGate E1/E2/E3 |
+| **Review** | 1 | force_accept |
+
+**引擎专属动态子面板：** TTS 区域根据所选引擎（chattts/cosyvoice/edge）动态显示不同控件。
+- CosyVoice: model_version, target_lang, num_norm, fp16
+- ChatTTS: speaker_seed, temperature, top_k, top_p, emotion_injection
+- Edge TTS: voice_name, pitch, volume
+
+每个字段显示**继承来源 Chip**（Event/Speaker/Global），被覆盖的字段显示**恢复按钮**。
+Slider/Number 类型通过 `useConfigInspector` hook 实现 300ms debounce，
+Select/Toggle 类型即时发送。
+
+### Config API 端点 (`GUI/server.py`)
+
+| 端点 | 方法 | 功能 |
+|------|------|------|
+| `/api/timeline/config/apply` | POST | 应用单个 ConfigChange（OVERRIDE_CONFIG patch） |
+| `/api/timeline/config/batch` | POST | 批量应用多个配置变更 |
+| `/api/timeline/config/resolve` | GET | 获取事件的三级合并后最终配置 |
+| `/api/config/slots` | GET | 列出所有可配置槽位及其 Schema |
+
+### useConfigInspector Hook (`GUI/hooks/useConfigInspector.ts`)
+
+```typescript
+const { config, loading, handleConfigChange, handleResetField, handleResetSlot, handlePreviewTTS }
+  = useConfigInspector(eventId);
+```
+
+- `fetchConfig` — 并行加载全部 7 槽位的 resolve 结果
+- `handleConfigChange(slot, field, value)` — number 类型 300ms debounce，其他即时发送
+- `handleResetField(slot, field)` — 发送 RESET_CONFIG 恢复继承
+- `handleResetSlot(slot)` — 批量重置整个槽位
+- `handlePreviewTTS()` — 调用 TTS 引擎生成预览音频
 
 ## 已知问题
 
