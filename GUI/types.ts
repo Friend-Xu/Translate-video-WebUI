@@ -766,3 +766,93 @@ export const BUILTIN_EXPORT_PRESETS: ExportPreset[] = [
   },
 ]
 
+// ── Config Parameter Types (v3.0 — 定稿 §11.3) ──────────────────────────────
+
+/** Per-slot config override. Stored in IR event state as slot.config */
+export interface SlotConfig {
+  [key: string]: any
+}
+
+/** Resolved config for a single event slot */
+export interface ResolvedConfig {
+  eventId: string
+  slot: string
+  resolved: Record<string, any>
+  inheritedFrom: 'event' | 'speaker' | 'global'
+}
+
+/** Config change request from Inspector Panel */
+export interface ConfigChangeRequest {
+  eventId: string
+  slot: string
+  field: string           // dot-separated nested path e.g. "gate.threshold_accept"
+  value: any
+  op: 'override' | 'set' | 'reset'
+}
+
+/** Batch config change */
+export interface BatchConfigRequest {
+  eventIds: string[]
+  slot: string
+  configBlock: Record<string, any>
+}
+
+/** Full config state for the Inspector Panel */
+export interface InspectorConfigState {
+  audio: SlotConfig
+  asr: SlotConfig
+  speaker: SlotConfig
+  translation: SlotConfig
+  tts: SlotConfig
+  emotion: SlotConfig
+  review: SlotConfig
+  /** Which slots have event-level overrides (not inherited) */
+  overriddenSlots: string[]
+  /** Loading state per slot */
+  loading: Record<string, boolean>
+}
+
+/** Default empty config state */
+export const DEFAULT_INSPECTOR_CONFIG: InspectorConfigState = {
+  audio: {},
+  asr: {},
+  speaker: {},
+  translation: {},
+  tts: {},
+  emotion: {},
+  review: {},
+  overriddenSlots: [],
+  loading: {},
+}
+
+/** Engine option params for TTS sub-engines */
+export interface CosyVoiceEngineOptions {
+  version: 'v2' | 'v3'
+  lang: string
+  speed: number
+  num_norm: boolean
+  fp16: boolean
+}
+
+export interface ChatTTSEngineOptions {
+  speaker_seed: number
+  temperature: number
+  top_k: number
+  top_p: number
+  emotion_injection: boolean
+}
+
+export interface EdgeTTSEngineOptions {
+  voice: string | null
+  pitch: string
+  volume: string
+  timeout: number
+}
+
+/** Slot schema info for dynamic UI rendering */
+export interface SlotSchemaInfo {
+  title: string
+  description: string
+  properties: string[]
+}
+
