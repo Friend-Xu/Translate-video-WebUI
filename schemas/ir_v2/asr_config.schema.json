@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "schemas/ir_v2/asr_config.schema.json",
+  "title": "ASR Slot Config",
+  "description": "asr 槽位 config 子字段 — Whisper 模型选择、设备、精度、对齐参数 (定稿 §2.4)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "model": {
+      "type": "string",
+      "enum": ["tiny", "tiny.en", "base", "base.en", "small", "small.en", "medium", "medium.en", "turbo", "large-v2", "large-v3"],
+      "default": "turbo",
+      "description": "Whisper 模型选择。turbo 为速度-质量最佳权衡。"
+    },
+    "device": {
+      "type": "string",
+      "enum": ["cuda", "cpu", "auto"],
+      "default": "cuda",
+      "description": "推理设备。auto 时自动检测 CUDA 可用性。"
+    },
+    "compute_type": {
+      "type": "string",
+      "enum": ["float16", "float32", "int8", "int8_float16", "default"],
+      "default": "float16",
+      "description": "CTranslate2 计算精度"
+    },
+    "language": {
+      "type": "string",
+      "default": "auto",
+      "description": "源语言代码。auto 时自动检测。显式指定可提升准确度。"
+    },
+    "alignment_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "是否启用 wav2vec2 强制对齐，提升词级时间戳精度 (~20ms)"
+    },
+    "num_workers": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 8,
+      "default": 1,
+      "description": "并行 worker 数。GPU 模式下建议 1-2。"
+    },
+    "beam_size": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "default": 5,
+      "description": "Beam search 宽度。越高越准确但越慢。"
+    },
+    "word_timestamps": {
+      "type": "boolean",
+      "default": true,
+      "description": "是否输出词级时间戳"
+    }
+  }
+}

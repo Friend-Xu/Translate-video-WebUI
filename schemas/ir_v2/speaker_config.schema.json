@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "schemas/ir_v2/speaker_config.schema.json",
+  "title": "Speaker Slot Config",
+  "description": "speaker 槽位 config 子字段 — 说话人聚类、嵌入提取、性别推断参数 (定稿 §8.3)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "clustering_threshold": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 0.65,
+      "description": "余弦相似度聚类阈值。越低→说话人越少，越高→说话人越细分。"
+    },
+    "min_speakers": {
+      "type": ["integer", "null"],
+      "default": null,
+      "description": "预期最少说话人数。约束聚类结果下限。"
+    },
+    "max_speakers": {
+      "type": ["integer", "null"],
+      "default": null,
+      "description": "预期最多说话人数。超过时自动合并最相似的说话人对。"
+    },
+    "clustering_method": {
+      "type": "string",
+      "enum": ["agglomerative", "spectral", "umap_hdbscan"],
+      "default": "agglomerative",
+      "description": "聚类算法选择"
+    },
+    "gender": {
+      "type": "string",
+      "enum": ["auto", "male", "female", "neutral"],
+      "default": "auto",
+      "description": "性别覆盖。auto 时由 pyannote 自动推断。"
+    },
+    "embedding_model": {
+      "type": "string",
+      "default": "pyannote/embedding",
+      "description": "说话人嵌入提取模型"
+    },
+    "min_segment_duration": {
+      "type": "number",
+      "minimum": 0.1,
+      "default": 0.5,
+      "description": "低于此时长的片段不参与聚类（直接继承相邻标签）"
+    },
+    "merge_similar_speakers_threshold": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 0.85,
+      "description": "聚类后处理：两个说话人中心嵌入相似度超过此值则自动合并。设为 1.0 禁用。"
+    }
+  }
+}

@@ -44,14 +44,14 @@ Models download automatically to `models/` on first run.
 
 ---
 
-## What's New in v1.4.0
+## What's New in v2.0.0
 
-- **ChatTTS Persistent Worker** — Isolated subprocess with JSON protocol, eliminates STATUS_HEAP_CORRUPTION crashes on Windows CUDA
-- **SSE Real-time Streaming** — asyncio.Queue instant delivery + react-virtuoso virtual scrolling (500 DOM nodes → ~30), smooth log display even with 1000+ lines
-- **Text Normalization** — WeTextProcessing (wetext) integration for Chinese number/date normalization, fixed Minecraft version number pronunciation ("1.19" → "一点一九")
-- **Glossary Safety** — Auto-filter Minecraft formatting codes (§l, §r) from glossary values, preventing subtitle corruption
-- **Per-segment LUFS** — Automatic loudness normalization per TTS segment, eliminates volume jumps between ChatTTS/CosyVoice segments
-- **UTF-8 Everywhere** — Enforced UTF-8 encoding for all subprocess calls, no more GBK decode crashes on Chinese Windows
+- **core/ Adapter-Pass-Gate Architecture** — 3-tier engine: 14 Pass + 11 Adapter + 8 Scorer + 2 Gate, type-safe composable pipeline
+- **Timeline IR v2** — 9-slot event state + OpCode enum + version system, immutable data model
+- **Patch Engine (Ch12)** — Full OpCode dispatch (merge/split/annotate), conflict detection, recompute engine, rollback & snapshot
+- **Translation Quality Gate (Ch14)** — TextGate A/C/B triage + joint formula, TranslationScorer 5-dim weighted, MiniLM + PPL adapters
+- **Emotion Control Axis (Ch15)** — Audio+text dual-path emotion recognition, EmotionGate E1/E2/E3, VAD-space emotion vectors
+- **Unified Timeline Workbench** — React 19 + MUI 7 + Zustand, 5-mode WebUI (Import/Review/Speaker/Patch/Export), TimelineArena with rubber-band select, waveform, multi-track
 
 ---
 ## Features
@@ -95,27 +95,43 @@ Models download automatically to `models/` on first run.
 
 ## Architecture
 
+**Production pipeline** (`main.py`):
+
 ```mermaid
 graph LR
-    A[🎬 Input Video] --> B[📝 Extract]
-    B --> C[🌐 Translate]
-    C --> D[🗣️ TTS]
-    D --> E[🎥 Output]
+    A[Input Video] --> B[Extract]
+    B --> C[Translate]
+    C --> D[TTS]
+    D --> E[Output]
 
-    B --> B1[faster-whisper<br/>CTranslate2 GPU]
-    B --> B2[Silero VAD<br/>Segmentation]
-    B --> B3[wav2vec2<br/>Alignment]
+    B --> B1[faster-whisper + VAD]
+    B --> B2[wav2vec2 Alignment]
 
-    C --> C1[LLM API<br/>3-tier Fallback]
-    C --> C2[Semantic Check<br/>Threshold 0.65]
-    C --> C3[Glossary<br/>On-demand Injection]
+    C --> C1[LLM API / 3-tier Fallback]
+    C --> C2[TextGate Quality Check]
 
-    D --> D1[Edge / ChatTTS / CosyVoice<br/>Triple Engine]
-    D --> D2[Auto Voice<br/>15 Languages]
-    D --> D3[RubberBand<br/>Time-stretch]
-    D --> D4[Demucs<br/>BGM Preserve]
+    D --> D1[Edge / ChatTTS / CosyVoice]
+    D --> D2[RubberBand Time-stretch]
+    D --> D3[Demucs BGM Preserve]
 
-    E --> E1[dubbed.mp4<br/>Bilingual Subtitles]
+    E --> E1[dubbed.mp4]
+```
+
+**New core/ engine** (`main.py --use-core`):
+
+```mermaid
+graph LR
+    V[Video + Config] --> PM[PassManager]
+    PM --> A[11 Adapters]
+    PM --> P[14 Passes]
+    PM --> G[2 Gates]
+
+    A --> PS[PatchEngine]
+    P --> PS
+    G --> PS
+
+    PS --> SE[SynthesisEngine]
+    SE --> OUT[Output SRT / TTS / dubbed.mp4]
 ```
 
 Full architecture → [`ARCHITECTURE.md`](ARCHITECTURE.md)
@@ -178,6 +194,7 @@ Full architecture → [`ARCHITECTURE.md`](ARCHITECTURE.md)
 | `--caption-position` | bottom | Position (`bottom`/`top`) |
 | `--caption-max-lines` | 2 | Max subtitle lines |
 | `--export-external-srt` | — | Export external subtitle file |
+| `--use-core` | — | Use core/ Adapter-Pass-Gate pipeline (new architecture) |
 
 ---
 
@@ -292,8 +309,35 @@ test_project/
 
 ```
 Translate_video/
-├── main.py                  # Entry point: 3-step pipeline
+├── main.py                  # Entry point: 3-step pipeline + --use-core flag
 ├── extract_subtitles.py     # Subtitle extraction (standalone)
+├── core/                    # Adapter-Pass-Gate architecture (NEW)
+│   ├── engine/              # PassManager + PassBase
+│   ├── ir/                  # Timeline IR v2 (immutable data model)
+│   ├── adapters/            # 11 external engine wrappers
+│   ├── passes/              # 14 orchestration passes
+│   ├── gates/               # 2 quality gates (TextGate, EmotionGate)
+│   ├── scoring/             # 8 scorers (Translation, Emotion, ASR, TTS×5)
+│   ├── runtime/             # Patch engine + state management
+│   ├── emotion/             # Emotion space + alignment
+│   ├── speaker/             # Speaker diarization modules
+│   ├── tts/                 # TTS control modules
+│   └── refiner/             # Translation refinement
+├── timeline/                # IR migration layer + dual-write
+│   ├── abstract.py          # Unified consumer protocol
+│   ├── fusion.py            # Old/new IR merge engine
+│   ├── dual_write.py        # Dual-write infrastructure
+│   ├── api/timeline.py      # Gray-release routing
+│   ├── adapters/            # Old/new IR adapters
+│   ├── patch/               # Patch model + conflict detection
+│   ├── recovery/            # Replay + snapshot
+│   └── ui_adapter/          # IR → UI mapper
+├── schemas/                 # JSON Schema definitions
+│   ├── timeline.schema.json
+│   ├── export_config.schema.json
+│   ├── patch_log.schema.json
+│   └── speaker_map.schema.json
+├── main_core.py             # core/ pipeline standalone entry
 ├── pipeline/                # Core modules
 │   ├── audio.py             # Audio extraction + C2 defect fix
 │   ├── transcriber.py       # Silero VAD + faster-whisper + wav2vec2

@@ -507,6 +507,643 @@ pipeline/
 3. **SRT 时间戳质量问题**：`extract_subtitles.py` 生成的 SRT 首条偶有反转时间戳，`parse_srt()` 已自动修正
 4. **Windows 路径兼容**：TimingAdjuster 原用 Unix `/` 路径拼接，已改为 `os.path.join`
 
+## core/ — Adapter-Pass-Gate 三层架构（新 🆕）
+
+`core/` 是新一代 pipeline 引擎，采用 **Adapter-Pass-Gate** 三层分离架构，
+目标：类型安全、可独立测试、可线性编排的全流程引擎。
+
+### 架构概览
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        PassManager                               │
+│  按 depends_on DAG 拓扑排序，线性执行 14 个 Pass                  │
+└─────────────────────────────────────────────────────────────────┘
+        │                    │                    │
+        ▼                    ▼                    ▼
+┌───────────────┐   ┌───────────────┐   ┌───────────────┐
+│   Adapter 层   │   │    Pass 层     │   │    Gate 层     │
+│  (11 adapters) │   │  (14 passes)   │   │   (2 gates)    │
+│                │   │                │   │                │
+│ • Whisper      │   │ • ASR          │   │ • TextGate     │
+│ • Wav2Vec2     │   │ • Speaker      │   │   A/C/B 决策   │
+│ • PyAnnote     │   │ • Translation  │   │ • EmotionGate  │
+│ • ChatTTS      │   │ • TTS ×5       │   │   E1/E2/E3     │
+│ • CosyVoice    │   │ • Emotion      │   │                │
+│ • IndexTTS     │   │ • Quality      │   │                │
+│ • OpenVoice    │   │ • AudioPre     │   │                │
+│ • EdgeTTS      │   │ • SRTExport    │   │                │
+│ • MiniLM       │   │ • SemanticMerge│   │                │
+│ • PPL          │   │ • ASRToIR      │   │                │
+│ • EmotionRecog │   │                │   │                │
+└───────────────┘   └───────────────┘   └───────────────┘
+        │                    │                    │
+        └────────────────────┼────────────────────┘
+                             │
+                             ▼
+              ┌──────────────────────────┐
+              │     TimelineProjectState  │
+              │  ┌──────────────────────┐ │
+              │  │  IR (immutable)      │ │
+              │  │  events[], speakers{}│ │
+              │  ├──────────────────────┤ │
+              │  │  EventState × N      │ │
+              │  │  _data (9 slots)     │ │
+              │  │  patches[]           │ │
+              │  ├──────────────────────┤ │
+              │  │  Global patches[]    │ │
+              │  └──────────────────────┘ │
+              └──────────────────────────┘
+                             │
+                             ▼
+              ┌──────────────────────────┐
+              │    SynthesisEngine        │
+              │  5-layer render:          │
+              │  L1 raw IR → L2 deriv.   │
+              │  → L3 patches →          │
+              │  L4 speakers → L5 output │
+              └──────────────────────────┘
+```
+
+### Adapter 层 — 外部引擎封装
+
+每个 Adapter 封装一个外部引擎（Whisper, ChatTTS, MiniLM 等），
+统一返回 `Patch` 对象写入 `TimelineProjectState`。
+
+**11 个 Adapter：**
+
+| Adapter | 封装引擎 | 输出 Patch |
+|---------|---------|-----------|
+| `WhisperAdapter` | faster-whisper (CTranslate2) | UPDATE_TRANSCRIPTION |
+| `Wav2Vec2Adapter` | Wav2Vec2ForCTC | REFINE_ALIGNMENT |
+| `PyAnnoteAdapter` | pyannote.audio | UPDATE_SPEAKER |
+| `ChatTTSAdapter` | ChatTTS subprocess | UPDATE_TTS |
+| `CosyVoiceAdapter` | CosyVoice subprocess | UPDATE_TTS |
+| `IndexTTSAdapter` | IndexTTS subprocess | UPDATE_TTS |
+| `OpenVoiceAdapter` | OpenVoiceCloner | UPDATE_TTS (fallback) |
+| `EdgeTTSAdapter` | EdgeTTSEngine | UPDATE_TTS (last resort) |
+| `MiniLMAdapter` | SentenceTransformer | ANNOTATE (similarity) |
+| `PPLAdapter` | GPT-2 PPL | ANNOTATE (ppl_ratio) |
+| `EmotionRecognizerAdapter` | EmotionModeler + funasr | UPDATE_EMOTION |
+
+### Pass 层 — 编排标准操作
+
+每个 Pass 是一个 `apply(state) → state` 函数，通过 `depends_on` 声明依赖，
+`PassManager` 自动拓扑排序执行。
+
+**14 个 Pass：**
+
+| Pass | 依赖 | 功能 |
+|------|------|------|
+| `AudioPreprocessCompositePass` | — | MediaValidator + Demucs + VAD |
+| `ASRToIRPass` | — | ASR 输出 → Timeline IR |
+| `ASRCompositePass` | audio_preprocess | Whisper + Wav2Vec2 → Patch |
+| `SpeakerCompositePass` | asr_composite | PyAnnote → Speaker Patch |
+| `LLMTranslationPass` | asr_to_ir | LLM 翻译 → UPDATE_TRANSLATION |
+| `TranslationQualityPass` | llm_translation | TranslationScorer + TextGate |
+| `EmotionCompositePass` | speaker_composite, llm_translation | EmotionRecognizer + EmotionGate |
+| `TTSCompositePass` | llm_translation | ChatTTS → UPDATE_TTS |
+| `CosyVoiceCompositePass` | llm_translation | CosyVoice → UPDATE_TTS |
+| `IndexTTSCompositePass` | llm_translation | IndexTTS → UPDATE_TTS |
+| `OpenVoiceCompositePass` | tts_composite | OpenVoice fallback |
+| `EdgeTTSCompositePass` | openvoice_composite | EdgeTTS last resort |
+| `SemanticMergePass` | asr_to_ir | 语义合并相邻 segment |
+| `SRTExportPass` | (末端) | State → SRT 文件 |
+
+### Gate 层 — 质量门控
+
+**TextGate** (Ch14) — 翻译质量门控：
+
+```
+A 门: new_sim < old_sim - sim_drop_limit → reject (退化)
+C 门: new_ppl_ratio > old_ppl_ratio → reject (流畅度下降)
+B 门: new_sim - old_sim > 0.05 → accept (质量提升)
+      否则 → reject (无提升)
+
+Joint Formula 模式:
+  score = 0.4 × (1 - PPL_ratio_norm) + 0.4 × sim_gain + 0.2 × (1 - length_err)
+  score > 0.5 → accept
+```
+
+**EmotionGate** (Ch15) — 情感一致性门控：
+
+```
+E2 (硬门槛): current.confidence < 0.3 → review
+E1 (连续性): |current.intensity - previous.intensity| > 0.7 → repair
+E3 (说话人): current.distance(speaker_baseline) > 1.5 → repair
+```
+
+### Timeline IR v2 — 9 槽位事件状态
+
+`TimelineEventState` 管理 9 个语义槽位，每个槽位惰性初始化为 `dict`：
+
+| 槽位 | 内容 | 写入者 |
+|------|------|--------|
+| `audio` | 音频路径、VAD 边界 | AudioPreprocess |
+| `asr` | 转录文本、词级时间戳 | ASRComposite |
+| `speaker` | speaker_id、嵌入向量 | SpeakerComposite |
+| `semantic` | 语义分组 | SemanticMerge |
+| `translation` | 翻译文本、质量评分 | LLMTranslation + Quality |
+| `tts` | TTS 输出路径、时长 | TTS Composite |
+| `emotion` | valence/arousal/dominance | EmotionComposite |
+| `review` | 人工审校标记 | WebUI |
+| `runtime` | 重算标记、版本 | PatchEngine |
+
+**OpCode 枚举** — 20+ 操作码：
+
+```
+REPLACE, MERGE, SPLIT, INSERT, DELETE,
+UPDATE_TRANSCRIPTION, UPDATE_TRANSLATION, UPDATE_SPEAKER,
+UPDATE_TTS, UPDATE_EMOTION, REFINE_ALIGNMENT,
+ASSIGN_SPEAKER, MERGE_SPEAKERS, ANNOTATE, ...
+```
+
+### Patch Engine (Ch12) — 补丁状态机
+
+`PatchEngine` 是整个 core/ 的运行时核心，将 Patch 应用到 State：
+
+```
+Patch.apply(state) → 分发到 handler
+  ├── _replace    → target.derivatives.update(value)
+  ├── _seg_split  → 创建 2 个新 EventState
+  ├── _seg_merge  → 合并 N 个 EventState
+  ├── _seg_insert → 创建 1 个新 EventState
+  ├── _assign_speaker → 更新 speaker_ref
+  ├── _merge_speakers → 重映射 speaker_id
+  ├── _annotate   → 写入指定槽位
+  └── _propagate  → 批量更新多个 target
+```
+
+**配套子系统：**
+
+| 模块 | 功能 |
+|------|------|
+| `DependencyGraph` | 段间时间依赖图，级联失效检测 |
+| `RecomputeEngine` | 增量重算，最小化重处理范围 |
+| `ConflictDetector` | OVERWRITE/IDENTITY/TEMPORAL 冲突检测 |
+| `ConflictResolver` | 规则优先级 + 置信度仲裁 |
+| `RollbackManager` | Patch undo/redo，版本回退 |
+| `SnapshotManager` | State 快照，崩溃恢复 |
+| `PatchStore` | 三层存储（内存→磁盘→远程） |
+| `Reducer` | 确定性重放至指定时间戳 |
+| `GateValidator` | 预应用校验（幂等性、置信度、必填字段） |
+
+### 评分器 — 8 个 Scorer
+
+| Scorer | 评估维度 | 输出 |
+|--------|---------|------|
+| `TranslationScorer` | semantic + fluency + faithfulness + temporal + length | composite ∈ [0,1] |
+| `EmotionScorer` | consistency + intensity + speaker_fit + translation_alignment | composite ∈ [0,1] |
+| `ASRScorer` | confidence + alignment + coverage | score ∈ [0,1] |
+| `TTSScorer` | duration_fit + quality + naturalness | score ∈ [0,1] |
+| `CosyVoiceScorer` | duration_fit + cross_lingual + quality | score ∈ [0,1] |
+| `IndexTTSScorer` | duration_fit + voice_match + emotion_fit | score ∈ [0,1] |
+| `OpenVoiceScorer` | duration_fit + transfer_quality | score ∈ [0,1] |
+| `EdgeTTSScorer` | duration_fit + fallback_reason | score ∈ [0,1] |
+
+### 与旧架构关系
+
+```
+旧架构: main.py → extract_subtitles.py → SRT_Translator → TtsPipeline
+新架构: main.py --use-core → PassManager → 14 Pass → SynthesisEngine
+
+迁移策略: 渐进，双系统共存。--use-core 默认不启用。
+```
+
+### Config 层 — 参数配置体系（v3.0 新增 🆕）
+
+四层对象域 + 三级优先级 + 配置注入，将所有引擎参数从 CLI 扁平化提升为
+分层、可覆盖、可追溯的配置系统。详见 `计划开发/工作流参数新架构设计-定稿.md` 第 1 章。
+
+#### 四层对象域
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    ProjectPolicy                            │
+│  全局策略：target_lang、quality_profile、default_tts_engine   │
+│  作用域：整个项目，所有事件继承                                │
+├─────────────────────────────────────────────────────────────┤
+│                    WorkflowPolicy                           │
+│  工作流路径选择：启用的 Pass 列表、skip_demucs、glossary_mode │
+│  作用域：单次工作流运行                                      │
+├─────────────────────────────────────────────────────────────┤
+│                    EnginePolicy                             │
+│  引擎运行方式：model_size、device、compute_type、temperature  │
+│  作用域：特定 Adapter，由系统自动检测 + 用户调优               │
+├─────────────────────────────────────────────────────────────┤
+│                    SegmentRuntimeState                      │
+│  事件级运行时决策：event.tts.config.engine=cosyvoice          │
+│  作用域：单个事件，最高优先级，覆盖以上三层                     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### 三级配置优先级
+
+```
+Event.config  >  Speaker.config  >  Global.config
+   (最高)           (中间)            (最低)
+```
+
+**关键规则：**
+1. **只有显式设定的值才参与覆盖** — `event.asr.config = {"model": "large-v3"}` 只覆盖 model，其余字段继承
+2. **深度合并（deep_merge）** — 嵌套对象递归合并，非浅层替换
+3. **null = 删除覆盖** — 显式设 null 恢复继承，语义不同于"字段不存在"
+4. **差异化存储（delta storage）** — 事件级 config 仅序列化与上级默认值的差异
+
+#### ConfigResolver (`core/runtime/config_resolver.py`)
+
+三级合并引擎，`resolve_event_config(event_id, slot, state)` 按优先级深度合并：
+```python
+def resolve_event_config(event_id, slot, state) -> dict:
+    base = deep_merge(global_config[slot], speaker.config[slot])  # L3+L2
+    return deep_merge(base, event.config[slot])                    # +L1
+```
+
+`deep_merge(base, override)` 实现了 null 语义：
+- `override[key] = null` → 从结果中删除 key（恢复继承）
+- 嵌套 dict 递归合并，非 dict 值直接替换
+- `serialize_event_config()` 输出差异化存储（仅保存与默认值的差异）
+
+#### SlotLevelDependencyGraph (`core/runtime/slot_dependency.py`)
+
+细粒度脏传播：改变某槽位的特定字段只传播到受影响的下游槽位。
+```
+audio.config.vad_threshold  →  audio, asr, speaker  (VAD 影响 ASR 分段)
+asr.config.model            →  asr                   (只影响 ASR 自身)
+tts.config.speed_factor     →  tts                   (只影响 TTS)
+translation.config.lang     →  translation           (只影响翻译)
+```
+
+#### Config OpCodes
+
+| OpCode | 语义 | 合并方式 |
+|--------|------|---------|
+| `SET_CONFIG` | 全量替换槽位配置 | 完全替换 |
+| `OVERRIDE_CONFIG` | 深度合并部分字段 | deep_merge |
+| `RESET_CONFIG` | 恢复继承（删除事件级覆盖） | 移除槽位 config |
+| `BATCH_SET_CONFIG` | 批量应用多个槽位配置 | 逐槽位 OVERRIDE |
+
+每个 config patch 通过 `SnapshotManager` 自动记录 `previous_state`（仅变更字段），
+支持 undo/redo。`GateValidator` 在 pre-apply 阶段校验 JSON Schema + 跨槽位约束。
+
+#### 跨槽位约束（6 规则）
+
+| 规则ID | 条件 | 约束 | 级别 |
+|--------|------|------|------|
+| ASR-C01 | language=auto + alignment_enabled=true | alignment 强制中文 | WARN |
+| TR-C02 | glossary_mode=CONTEXTUAL + backend=local_dict | local_dict 不支持上下文 | ERROR |
+| GATE-C03 | gate_mode=joint_formula + gate_threshold_accept < gate_threshold_reject | 阈值倒挂 | ERROR |
+| TTS-C01 | engine=cosyvoice + cosy_lang not in speakers | 语言不在说话人语言集 | WARN |
+| EMO-C01 | emotion.enabled=true + text_model=distiluse + fusion_strategy=text_primary | 轻量模型不适合主策略 | WARN |
+| ENG-C02 | engine=chattts + chattts_temperature > 1.5 | 高温可能产生不稳定输出 | WARN |
+
+#### 配置注入流程
+
+```
+main.py / CLI args
+      │
+      ▼
+GlobalConfig.load("config/global.yaml")  ──→ ProjectPolicy + EnginePolicy
+      │
+      ▼
+WorkflowOrchestrator.run(video, policy)
+      │
+      ├── 1. 加载 GlobalConfig，derive_engine_policy() 自动检测 GPU
+      ├── 2. 每个 Stage 前：ConfigResolver.resolve_event_config(event_id, slot, state)
+      ├── 3. 注入 Adapter：adapter.configure(resolved_config)
+      └── 4. 用户修改 → InspectorPanel → OVERRIDE_CONFIG patch → GateValidator → PatchEngine
+```
+
+### core/ 模块布局
+
+```
+core/
+├── engine/           # PassManager + PassBase
+├── ir/               # Timeline IR (不可变数据模型)
+├── adapters/         # 11 个外部引擎封装 (均含 configure() 方法)
+├── passes/           # 14 个编排 Pass
+├── gates/            # 2 个质量门控
+├── scoring/          # 8 个评分器
+├── runtime/          # 补丁引擎 + 状态管理 + 配置解析
+├── config/           # 全局配置 + Schema 加载 + EnginePolicy 推导 🆕
+│   ├── global_config.py    # GlobalConfig + ProjectPolicy + EnginePolicy
+│   ├── schema_loader.py    # SchemaLoader — 10 槽位 JSON Schema 校验
+│   └── engine_policy.py    # derive_engine_policy() — GPU 自动检测
+├── emotion/          # 情感空间
+├── speaker/          # 说话人识别
+├── tts/              # TTS 控制
+└── refiner/          # 翻译结果精炼
+    ├── engine.py
+    └── prob_builder.py
+```
+
+### core/runtime/ 详解
+
+`runtime/` 是 core/ 的核心引擎层，包含完整的状态管理、补丁系统和数据生命周期：
+
+```
+runtime/
+├── patch.py              # Patch 数据类 + OpCode 枚举 (14+4 操作码)
+├── event_state.py        # TimelineEventState — 9 槽位惰性初始化
+├── project_state.py      # TimelineProjectState — 项目级状态容器 (+ global_config)
+├── patch_engine.py       # PatchEngine — 核心补丁状态机 (14 handler, v3.0)
+├── synthesis.py          # SynthesisEngine — 5 层渲染 (IR→衍生→补丁→说话人→输出)
+├── index.py              # 统一导出入口
+├── dependency_graph.py   # DependencyGraph — 段间时间依赖图
+├── recompute.py          # RecomputeEngine — 局部增量重算
+├── conflict.py           # ConflictDetector + ConflictResolver
+├── reducer.py            # Reducer — 确定性补丁重放
+├── rollback.py           # RollbackManager — undo/redo + 版本回退
+├── snapshot.py           # SnapshotManager — State 快照
+├── snapshot_manager.py   # SnapshotManager — 配置 undo 增量快照 (v3.0 🆕)
+├── slot_dependency.py    # SlotLevelDependencyGraph — 槽位级脏传播 (v3.0 🆕)
+├── config_resolver.py    # ConfigResolver — 三级合并引擎 + deep_merge (v3.0 🆕)
+├── gate_validator.py     # GateValidator — 预应用校验 + Schema + 跨槽位约束 (v3.0)
+├── patch_store.py        # PatchStore — 三层存储 (内存/磁盘/远程)
+├── patch_planner.py      # PatchPlanner — 补丁策略规划
+└── verify.py             # 结构校验 + OpCode 兼容性
+```
+
+### 5 层渲染引擎 (SynthesisEngine)
+
+`SynthesisEngine.render(event_state)` 按优先级合成最终输出：
+
+```
+Layer 1 (Raw IR):        ir.start, ir.end, ir.speaker_ref, ir.text_ref
+Layer 2 (Derivatives):   event_state.derivatives 覆盖 L1
+Layer 3 (Patches):       replace 类 patch 覆盖 L2 (按 timestamp 排序)
+Layer 4 (Speakers):      注入 speaker 元数据 (name, embedding_ref)
+Layer 5 (Output):        合并所有层，输出 dict
+```
+
+## timeline/ — Timeline 中间层 + Strangler Fig 迁移系统
+
+`timeline/` 是**新旧 IR 之间的桥接层**，实现 Strangler Fig 渐进迁移模式。
+目标是让所有消费端（API、WebUI、CLI）不直接依赖具体 IR 实现，
+而是通过统一 Protocol 消费，实现新旧 IR 的透明切换。
+
+### 统一消费协议 (abstract.py)
+
+核心是两个 `@runtime_checkable` Protocol，消费端**只依赖协议，不依赖实现**：
+
+```python
+class SegmentView(Protocol):
+    id: str; start: float; end: float
+    speaker: str | None; text: str; type: str
+    @property
+    def duration(self) -> float: ...
+
+class TimelineView(Protocol):
+    segments: list[SegmentView]
+    speakers: list[dict]
+    def to_dict(self) -> dict: ...        # → WebUI JSON
+    def to_project_ir(self) -> ...: ...   # → 新引擎 TimelineProjectIR
+```
+
+### 数据流全景
+
+```
+extract_subtitles.py 输出
+        │
+        ├── transcript.json (旧格式)
+        │       │
+        │       ▼
+        │   timeline/fusion.py
+        │   from_extract_result() → TimelineIR (旧 IR)
+        │       │
+        │       ├─── to_project_ir() → TimelineProjectIR (新 IR) → core/
+        │       │
+        │       └─── to_dict() → WebUI JSON
+        │
+        └── project.json (旧格式)
+                │
+                ▼
+           旧架构消费 (SRT_Translator, TtsPipeline)
+```
+
+### Fusion 引擎 (fusion.py) — 新旧 IR 数据合并
+
+```
+VAD segments  ─┐
+ASR words      ─┤
+Speaker info   ─┼──→ from_extract_result() → TimelineIR
+Alignment      ─┤                                   │
+Metadata       ─┘                                   │
+                                          ┌─────────┴──────────┐
+                                          │                    │
+                                    to_project_ir()    from_project_ir()
+                                          │                    │
+                                          ▼                    ▼
+                                  TimelineProjectIR      TimelineIR
+                                    (新 core/ IR)        (旧 timeline IR)
+```
+
+**关键函数：**
+
+| 函数 | 方向 | 功能 |
+|------|------|------|
+| `from_extract_result()` | 旧输出 → 旧 IR | VAD/ASR/Speaker 片段 → TimelineIR，自动检测 overlap |
+| `to_project_ir()` | 旧 IR → 新 IR | 深度迁移：TimelineSegment → TimelineEventIR，Speaker → SpeakerNodeIR |
+| `from_project_ir()` | 新 IR → 旧 IR | 反向迁移：含 derivatives_map 填充 translation/words |
+
+### 双写基础设施 (dual_write.py) — Strangler Fig 核心
+
+补丁同步应用到新旧两套 IR，比对结果确保行为等价：
+
+```
+WebUI 用户操作
+      │
+      ▼
+  TimelinePatch (旧 OpCode: MERGE, SPLIT, RETAG_SPEAKER, ...)
+      │
+      ├──→ apply_patch(old_segments)  → 旧 IR 结果
+      │
+      ├──→ _map_opcode() → CorePatch  → PatchEngine.apply() → 新 IR 结果
+      │
+      └──→ _compare(old, new)  → {"status": "ok"|"diff", "diffs": [...]}
+```
+
+**OpCode 映射** (dual_write.py:77-84)：
+
+| 旧 OpCode | 新引擎 OpCode |
+|-----------|--------------|
+| MERGE | merge |
+| SPLIT | split |
+| RETAG_SPEAKER | replace |
+| SET_TRANSLATION | replace |
+| RELINK_WORDS | propagate |
+| ANNOTATE | replace |
+
+### 灰度路由 (api/timeline.py)
+
+API 层根据配置开关，在 `TimelineView` 协议的两种实现间透明切换：
+
+```
+GET /api/timeline/{project_id}
+      │
+      ├── use_new_ir=True  → NewIRAdapter  → TimelineView (新 core/ IR)
+      └── use_new_ir=False → OldIRAdapter  → TimelineView (旧 timeline IR)
+```
+
+消费端代码只依赖 `TimelineView` Protocol，不感知底层是哪种 IR。
+
+### 适配器层 (adapters/)
+
+| 适配器 | 功能 |
+|--------|------|
+| `OldIRAdapter` | 旧 `TimelineIR` → `TimelineView` Protocol |
+| `NewIRAdapter` | 新 `TimelineProjectState` → `TimelineView` Protocol |
+| `speaker.py` | Speaker 数据在新旧格式间的映射 |
+
+### UI 适配器 (ui_adapter/mapper.py)
+
+将 IR 数据映射为前端 Zustand store 消费的格式：
+
+```
+TimelineView.to_dict() → mapper → {
+    events: TimelineEvent[],    # EventBlock 直接渲染
+    speakers: SpeakerInfo[],    # SpeakerReviewPanel 使用
+    patches: PatchDraft[],      # PatchManagementView 使用
+}
+```
+
+### 迁移配置 (config.py)
+
+```python
+# 灰度开关
+USE_NEW_IR = os.getenv("USE_NEW_IR", "false").lower() == "true"
+
+# 双写开关
+DUAL_WRITE_ENABLED = True  # 新旧同时写入, 差异仅记录不阻断
+```
+
+### 补丁与恢复系统
+
+```
+timeline/patch/
+├── model.py      # TimelinePatch — OpCode + payload + targets
+├── opcode.py     # OpCode 枚举 (MERGE, SPLIT, RETAG_SPEAKER, SET_TRANSLATION, ...)
+├── apply.py      # apply_patch() — 基于索引的语义级补丁应用
+├── conflict.py   # 冲突检测
+└── planner.py    # 补丁规划
+
+timeline/recovery/
+├── graph.py      # 补丁依赖图
+├── replay.py     # 确定性重放到指定检查点
+└── snapshot.py   # 时间轴状态快照
+
+timeline/rules/
+└── extractor.py  # 从补丁历史中提取规则 (speaker 偏好、分段模式)
+
+timeline/safety/
+└── guard.py      # 补丁安全边界 (禁止删除全部 segment、禁止负时间等)
+
+timeline/scorer/
+└── scorer.py     # AI 补丁质量评分
+```
+
+### 新旧 IR 对比
+
+| 维度 | 旧 IR (timeline/ir.py) | 新 IR (core/ir/) |
+|------|----------------------|-------------------|
+| 核心类型 | TimelineSegment (mutable dataclass) | TimelineEventIR (frozen dataclass) |
+| 状态管理 | 直接修改 segment 字段 | Patch + EventState 9 槽位 |
+| 说话人 | speaker_map: dict | SpeakerNodeIR (frozen) |
+| 版本 | "1.0" 字符串 | Version 系统 (MAJOR.MINOR) |
+| OpCode | 自定义字符串 | OpCode 枚举 (20+ 成员) |
+| 可逆性 | 无内置回滚 | RollbackManager + SnapshotManager |
+
+### 目录布局
+
+```
+timeline/
+├── abstract.py          # TimelineView / SegmentView Protocol
+├── ir.py                # 旧版 TimelineIR + TimelineSegment
+├── schema.py            # JSON Schema 定义 + 结构校验
+├── fusion.py            # 新旧 IR 双向迁移 (from_extract_result / to_project_ir / from_project_ir)
+├── dual_write.py        # 双写: 补丁同步应用到新旧 IR + 结果比对
+├── config.py            # 灰度开关 (USE_NEW_IR, DUAL_WRITE_ENABLED)
+├── io.py                # 文件 I/O
+├── api/
+│   └── timeline.py      # API 灰度路由
+├── adapters/
+│   ├── old_ir_adapter.py    # 旧 IR → TimelineView Protocol
+│   ├── new_ir_adapter.py    # 新 IR → TimelineView Protocol
+│   └── speaker.py           # Speaker 映射适配器
+├── patch/
+│   ├── model.py         # TimelinePatch 模型
+│   ├── opcode.py        # OpCode 枚举
+│   ├── apply.py         # 补丁应用引擎
+│   ├── conflict.py      # 冲突检测
+│   └── planner.py       # 补丁规划
+├── recovery/
+│   ├── graph.py         # 依赖图
+│   ├── replay.py        # 确定性重放
+│   └── snapshot.py      # 快照
+├── rules/
+│   └── extractor.py     # 规则特征提取
+├── safety/
+│   └── guard.py         # 安全边界守卫
+├── scorer/
+│   └── scorer.py        # AI 补丁评分
+├── speaker/
+│   └── model.py         # 说话人模型
+└── ui_adapter/
+    └── mapper.py        # IR → 前端 Zustand store 映射
+
+## schemas/ — JSON Schema 数据规范
+
+```
+schemas/
+├── timeline.schema.json         # Timeline IR Schema
+├── export_config.schema.json    # 导出配置 Schema
+├── patch_log.schema.json        # 补丁日志 Schema (v3.0)
+├── speaker_map.schema.json      # 说话人映射 Schema (v3.0)
+└── ir_v2/                       # 槽位级 JSON Schema (v3.0 🆕)
+    ├── audio_config.schema.json          # 音频预处理参数
+    ├── asr_config.schema.json            # ASR 引擎参数
+    ├── speaker_config.schema.json        # 说话人识别参数
+    ├── semantic_config.schema.json       # 语义分析参数
+    ├── translation_config.schema.json    # 翻译引擎参数
+    ├── tts_routing.schema.json           # TTS 路由参数
+    ├── tts_cosyvoice.schema.json         # CosyVoice 专属参数
+    ├── tts_chattts.schema.json           # ChatTTS 专属参数
+    ├── tts_edge.schema.json              # Edge TTS 专属参数
+    └── emotion_config.schema.json        # 情感控制参数
+```
+
+所有 ir_v2 Schema 均为 JSON Schema Draft-07，由 `SchemaLoader` 加载校验。
+
+## core/refiner/ — 翻译结果精炼
+
+```
+core/refiner/
+├── engine.py            # RefinerEngine — 翻译后处理
+└── prob_builder.py      # ProblemBuilder — 问题定位
+```
+
+## 新旧架构入口对照
+
+```
+旧架构 (默认):
+  main.py
+    ├── extract_subtitles.py (子进程)  → NODE 1~4 → SRT
+    ├── SRT.SRT_Translator            → 翻译
+    └── TtsPipeline                   → TTS + 合并
+
+新架构 (--use-core):
+  main.py --use-core
+    └── main_core.py
+          ├── PipelineProfile         → 统一配置
+          ├── PassManager.run()       → 14 Pass 线性执行
+          └── SynthesisEngine         → 5 层渲染输出
+
+双写 (transitional):
+  extract_subtitles.py 同时输出
+    ├── 旧格式 (project.json + SRT)  → 旧架构可消费
+    └── 新格式 (TimelineIR JSON)     → core/ 可消费
+```
+
 ## 配置参考 (`config/translate.yaml`)
 
 ```yaml
@@ -600,6 +1237,54 @@ Translate_video/models/
 ```
 
 注: whisperx_local/ 是代码（~10KB），不是模型。Wav2Vec2 模型运行时自动从 HF 镜像下载缓存。
+
+## WebUI — 参数配置面板与 Config API（v3.0 🆕）
+
+### InspectorPanel — 7 区手风琴组件
+
+`GUI/components/InspectorPanel.tsx`（170 行）提供事件级参数检查与覆盖，
+7 个可折叠区域覆盖全部 9 语义槽位中的可配置参数：
+
+| 区域 | 控件数 | 关键参数 |
+|------|--------|---------|
+| **Audio Preprocess** | 5 | skip_demucs, demucs_model, vad_threshold, silence_handling, loudness_compensation |
+| **ASR Transcription** | 3 | model (tiny→large-v3), language, alignment_enabled |
+| **Speaker** | 5 | clustering_threshold, clustering_method, min/max_speakers, gender |
+| **Translation & Gate** | 7 | lang, backend, glossary_mode, gate_mode, gate_threshold_accept/reject |
+| **TTS Synthesis** | 5+ | engine, voice_gender, speed_factor, timing_adaptive + 引擎专属子面板 |
+| **Emotion Control** | 8 | enabled, fusion_strategy, audio/text_weight, text_model, EmotionGate E1/E2/E3 |
+| **Review** | 1 | force_accept |
+
+**引擎专属动态子面板：** TTS 区域根据所选引擎（chattts/cosyvoice/edge）动态显示不同控件。
+- CosyVoice: model_version, target_lang, num_norm, fp16
+- ChatTTS: speaker_seed, temperature, top_k, top_p, emotion_injection
+- Edge TTS: voice_name, pitch, volume
+
+每个字段显示**继承来源 Chip**（Event/Speaker/Global），被覆盖的字段显示**恢复按钮**。
+Slider/Number 类型通过 `useConfigInspector` hook 实现 300ms debounce，
+Select/Toggle 类型即时发送。
+
+### Config API 端点 (`GUI/server.py`)
+
+| 端点 | 方法 | 功能 |
+|------|------|------|
+| `/api/timeline/config/apply` | POST | 应用单个 ConfigChange（OVERRIDE_CONFIG patch） |
+| `/api/timeline/config/batch` | POST | 批量应用多个配置变更 |
+| `/api/timeline/config/resolve` | GET | 获取事件的三级合并后最终配置 |
+| `/api/config/slots` | GET | 列出所有可配置槽位及其 Schema |
+
+### useConfigInspector Hook (`GUI/hooks/useConfigInspector.ts`)
+
+```typescript
+const { config, loading, handleConfigChange, handleResetField, handleResetSlot, handlePreviewTTS }
+  = useConfigInspector(eventId);
+```
+
+- `fetchConfig` — 并行加载全部 7 槽位的 resolve 结果
+- `handleConfigChange(slot, field, value)` — number 类型 300ms debounce，其他即时发送
+- `handleResetField(slot, field)` — 发送 RESET_CONFIG 恢复继承
+- `handleResetSlot(slot)` — 批量重置整个槽位
+- `handlePreviewTTS()` — 调用 TTS 引擎生成预览音频
 
 ## 已知问题
 

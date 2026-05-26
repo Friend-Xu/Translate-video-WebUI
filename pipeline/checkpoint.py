@@ -232,6 +232,8 @@ class PipelineCheckpoint:
     # ── per-step helpers ───────────────────────────────────────
 
     def _get_step(self, name: str) -> StepState:
+        if name not in self.steps:
+            self.steps[name] = StepState(status="pending")
         return self.steps[name]
 
     def is_step_done(self, name: str) -> bool:

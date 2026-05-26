@@ -70,6 +70,53 @@ def _ensure_hf_cache(repo_id: str, local_dir: Path) -> None:
         logger.info("HF 缓存注入: %s → %s", repo_id, target)
 
 
+from contextlib import contextmanager
+
+@contextmanager
+def _pyannote_compat_context(model_dir: Path):
+    """pyannote 兼容层：torch.load + hf_hub_download 本地缓存优先。
+    通过 context manager 限定补丁生命周期，退出时自动恢复。
+    """
+    import torch, huggingface_hub
+
+    _orig_load = torch.load
+    _saved_modules = {}
+
+    def _safe_load(*args, **kwargs):
+        kwargs["weights_only"] = False
+        return _orig_load(*args, **kwargs)
+
+    def _safe_hf_hub(repo_id, filename, *args, **kwargs):
+        kwargs.pop("use_auth_token", None)
+        # 优先本地缓存
+        if repo_id.startswith("pyannote/"):
+            local = model_dir.parent / repo_id.split("/")[-1] / filename
+            if local.is_file():
+                return str(local)
+        return huggingface_hub.hf_hub_download(repo_id, filename, *args, **kwargs)
+
+    for mod_name in ("pyannote.audio.core.model", "pyannote.audio.pipelines.utils.getter"):
+        try:
+            mod = __import__(mod_name, fromlist=["hf_hub_download"])
+            if hasattr(mod, "hf_hub_download"):
+                _saved_modules[mod_name] = mod.hf_hub_download
+                mod.hf_hub_download = _safe_hf_hub
+        except ImportError:
+            pass
+
+    torch.load = _safe_load
+    try:
+        yield
+    finally:
+        torch.load = _orig_load
+        for mod_name, orig_fn in _saved_modules.items():
+            try:
+                mod = __import__(mod_name, fromlist=["hf_hub_download"])
+                mod.hf_hub_download = orig_fn
+            except ImportError:
+                pass
+
+
 class SpeakerDiarizer:
     """pyannote 说话人分离引擎。每次 run() 加载模型 → 推理 → 卸载。"""
 
@@ -92,10 +139,11 @@ class SpeakerDiarizer:
     def load_model(self) -> None:
         if self._loaded:
             return
-        # numpy 2.x: np.NaN 被移除
+        # numpy 2.x 兼容: np.NaN 被移除
         import numpy as np
-        np.NaN = np.nan
-        np.NAN = np.nan
+        if not hasattr(np, "NaN"):
+            np.NaN = np.nan
+            np.NAN = np.nan
 
         from pyannote.audio import Pipeline
 
@@ -121,41 +169,30 @@ class SpeakerDiarizer:
             if repo_id and "/" in repo_id:
                 _ensure_hf_cache(repo_id, model_dir.parent / repo_id.split("/")[-1])
 
-        # PyTorch 2.6 兼容 + hf_hub 本地拦截（仅 Pipeline.from_pretrained 期间生效）
-        import torch, huggingface_hub
-        _orig_load = torch.load
-        _orig_hf_hub = huggingface_hub.hf_hub_download
-
-        def _patched_load(*args, **kwargs):
-            kwargs["weights_only"] = False
-            return _orig_load(*args, **kwargs)
-
-        def _patched_hf_hub(repo_id, filename, *args, **kwargs):
-            if "use_auth_token" in kwargs:
-                kwargs["token"] = kwargs.pop("use_auth_token")
-            # 仅拦截 pyannote 仓库，避免劫持其他模型的 HF 下载
-            if repo_id.startswith("pyannote/"):
-                local = model_dir.parent / repo_id.split("/")[-1] / filename
-                if local.is_file():
-                    return str(local)
-            return _orig_hf_hub(repo_id, filename, *args, **kwargs)
-
-        try:
-            torch.load = _patched_load
-            huggingface_hub.hf_hub_download = _patched_hf_hub
-
+        with _pyannote_compat_context(model_dir):
             t0 = time.time()
             logger.info("加载 pyannote: %s", config_path)
             self._pipeline = Pipeline.from_pretrained(config_path)
             self._pipeline.to(torch.device(self._device))
+
+            # 优化默认参数（针对视频/游戏场景）
+            # segmentation-3.0 只有 min_duration_off；clustering 可调 threshold
+            self._pipeline.instantiate({
+                "segmentation": {
+                    "min_duration_off": 0.0,
+                },
+                "clustering": {
+                    "threshold": 0.55,
+                    "min_cluster_size": 8,
+                },
+            })
+            logger.info("pyannote 参数: min_dur_off=0.0, cluster_threshold=0.55, min_cluster_size=8")
+
             # 预热 CUDA JIT
             dummy = torch.randn(1, 16000, device=self._device)
             self._pipeline({"waveform": dummy, "sample_rate": 16000})
             self._loaded = True
             logger.info("pyannote 加载完成 (%.1fs)", time.time() - t0)
-        finally:
-            torch.load = _orig_load
-            huggingface_hub.hf_hub_download = _orig_hf_hub
 
     def unload_model(self) -> None:
         if self._pipeline is not None:
@@ -165,9 +202,14 @@ class SpeakerDiarizer:
         torch.cuda.empty_cache()
 
     def run(
-        self, vocals_path: str, force: bool = False
+        self, vocals_path: str, force: bool = False,
+        min_speakers: int = 1, max_speakers: int = 10,
     ) -> List[Tuple[str, float, float, float]]:
         """对音频执行说话人分离。
+
+        Args:
+            min_speakers: 最少说话人数（用于约束聚类）
+            max_speakers: 最多说话人数（用于约束聚类）
 
         Returns: [(speaker_id, start_s, end_s, confidence), ...] 按时间排序
         """
@@ -183,7 +225,11 @@ class SpeakerDiarizer:
             self.load_model()
             t0 = time.time()
             logger.info("说话人分离: %s", os.path.basename(vocals_path))
-            output = self._pipeline(vocals_path)
+            output = self._pipeline(
+                vocals_path,
+                min_speakers=min_speakers,
+                max_speakers=max_speakers,
+            )
 
             timeline = []
             for turn, _, speaker in output.itertracks(yield_label=True):
@@ -251,10 +297,12 @@ class SpeakerDiarizer:
 def run_diarization(
     vocals_path: str, output_dir: str, force: bool = False,
     hf_token: Optional[str] = None,
+    min_speakers: int = 1, max_speakers: int = 10,
 ) -> Tuple[str, List[Tuple[str, float, float, float]]]:
     """一键运行说话人分离并导出。Returns: (json_path, timeline)"""
     diarizer = SpeakerDiarizer(hf_token=hf_token)
-    timeline = diarizer.run(vocals_path, force=force)
+    timeline = diarizer.run(vocals_path, force=force,
+                            min_speakers=min_speakers, max_speakers=max_speakers)
     json_path = os.path.join(output_dir, "speaker_timeline.json")
     diarizer.export_timeline_json(vocals_path, json_path, force=force)
     return json_path, timeline

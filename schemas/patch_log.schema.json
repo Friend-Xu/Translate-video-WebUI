@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://translate-video/schemas/patch_log.schema.json",
+  "title": "Patch Log",
+  "description": "补丁历史日志的 JSON Schema (v3.0).",
+  "type": "object",
+  "required": ["schema_version", "patches"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "type": "string", "const": "3.0" },
+    "patches": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/PatchEntry" }
+    }
+  },
+  "$defs": {
+    "PatchEntry": {
+      "type": "object",
+      "required": ["patch_id", "opcode", "targets", "author", "timestamp"],
+      "additionalProperties": false,
+      "properties": {
+        "patch_id": { "type": "string" },
+        "opcode": {
+          "type": "string",
+          "enum": [
+            "ADJUST_ALIGNMENT", "BATCH_SET_CONFIG", "MERGE_SPEAKERS",
+            "MOVE_EVENT", "OVERRIDE_CONFIG", "RENAME_SPEAKER",
+            "RESET_CONFIG", "RETAG_SPEAKER", "RETRIGGER_TTS",
+            "SET_CONFIG", "SET_TRANSLATION", "SPLIT_EVENT"
+          ]
+        },
+        "targets": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "author": { "type": "string", "enum": ["system", "user", "ai"] },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "reason": { "type": "array", "items": { "type": "string" } },
+        "previous_state": {
+          "type": "object",
+          "description": "Previous config values for undo (v3.0, 定稿 S12.5.1)"
+        },
+        "status": { "type": "string", "enum": ["applied", "pending", "reverted", "conflict"], "default": "applied" }
+      }
+    }
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "schemas/ir_v2/translation_config.schema.json",
+  "title": "Translation Slot Config",
+  "description": "translation 槽位 config 子字段 — 翻译引擎、后端路由、术语注入、门控参数 (定稿 §3.3, §4.4)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "lang": {
+      "type": "string",
+      "default": "zh",
+      "description": "目标翻译语言代码"
+    },
+    "backend": {
+      "type": "string",
+      "enum": ["deepseek", "openai", "local_dict", "custom_api"],
+      "default": "deepseek",
+      "description": "LLM 翻译后端选择"
+    },
+    "glossary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["OFF", "ALL", "RELEVANCE", "CONTEXTUAL"],
+          "default": "OFF",
+          "description": "术语注入模式: OFF=禁用, ALL=全部注入, RELEVANCE=相关性阈值过滤, CONTEXTUAL=语义上下文匹配"
+        },
+        "relevance_threshold": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.6,
+          "description": "RELEVANCE 模式下术语匹配的相似度阈值"
+        }
+      },
+      "default": { "mode": "OFF" }
+    },
+    "custom_prompt": {
+      "type": "string",
+      "default": "",
+      "description": "自定义翻译提示词。为空时使用默认系统提示。"
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "TextGate 门控参数 (定稿 §4.4)",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["logic_gate", "joint_formula"],
+          "default": "logic_gate",
+          "description": "门控模式: logic_gate=A AND C AND B, joint_formula=加权联合公式"
+        },
+        "threshold_accept": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.80,
+          "description": "A 级（语义安全）接受阈值"
+        },
+        "threshold_reject": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.60,
+          "description": "C 级（内容保真）拒绝阈值"
+        },
+        "beta": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.6,
+          "description": "joint_formula 模式流畅度权重"
+        },
+        "gamma": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.4,
+          "description": "joint_formula 模式语义相似度权重"
+        },
+        "sim_drop_limit": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.05,
+          "description": "Gate C 相似度下降容差"
+        }
+      },
+      "default": {}
+    }
+  }
+}
