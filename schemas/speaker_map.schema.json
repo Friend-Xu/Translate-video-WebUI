@@ -2,12 +2,12 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://translate-video/schemas/speaker_map.schema.json",
   "title": "Speaker Map",
-  "description": "说话人→声线映射文件的 JSON Schema (v2.0)。位于 03_speaker/speaker_map.json。",
+  "description": "Speaker to voice mapping schema (v3.0).",
   "type": "object",
   "required": ["schema_version", "mappings"],
   "additionalProperties": false,
   "properties": {
-    "schema_version": { "type": "string", "const": "2.0" },
+    "schema_version": { "type": "string", "const": "3.0" },
     "workspace": { "type": "string" },
     "mappings": {
       "type": "object",
@@ -23,19 +23,25 @@
       "properties": {
         "display_name": { "type": "string" },
         "voice_id": { "type": ["string", "null"], "default": null },
-        "voice_engine": {
-          "type": "string",
-          "enum": ["edge", "chattts", "cosyvoice", "indextts", "none"],
-          "default": "none"
-        },
+        "voice_engine": { "type": "string", "enum": ["edge", "chattts", "cosyvoice", "indextts", "none"], "default": "none" },
         "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$", "default": "#808080" },
         "is_locked": { "type": "boolean", "default": false },
         "is_merged": { "type": "boolean", "default": false },
         "merged_from": { "type": "array", "items": { "type": "string" } },
-        "review_status": {
-          "type": "string",
-          "enum": ["pending", "approved", "flagged"],
-          "default": "pending"
+        "review_status": { "type": "string", "enum": ["pending", "approved", "flagged"], "default": "pending" },
+        "clone_ref": {
+          "type": "object",
+          "description": "Reference audio for voice cloning (v3.0, 定稿 S8.3)",
+          "properties": {
+            "path": { "type": "string" },
+            "hash": { "type": "string" },
+            "duration": { "type": "number" },
+            "version": { "type": "integer", "default": 1 }
+          }
+        },
+        "config": {
+          "type": "object",
+          "description": "Per-speaker config overrides (v3.0, 定稿 S10.4)"
         }
       }
     }

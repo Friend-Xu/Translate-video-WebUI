@@ -23,6 +23,7 @@ class SchemaLoader:
         "audio": "audio_config",
         "asr": "asr_config",
         "speaker": "speaker_config",
+        "semantic": "semantic_config",
         "translation": "translation_config",
         "tts_routing": "tts_config_routing",
         "tts_cosyvoice": "tts_config_cosyvoice",
