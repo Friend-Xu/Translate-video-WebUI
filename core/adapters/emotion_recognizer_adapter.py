@@ -18,6 +18,10 @@ class EmotionRecognizerContext:
 
 class EmotionRecognizerAdapter:
 
+    def configure(self, event_config = None):
+        if not event_config: return
+        if "fusion_strategy" in event_config: self._fusion_strategy = event_config["fusion_strategy"]
+        if "audio_weight" in event_config: self._audio_weight = event_config["audio_weight"]
     def recognize(self, ctx: EmotionRecognizerContext) -> Patch:
         if ctx.audio_path:
             return self.recognize_from_audio(ctx)

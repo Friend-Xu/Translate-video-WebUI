@@ -27,6 +27,9 @@ class MiniLMAdapter:
             self._scorer = CrossLingualScorer()
         return self._scorer
 
+    def configure(self, event_config = None):
+        if not event_config: return
+        pass
     def verify(self, ctx: MiniLMContext) -> Patch:
         scorer = self._get_scorer()
         try:

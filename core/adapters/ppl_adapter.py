@@ -27,6 +27,9 @@ class PPLAdapter:
             self._evaluator = PPLEvaluator()
         return self._evaluator
 
+    def configure(self, event_config = None):
+        if not event_config: return
+        pass
     def evaluate(self, ctx: PPLContext) -> Patch:
         ev = self._get_evaluator()
         try:

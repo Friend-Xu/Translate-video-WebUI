@@ -28,6 +28,11 @@ class PyannoteAdapter:
 
     # ── Boundary Generator (§4.1.1.1) ────────────────────
 
+    def configure(self, event_config = None):
+        if not event_config: return
+        if "clustering_threshold" in event_config: self._threshold = event_config["clustering_threshold"]
+        if "min_speakers" in event_config: self._min_speakers = event_config["min_speakers"]
+        if "max_speakers" in event_config: self._max_speakers = event_config["max_speakers"]
     def run_diarization(self, vocals_path: str, force: bool = False,
                         min_speakers: int = 1, max_speakers: int = 10
                         ) -> list[tuple]:

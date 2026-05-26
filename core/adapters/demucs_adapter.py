@@ -28,6 +28,10 @@ class DemucsAdapter:
     分离后的 bgm 保留给最终合成阶段混入背景音乐。
     """
 
+    def configure(self, event_config = None):
+        if not event_config: return
+        if "skip_demucs" in event_config: self._skip = event_config["skip_demucs"]
+        if "demucs_model" in event_config: self._model = event_config["demucs_model"]
     def separate(self, ctx: DemucsContext) -> Patch:
         """运行 Demucs 分离，返回 ANNOTATE patch。
 

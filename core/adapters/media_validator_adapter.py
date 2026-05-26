@@ -27,6 +27,9 @@ class MediaValidatorAdapter:
     输出 ANNOTATE patch 写入 audio 槽位。
     """
 
+    def configure(self, event_config = None):
+        if not event_config: return
+        pass
     def diagnose(self, ctx: AudioDefectContext) -> Patch:
         """运行缺陷诊断，返回 ANNOTATE patch。
 
