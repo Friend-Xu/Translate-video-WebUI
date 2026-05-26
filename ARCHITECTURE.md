@@ -724,6 +724,126 @@ core/
 ├── emotion/          # 情感空间
 ├── speaker/          # 说话人识别
 └── tts/              # TTS 控制
+└── refiner/           # 翻译结果精炼
+    ├── engine.py
+    └── prob_builder.py
+```
+
+### core/runtime/ 详解
+
+`runtime/` 是 core/ 的核心引擎层，包含完整的状态管理、补丁系统和数据生命周期：
+
+```
+runtime/
+├── patch.py              # Patch 数据类 + OpCode 枚举 (20+ 操作码)
+├── event_state.py        # TimelineEventState — 9 槽位惰性初始化
+├── project_state.py      # TimelineProjectState — 项目级状态容器
+├── patch_engine.py       # PatchEngine — 核心补丁状态机 (9 个 handler)
+├── synthesis.py          # SynthesisEngine — 5 层渲染 (IR→衍生→补丁→说话人→输出)
+├── index.py              # 统一导出入口
+├── dependency_graph.py   # DependencyGraph — 段间时间依赖图
+├── recompute.py          # RecomputeEngine — 局部增量重算
+├── conflict.py           # ConflictDetector + ConflictResolver
+├── reducer.py            # Reducer — 确定性补丁重放
+├── rollback.py           # RollbackManager — undo/redo + 版本回退
+├── snapshot.py           # SnapshotManager — State 快照
+├── patch_store.py        # PatchStore — 三层存储 (内存/磁盘/远程)
+├── patch_planner.py      # PatchPlanner — 补丁策略规划
+├── gate_validator.py     # GateValidator — 预应用校验
+└── verify.py             # 结构校验 + OpCode 兼容性
+```
+
+### 5 层渲染引擎 (SynthesisEngine)
+
+`SynthesisEngine.render(event_state)` 按优先级合成最终输出：
+
+```
+Layer 1 (Raw IR):        ir.start, ir.end, ir.speaker_ref, ir.text_ref
+Layer 2 (Derivatives):   event_state.derivatives 覆盖 L1
+Layer 3 (Patches):       replace 类 patch 覆盖 L2 (按 timestamp 排序)
+Layer 4 (Speakers):      注入 speaker 元数据 (name, embedding_ref)
+Layer 5 (Output):        合并所有层，输出 dict
+```
+
+## timeline/ — Timeline 中间层 + 迁移系统
+
+`timeline/` 是新旧 IR 之间的桥接层，提供统一消费协议和双写基础设施：
+
+```
+timeline/
+├── abstract.py          # TimelineConsumer Protocol — 统一消费接口
+├── ir.py                # 旧版 TimelineIR (兼容层)
+├── schema.py            # JSON Schema 定义 + 结构校验
+├── fusion.py            # FusionEngine — 新旧 IR 数据合并
+├── dual_write.py        # 双写基础设施 — 同时写入新旧 IR
+├── config.py            # 迁移配置 + 灰度开关
+├── io.py                # 文件 I/O 辅助
+├── api/
+│   └── timeline.py      # API 层 — 灰度路由 (新旧 IR 切换)
+├── adapters/
+│   ├── old_ir_adapter.py    # 旧 IR → 统一协议
+│   ├── new_ir_adapter.py    # 新 IR → 统一协议
+│   └── speaker.py           # 说话人映射适配器
+├── patch/
+│   ├── model.py         # 补丁数据模型
+│   ├── opcode.py        # 操作码定义
+│   ├── apply.py         # 补丁应用引擎
+│   ├── conflict.py      # 冲突检测
+│   └── planner.py       # 补丁规划
+├── recovery/
+│   ├── graph.py         # 依赖图
+│   ├── replay.py        # 重放引擎
+│   └── snapshot.py      # 快照系统
+├── rules/
+│   └── extractor.py     # 规则特征提取
+├── safety/
+│   └── guard.py         # 安全边界守卫
+├── scorer/
+│   └── scorer.py        # 评分系统
+├── speaker/
+│   └── model.py         # 说话人模型
+└── ui_adapter/
+    └── mapper.py        # 前端数据映射 (IR → UI)
+```
+
+## schemas/ — JSON Schema 数据规范
+
+```
+schemas/
+├── timeline.schema.json         # Timeline IR Schema
+├── export_config.schema.json    # 导出配置 Schema
+├── patch_log.schema.json        # 补丁日志 Schema
+└── speaker_map.schema.json      # 说话人映射 Schema
+```
+
+## core/refiner/ — 翻译结果精炼
+
+```
+core/refiner/
+├── engine.py            # RefinerEngine — 翻译后处理
+└── prob_builder.py      # ProblemBuilder — 问题定位
+```
+
+## 新旧架构入口对照
+
+```
+旧架构 (默认):
+  main.py
+    ├── extract_subtitles.py (子进程)  → NODE 1~4 → SRT
+    ├── SRT.SRT_Translator            → 翻译
+    └── TtsPipeline                   → TTS + 合并
+
+新架构 (--use-core):
+  main.py --use-core
+    └── main_core.py
+          ├── PipelineProfile         → 统一配置
+          ├── PassManager.run()       → 14 Pass 线性执行
+          └── SynthesisEngine         → 5 层渲染输出
+
+双写 (transitional):
+  extract_subtitles.py 同时输出
+    ├── 旧格式 (project.json + SRT)  → 旧架构可消费
+    └── 新格式 (TimelineIR JSON)     → core/ 可消费
 ```
 
 ## 配置参考 (`config/translate.yaml`)

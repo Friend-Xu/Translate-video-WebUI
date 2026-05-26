@@ -95,27 +95,43 @@ Models download automatically to `models/` on first run.
 
 ## Architecture
 
+**Production pipeline** (`main.py`):
+
 ```mermaid
 graph LR
-    A[🎬 Input Video] --> B[📝 Extract]
-    B --> C[🌐 Translate]
-    C --> D[🗣️ TTS]
-    D --> E[🎥 Output]
+    A[Input Video] --> B[Extract]
+    B --> C[Translate]
+    C --> D[TTS]
+    D --> E[Output]
 
-    B --> B1[faster-whisper<br/>CTranslate2 GPU]
-    B --> B2[Silero VAD<br/>Segmentation]
-    B --> B3[wav2vec2<br/>Alignment]
+    B --> B1[faster-whisper + VAD]
+    B --> B2[wav2vec2 Alignment]
 
-    C --> C1[LLM API<br/>3-tier Fallback]
-    C --> C2[Semantic Check<br/>Threshold 0.65]
-    C --> C3[Glossary<br/>On-demand Injection]
+    C --> C1[LLM API / 3-tier Fallback]
+    C --> C2[TextGate Quality Check]
 
-    D --> D1[Edge / ChatTTS / CosyVoice<br/>Triple Engine]
-    D --> D2[Auto Voice<br/>15 Languages]
-    D --> D3[RubberBand<br/>Time-stretch]
-    D --> D4[Demucs<br/>BGM Preserve]
+    D --> D1[Edge / ChatTTS / CosyVoice]
+    D --> D2[RubberBand Time-stretch]
+    D --> D3[Demucs BGM Preserve]
 
-    E --> E1[dubbed.mp4<br/>Bilingual Subtitles]
+    E --> E1[dubbed.mp4]
+```
+
+**New core/ engine** (`main.py --use-core`):
+
+```mermaid
+graph LR
+    V[Video + Config] --> PM[PassManager]
+    PM --> A[11 Adapters]
+    PM --> P[14 Passes]
+    PM --> G[2 Gates]
+
+    A --> PS[PatchEngine]
+    P --> PS
+    G --> PS
+
+    PS --> SE[SynthesisEngine]
+    SE --> OUT[Output SRT / TTS / dubbed.mp4]
 ```
 
 Full architecture → [`ARCHITECTURE.md`](ARCHITECTURE.md)
@@ -305,7 +321,23 @@ Translate_video/
 │   ├── runtime/             # Patch engine + state management
 │   ├── emotion/             # Emotion space + alignment
 │   ├── speaker/             # Speaker diarization modules
-│   └── tts/                 # TTS control modules
+│   ├── tts/                 # TTS control modules
+│   └── refiner/             # Translation refinement
+├── timeline/                # IR migration layer + dual-write
+│   ├── abstract.py          # Unified consumer protocol
+│   ├── fusion.py            # Old/new IR merge engine
+│   ├── dual_write.py        # Dual-write infrastructure
+│   ├── api/timeline.py      # Gray-release routing
+│   ├── adapters/            # Old/new IR adapters
+│   ├── patch/               # Patch model + conflict detection
+│   ├── recovery/            # Replay + snapshot
+│   └── ui_adapter/          # IR → UI mapper
+├── schemas/                 # JSON Schema definitions
+│   ├── timeline.schema.json
+│   ├── export_config.schema.json
+│   ├── patch_log.schema.json
+│   └── speaker_map.schema.json
+├── main_core.py             # core/ pipeline standalone entry
 ├── pipeline/                # Core modules
 │   ├── audio.py             # Audio extraction + C2 defect fix
 │   ├── transcriber.py       # Silero VAD + faster-whisper + wav2vec2
