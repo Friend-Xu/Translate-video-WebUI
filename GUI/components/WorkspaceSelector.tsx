@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { Box, Button, TextField, List, ListItemButton, ListItemText, Typography, Popover, Chip } from '@mui/material'
+import { Box, Button, TextField, List, ListItemButton, ListItemText, Typography, Popover, Chip, Divider } from '@mui/material'
 import FolderOpenIcon from '@mui/icons-material/FolderOpenRounded'
 import RefreshIcon from '@mui/icons-material/RefreshRounded'
 import { useAppStore } from '../store/useAppStore'
@@ -44,6 +44,7 @@ export default function WorkspaceSelector() {
             path: `source_file/${d}`,
             name: d.replace('_project', ''),
             updatedAt: '',
+            runtimeState: 'uninitialized',
             pipelineStatus: '',
             videoPath: '',
           }))
@@ -73,7 +74,7 @@ export default function WorkspaceSelector() {
       <Button
         size="small"
         variant={dataSource === 'workspace' ? 'contained' : 'outlined'}
-        color={dataSource === 'workspace' ? 'primary' : 'inherit'}
+        color="primary"
         startIcon={<FolderOpenIcon fontSize="small" />}
         onClick={handleOpen}
         sx={{ fontSize: '0.7rem', textTransform: 'none', mr: 1 }}
@@ -89,7 +90,7 @@ export default function WorkspaceSelector() {
         onClose={handleClose}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
         transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-        slotProps={{ paper: { sx: { width: 420, p: 2, bgcolor: 'grey.900', border: '1px solid rgba(255,255,255,0.1)' } } }}
+        slotProps={{ paper: { sx: { width: 420, p: 2, bgcolor: 'background.paper', border: '1px solid', borderColor: 'divider', boxShadow: 24 } } }}
       >
         <Typography variant="subtitle2" sx={{ mb: 1, color: 'text.primary' }}>
           Open Workspace
@@ -135,12 +136,12 @@ export default function WorkspaceSelector() {
 
         {discovered.length > 0 && (
           <>
-            <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mb: 0.5 }}>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, fontWeight: 500 }}>
               Discovered Projects
             </Typography>
             <List dense disablePadding sx={{ mb: 1, maxHeight: 180, overflow: 'auto' }}>
               {discovered.map(d => (
-                <ListItemButton key={d.path} onClick={() => handleLoad(d.path)} sx={{ borderRadius: 1, py: 0.25 }}>
+                <ListItemButton key={d.path} onClick={() => handleLoad(d.path)} sx={{ borderRadius: 1, py: 0.25, mb: 0.5, bgcolor: 'background.default', border: '1px solid', borderColor: 'divider', '&:hover': { bgcolor: 'action.hover' } }}>
                   <ListItemText
                     primary={d.name}
                     secondary={d.path}
@@ -155,12 +156,12 @@ export default function WorkspaceSelector() {
 
         {recent.length > 0 && (
           <>
-            <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mb: 0.5 }}>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5, fontWeight: 500 }}>
               Recent
             </Typography>
             <List dense disablePadding sx={{ maxHeight: 140, overflow: 'auto' }}>
               {recent.map(path => (
-                <ListItemButton key={path} onClick={() => handleLoad(path)} sx={{ borderRadius: 1, py: 0.25 }}>
+                <ListItemButton key={path} onClick={() => handleLoad(path)} sx={{ borderRadius: 1, py: 0.25, mb: 0.5, bgcolor: 'background.default', border: '1px solid', borderColor: 'divider', '&:hover': { bgcolor: 'action.hover' } }}>
                   <ListItemText
                     primary={path.split('/').pop()}
                     secondary={path}
@@ -173,6 +174,7 @@ export default function WorkspaceSelector() {
           </>
         )}
 
+        <Divider sx={{ mt: 0.5, mb: 0.5 }} />
         <Button
           size="small" variant="text" color="inherit"
           startIcon={<RefreshIcon fontSize="small" />}
