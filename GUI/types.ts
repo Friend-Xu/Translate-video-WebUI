@@ -862,6 +862,7 @@ export interface SlotSchemaInfo {
 export interface WorkspaceManifest {
   version: number
   video_path: string
+  video_duration?: number
   workflow_preset?: string
   passes?: string[]
   runtime_state?: string
@@ -910,5 +911,19 @@ export interface WorkspaceDetail {
   fileCount: number
   files: Array<{ name: string; relativePath: string; size: number }>
   failureReason: string
+}
+
+export interface AiSuggestRequest {
+  event_id: string
+  workspace: string
+  source_text: string
+  current_translation: string
+  target_lang: string
+}
+
+export interface AiSuggestResponse {
+  suggestion: string
+  reasoning: string
+  diff: { before: string; after: string }
 }
 

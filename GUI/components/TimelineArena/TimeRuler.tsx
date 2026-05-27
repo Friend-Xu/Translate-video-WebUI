@@ -1,4 +1,3 @@
-import { Box } from '@mui/material'
 import type { TimelineCoordAPI } from '../../hooks/useTimelineCoordinates'
 
 interface Props {

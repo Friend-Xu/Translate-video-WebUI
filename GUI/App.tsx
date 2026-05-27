@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { ThemeProvider, CssBaseline, Box, Alert, Snackbar, Typography } from '@mui/material'
+import { ThemeProvider, CssBaseline, Box, Alert, Snackbar, Typography, Button } from '@mui/material'
 import CloudUploadOutlined from '@mui/icons-material/CloudUploadOutlined'
 import theme from './theme'
 import AppShell from './components/AppShell'
@@ -39,6 +39,7 @@ export default function App() {
   } | null>(null)
 
   const mode = useAppStore(s => s.mode)
+  const setMode = useAppStore(s => s.setMode)
   const selectedEventId = useAppStore(s => s.selectedEventId)
 
   // SSE
@@ -125,8 +126,8 @@ export default function App() {
   const events = isWorkspace ? storeEvents : MOCK_EVENTS
   const waveform = isWorkspace && storeWaveform ? storeWaveform : MOCK_WAVEFORM
   const totalDuration = isWorkspace
-    ? Math.max(...storeEvents.map(e => e.end), 80)
-    : 80
+    ? manifest?.video_duration || Math.max(...storeEvents.map(e => e.end), 5)
+    : Math.max(...MOCK_EVENTS.map(e => e.end), 80)
   const videoSrc = isWorkspace && manifest?.video_path
     ? `/api/files/video?path=${encodeURIComponent(manifest.video_path)}`
     : null
@@ -156,7 +157,24 @@ export default function App() {
       <Box sx={{ display: mode === 'export' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
         <ExportView events={events} />
       </Box>
-      <Box sx={{ display: mode === 'timeline' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
+      <Box sx={{ display: mode === 'timeline' ? 'flex' : 'none', flex: 1, overflow: 'hidden', position: 'relative' }}>
+        {!isWorkspace && (
+          <Box sx={{
+            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 50,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            bgcolor: 'rgba(0,0,0,0.75)', gap: 2, px: 3,
+          }}>
+            <Typography variant="h6" color="text.secondary" textAlign="center">
+              尚未加载项目数据
+            </Typography>
+            <Typography variant="body2" color="text.disabled" textAlign="center" sx={{ maxWidth: 420 }}>
+              当前显示的是示例数据。请在项目中心选择已有项目，或创建新的 Timeline Runtime 以加载真实数据。
+            </Typography>
+            <Button variant="contained" onClick={() => setMode('hub')}>
+              返回项目中心
+            </Button>
+          </Box>
+        )}
         <TimelineArena
           events={events}
           waveform={waveform}

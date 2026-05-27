@@ -167,21 +167,69 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
     }
   }, [events])
 
-  const handleRequestAiAssist = useCallback(() => {
-    const selected = useAppStore.getState().selectedEventIds
+  const handleRequestAiAssist = useCallback(async () => {
+    const store = useAppStore.getState()
+    const selected = store.selectedEventIds
     const targets = selected.length > 0
       ? events.filter(e => selected.includes(e.id))
       : events.filter(e => e.confidence < 0.7)
-    const store = useAppStore.getState()
+
+    const ws = store.workspace || ''
+    const targetLang = store.manifest?.target_lang || 'zh'
+
     for (const evt of targets) {
-      store.addDraft({
-        eventId: evt.id,
-        opcode: 'AI_SUGGEST',
-        payload: { suggestion: `[AI] 建议优化 "${evt.text.slice(0, 20)}..." 的翻译` },
-        before: { translation: evt.translation },
-        after: {},
-        timestamp: Date.now(),
-      })
+      const sourceText = evt.text || ''
+      const currentTrans = evt.translation || ''
+      if (!sourceText.trim() || !currentTrans.trim()) continue
+
+      try {
+        const res = await fetch('/api/timeline/ai/suggest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event_id: evt.id,
+            workspace: ws,
+            source_text: sourceText,
+            current_translation: currentTrans,
+            target_lang: targetLang,
+          }),
+        })
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}))
+          const detail = (errData as any).detail || `HTTP ${res.status}`
+          store.addDraft({
+            eventId: evt.id,
+            opcode: 'AI_SUGGEST',
+            payload: { suggestion: `[AI 请求失败] ${detail}`, error: true },
+            before: { translation: currentTrans },
+            after: {},
+            timestamp: Date.now(),
+          })
+          continue
+        }
+        const data = await res.json()
+        store.addDraft({
+          eventId: evt.id,
+          opcode: 'AI_SUGGEST',
+          payload: {
+            suggestion: data.suggestion,
+            reasoning: data.reasoning,
+            diff: data.diff,
+          },
+          before: { translation: currentTrans },
+          after: { translation: data.suggestion },
+          timestamp: Date.now(),
+        })
+      } catch (e) {
+        store.addDraft({
+          eventId: evt.id,
+          opcode: 'AI_SUGGEST',
+          payload: { suggestion: `[网络错误] ${e}`, error: true },
+          before: { translation: currentTrans },
+          after: {},
+          timestamp: Date.now(),
+        })
+      }
     }
   }, [events])
 
@@ -199,7 +247,13 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
 
   // Playback handlers
   const handlePlayPause = useCallback(() => {
-    setIsPlaying(p => !p)
+    setIsPlaying(p => {
+      if (!p) {
+        // Seek video to playhead before starting playback
+        setVideoCurrentTime(useAppStore.getState().playheadPosition)
+      }
+      return !p
+    })
   }, [])
 
   const handleJumpPrev = useCallback(() => {
@@ -238,7 +292,7 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
       // Don't intercept when focus is in an input
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
-      if (e.key === ' ') { e.preventDefault(); setIsPlaying(p => !p) }
+      if (e.key === ' ') { e.preventDefault(); handlePlayPause() }
       if (e.key === '\\') { e.preventDefault(); coord.zoomToFit(0.05) }
       if (e.key === '+' || e.key === '=') { e.preventDefault(); coord.zoomIn() }
       if (e.key === '-') { e.preventDefault(); coord.zoomOut() }
