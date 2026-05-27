@@ -38,10 +38,10 @@ export default function ZoomPresets({ coord }: Props) {
             variant="outlined"
             onClick={handleClick}
             sx={{
-              fontSize: '0.6rem', height: 22, borderRadius: 0.75,
-              color: 'rgba(255,255,255,0.6)', borderColor: 'rgba(255,255,255,0.2)',
-              cursor: 'pointer',
-              '&:hover': { bgcolor: 'rgba(255,255,255,0.1)', color: 'common.white' },
+              fontSize: '0.65rem', height: 22, borderRadius: 0.75,
+              color: '#ccc', borderColor: 'rgba(255,255,255,0.4)',
+              cursor: 'pointer', bgcolor: 'rgba(255,255,255,0.05)',
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.15)', color: '#fff' },
             }}
           />
         )

@@ -76,22 +76,22 @@ export default function TimelineToolbar({
     }}>
       {/* Left: Transport */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-        <Tooltip title="跳转到上一个事件">
+        <Tooltip title="上一个事件 (Ctrl+←)">
           <IconButton size="small" onClick={onJumpPrev} sx={btnSx}>
             <SkipPreviousIcon fontSize="small" />
           </IconButton>
         </Tooltip>
-        <Tooltip title={isPlaying ? '暂停' : '播放'}>
+        <Tooltip title={isPlaying ? '暂停 (Space)' : '播放 (Space)'}>
           <IconButton size="small" onClick={onPlayPause} sx={{ ...btnSx, color: 'primary.main' }}>
             {isPlaying ? <PauseIcon fontSize="small" /> : <PlayArrowIcon fontSize="small" />}
           </IconButton>
         </Tooltip>
-        <Tooltip title="跳转到下一个事件">
+        <Tooltip title="下一个事件 (Ctrl+→)">
           <IconButton size="small" onClick={onJumpNext} sx={btnSx}>
             <SkipNextIcon fontSize="small" />
           </IconButton>
         </Tooltip>
-        <Tooltip title={loopEnabled ? '关闭循环' : '循环播放'}>
+        <Tooltip title={loopEnabled ? '关闭循环 (L)' : '循环播放 (L)'}>
           <ToggleButton size="small" value="loop" selected={loopEnabled}
             onChange={onToggleLoop} sx={activeSx(loopEnabled)}>
             <LoopIcon fontSize="small" />
@@ -131,13 +131,13 @@ export default function TimelineToolbar({
 
       {/* Right: Tools */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-        <Tooltip title={snapEnabled ? '关闭吸附' : '开启吸附'}>
+        <Tooltip title={snapEnabled ? '关闭吸附 (Shift+S)' : '开启吸附 (Shift+S)'}>
           <ToggleButton size="small" value="snap" selected={snapEnabled}
             onChange={() => setSnapEnabled(!snapEnabled)} sx={activeSx(snapEnabled)}>
             <CenterFocusStrongIcon fontSize="small" sx={{ transform: 'rotate(45deg)' }} />
           </ToggleButton>
         </Tooltip>
-        <Tooltip title="筛选事件">
+        <Tooltip title="筛选事件 (Ctrl+F)">
           <ToggleButton size="small" value="filter" selected={filterBarOpen}
             onChange={onToggleFilter} sx={activeSx(filterBarOpen)}>
             <FilterListIcon fontSize="small" />

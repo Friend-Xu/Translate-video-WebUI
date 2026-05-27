@@ -24,14 +24,15 @@ export interface TrackDefinition {
   maxHeight?: number
   renderer: TrackRenderer
   dataSource: string
+  color?: string
 }
 
 export const DEFAULT_TRACKS: TrackDefinition[] = [
-  { id: 'trk_source', type: 'source', label: '原文', order: 0, visible: true, locked: false, height: 50, minHeight: 30, renderer: 'event-block', dataSource: 'events' },
-  { id: 'trk_translation', type: 'translation', label: '译文', order: 1, visible: true, locked: false, height: 50, minHeight: 30, renderer: 'event-block', dataSource: 'events' },
-  { id: 'trk_diff', type: 'diff', label: '差异', order: 2, visible: false, locked: true, height: 50, minHeight: 30, renderer: 'event-block', dataSource: 'pendingDrafts' },
-  { id: 'trk_speaker', type: 'speaker', label: '说话人', order: 3, visible: true, locked: false, height: 40, minHeight: 24, renderer: 'speaker-lane', dataSource: 'events' },
-  { id: 'trk_tts', type: 'tts', label: 'TTS 音频', order: 4, visible: false, locked: false, muted: true, height: 50, minHeight: 30, maxHeight: 100, renderer: 'tts-waveform', dataSource: 'waveformByTtsEngine' },
+  { id: 'trk_source', type: 'source', label: '原文', order: 0, visible: true, locked: false, height: 50, minHeight: 30, renderer: 'event-block', dataSource: 'events', color: '#64B5F6' },
+  { id: 'trk_translation', type: 'translation', label: '译文', order: 1, visible: true, locked: false, height: 50, minHeight: 30, renderer: 'event-block', dataSource: 'events', color: '#81C784' },
+  { id: 'trk_diff', type: 'diff', label: '差异', order: 2, visible: false, locked: true, height: 50, minHeight: 30, renderer: 'event-block', dataSource: 'pendingDrafts', color: '#FFB74D' },
+  { id: 'trk_speaker', type: 'speaker', label: '说话人', order: 3, visible: true, locked: false, height: 40, minHeight: 24, renderer: 'speaker-lane', dataSource: 'events', color: '#CE93D8' },
+  { id: 'trk_tts', type: 'tts', label: 'TTS 音频', order: 4, visible: false, locked: false, muted: true, height: 50, minHeight: 30, maxHeight: 100, renderer: 'tts-waveform', dataSource: 'waveformByTtsEngine', color: '#4DD0E1' },
 ]
 
 // ── Track Visibility Presets per Mode ──

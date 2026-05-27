@@ -39,6 +39,15 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
   const isDimmed = hasSoloTrack && !track.solo
   const timelineFocus = useAppStore(s => s.timelineFocus)
 
+  // Compute actual container height for speaker lanes
+  const containerHeight = (() => {
+    if (track.renderer !== 'speaker-lane') return track.height
+    const speakerCount = new Set(events.map(e => e.speaker).filter(Boolean)).size
+    if (speakerCount === 0) return track.height
+    const rowH = timelineFocus === 'speaker' ? 80 : Math.max(24, Math.floor(track.height / speakerCount))
+    return Math.max(track.height, speakerCount * rowH)
+  })()
+
   // Compute virtual events at top level (hooks must not be conditional)
   const baseEvents = track.type === 'diff'
     ? events.filter(e => pendingDrafts.has(e.id))
@@ -99,9 +108,21 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
       case 'speaker-lane': {
         const bySpeaker = new Map<string, EventViewModel[]>()
         for (const evt of events) {
-          const key = evt.speaker || 'UNKNOWN'
+          const key = evt.speaker || ''
+          if (!key) continue
           if (!bySpeaker.has(key)) bySpeaker.set(key, [])
           bySpeaker.get(key)!.push(evt)
+        }
+        // No real speakers — show placeholder
+        if (bySpeaker.size === 0) {
+          return (
+            <SpeakerLane
+              lanes={[]}
+              timeToPixel={(t: number) => coord.timeToPixel(t) + trackScrollLeft}
+              pixelsPerSec={coord.pixelsPerSec}
+              laneHeight={track.height}
+            />
+          )
         }
         const lanes = Array.from(bySpeaker.entries()).map(([speaker, evts], i) => ({
           speaker,
@@ -110,12 +131,13 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
           locked: track.locked,
           events: evts,
         }))
+        const totalH = Math.max(track.height, lanes.length * (timelineFocus === 'speaker' ? 80 : track.height))
         return (
           <SpeakerLane
             lanes={lanes}
             timeToPixel={(t: number) => coord.timeToPixel(t) + trackScrollLeft}
             pixelsPerSec={coord.pixelsPerSec}
-            laneHeight={track.height}
+            laneHeight={timelineFocus === 'speaker' ? 80 : Math.max(24, Math.floor(track.height / lanes.length))}
             expanded={timelineFocus === 'speaker'}
           />
         )
@@ -150,13 +172,13 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
 
   return (
     <Box sx={{
-      height: track.height, position: 'relative',
+      height: containerHeight, position: 'relative',
       borderBottom: '1px solid rgba(255,255,255,0.06)',
-      opacity: isDimmed ? 0.2 : track.muted ? 0.5 : 1,
-      pointerEvents: track.locked || track.muted ? 'none' : isDimmed ? 'none' : 'auto',
+      opacity: !track.visible ? 0 : isDimmed ? 0.2 : track.muted ? 0.5 : 1,
+      pointerEvents: !track.visible ? 'none' : track.locked || track.muted ? 'none' : isDimmed ? 'none' : 'auto',
       overflow: 'hidden',
     }}>
-      {renderContent()}
+      {track.visible ? renderContent() : null}
       {track.locked && (
         <Box sx={{
           position: 'absolute', inset: 0, bgcolor: 'rgba(0,0,0,0.15)', zIndex: 5,

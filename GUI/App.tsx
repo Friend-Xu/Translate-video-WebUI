@@ -133,41 +133,41 @@ export default function App() {
 
   const selectedEvent = events.find(e => e.id === selectedEventId) || null
 
-  const arenaContent = (() => {
-    switch (mode) {
-      case 'hub':
-        return <ProjectHubPage />
-      case 'batch':
-        return (
-          <OpsDashboard
-            batch={batch}
-            cpuUsage={sysStatus?.cpuUsage}
-            memUsage={sysStatus?.memUsage}
-            gpuUsage={sysStatus?.gpuUsage}
-            modelsOnline={sysStatus?.modelsOnline || []}
-            onStartBatch={() => showMsg('请先将视频文件拖拽到窗口以开始批处理', 'info')}
-            onCancelBatch={cancelBatch}
-            onSkipCurrent={skipCurrent}
-          />
-        )
-      case 'patch':
-        return <PatchManagementView events={events} />
-      case 'export':
-        return <ExportView events={events} />
-      case 'timeline':
-      default:
-        return (
-          <TimelineArena
-            events={events}
-            waveform={waveform}
-            totalDuration={totalDuration}
-            ttsWaveforms={MOCK_TTS_WAVEFORMS}
-            videoSrc={videoSrc}
-            onDropVideo={handleFileDropped}
-          />
-        )
-    }
-  })()
+  const arenaContent = (
+    <>
+      <Box sx={{ display: mode === 'hub' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
+        <ProjectHubPage />
+      </Box>
+      <Box sx={{ display: mode === 'batch' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
+        <OpsDashboard
+          batch={batch}
+          cpuUsage={sysStatus?.cpuUsage}
+          memUsage={sysStatus?.memUsage}
+          gpuUsage={sysStatus?.gpuUsage}
+          modelsOnline={sysStatus?.modelsOnline || []}
+          onStartBatch={() => showMsg('请先将视频文件拖拽到窗口以开始批处理', 'info')}
+          onCancelBatch={cancelBatch}
+          onSkipCurrent={skipCurrent}
+        />
+      </Box>
+      <Box sx={{ display: mode === 'patch' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
+        <PatchManagementView events={events} />
+      </Box>
+      <Box sx={{ display: mode === 'export' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
+        <ExportView events={events} />
+      </Box>
+      <Box sx={{ display: mode === 'timeline' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
+        <TimelineArena
+          events={events}
+          waveform={waveform}
+          totalDuration={totalDuration}
+          ttsWaveforms={MOCK_TTS_WAVEFORMS}
+          videoSrc={videoSrc}
+          onDropVideo={handleFileDropped}
+        />
+      </Box>
+    </>
+  )
 
   return (
     <ThemeProvider theme={theme}>

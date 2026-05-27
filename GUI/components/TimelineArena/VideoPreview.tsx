@@ -8,6 +8,7 @@ interface Props {
   videoSrc: string | null
   currentTime: number
   events: EventViewModel[]
+  isPlaying?: boolean
   onTimeUpdate?: (time: number) => void
   onDurationChange?: (duration: number) => void
 }
@@ -16,12 +17,24 @@ export default function VideoPreview({
   videoSrc,
   currentTime,
   events,
+  isPlaying,
   onTimeUpdate,
   onDurationChange,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [collapsed, setCollapsed] = useState(false)
   const [duration, setDuration] = useState(0)
+
+  // Control video playback
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    if (isPlaying) {
+      video.play().catch(() => {})
+    } else {
+      video.pause()
+    }
+  }, [isPlaying])
 
   useEffect(() => {
     const video = videoRef.current

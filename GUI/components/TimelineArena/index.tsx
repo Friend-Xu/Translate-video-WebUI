@@ -4,7 +4,7 @@ import CloudUploadOutlined from '@mui/icons-material/CloudUploadOutlined'
 import { useTimelineCoordinates } from '../../hooks/useTimelineCoordinates'
 import { useAppStore } from '../../store/useAppStore'
 import TrackSystem from './TrackSystem'
-import ZoomScrollbar from './ZoomScrollbar'
+import TimelineMinimap from './TimelineMinimap'
 import ZoomPresets from './ZoomPresets'
 import TimelineToolbar from './TimelineToolbar'
 import VideoPreview from './VideoPreview'
@@ -232,12 +232,13 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
 
   const isEmpty = events.length === 0
 
-  // Keyboard shortcuts for zoom
+  // Keyboard shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Don't intercept when focus is in an input
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (e.key === ' ') { e.preventDefault(); setIsPlaying(p => !p) }
       if (e.key === '\\') { e.preventDefault(); coord.zoomToFit(0.05) }
       if (e.key === '+' || e.key === '=') { e.preventDefault(); coord.zoomIn() }
       if (e.key === '-') { e.preventDefault(); coord.zoomOut() }
@@ -294,6 +295,7 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
         videoSrc={videoSrc || null}
         currentTime={videoCurrentTime}
         events={filteredEvents}
+        isPlaying={isPlaying}
         onTimeUpdate={handleVideoTimeUpdate}
         onDurationChange={handleVideoDurationChange}
       />
@@ -371,25 +373,33 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
         onClose={handleCloseDiffPopover}
       />
 
-      {/* Zoom controls */}
+      {/* Zoom controls + Minimap */}
       <Box sx={{
-        position: 'absolute', bottom: 20, left: 0, right: 0, zIndex: 25,
-        display: 'flex', alignItems: 'center', gap: 1, px: 1,
+        display: 'flex', flexDirection: 'column',
+        borderTop: '1px solid rgba(255,255,255,0.1)',
+        bgcolor: '#1a1a1a',
+        flexShrink: 0,
       }}>
-        <ZoomPresets coord={coord} />
-        <Box sx={{ flexGrow: 1 }}>
-          <ZoomScrollbar coord={coord} totalDuration={totalDuration || 80} canvasWidth={canvasW} />
-        </Box>
-        <Box sx={{ display: 'flex', gap: 0.5 }}>
-          <Box component="button" onClick={() => coord.zoomOut()} aria-label="缩小"
-            sx={{ width: 28, height: 28, border: '1px solid rgba(255,255,255,0.3)', borderRadius: 1, bgcolor: 'rgba(0,0,0,0.6)', color: '#fff', cursor: 'pointer', fontSize: '1rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            −
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5 }}>
+          <ZoomPresets coord={coord} />
+          <Box sx={{ flexGrow: 1 }} />
+          <Box sx={{ display: 'flex', gap: 0.5 }}>
+            <Box component="button" onClick={() => coord.zoomOut()} aria-label="缩小"
+              sx={{ width: 24, height: 24, border: '1px solid rgba(255,255,255,0.5)', borderRadius: 1, bgcolor: '#333', color: '#fff', cursor: 'pointer', fontSize: '0.9rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              −
+            </Box>
+            <Box component="button" onClick={() => coord.zoomIn()} aria-label="放大"
+              sx={{ width: 24, height: 24, border: '1px solid rgba(255,255,255,0.5)', borderRadius: 1, bgcolor: '#333', color: '#fff', cursor: 'pointer', fontSize: '0.9rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              +
+            </Box>
           </Box>
-          <Box component="button" onClick={() => coord.zoomIn()} aria-label="放大"
-            sx={{ width: 28, height: 28, border: '1px solid rgba(255,255,255,0.3)', borderRadius: 1, bgcolor: 'rgba(0,0,0,0.6)', color: '#fff', cursor: 'pointer', fontSize: '1rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            +
-          </Box>
         </Box>
+        <TimelineMinimap
+          events={events}
+          coord={coord}
+          totalDuration={totalDuration || 80}
+          canvasWidth={canvasW}
+        />
       </Box>
     </Box>
   )
