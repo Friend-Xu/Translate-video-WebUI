@@ -41,7 +41,7 @@ import yaml
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
@@ -61,6 +61,9 @@ LOG_DIR.mkdir(exist_ok=True)
 from pipeline.logging_setup import setup_logging, get_logger
 setup_logging(log_dir=LOG_DIR)
 logger = get_logger("server")
+
+# Workflow Presets — Pipeline as Timeline Runtime bootstrap templates
+from GUI.workflow_presets import get_presets, get_preset, RuntimeState
 
 
 class SSELogHandler(logging.Handler):
@@ -192,12 +195,14 @@ class Job:
     id: str
     process: subprocess.Popen | None = None
     status: str = "idle"        # idle | running | completed | failed | cancelled
+    runtime_state: str = "uninitialized"  # Timeline Runtime state (UNINITIALIZED/BOOTSTRAPPING/READY/COMPUTING/FAILED/COMPLETE)
     progress: int = 0
     current_step: str = "就绪"
     logs: list[str] = field(default_factory=list)
     video_path: str = ""
     created_at: str = ""
     batch_id: str | None = None
+    workspace_path: str = ""    # workspace directory for this job
     _queues: list[asyncio.Queue] = field(default_factory=list)
     _pending_save: int = 0
     _loop: asyncio.AbstractEventLoop | None = None
@@ -737,9 +742,28 @@ class RunResponse(BaseModel):
 
 class StatusResponse(BaseModel):
     status: str
+    runtime_state: str = "uninitialized"
     progress: int
     current_step: str
     detail: str = ""
+
+
+def _update_workspace_runtime_state(workspace_path: str, state: RuntimeState) -> None:
+    """Update runtime_state in workspace project.json."""
+    if not workspace_path:
+        return
+    manifest_path = Path(workspace_path) / "project.json"
+    if not manifest_path.is_file():
+        return
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            m = json.load(f)
+        m["runtime_state"] = state.value
+        m["updated_at"] = datetime.now(timezone.utc).isoformat()
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(m, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -952,10 +976,12 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
                 return
             if job.process.returncode == 0:
                 job.status = "completed"
+                job.runtime_state = "ready"
                 job.progress = 100
                 job.current_step = "处理完成"
-                job.append_log("[INFO] 处理完成")
+                job.append_log("[INFO] Timeline Runtime 就绪")
                 logger.info("流水线完成 (job=%s)", job.id)
+                _update_workspace_runtime_state(job.workspace_path, RuntimeState.READY)
                 _save_job(job)
                 return
 
@@ -977,6 +1003,7 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
 
             # Not retryable or retries exhausted
             job.status = "failed"
+            job.runtime_state = "failed"
             job.current_step = f"失败 ({status_name})"
             job.append_log(
                 f"[ERROR] 流水线失败，退出码: {job.process.returncode}"
@@ -997,6 +1024,7 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
 
     except Exception as e:
         job.status = "failed"
+        job.runtime_state = "failed"
         job.current_step = "异常"
         job.append_log(f"[ERROR] {e}")
         logger.exception("流水线异常 (job=%s)", job.id)
@@ -1027,11 +1055,16 @@ async def start_pipeline(req: RunRequest) -> RunResponse:
         raise HTTPException(status_code=400, detail=f"视频文件不存在: {req.video_path}")
 
     job_id = uuid.uuid4().hex[:8]
+    # Derive workspace path
+    video_stem = video.stem
+    workspace_path = str(video.parent / f"{video_stem}_project")
     job = Job(
         id=job_id,
         status="running",
+        runtime_state="bootstrapping",
         current_step="启动中...",
         video_path=req.video_path,
+        workspace_path=workspace_path,
         created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )
     _jobs[job_id] = job
@@ -1142,6 +1175,7 @@ async def get_status(job_id: str) -> StatusResponse:
 
     return StatusResponse(
         status=job.status,
+        runtime_state=job.runtime_state,
         progress=job.progress,
         current_step=job.current_step,
         detail=detail,
@@ -3162,6 +3196,19 @@ async def find_file(name: str = "", size: int = 0) -> dict:
     raise HTTPException(status_code=404, detail=f"File not found: {name}")
 
 
+@app.get("/api/files/video")
+async def serve_video(path: str):
+    """Stream a local video file for browser playback.
+
+    Browsers cannot access local filesystem paths directly.
+    This endpoint proxies the file so the video player can seek.
+    """
+    video_path = Path(path)
+    if not video_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Video not found: {path}")
+    return FileResponse(video_path, media_type="video/mp4")
+
+
 @app.post("/api/files/upload")
 async def upload_file(file: UploadFile = File(...)) -> dict:
     """Upload a dropped file to source_file/, return server-side path."""
@@ -4152,6 +4199,165 @@ async def speaker_audio_preview(path: str = "", start: float = 0, end: float = 0
     if proc.returncode != 0:
         raise HTTPException(status_code=500, detail="ffmpeg 提取失败")
     return {"audio_base64": base64.b64encode(proc.stdout).decode("ascii"), "format": "wav"}
+
+
+# ---------------------------------------------------------------------------
+# Workflow Presets + Workspace CRUD + Timeline Runtime endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/workflow/presets")
+async def list_workflow_presets() -> dict:
+    """Return all available Workflow Presets (Pass DAG templates)."""
+    return {"presets": get_presets()}
+
+
+class WorkspaceCreateRequest(BaseModel):
+    video_path: str
+    name: str = ""
+    workflow_preset: str = "quick_subtitle"
+    lang: str = ""
+    target_lang: str = ""
+
+
+@app.post("/api/workspace/create")
+async def create_workspace(req: WorkspaceCreateRequest) -> dict:
+    """Create a workspace directory and initialize project.json.
+
+    This is the first step in the Timeline Runtime lifecycle.
+    Does NOT start pipeline processing — that's a separate call.
+    """
+    video_path = Path(req.video_path)
+    if not video_path.is_file():
+        raise HTTPException(status_code=400, detail=f"Video not found: {req.video_path}")
+
+    # Derive workspace path: {video_dir}/{name}_project/
+    name = req.name or video_path.stem
+    workspace_dir = video_path.parent / f"{name}_project"
+
+    # Lookup preset for defaults
+    preset = get_preset(req.workflow_preset)
+    passes = preset.passes if preset else []
+
+    # Create directory structure
+    for sub in ["01_extract", "02_translate", "03_tts", "04_output"]:
+        (workspace_dir / sub).mkdir(parents=True, exist_ok=True)
+
+    # Write initial project.json
+    manifest = {
+        "version": 1,
+        "name": name,
+        "video_path": str(video_path),
+        "workflow_preset": req.workflow_preset,
+        "passes": passes,
+        "runtime_state": RuntimeState.UNINITIALIZED.value,
+        "lang": req.lang,
+        "target_lang": req.target_lang,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "pipeline": {},
+        "files": {},
+    }
+    manifest_path = workspace_dir / "project.json"
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=False, indent=2)
+
+    return {
+        "workspace": str(workspace_dir),
+        "name": name,
+        "manifest": manifest,
+    }
+
+
+@app.get("/api/workspaces")
+async def list_workspaces() -> dict:
+    """Scan source_file/ for *_project directories and return summaries."""
+    source_dir = PROJECT_ROOT / "source_file"
+    workspaces: list[dict] = []
+
+    if source_dir.is_dir():
+        for d in sorted(source_dir.iterdir()):
+            if not d.is_dir() or not d.name.endswith("_project"):
+                continue
+            manifest_path = d / "project.json"
+            runtime_state = RuntimeState.UNINITIALIZED.value
+            video_path = ""
+            if manifest_path.is_file():
+                try:
+                    with open(manifest_path, "r", encoding="utf-8") as f:
+                        m = json.load(f)
+                    runtime_state = m.get("runtime_state", RuntimeState.UNINITIALIZED.value)
+                    video_path = m.get("video_path", "")
+                except Exception:
+                    pass
+
+            workspaces.append({
+                "path": str(d),
+                "name": d.name.replace("_project", ""),
+                "updatedAt": datetime.fromtimestamp(d.stat().st_mtime, tz=timezone.utc).isoformat(),
+                "runtimeState": runtime_state,
+                "videoPath": video_path,
+            })
+
+    return {"workspaces": workspaces}
+
+
+@app.get("/api/workspace/detail")
+async def get_workspace_detail(path: str = "") -> dict:
+    """Get detailed workspace status: manifest, disk usage, file listing."""
+    if not path:
+        raise HTTPException(status_code=400, detail="workspace path required")
+
+    ws_dir = Path(path)
+    if not ws_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Workspace not found: {path}")
+
+    # Read manifest
+    manifest = {}
+    manifest_path = ws_dir / "project.json"
+    if manifest_path.is_file():
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+        except Exception:
+            pass
+
+    # File listing
+    files: list[dict] = []
+    total_size = 0
+    for item in sorted(ws_dir.rglob("*")):
+        if item.is_file() and item.name != "project.json":
+            sz = item.stat().st_size
+            total_size += sz
+            files.append({
+                "name": item.name,
+                "relativePath": str(item.relative_to(ws_dir)),
+                "size": sz,
+            })
+
+    # Failure reason extraction
+    failure_reason = ""
+    if manifest.get("runtime_state") == RuntimeState.FAILED.value:
+        log_path = ws_dir / "pipeline.log"
+        if log_path.is_file():
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+                for line in reversed(lines[-50:]):
+                    if "ERROR" in line or "error" in line.lower() or "Traceback" in line:
+                        failure_reason = line.strip()[-200:]
+                        break
+            except Exception:
+                pass
+
+    return {
+        "path": str(ws_dir),
+        "manifest": manifest,
+        "runtimeState": manifest.get("runtime_state", RuntimeState.UNINITIALIZED.value),
+        "diskUsageBytes": total_size,
+        "fileCount": len(files),
+        "files": files[:50],  # cap at 50 files
+        "failureReason": failure_reason,
+    }
 
 
 # ---------------------------------------------------------------------------

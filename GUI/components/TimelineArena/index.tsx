@@ -20,10 +20,11 @@ interface Props {
   waveform: WaveformData | null
   totalDuration: number
   ttsWaveforms?: TrackWaveformData[]
+  videoSrc?: string | null
   onDropVideo?: (file: File) => void
 }
 
-export default function TimelineArena({ events, totalDuration, waveform, ttsWaveforms, onDropVideo }: Props) {
+export default function TimelineArena({ events, totalDuration, waveform, ttsWaveforms, videoSrc, onDropVideo }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [canvasW, setCanvasW] = useState(1200)
   const [dragOver, setDragOver] = useState(false)
@@ -290,7 +291,7 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
         events={events}
       />
       <VideoPreview
-        videoSrc={null}
+        videoSrc={videoSrc || null}
         currentTime={videoCurrentTime}
         events={filteredEvents}
         onTimeUpdate={handleVideoTimeUpdate}

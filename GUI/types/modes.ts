@@ -2,7 +2,10 @@
  * modes.ts — 模式切换协议与布局预设类型
  */
 
-export type Mode = 'timeline' | 'speaker' | 'patch' | 'batch' | 'export'
+export type Mode = 'hub' | 'timeline' | 'patch' | 'batch' | 'export'
+
+/** Timeline Runtime states — mirrors backend RuntimeState enum */
+export type RuntimeState = 'uninitialized' | 'bootstrapping' | 'ready' | 'computing' | 'failed' | 'complete'
 
 /** 跨模式导航上下文 — 从辅助模式一键跳回 Timeline 时携带 */
 export interface CrossModeContext {
@@ -12,7 +15,7 @@ export interface CrossModeContext {
   timestamp: number
 }
 
-export const ALL_MODES: Mode[] = ['timeline', 'speaker', 'patch', 'batch', 'export']
+export const ALL_MODES: Mode[] = ['hub', 'timeline', 'patch', 'batch', 'export']
 
 export interface ModeMeta {
   label: string
@@ -25,7 +28,13 @@ export interface ModeMeta {
   defaultDockView: 'log' | 'aiTrace' | 'patchDiff' | 'taskOutput' | 'debug'
 }
 
-export const MODE_META: Record<Mode, ModeMeta> = {
+export const MODE_META: Record<Mode | 'speaker', ModeMeta> = {
+  hub: {
+    label: 'Project Hub', labelEn: 'Project Hub',
+    accentColor: 'var(--mode-hub)', hexColor: '#6366f1', icon: 'Home',
+    defaultShortcuts: { 'Ctrl+N': '新建项目', 'Ctrl+O': '打开项目', 'Ctrl+K': '命令面板' },
+    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'log',
+  },
   timeline: {
     label: 'Timeline Studio', labelEn: 'Timeline Studio',
     accentColor: 'var(--mode-timeline)', hexColor: '#2196F3', icon: 'Timeline',
@@ -59,8 +68,8 @@ export const MODE_META: Record<Mode, ModeMeta> = {
   },
 }
 
-export type InspectorTab = 'content' | 'timing' | 'speaker' | 'tts' | 'patch' | 'history'
-export const ALL_INSPECTOR_TABS: InspectorTab[] = ['content', 'timing', 'speaker', 'tts', 'patch', 'history']
+export type InspectorTab = 'content' | 'timing' | 'speaker' | 'tts' | 'patch' | 'history' | 'config'
+export const ALL_INSPECTOR_TABS: InspectorTab[] = ['content', 'timing', 'speaker', 'tts', 'patch', 'history', 'config']
 
 export interface LayoutPreset {
   railComponent: string | null
@@ -69,8 +78,8 @@ export interface LayoutPreset {
 }
 
 export const LAYOUT_PRESETS: Record<Mode, LayoutPreset> = {
+  hub: { railComponent: null, inspectorTabs: [], defaultDockView: 'log' },
   timeline: { railComponent: null, inspectorTabs: ALL_INSPECTOR_TABS, defaultDockView: 'log' },
-  speaker: { railComponent: null, inspectorTabs: ['speaker', 'tts', 'content', 'timing'], defaultDockView: 'log' },
   patch: { railComponent: null, inspectorTabs: ['patch', 'content', 'timing', 'history'], defaultDockView: 'patchDiff' },
   batch: { railComponent: null, inspectorTabs: ['content', 'timing', 'history'], defaultDockView: 'taskOutput' },
   export: { railComponent: null, inspectorTabs: ['content', 'timing'], defaultDockView: 'log' },

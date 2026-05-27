@@ -37,12 +37,8 @@ export const DEFAULT_TRACKS: TrackDefinition[] = [
 // ── Track Visibility Presets per Mode ──
 
 export const TRACK_VISIBILITY_MAP: Record<Mode, Partial<Record<TrackType, { visible: boolean; locked: boolean; solo?: boolean; muted?: boolean }>>> = {
+  hub: {},
   timeline: {},
-  speaker: {
-    speaker: { visible: true, locked: false, solo: true },
-    source: { visible: true, locked: true, muted: true },
-    translation: { visible: false, locked: true },
-  },
   patch: {
     diff: { visible: true, locked: false, solo: true },
     speaker: { visible: false, locked: true },
@@ -54,6 +50,13 @@ export const TRACK_VISIBILITY_MAP: Record<Mode, Partial<Record<TrackType, { visi
     tts: { visible: false, locked: true },
   },
   export: {},
+}
+
+// Speaker focus track preset — applied when timelineFocus='speaker'
+export const SPEAKER_TRACK_PRESET: Partial<Record<TrackType, { visible: boolean; locked: boolean; solo?: boolean; muted?: boolean }>> = {
+  speaker: { visible: true, locked: false, solo: true },
+  source: { visible: true, locked: true, muted: true },
+  translation: { visible: false, locked: true },
 }
 
 // ── Snap ──
