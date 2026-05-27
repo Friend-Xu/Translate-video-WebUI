@@ -1,9 +1,10 @@
 import { create } from 'zustand'
-import type { PatchPreview, SpeakerInfo, TimelinePatchData, ExportPreset, WorkspaceManifest, EventViewModel, WaveformData, DataSource } from '../types'
+import type { PatchPreview, SpeakerInfo, TimelinePatchData, ExportPreset, WorkspaceManifest, EventViewModel, WaveformData, DataSource, WorkflowPreset, WorkspaceSummary } from '../types'
 import type { Mode, PatchDraft, IssueFilter, JobState, CrossModeContext, SpeakerLaneData, SpeakerQuality, VoiceCard } from '../types/modes'
 import type { TrackDefinition } from '../types/timeline'
 import type { TrackWaveformData } from '../types'
-import { DEFAULT_TRACKS, TRACK_VISIBILITY_MAP } from '../types/timeline'
+import { DEFAULT_TRACKS, TRACK_VISIBILITY_MAP, SPEAKER_TRACK_PRESET } from '../types/timeline'
+import { MOCK_SPEAKER_LOAD } from '../mocks/mockData'
 
 export type { Mode, PatchDraft, IssueFilter, JobState }
 export type TimelineFocus = 'default' | 'speaker' | 'patch'
@@ -55,6 +56,10 @@ export interface AppState {
   manifest: WorkspaceManifest | null
   loading: boolean
   error: string | null
+
+  // Hub state (Phase 1)
+  workflowPresets: WorkflowPreset[]
+  workspaceList: WorkspaceSummary[]
 
   // Actions — Mode
   setMode: (mode: Mode) => void
@@ -122,6 +127,11 @@ export interface AppState {
   loadWorkspace: (workspacePath: string) => Promise<void>
   clearWorkspace: () => void
   setDataSource: (source: DataSource) => void
+
+  // Actions — Hub (Phase 1)
+  fetchWorkflowPresets: () => Promise<void>
+  fetchWorkspaceList: () => Promise<void>
+  createWorkspace: (videoPath: string, presetId: string, name?: string) => Promise<string>
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -169,6 +179,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   manifest: null,
   loading: false,
   error: null,
+
+  // Hub defaults (Phase 1)
+  workflowPresets: [],
+  workspaceList: [],
 
   // ── Mode ──
   setMode: (mode) => {
@@ -608,4 +622,47 @@ export const useAppStore = create<AppState>((set, get) => ({
   }),
 
   setDataSource: (source) => set({ dataSource: source }),
+
+  // ── Hub Actions (Phase 1) ──
+
+  fetchWorkflowPresets: async () => {
+    try {
+      const res = await fetch('/api/workflow/presets')
+      if (res.ok) {
+        const data = await res.json()
+        set({ workflowPresets: data.presets || [] })
+      }
+    } catch { /* non-critical */ }
+  },
+
+  fetchWorkspaceList: async () => {
+    try {
+      const res = await fetch('/api/workspaces')
+      if (res.ok) {
+        const data = await res.json()
+        set({ workspaceList: data.workspaces || [] })
+      }
+    } catch { /* non-critical */ }
+  },
+
+  createWorkspace: async (videoPath, presetId, name) => {
+    set({ loading: true, error: null })
+    try {
+      const res = await fetch('/api/workspace/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ video_path: videoPath, workflow_preset: presetId, name: name || '' }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error((err as any).detail || '创建工作区失败')
+      }
+      const data = await res.json()
+      set({ workspace: data.workspace, manifest: data.manifest, loading: false })
+      return data.workspace as string
+    } catch (err) {
+      set({ loading: false, error: err instanceof Error ? err.message : '未知错误' })
+      throw err
+    }
+  },
 }))

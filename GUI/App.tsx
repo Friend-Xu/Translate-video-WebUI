@@ -150,8 +150,6 @@ export default function App() {
             onSkipCurrent={skipCurrent}
           />
         )
-      case 'speaker':
-        return <SpeakerReviewView events={events} totalDuration={totalDuration} />
       case 'patch':
         return <PatchManagementView events={events} />
       case 'export':
