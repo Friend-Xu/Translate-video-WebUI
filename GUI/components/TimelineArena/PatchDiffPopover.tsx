@@ -50,8 +50,9 @@ export default function PatchDiffPopover({ event, anchorEl, onClose }: Props) {
       open={open}
       anchorEl={anchorEl}
       onClose={onClose}
-      anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      transformOrigin={{ vertical: 'top', horizontal: 'center' }}
+      anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
+      transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+      marginThreshold={8}
       slotProps={{ paper: { sx: { maxWidth: 420, p: 2, bgcolor: 'grey.900', border: '1px solid rgba(255,255,255,0.1)' } } }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>

@@ -35,7 +35,9 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
   const [lockedEventIds, setLockedEventIds] = useState<Set<string>>(new Set())
   const [filterState, setFilterState] = useState<FilterState>(DEFAULT_FILTER)
   const [filterBarOpen, setFilterBarOpen] = useState(false)
+  const [diffPopoverAnchor, setDiffPopoverAnchor] = useState<HTMLElement | null>(null)
   const [diffPopoverEvent, setDiffPopoverEvent] = useState<EventViewModel | null>(null)
+  const [dismissedSuggestionIds] = useState<Set<string>>(new Set())
 
   const selectedEventIds = useAppStore(s => s.selectedEventIds)
   const selectEvent = useAppStore(s => s.selectEvent)
@@ -99,7 +101,16 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
       selectEvent(eventId)
     }
     const ev = events.find(x => x.id === eventId)
-    if (ev) coord.scrollToTime(ev.start)
+    if (ev) {
+      coord.scrollToTime(ev.start)
+      if (ev.visualState.hasAiSuggestion && !dismissedSuggestionIds.has(eventId)) {
+        setDiffPopoverAnchor(e.currentTarget as HTMLElement)
+        setDiffPopoverEvent(ev)
+      } else {
+        setDiffPopoverAnchor(null)
+        setDiffPopoverEvent(null)
+      }
+    }
   }, [selectedEventIds, selectEvent, events, coord])
 
   // Double click
@@ -121,6 +132,12 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
     setContextMenuAnchor(null)
     setContextMenuEvent(null)
   }, [])
+
+  const handleCloseDiffPopover = useCallback(() => {
+    if (diffPopoverEvent) dismissedSuggestionIds.add(diffPopoverEvent.id)
+    setDiffPopoverAnchor(null)
+    setDiffPopoverEvent(null)
+  }, [diffPopoverEvent])
 
   const handleToggleEventLock = useCallback((eventId: string) => {
     setLockedEventIds(prev => {
@@ -169,17 +186,6 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
 
   // Apply filters
   const { visible: filteredEvents, dimmed: dimmedEventIds } = applyFilter(events, filterState)
-
-  // Show diff popover when AI-suggested event is selected
-  useEffect(() => {
-    const selectedId = useAppStore.getState().selectedEventId
-    if (selectedId) {
-      const evt = events.find(e => e.id === selectedId && e.visualState.hasAiSuggestion)
-      setDiffPopoverEvent(evt || null)
-    } else {
-      setDiffPopoverEvent(null)
-    }
-  }, [useAppStore(s => s.selectedEventId), events])
 
   // Drag & drop video
   const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setDragOver(true) }, [])
@@ -360,8 +366,8 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
       {/* AI suggestion diff popover */}
       <PatchDiffPopover
         event={diffPopoverEvent}
-        anchorEl={containerRef.current}
-        onClose={() => setDiffPopoverEvent(null)}
+        anchorEl={diffPopoverAnchor}
+        onClose={handleCloseDiffPopover}
       />
 
       {/* Zoom controls */}

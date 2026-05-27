@@ -37,6 +37,10 @@ class WhisperAdapter:
         if "model" in event_config: self.ctx.model_name = event_config["model"]
         if "device" in event_config: self.ctx.device = event_config["device"]
         if "language" in event_config: self.ctx.language = event_config["language"]
+        if "compute_type" in event_config: self.ctx.compute_type = event_config["compute_type"]
+        if "beam_size" in event_config: self.ctx.beam_size = event_config["beam_size"]
+        if "word_timestamps" in event_config: self.ctx.word_timestamps = event_config["word_timestamps"]
+        if "alignment_enabled" in event_config: self.ctx.alignment_enabled = event_config["alignment_enabled"]
 
     def run(self) -> list[Patch]:
         """执行完整转录流程，返回 Patch 列表。

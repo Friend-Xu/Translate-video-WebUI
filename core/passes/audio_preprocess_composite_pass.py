@@ -50,6 +50,13 @@ class AudioPreprocessCompositePass(TimelinePass):
         self.skip_vad = skip_vad
         self.sample_rate = sample_rate
         self.channels = channels
+        self._resolved_config: dict | None = None
+
+    def configure(self, resolved_config: dict | None = None) -> None:
+        cfg = resolved_config or {}
+        self._resolved_config = cfg
+        if "skip_demucs" in cfg:
+            self.skip_demucs = cfg["skip_demucs"]
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         engine = PatchEngine()

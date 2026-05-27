@@ -73,6 +73,11 @@ class TranslationQualityPass(TimelinePass):
                 "gate_decision": ts.gate_decision,
                 "accepted": ts.accepted,
             }
+            # Gate 路由映射: WorkflowOrchestrator 读取 A/B/C
+            if ts.accepted:
+                es.provenance["gate_decision"] = "A"
+            else:
+                es.provenance["gate_decision"] = "B" if ts.composite > 0.4 else "C"
             if ts.hard_fail_reason:
                 es.review.setdefault("flags", []).append("translation_hard_fail")
                 es.review["notes"] = (es.review.get("notes", "") +

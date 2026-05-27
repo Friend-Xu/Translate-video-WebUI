@@ -42,6 +42,14 @@ class SpeakerCompositePass(TimelinePass):
         self.enable_clustering = enable_clustering
         self.enable_drift_detection = enable_drift_detection
         self.max_refinement_iterations = max_refinement_iterations
+        self._resolved_config: dict | None = None
+
+    def configure(self, resolved_config: dict | None = None) -> None:
+        """接收 ConfigResolver 解析后的 speaker 槽位配置。"""
+        cfg = resolved_config or {}
+        self._resolved_config = cfg
+        if "clustering_threshold" in cfg:
+            self.enable_clustering = cfg["clustering_threshold"] > 0
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         engine = PatchEngine()

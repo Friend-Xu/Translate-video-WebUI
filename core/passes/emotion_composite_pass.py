@@ -15,6 +15,15 @@ class EmotionCompositePass(TimelinePass):
                  gate_mode: str = "strict"):
         self.skip_emotion = skip_emotion; self.skip_alignment = skip_alignment
         self.gate_mode = gate_mode
+        self._resolved_config: dict | None = None
+
+    def configure(self, resolved_config: dict | None = None) -> None:
+        cfg = resolved_config or {}
+        self._resolved_config = cfg
+        if "enabled" in cfg:
+            self.skip_emotion = not cfg["enabled"]
+        if "gate_mode" in cfg:
+            self.gate_mode = cfg["gate_mode"]
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         if self.skip_emotion:
@@ -53,6 +62,9 @@ class EmotionCompositePass(TimelinePass):
             es.emotion["emotion_score"] = scorer.score(ev, prev).composite
             gr = gate.decide(ev, prev)
             es.emotion["gate_decision"] = gr.decision
+            # WorkflowOrchestrator 读取: E1=accept, E2=downgrade, E3=repair
+            emap = {"accept": "E1", "downgrade": "E2", "repair": "E3"}
+            es.provenance["gate_decision"] = emap.get(gr.decision, "E1")
 
             route = router.route(ev)
             es.provenance["emotion_route"] = {

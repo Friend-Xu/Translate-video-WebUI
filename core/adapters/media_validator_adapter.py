@@ -29,7 +29,9 @@ class MediaValidatorAdapter:
 
     def configure(self, event_config = None):
         if not event_config: return
-        pass
+        if "loudness_compensation" in event_config: self._loudness_norm = event_config["loudness_compensation"]
+        if "target_loudness" in event_config: self._target_loudness = event_config["target_loudness"]
+        if "high_pass_filter" in event_config: self._high_pass = event_config["high_pass_filter"]
     def diagnose(self, ctx: AudioDefectContext) -> Patch:
         """运行缺陷诊断，返回 ANNOTATE patch。
 

@@ -29,7 +29,8 @@ class MiniLMAdapter:
 
     def configure(self, event_config = None):
         if not event_config: return
-        pass
+        if "gate_threshold_accept" in event_config: self._threshold = event_config["gate_threshold_accept"]
+        if "gate_sim_drop_limit" in event_config: self._sim_drop = event_config["gate_sim_drop_limit"]
     def verify(self, ctx: MiniLMContext) -> Patch:
         scorer = self._get_scorer()
         try:

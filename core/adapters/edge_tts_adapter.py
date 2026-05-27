@@ -63,6 +63,10 @@ class EdgeTTSAdapter:
     def configure(self, event_config = None):
         if not event_config: return
         if "voice" in event_config: self._voice = event_config["voice"]
+        if "edge_voice" in event_config: self._voice = event_config["edge_voice"]
+        if "edge_pitch" in event_config: self._pitch = event_config["edge_pitch"]
+        if "edge_volume" in event_config: self._volume = event_config["edge_volume"]
+        if "speed_factor" in event_config: self._rate = event_config["speed_factor"]
 
     def synthesize(self, ctx: EdgeTTSSegmentContext) -> Patch:
         """对单个 segment 合成语音，返回 UPDATE_TTS_AUDIO patch。

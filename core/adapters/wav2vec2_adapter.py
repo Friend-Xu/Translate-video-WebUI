@@ -31,6 +31,10 @@ class Wav2Vec2Adapter:
         self.model_name = model_name
         self.model_dir = model_dir
 
+    def configure(self, event_config = None):
+        if not event_config: return
+        if "alignment_enabled" in event_config: self._alignment_enabled = event_config["alignment_enabled"]
+
     # ── alignment 模式 ────────────────────────────────────
 
     def refine_alignment(self, segments: list[dict]) -> list[Patch]:

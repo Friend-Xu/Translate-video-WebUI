@@ -38,6 +38,7 @@ class VADBoundaryAdapter:
     def configure(self, event_config = None):
         if not event_config: return
         if "vad_threshold" in event_config: self._vad_threshold = event_config["vad_threshold"]
+        if "silence_handling" in event_config: self._silence_policy = event_config["silence_handling"]
     def detect_boundaries(self, ctx: VADBoundaryContext) -> list[Patch]:
         """运行 VAD，返回 SEGMENT_INSERT patch 列表。
 
