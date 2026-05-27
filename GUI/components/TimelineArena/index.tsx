@@ -4,7 +4,7 @@ import CloudUploadOutlined from '@mui/icons-material/CloudUploadOutlined'
 import { useTimelineCoordinates } from '../../hooks/useTimelineCoordinates'
 import { useAppStore } from '../../store/useAppStore'
 import TrackSystem from './TrackSystem'
-import ZoomScrollbar from './ZoomScrollbar'
+import TimelineMinimap from './TimelineMinimap'
 import ZoomPresets from './ZoomPresets'
 import TimelineToolbar from './TimelineToolbar'
 import VideoPreview from './VideoPreview'
@@ -167,21 +167,69 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
     }
   }, [events])
 
-  const handleRequestAiAssist = useCallback(() => {
-    const selected = useAppStore.getState().selectedEventIds
+  const handleRequestAiAssist = useCallback(async () => {
+    const store = useAppStore.getState()
+    const selected = store.selectedEventIds
     const targets = selected.length > 0
       ? events.filter(e => selected.includes(e.id))
       : events.filter(e => e.confidence < 0.7)
-    const store = useAppStore.getState()
+
+    const ws = store.workspace || ''
+    const targetLang = store.manifest?.target_lang || 'zh'
+
     for (const evt of targets) {
-      store.addDraft({
-        eventId: evt.id,
-        opcode: 'AI_SUGGEST',
-        payload: { suggestion: `[AI] 建议优化 "${evt.text.slice(0, 20)}..." 的翻译` },
-        before: { translation: evt.translation },
-        after: {},
-        timestamp: Date.now(),
-      })
+      const sourceText = evt.text || ''
+      const currentTrans = evt.translation || ''
+      if (!sourceText.trim() || !currentTrans.trim()) continue
+
+      try {
+        const res = await fetch('/api/timeline/ai/suggest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event_id: evt.id,
+            workspace: ws,
+            source_text: sourceText,
+            current_translation: currentTrans,
+            target_lang: targetLang,
+          }),
+        })
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}))
+          const detail = (errData as any).detail || `HTTP ${res.status}`
+          store.addDraft({
+            eventId: evt.id,
+            opcode: 'AI_SUGGEST',
+            payload: { suggestion: `[AI 请求失败] ${detail}`, error: true },
+            before: { translation: currentTrans },
+            after: {},
+            timestamp: Date.now(),
+          })
+          continue
+        }
+        const data = await res.json()
+        store.addDraft({
+          eventId: evt.id,
+          opcode: 'AI_SUGGEST',
+          payload: {
+            suggestion: data.suggestion,
+            reasoning: data.reasoning,
+            diff: data.diff,
+          },
+          before: { translation: currentTrans },
+          after: { translation: data.suggestion },
+          timestamp: Date.now(),
+        })
+      } catch (e) {
+        store.addDraft({
+          eventId: evt.id,
+          opcode: 'AI_SUGGEST',
+          payload: { suggestion: `[网络错误] ${e}`, error: true },
+          before: { translation: currentTrans },
+          after: {},
+          timestamp: Date.now(),
+        })
+      }
     }
   }, [events])
 
@@ -199,7 +247,13 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
 
   // Playback handlers
   const handlePlayPause = useCallback(() => {
-    setIsPlaying(p => !p)
+    setIsPlaying(p => {
+      if (!p) {
+        // Seek video to playhead before starting playback
+        setVideoCurrentTime(useAppStore.getState().playheadPosition)
+      }
+      return !p
+    })
   }, [])
 
   const handleJumpPrev = useCallback(() => {
@@ -232,12 +286,13 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
 
   const isEmpty = events.length === 0
 
-  // Keyboard shortcuts for zoom
+  // Keyboard shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Don't intercept when focus is in an input
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (e.key === ' ') { e.preventDefault(); handlePlayPause() }
       if (e.key === '\\') { e.preventDefault(); coord.zoomToFit(0.05) }
       if (e.key === '+' || e.key === '=') { e.preventDefault(); coord.zoomIn() }
       if (e.key === '-') { e.preventDefault(); coord.zoomOut() }
@@ -294,6 +349,7 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
         videoSrc={videoSrc || null}
         currentTime={videoCurrentTime}
         events={filteredEvents}
+        isPlaying={isPlaying}
         onTimeUpdate={handleVideoTimeUpdate}
         onDurationChange={handleVideoDurationChange}
       />
@@ -371,25 +427,33 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
         onClose={handleCloseDiffPopover}
       />
 
-      {/* Zoom controls */}
+      {/* Zoom controls + Minimap */}
       <Box sx={{
-        position: 'absolute', bottom: 20, left: 0, right: 0, zIndex: 25,
-        display: 'flex', alignItems: 'center', gap: 1, px: 1,
+        display: 'flex', flexDirection: 'column',
+        borderTop: '1px solid rgba(255,255,255,0.1)',
+        bgcolor: '#1a1a1a',
+        flexShrink: 0,
       }}>
-        <ZoomPresets coord={coord} />
-        <Box sx={{ flexGrow: 1 }}>
-          <ZoomScrollbar coord={coord} totalDuration={totalDuration || 80} canvasWidth={canvasW} />
-        </Box>
-        <Box sx={{ display: 'flex', gap: 0.5 }}>
-          <Box component="button" onClick={() => coord.zoomOut()} aria-label="缩小"
-            sx={{ width: 28, height: 28, border: '1px solid rgba(255,255,255,0.3)', borderRadius: 1, bgcolor: 'rgba(0,0,0,0.6)', color: '#fff', cursor: 'pointer', fontSize: '1rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            −
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5 }}>
+          <ZoomPresets coord={coord} />
+          <Box sx={{ flexGrow: 1 }} />
+          <Box sx={{ display: 'flex', gap: 0.5 }}>
+            <Box component="button" onClick={() => coord.zoomOut()} aria-label="缩小"
+              sx={{ width: 24, height: 24, border: '1px solid rgba(255,255,255,0.5)', borderRadius: 1, bgcolor: '#333', color: '#fff', cursor: 'pointer', fontSize: '0.9rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              −
+            </Box>
+            <Box component="button" onClick={() => coord.zoomIn()} aria-label="放大"
+              sx={{ width: 24, height: 24, border: '1px solid rgba(255,255,255,0.5)', borderRadius: 1, bgcolor: '#333', color: '#fff', cursor: 'pointer', fontSize: '0.9rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              +
+            </Box>
           </Box>
-          <Box component="button" onClick={() => coord.zoomIn()} aria-label="放大"
-            sx={{ width: 28, height: 28, border: '1px solid rgba(255,255,255,0.3)', borderRadius: 1, bgcolor: 'rgba(0,0,0,0.6)', color: '#fff', cursor: 'pointer', fontSize: '1rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            +
-          </Box>
         </Box>
+        <TimelineMinimap
+          events={events}
+          coord={coord}
+          totalDuration={totalDuration || 80}
+          canvasWidth={canvasW}
+        />
       </Box>
     </Box>
   )

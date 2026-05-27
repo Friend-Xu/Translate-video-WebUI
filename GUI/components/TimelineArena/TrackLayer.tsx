@@ -1,4 +1,5 @@
 import { Box } from '@mui/material'
+import { useEffect } from 'react'
 import { useAppStore } from '../../store/useAppStore'
 import type { TrackDefinition } from '../../types/timeline'
 import type { EventViewModel, WaveformData, TrackWaveformData } from '../../types'
@@ -38,6 +39,27 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
   const hasSoloTrack = tracks.some(t => t.solo)
   const isDimmed = hasSoloTrack && !track.solo
   const timelineFocus = useAppStore(s => s.timelineFocus)
+  const setPlayhead = useAppStore(s => s.setPlayhead)
+  const resizeTrack = useAppStore(s => s.resizeTrack)
+
+  const MIN_SPEAKER_HEIGHT = 28 // per speaker: ~12px name + ~16px blocks
+
+  // Auto-resize speaker track height based on speaker count
+  const speakerCount = track.renderer === 'speaker-lane'
+    ? new Set(events.map(e => e.speaker).filter(Boolean)).size
+    : 0
+  useEffect(() => {
+    if (track.renderer !== 'speaker-lane' || speakerCount <= 1) return
+    if (timelineFocus === 'speaker') return // don't override focus mode
+    const needed = speakerCount * MIN_SPEAKER_HEIGHT
+    if (track.height !== needed) {
+      resizeTrack(track.id, needed)
+    }
+  }, [track.renderer, speakerCount, timelineFocus, track.id, track.height, resizeTrack])
+
+  const containerHeight = track.renderer === 'speaker-lane' && speakerCount > 1 && timelineFocus === 'speaker'
+    ? speakerCount * 80
+    : track.height
 
   // Compute virtual events at top level (hooks must not be conditional)
   const baseEvents = track.type === 'diff'
@@ -99,25 +121,86 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
       case 'speaker-lane': {
         const bySpeaker = new Map<string, EventViewModel[]>()
         for (const evt of events) {
-          const key = evt.speaker || 'UNKNOWN'
+          const key = evt.speaker || ''
+          if (!key) continue
           if (!bySpeaker.has(key)) bySpeaker.set(key, [])
           bySpeaker.get(key)!.push(evt)
         }
-        const lanes = Array.from(bySpeaker.entries()).map(([speaker, evts], i) => ({
+        if (bySpeaker.size === 0) {
+          return (
+            <SpeakerLane lanes={[]} timeToPixel={(t: number) => coord.timeToPixel(t) + trackScrollLeft}
+              pixelsPerSec={coord.pixelsPerSec} laneHeight={track.height} />
+          )
+        }
+        // Focus mode: expanded SpeakerLane
+        if (timelineFocus === 'speaker') {
+          const lanes = Array.from(bySpeaker.entries()).map(([speaker, evts], i) => ({
+            speaker, displayName: evts[0]?.displayName || speaker,
+            color: LANE_COLORS[i % LANE_COLORS.length], locked: track.locked, events: evts,
+          }))
+          return (
+            <SpeakerLane lanes={lanes} timeToPixel={(t: number) => coord.timeToPixel(t) + trackScrollLeft}
+              pixelsPerSec={coord.pixelsPerSec} laneHeight={80} expanded />
+          )
+        }
+        // Normal mode: each speaker = name row + blocks row, stacked
+        const speakers = Array.from(bySpeaker.entries()).map(([speaker, evts], i) => ({
           speaker,
           displayName: evts[0]?.displayName || speaker,
           color: LANE_COLORS[i % LANE_COLORS.length],
-          locked: track.locked,
           events: evts,
         }))
+        const spH = Math.floor(track.height / speakers.length)
+        const labelH = Math.max(10, Math.floor(spH * 0.5))
+        const blockH = spH - labelH
+        const canvasW = totalDuration * coord.pixelsPerSec
         return (
-          <SpeakerLane
-            lanes={lanes}
-            timeToPixel={(t: number) => coord.timeToPixel(t) + trackScrollLeft}
-            pixelsPerSec={coord.pixelsPerSec}
-            laneHeight={track.height}
-            expanded={timelineFocus === 'speaker'}
-          />
+          <Box sx={{ height: track.height, position: 'relative', width: canvasW,
+            transform: `translateX(${-trackScrollLeft}px)`, overflow: 'hidden' }}>
+            {speakers.map((sp, si) => {
+              const top = si * spH
+              return (
+                <Box key={sp.speaker}>
+                  {/* Name row */}
+                  <Box sx={{
+                    position: 'absolute', left: 0, top, height: labelH, width: canvasW,
+                    display: 'flex', alignItems: 'center',
+                  }}>
+                    <Box sx={{
+                      position: 'sticky', left: 0,
+                      px: 0.5, fontSize: '0.7rem', color: sp.color, fontWeight: 600,
+                      bgcolor: 'rgba(0,0,0,0.6)', borderRadius: 0.5,
+                      whiteSpace: 'nowrap', lineHeight: `${labelH}px`,
+                      zIndex: 2,
+                    }}>
+                      {sp.displayName}
+                    </Box>
+                  </Box>
+                  {/* Blocks row */}
+                  <Box sx={{ position: 'absolute', left: 0, top: top + labelH, height: blockH, width: canvasW }}>
+                    {sp.events.map(evt => {
+                      const left = coord.timeToPixel(evt.start)
+                      const w = Math.max(2, (evt.end - evt.start) * coord.pixelsPerSec)
+                      if (left + w < 0 || left > canvasW + 100) return null
+                      return (
+                        <Box key={evt.id} sx={{
+                          position: 'absolute', left, top: 0, height: '100%', width: w,
+                          bgcolor: `${sp.color}66`, borderRadius: 0.25,
+                          borderLeft: `2px solid ${sp.color}`,
+                          cursor: 'pointer',
+                          '&:hover': { filter: 'brightness(1.4)', zIndex: 3 },
+                        }}
+                          onClick={(e) => { setPlayhead(evt.start); onEventClick(evt.id, e) }}
+                          onDoubleClick={() => onEventDblClick(evt.id)}
+                          onContextMenu={(e) => { e.preventDefault(); onEventContextMenu(evt.id, e) }}
+                        />
+                      )
+                    })}
+                  </Box>
+                </Box>
+              )
+            })}
+          </Box>
         )
       }
 
@@ -150,13 +233,13 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
 
   return (
     <Box sx={{
-      height: track.height, position: 'relative',
+      height: containerHeight, position: 'relative',
       borderBottom: '1px solid rgba(255,255,255,0.06)',
-      opacity: isDimmed ? 0.2 : track.muted ? 0.5 : 1,
-      pointerEvents: track.locked || track.muted ? 'none' : isDimmed ? 'none' : 'auto',
+      opacity: !track.visible ? 0 : isDimmed ? 0.2 : track.muted ? 0.5 : 1,
+      pointerEvents: !track.visible ? 'none' : track.locked || track.muted ? 'none' : isDimmed ? 'none' : 'auto',
       overflow: 'hidden',
     }}>
-      {renderContent()}
+      {track.visible ? renderContent() : null}
       {track.locked && (
         <Box sx={{
           position: 'absolute', inset: 0, bgcolor: 'rgba(0,0,0,0.15)', zIndex: 5,

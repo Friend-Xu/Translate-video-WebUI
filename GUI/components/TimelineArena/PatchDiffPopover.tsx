@@ -13,9 +13,17 @@ interface Props {
 
 export default function PatchDiffPopover({ event, anchorEl, onClose }: Props) {
   const addDraft = useAppStore(s => s.addDraft)
+  const pendingDrafts = useAppStore(s => s.pendingDrafts)
   const open = Boolean(anchorEl) && event !== null && event.visualState.hasAiSuggestion
 
   if (!event) return null
+
+  // Find AI suggestion content from drafts targeting this event
+  const aiDrafts = Array.from(pendingDrafts.values())
+    .filter(d => d.eventId === event.id && d.opcode === 'AI_SUGGEST')
+  const latestDraft = aiDrafts[aiDrafts.length - 1]
+  const suggestion = (latestDraft?.payload as any)?.suggestion || event.text
+  const hasError = (latestDraft?.payload as any)?.error
 
   const handleApply = () => {
     addDraft({
@@ -76,10 +84,10 @@ export default function PatchDiffPopover({ event, anchorEl, onClose }: Props) {
         </Box>
         <Box sx={{ flex: 1, p: 1, borderRadius: 1, bgcolor: 'rgba(255,152,0,0.1)', border: '1px solid rgba(255,152,0,0.2)' }}>
           <Typography variant="caption" color="warning.main" sx={{ display: 'block', mb: 0.5 }}>
-            建议译文
+            {hasError ? '请求失败' : '建议译文'}
           </Typography>
-          <Typography variant="body2" sx={{ fontSize: '0.72rem', color: 'warning.light' }}>
-            {event.text}
+          <Typography variant="body2" sx={{ fontSize: '0.72rem', color: hasError ? 'error.light' : 'warning.light' }}>
+            {suggestion}
           </Typography>
         </Box>
       </Box>

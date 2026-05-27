@@ -1,3 +1,4 @@
+import { useRef, useCallback, useState, useMemo } from 'react'
 import { Box } from '@mui/material'
 import { useAppStore } from '../../store/useAppStore'
 import type { TimelineCoordAPI } from '../../hooks/useTimelineCoordinates'
@@ -5,6 +6,8 @@ import type { EventViewModel, WaveformData, TrackWaveformData } from '../../type
 import TimeRuler from './TimeRuler'
 import TrackHeader from './TrackHeader'
 import TrackLayer from './TrackLayer'
+
+const HEADER_W = 120
 
 interface Props {
   events: EventViewModel[]
@@ -22,36 +25,95 @@ interface Props {
 export default function TrackSystem({ events, totalDuration, canvasWidth, coord, waveformData, ttsWaveforms, dimmedEventIds, onEventClick, onEventDblClick, onEventContextMenu }: Props) {
   const tracks = useAppStore(s => s.tracks)
   const playheadPosition = useAppStore(s => s.playheadPosition)
-  const toggleTrackVisibility = useAppStore(s => s.toggleTrackVisibility)
-  const toggleTrackLock = useAppStore(s => s.toggleTrackLock)
-  const toggleTrackSolo = useAppStore(s => s.toggleTrackSolo)
-  const toggleTrackMute = useAppStore(s => s.toggleTrackMute)
+  const setPlayhead = useAppStore(s => s.setPlayhead)
+  const [scrubTime, setScrubTime] = useState<number | null>(null)
 
-  const visibleTracks = tracks.filter(t => t.visible)
+  const trackAreaRef = useRef<HTMLDivElement | null>(null)
 
   const playheadX = coord.timeToPixel(playheadPosition)
 
+  // Semantic markers from events
+  const markers = useMemo(() => {
+    const result: Array<{ time: number; label: string; color: string }> = []
+    for (const evt of events) {
+      if (evt.confidence < 0.5) {
+        result.push({ time: evt.start, label: `低置信度: ${evt.confidence.toFixed(2)}`, color: '#F44336' })
+      } else if (evt.confidence < 0.7) {
+        result.push({ time: evt.start, label: `中置信度: ${evt.confidence.toFixed(2)}`, color: '#FF9800' })
+      }
+      if (evt.visualState?.hasAiSuggestion) {
+        result.push({ time: evt.start, label: 'AI 建议', color: '#FFEB3B' })
+      }
+      if (evt.visualState?.hasPatches) {
+        result.push({ time: evt.start, label: '有补丁', color: '#4CAF50' })
+      }
+      if (evt.end - evt.start > 8) {
+        result.push({ time: evt.start, label: '超长段', color: '#9C27B0' })
+      }
+    }
+    return result
+  }, [events])
+
+  // Playhead drag
+  const handlePlayheadMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const rect = trackAreaRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const contentLeft = rect.left + HEADER_W
+
+    const onMove = (ev: MouseEvent) => {
+      const x = ev.clientX - contentLeft
+      const t = Math.max(0, Math.min(totalDuration, coord.pixelToTime(x)))
+      setPlayhead(t)
+    }
+
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [coord, totalDuration, setPlayhead])
+
+  // Time ruler click to seek
+  const handleRulerClick = useCallback((time: number) => {
+    setPlayhead(time)
+    coord.centerOnTime(time)
+  }, [setPlayhead, coord])
+
+  // Time ruler hover — show scrub line
+  const handleRulerHover = useCallback((time: number | null) => {
+    setScrubTime(time)
+  }, [])
+
+  const scrubX = scrubTime != null ? coord.timeToPixel(scrubTime) : null
+
   return (
-    <Box sx={{ height: '100%', width: '100%', position: 'relative', overflow: 'hidden' }}>
-      {/* Time ruler + Track header row */}
-      <Box sx={{ display: 'flex', position: 'sticky', top: 0, zIndex: 15 }}>
-        <Box sx={{ width: 48, minWidth: 48, bgcolor: 'rgba(0,0,0,0.5)', borderBottom: '1px solid rgba(255,255,255,0.12)' }} />
-        <Box sx={{ flexGrow: 1, overflow: 'hidden' }}>
-          <TimeRuler coord={coord} totalDuration={totalDuration} canvasWidth={canvasWidth} />
+    <Box ref={trackAreaRef} sx={{ height: '100%', width: '100%', position: 'relative', overflow: 'hidden' }}>
+      {/* Time ruler row */}
+      <Box sx={{ display: 'flex', flexShrink: 0 }}>
+        <Box sx={{ width: HEADER_W, minWidth: HEADER_W, bgcolor: '#1e1e1e', borderBottom: '1px solid rgba(255,255,255,0.08)' }} />
+        <Box sx={{ flexGrow: 1 }}>
+          <TimeRuler
+            coord={coord}
+            totalDuration={totalDuration}
+            canvasWidth={canvasWidth}
+            onClick={handleRulerClick}
+            onHover={handleRulerHover}
+            scrubX={scrubX}
+            markers={markers}
+            onMarkerClick={(t) => setPlayhead(t)}
+          />
         </Box>
       </Box>
 
       {/* Track rows */}
       <Box sx={{ display: 'flex', overflow: 'hidden' }}>
-        <TrackHeader
-          tracks={visibleTracks}
-          onToggleVisibility={toggleTrackVisibility}
-          onToggleLock={toggleTrackLock}
-          onToggleSolo={toggleTrackSolo}
-          onToggleMute={toggleTrackMute}
-        />
+        <TrackHeader />
         <Box sx={{ flexGrow: 1, overflow: 'hidden' }}>
-          {visibleTracks.map(track => (
+          {tracks.map(track => (
             <TrackLayer
               key={track.id}
               track={track}
@@ -70,14 +132,34 @@ export default function TrackSystem({ events, totalDuration, canvasWidth, coord,
         </Box>
       </Box>
 
-      {/* Playhead line — spans all tracks */}
-      {playheadX >= 0 && playheadX <= canvasWidth && (
+      {/* Playhead — draggable handle + line */}
+      <Box sx={{
+        position: 'absolute', top: 0, bottom: 0,
+        left: HEADER_W + playheadX,
+        width: 0, zIndex: 25, pointerEvents: 'none',
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+      }}>
+        {/* Drag handle — triangle */}
+        <Box
+          onMouseDown={handlePlayheadMouseDown}
+          sx={{
+            width: 0, height: 0,
+            borderLeft: '7px solid transparent',
+            borderRight: '7px solid transparent',
+            borderTop: '10px solid #FF5252',
+            cursor: 'col-resize',
+            pointerEvents: 'auto',
+            filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.5))',
+          }}
+        />
+        {/* Vertical line */}
         <Box sx={{
-          position: 'absolute', top: 22, left: 48 + playheadX, bottom: 0,
-          width: 2, bgcolor: '#FF5252', zIndex: 20, pointerEvents: 'none',
+          width: 2,
+          flex: 1,
+          bgcolor: '#FF5252',
           boxShadow: '0 0 6px rgba(255,82,82,0.6)',
         }} />
-      )}
+      </Box>
     </Box>
   )
 }

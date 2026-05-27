@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import {
   Box, Typography, Button, Card, CardContent, CardActionArea,
   Chip, Divider, LinearProgress, Grid, Stepper, Step, StepLabel,
-  Select, MenuItem, FormControl, InputLabel,
+  Select, MenuItem, FormControl, InputLabel, Switch, FormControlLabel,
   Accordion, AccordionSummary, AccordionDetails,
 } from '@mui/material'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMoreRounded'
@@ -18,11 +18,14 @@ import PlayArrowRounded from '@mui/icons-material/PlayArrowRounded'
 import StopRounded from '@mui/icons-material/StopRounded'
 import OpenInNewRounded from '@mui/icons-material/OpenInNewRounded'
 import VideoFileRounded from '@mui/icons-material/VideoFileRounded'
+import SettingsIcon from '@mui/icons-material/SettingsRounded'
 import { useAppStore } from '../store/useAppStore'
 import { usePipeline } from '../hooks/usePipeline'
 import { useSSE } from '../hooks/useSSE'
-import type { WorkflowPreset, WorkspaceSummary } from '../types'
+import { ApiConfigDialog } from './ApiConfigDialog'
+import type { WorkflowPreset, WorkspaceSummary, PipelineConfig } from '../types'
 import type { LogEntry } from '../types'
+import { DEFAULT_CONFIG } from '../types'
 
 type Phase = 'hub' | 'config' | 'review' | 'running' | 'done'
 
@@ -69,6 +72,20 @@ export default function ProjectHubPage() {
   const [targetLang, setTargetLang] = useState('zh')
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [videoInfo, setVideoInfo] = useState<{ duration: number; resolution: string } | null>(null)
+
+  // Advanced config state
+  const [engine, setEngine] = useState('edge')
+  const [asrModel, setAsrModel] = useState('turbo')
+  const [device, setDevice] = useState('cuda')
+  const [computeType, setComputeType] = useState('float16')
+  const [skipDemucs, setSkipDemucs] = useState(false)
+  const [skipExtract, setSkipExtract] = useState(false)
+  const [skipTranslate, setSkipTranslate] = useState(false)
+  const [skipTts, setSkipTts] = useState(false)
+  const [skipSemanticValidation, setSkipSemanticValidation] = useState(false)
+  const [skipNaturalnessCheck, setSkipNaturalnessCheck] = useState(false)
+  const [apiDialogOpen, setApiDialogOpen] = useState(false)
+  const [pipelineConfig, setPipelineConfig] = useState<PipelineConfig>(DEFAULT_CONFIG)
 
   const { status, logs, appendLog, cancelPipeline } = usePipeline()
 
@@ -133,17 +150,34 @@ export default function ProjectHubPage() {
     }
   }, [])
 
+  // Apply preset config defaults to wizard state
+  const applyPresetDefaults = useCallback((presetId: string) => {
+    const preset = workflowPresets.find(p => p.id === presetId)
+    const d = preset?.configDefaults || {}
+    if (typeof d.engine === 'string') setEngine(d.engine)
+    if (typeof d.model === 'string') setAsrModel(d.model)
+    if (typeof d.device === 'string') setDevice(d.device)
+    if (typeof d.compute_type === 'string') setComputeType(d.compute_type)
+    setSkipDemucs(!!d.skip_demucs)
+    setSkipExtract(!!d.skip_extract)
+    setSkipTranslate(!!d.skip_translate)
+    setSkipTts(!!d.skip_tts)
+    setSkipSemanticValidation(!!d.skip_semantic_validation)
+    setSkipNaturalnessCheck(!!d.skip_naturalness_check)
+  }, [workflowPresets])
+
   // Create workspace and enter config phase
   const handleCreateRuntime = useCallback(async (presetId: string) => {
     if (!selectedVideo) return
     setStarting(true)
     setSelectedPresetId(presetId)
+    applyPresetDefaults(presetId)
     try {
       await createWorkspace(selectedVideo.path, presetId)
       setPhase('config')
     } catch { /* error in store */ }
     finally { setStarting(false) }
-  }, [selectedVideo, createWorkspace])
+  }, [selectedVideo, createWorkspace, applyPresetDefaults])
 
   // Start bootstrap pipeline
   const handleStartBootstrap = useCallback(async () => {
@@ -154,7 +188,21 @@ export default function ProjectHubPage() {
       const res = await fetch('/api/pipeline/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ video_path: videoPath, lang, target_lang: targetLang }),
+        body: JSON.stringify({
+          video_path: videoPath,
+          lang,
+          target_lang: targetLang,
+          engine,
+          model: asrModel,
+          device,
+          compute_type: computeType,
+          skip_demucs: skipDemucs,
+          skip_extract: skipExtract,
+          skip_translate: skipTranslate,
+          skip_tts: skipTts,
+          skip_semantic_validation: skipSemanticValidation,
+          skip_naturalness_check: skipNaturalnessCheck,
+        }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
@@ -164,7 +212,7 @@ export default function ProjectHubPage() {
       appendLog({ _id: Date.now(), level: 'ERROR', message: `启动失败: ${e}`, timestamp: new Date().toISOString() } as LogEntry)
       setPhase('review')
     }
-  }, [workspace, manifest?.video_path, lang, targetLang, appendLog])
+  }, [workspace, manifest?.video_path, lang, targetLang, engine, asrModel, device, computeType, skipDemucs, skipExtract, skipTranslate, skipTts, skipSemanticValidation, skipNaturalnessCheck, appendLog])
 
   const handleCancel = useCallback(() => {
     cancelPipeline()
@@ -411,13 +459,80 @@ export default function ProjectHubPage() {
               <Accordion expanded={showAdvanced} onChange={() => setShowAdvanced(!showAdvanced)}>
                 <AccordionSummary expandIcon={<ExpandMoreIcon />}><Typography variant="subtitle2">高级配置</Typography></AccordionSummary>
                 <AccordionDetails>
-                  <Typography variant="body2" color="text.secondary" gutterBottom>ASR 模型、TTS 引擎、字幕样式、术语表等高级选项将在后续版本中开放。</Typography>
-                  {selectedPreset && (
-                    <Box sx={{ mt: 1 }}>
-                      <Typography variant="caption" fontWeight={600}>当前 Preset 默认配置:</Typography>
-                      <Box component="pre" sx={{ fontSize: '0.65rem', bgcolor: 'background.default', p: 1, borderRadius: 1, mt: 0.5, overflow: 'auto', maxHeight: 200 }}>{JSON.stringify(selectedPreset.configDefaults, null, 2)}</Box>
-                    </Box>
-                  )}
+                  <Grid container spacing={2}>
+                    <Grid size={{ xs: 6, sm: 3 }}>
+                      <FormControl size="small" fullWidth>
+                        <InputLabel>TTS 引擎</InputLabel>
+                        <Select value={engine} label="TTS 引擎" onChange={e => setEngine(e.target.value)}>
+                          <MenuItem value="edge">Edge TTS</MenuItem>
+                          <MenuItem value="chattts">ChatTTS</MenuItem>
+                          <MenuItem value="cosyvoice">CosyVoice</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 6, sm: 3 }}>
+                      <FormControl size="small" fullWidth>
+                        <InputLabel>ASR 模型</InputLabel>
+                        <Select value={asrModel} label="ASR 模型" onChange={e => setAsrModel(e.target.value)}>
+                          <MenuItem value="tiny">tiny</MenuItem>
+                          <MenuItem value="base">base</MenuItem>
+                          <MenuItem value="small">small</MenuItem>
+                          <MenuItem value="medium">medium</MenuItem>
+                          <MenuItem value="turbo">turbo</MenuItem>
+                          <MenuItem value="large-v2">large-v2</MenuItem>
+                          <MenuItem value="large-v3">large-v3</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 6, sm: 3 }}>
+                      <FormControl size="small" fullWidth>
+                        <InputLabel>设备</InputLabel>
+                        <Select value={device} label="设备" onChange={e => setDevice(e.target.value)}>
+                          <MenuItem value="cuda">GPU (CUDA)</MenuItem>
+                          <MenuItem value="cpu">CPU</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid size={{ xs: 6, sm: 3 }}>
+                      <FormControl size="small" fullWidth>
+                        <InputLabel>计算精度</InputLabel>
+                        <Select value={computeType} label="计算精度" onChange={e => setComputeType(e.target.value)}>
+                          <MenuItem value="float16">float16</MenuItem>
+                          <MenuItem value="int8">int8</MenuItem>
+                          <MenuItem value="float32">float32</MenuItem>
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                  </Grid>
+
+                  <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>Skip Stages</Typography>
+                  <Grid container spacing={0.5}>
+                    {[
+                      { key: 'skip_demucs', label: '跳过人声分离', val: skipDemucs, set: setSkipDemucs },
+                      { key: 'skip_extract', label: '跳过字幕提取', val: skipExtract, set: setSkipExtract },
+                      { key: 'skip_translate', label: '跳过翻译', val: skipTranslate, set: setSkipTranslate },
+                      { key: 'skip_tts', label: '跳过 TTS 合成', val: skipTts, set: setSkipTts },
+                      { key: 'skip_semantic_validation', label: '跳过语义校验', val: skipSemanticValidation, set: setSkipSemanticValidation },
+                      { key: 'skip_naturalness_check', label: '跳过自然度检查', val: skipNaturalnessCheck, set: setSkipNaturalnessCheck },
+                    ].map(({ key, label, val, set }) => (
+                      <Grid key={key} size={{ xs: 6, sm: 4 }}>
+                        <FormControlLabel
+                          control={<Switch size="small" checked={val} onChange={e => set(e.target.checked)} />}
+                          label={<Typography variant="caption">{label}</Typography>}
+                          sx={{ m: 0 }}
+                        />
+                      </Grid>
+                    ))}
+                  </Grid>
+
+                  <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                    <Button
+                      size="small" variant="outlined" startIcon={<SettingsIcon />}
+                      onClick={() => setApiDialogOpen(true)}
+                    >
+                      配置翻译 API（模型、Key、提示词）
+                    </Button>
+                  </Box>
                 </AccordionDetails>
               </Accordion>
 
@@ -495,6 +610,14 @@ export default function ProjectHubPage() {
           )}
         </Card>
       )}
+
+      {/* API Config Dialog */}
+      <ApiConfigDialog
+        open={apiDialogOpen}
+        onClose={() => setApiDialogOpen(false)}
+        config={pipelineConfig}
+        onConfigChange={(key: keyof PipelineConfig, value: PipelineConfig[typeof key]) => setPipelineConfig(prev => ({ ...prev, [key]: value }))}
+      />
     </Box>
   )
 }

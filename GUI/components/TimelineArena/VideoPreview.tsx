@@ -8,6 +8,7 @@ interface Props {
   videoSrc: string | null
   currentTime: number
   events: EventViewModel[]
+  isPlaying?: boolean
   onTimeUpdate?: (time: number) => void
   onDurationChange?: (duration: number) => void
 }
@@ -16,6 +17,7 @@ export default function VideoPreview({
   videoSrc,
   currentTime,
   events,
+  isPlaying,
   onTimeUpdate,
   onDurationChange,
 }: Props) {
@@ -23,13 +25,30 @@ export default function VideoPreview({
   const [collapsed, setCollapsed] = useState(false)
   const [duration, setDuration] = useState(0)
 
+  // Keep a ref with the latest currentTime so play effect can read it
+  // without adding currentTime to its deps (which would re-fire on every timeupdate)
+  const currentTimeRef = useRef(currentTime)
+  currentTimeRef.current = currentTime
+
+  // Control video playback — seek to currentTime before playing
   useEffect(() => {
     const video = videoRef.current
-    if (!video || video.seeking) return
-    if (Math.abs(video.currentTime - currentTime) > 0.5) {
+    if (!video) return
+    if (isPlaying) {
+      video.currentTime = currentTimeRef.current
+      video.play().catch(() => {})
+    } else {
+      video.pause()
+    }
+  }, [isPlaying])
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !isPlaying) return
+    if (Math.abs(video.currentTime - currentTime) > 0.3) {
       video.currentTime = currentTime
     }
-  }, [currentTime])
+  }, [currentTime, isPlaying])
 
   const onLoadedMetadata = useCallback(() => {
     const d = videoRef.current?.duration || 0
@@ -77,7 +96,6 @@ export default function VideoPreview({
               onLoadedMetadata={onLoadedMetadata}
               onTimeUpdate={onVideoTimeUpdate}
               style={{ width: '100%', maxHeight: 252, display: 'block', objectFit: 'contain' }}
-              muted
             />
           ) : (
             <Box sx={{

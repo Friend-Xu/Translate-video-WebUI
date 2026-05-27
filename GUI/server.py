@@ -766,6 +766,82 @@ def _update_workspace_runtime_state(workspace_path: str, state: RuntimeState) ->
         pass
 
 
+def _persist_config_patch(workspace: str, patch_entry: dict) -> None:
+    """Append a config patch to the workspace patch log file."""
+    if not workspace:
+        return
+    log_path = Path(workspace) / "01_extract" / "timeline_patches.json"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if log_path.is_file():
+            with open(log_path, "r", encoding="utf-8") as f:
+                patches = json.load(f)
+        else:
+            patches = []
+        patches.append(patch_entry)
+        with open(log_path, "w", encoding="utf-8") as f:
+            json.dump(patches, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _load_config_overrides(workspace: str, event_id: str) -> dict[str, dict]:
+    """Load per-slot config overrides for an event from the patch log.
+
+    Returns dict[slot_name, config_dict] where config_dict contains
+    the merged override fields for that slot.
+    """
+    if not workspace:
+        return {}
+    log_path = Path(workspace) / "01_extract" / "timeline_patches.json"
+    if not log_path.is_file():
+        return {}
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            patches = json.load(f)
+    except Exception:
+        return {}
+
+    overrides: dict[str, dict] = {}
+    for p in patches:
+        if p.get("target_id") != event_id:
+            continue
+        op = p.get("op", "")
+        val = p.get("value", {})
+        slot = val.get("slot", "")
+        if not slot:
+            continue
+        if op in ("override_config", "OVERRIDE_CONFIG"):
+            partial = val.get("partial_config", {})
+            if slot not in overrides:
+                overrides[slot] = {}
+            # deep merge into existing overrides for this slot
+            _deep_merge_override(overrides[slot], partial)
+        elif op in ("set_config", "SET_CONFIG"):
+            block = val.get("config_block", {})
+            if slot not in overrides:
+                overrides[slot] = {}
+            _deep_merge_override(overrides[slot], block)
+        elif op in ("reset_config", "RESET_CONFIG"):
+            fields = val.get("fields") or []
+            if slot in overrides and fields:
+                for f in fields:
+                    overrides[slot].pop(f, None)
+            elif slot in overrides and not fields:
+                overrides[slot] = {}
+
+    return overrides
+
+
+def _deep_merge_override(base: dict, override: dict) -> None:
+    """In-place deep merge of override into base."""
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _deep_merge_override(base[k], v)
+        else:
+            base[k] = v
+
+
 # ---------------------------------------------------------------------------
 # Helper functions for pipeline launch
 # ---------------------------------------------------------------------------
@@ -1650,10 +1726,27 @@ async def project_manifest_resolve(workspace: str) -> dict:
     # 优先 reviewed_srt，否则 machine_srt
     translated_srt = reviewed_srt or machine_srt
 
+    # 获取视频时长（从 ffprobe）
+    video_duration = 0
+    video_path = manifest.get("video_path", "")
+    if video_path and os.path.isfile(video_path):
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode == 0:
+                video_duration = float(result.stdout.strip())
+        except Exception:
+            pass
+
     return {
         "manifest": manifest,
-        "video_path": manifest.get("video_path", ""),
+        "video_path": video_path,
         "workspace": os.path.normpath(workspace_dir),
+        "video_duration": video_duration,
         "paths": {
             "source_srt": source_srt,
             "translated_srt": translated_srt,
@@ -3388,6 +3481,71 @@ class SpeakerLoadRequest(BaseModel):
     workspace: str = ""
 
 
+def _tl_has_empty_timeline(tl_path: str) -> bool:
+    """Check if timeline.json exists but has an empty 'timeline' array."""
+    try:
+        with open(tl_path, "r", encoding="utf-8") as f:
+            tl = json.load(f)
+        return len(tl.get("timeline", [])) == 0
+    except Exception:
+        return True
+
+
+def _build_inspector_from_transcript(result: dict, segments: list,
+                                      patch_log_data: list, patches_data: dict) -> None:
+    """Build inspector_data and speaker_lanes from transcript.json segments.
+
+    Used as fallback when timeline.json is missing or empty, so the frontend
+    still shows ASR segments even if timeline fusion (NODE 3.75) failed.
+    """
+    SPEAKER_COLORS = ["#4CAF50", "#2196F3", "#FF9800", "#E91E63", "#9C27B0", "#00BCD4"]
+    speaker_segments: dict[str, list] = {}
+    for i, seg in enumerate(segments):
+        spk = seg.get("speaker") or "UNKNOWN"
+        seg_id = seg.get("id") or f"seg_{i+1:03d}"
+        entry = {
+            "id": seg_id,
+            "start": seg.get("start", 0),
+            "end": seg.get("end", 0),
+            "text": seg.get("text", ""),
+            "translation": seg.get("translation", ""),
+            "overlap": seg.get("overlap", False),
+            "words": seg.get("words", []),
+        }
+        if spk not in speaker_segments:
+            speaker_segments[spk] = []
+        speaker_segments[spk].append(entry)
+
+    lanes = []
+    for i, (spk, segs) in enumerate(sorted(speaker_segments.items())):
+        lanes.append({
+            "speaker": spk,
+            "display_name": spk,
+            "voice_id": "",
+            "color": SPEAKER_COLORS[i % len(SPEAKER_COLORS)],
+            "segments": segs,
+            "segment_count": len(segs),
+            "total_duration": round(sum(s["end"] - s["start"] for s in segs), 1),
+        })
+    result["speaker_lanes"] = lanes
+
+    inspector_data: dict = {}
+    for lane in lanes:
+        for seg in lane["segments"]:
+            inspector_data[seg["id"]] = {
+                "id": seg["id"], "start": seg["start"], "end": seg["end"],
+                "speaker": lane["speaker"], "displayName": lane["display_name"],
+                "text": seg["text"], "translation": seg.get("translation", ""),
+                "source": "asr", "confidence": 1.0,
+                "patches": [], "passTrace": [],
+                "visualState": {
+                    "hasPatches": False, "hasAiSuggestion": False,
+                    "isSelected": False, "isMultiSelected": False,
+                },
+            }
+    result["inspector_data"] = inspector_data
+
+
 @app.post("/api/speaker/diarization/load")
 async def speaker_load(req: SpeakerLoadRequest):
     """加载 Timeline IR + AI Patch 建议。
@@ -3412,7 +3570,9 @@ async def speaker_load(req: SpeakerLoadRequest):
     }
 
     tl_path = os.path.join(extract_dir, "timeline.json")
-    if not os.path.isfile(tl_path):
+    has_timeline = os.path.isfile(tl_path)
+
+    if not has_timeline:
         # 回退到旧 speaker_timeline.json
         stl_path = os.path.join(extract_dir, "speaker_timeline.json")
         if os.path.isfile(stl_path):
@@ -3420,6 +3580,24 @@ async def speaker_load(req: SpeakerLoadRequest):
                 stl = _json.load(f)
             result["timeline"] = stl.get("turns", [])
             result["speakers"] = stl.get("speakers", [])
+
+    # ── Build inspector_data from transcript.json as fallback ──
+    # This ensures the frontend always has events even if timeline fusion (NODE 3.75) failed.
+    if not has_timeline or (has_timeline and _tl_has_empty_timeline(tl_path)):
+        tj_path = os.path.join(extract_dir, "transcript.json")
+        if os.path.isfile(tj_path):
+            logger.info("speaker_load: timeline.json missing/empty, falling back to transcript.json")
+            with open(tj_path, "r", encoding="utf-8") as f:
+                tj = _json.load(f)
+            segments = tj.get("segments", [])
+            if segments:
+                _build_inspector_from_transcript(result, segments, result.get("patch_log", []),
+                                                  result.get("patches", {}))
+                return result
+        if not has_timeline:
+            return result
+
+    if not has_timeline:
         return result
 
     with open(tl_path, "r", encoding="utf-8") as f:
@@ -4070,6 +4248,97 @@ async def timeline_patch_log(workspace: str = ""):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── AI Suggestion API ─────────────────────────────────────────────
+
+class AiSuggestRequest(BaseModel):
+    event_id: str = ""
+    workspace: str = ""
+    source_text: str = ""
+    current_translation: str = ""
+    target_lang: str = "zh"
+
+
+class AiSuggestResponse(BaseModel):
+    suggestion: str
+    reasoning: str = ""
+    diff: dict = {}
+
+
+@app.post("/api/timeline/ai/suggest")
+async def timeline_ai_suggest(req: AiSuggestRequest):
+    """Generate AI improvement suggestion for a translated segment."""
+    if not req.source_text.strip():
+        raise HTTPException(status_code=400, detail="source_text is empty")
+    if not req.current_translation.strip():
+        raise HTTPException(status_code=400, detail="current_translation is empty")
+
+    settings = load_settings()
+    pipeline_cfg = settings.get("pipeline", {})
+    api_type = pipeline_cfg.get("apiType") or pipeline_cfg.get("api_type") or "deepseek"
+    api_key = pipeline_cfg.get("apiKey") or pipeline_cfg.get("api_key") or ""
+    api_base = pipeline_cfg.get("apiBaseUrl") or pipeline_cfg.get("api_base_url") or ""
+    api_model = pipeline_cfg.get("apiModel") or pipeline_cfg.get("api_model") or "deepseek-chat"
+
+    if not api_key:
+        raise HTTPException(status_code=400, detail="API key not configured. Please set it in Settings → API Config.")
+
+    provider_base_urls = {
+        "deepseek": "https://api.deepseek.com",
+        "kimi": "https://api.moonshot.ai/v1",
+        "xiaomi": "https://api.xiaomimimo.com/v1",
+    }
+    base_url = api_base or provider_base_urls.get(api_type, "https://api.deepseek.com")
+    url = f"{base_url.rstrip('/')}/v1/chat/completions"
+
+    system_prompt = (
+        "You are an expert translation reviewer. Given a source text and its current translation, "
+        "suggest an improved translation that is more natural, fluent, and accurate. "
+        "Provide your response in JSON format with three fields: "
+        '"suggestion" (the improved translation text), '
+        '"reasoning" (brief explanation of what was improved), '
+        '"diff" (object with "before" and "after" keys). '
+        "Only return valid JSON, no other text."
+    )
+    user_prompt = (
+        f"Source text: {req.source_text}\n"
+        f"Current translation: {req.current_translation}\n"
+        f"Target language: {req.target_lang}\n\n"
+        f"Please suggest an improved translation."
+    )
+
+    try:
+        import requests
+        resp = requests.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": api_model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "temperature": 0.3,
+                "max_tokens": 2000,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        result = json.loads(content)
+        return AiSuggestResponse(
+            suggestion=result.get("suggestion", ""),
+            reasoning=result.get("reasoning", ""),
+            diff=result.get("diff", {"before": req.current_translation, "after": result.get("suggestion", "")}),
+        )
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"LLM API error: {str(e)}")
+    except (json.JSONDecodeError, KeyError, IndexError) as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse LLM response: {str(e)}")
 
 
 # ── Config Parameter API (v3.0 — 定稿 §11.2) ─────────────────────────────────
@@ -4111,6 +4380,16 @@ async def timeline_config_apply(req: ConfigApplyRequest):
         else:
             raise HTTPException(status_code=400, detail=f"Unknown op: {req.op}")
 
+        # Persist patch to workspace patch log
+        _persist_config_patch(req.workspace, {
+            "id": patch.id,
+            "op": patch.op.value,
+            "target_id": patch.target_id,
+            "value": patch.value,
+            "timestamp": patch.timestamp,
+            "author": patch.author,
+        })
+
         return {
             "status": "patch_created",
             "patch": {
@@ -4143,26 +4422,82 @@ async def timeline_config_batch(req: ConfigBatchRequest):
 
 @app.get("/api/timeline/config/resolve")
 async def timeline_config_resolve(event_id: str, slot: str, workspace: str = ""):
-    """Resolve the effective config for an event slot (Event > Speaker > Global)."""
+    """Resolve the effective config for an event slot (Event > Speaker > Global).
+
+    Reads global defaults from GlobalConfig, then merges speaker-level and
+    event-level overrides from the workspace patch log.
+    """
     try:
-        from core.runtime.config_resolver import ConfigResolver
+        from core.runtime.config_resolver import ConfigResolver, deep_merge
         from core.config.global_config import GlobalConfig
 
         gc = GlobalConfig()
-        resolver = ConfigResolver(gc)
-
-        # For now, return global defaults as baseline
         resolved = gc.get_slot_defaults(slot)
         inherited = "global"
+
+        if workspace and event_id:
+            # Layer 2: speaker-level overrides (from timeline.json speaker configs)
+            speaker_config = _load_speaker_config_for_event(workspace, event_id, slot)
+            if speaker_config:
+                deep_merge(resolved, speaker_config)
+                inherited = "speaker"
+
+            # Layer 3: event-level overrides (from timeline_patches.json)
+            event_overrides = _load_config_overrides(workspace, event_id)
+            if slot in event_overrides:
+                deep_merge(resolved, event_overrides[slot])
+                inherited = "event"
+
+            # Collect list of overridden fields for UI display
+            overrides_list = list(event_overrides.get(slot, {}).keys()) if slot in event_overrides else []
+
+            return {
+                "event_id": event_id,
+                "slot": slot,
+                "resolved": resolved,
+                "inherited_from": inherited,
+                "overrides": overrides_list,
+            }
 
         return {
             "event_id": event_id,
             "slot": slot,
             "resolved": resolved,
             "inherited_from": inherited,
+            "overrides": [],
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _load_speaker_config_for_event(workspace: str, event_id: str, slot: str) -> dict:
+    """Load speaker-level config for an event from timeline.json."""
+    import json as _json
+    tl_path = Path(workspace) / "01_extract" / "timeline.json"
+    if not tl_path.is_file():
+        return {}
+    try:
+        with open(tl_path, "r", encoding="utf-8") as f:
+            tl = _json.load(f)
+    except Exception:
+        return {}
+
+    # Find the event to get its speaker
+    speaker_id = None
+    for seg in tl.get("timeline", []):
+        if seg.get("id") == event_id:
+            speaker_id = seg.get("speaker", "")
+            break
+
+    if not speaker_id:
+        return {}
+
+    # Look up speaker config
+    for spk in tl.get("speakers", []):
+        if spk.get("id") == speaker_id or spk.get("speaker") == speaker_id:
+            return spk.get("config", {}).get(slot, {})
+
+    return {}
 
 @app.get("/api/config/slots")
 async def config_slots_list():
