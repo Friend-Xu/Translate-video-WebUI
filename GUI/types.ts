@@ -862,6 +862,11 @@ export interface SlotSchemaInfo {
 export interface WorkspaceManifest {
   version: number
   video_path: string
+  workflow_preset?: string
+  passes?: string[]
+  runtime_state?: string
+  lang?: string
+  target_lang?: string
   created_at: string
   updated_at: string
   pipeline: Record<string, 'completed' | 'running' | 'failed'>
@@ -873,10 +878,37 @@ export interface WorkspaceSummary {
   path: string
   name: string
   updatedAt: string
+  runtimeState: string
   pipelineStatus: string
   videoPath: string
+  videoName?: string
 }
 
 /** Data source mode */
 export type DataSource = 'mock' | 'workspace'
+
+// ── Workflow Preset + Runtime State (Phase 0-1) ──────────────────────────────
+
+/** Workflow Preset — a named Pass DAG template for Timeline bootstrap */
+export interface WorkflowPreset {
+  id: string
+  name: string
+  nameEn: string
+  description: string
+  icon: string
+  passes: string[]
+  tags: string[]
+  configDefaults: Record<string, unknown>
+}
+
+/** Workspace detail returned by GET /api/workspace/detail */
+export interface WorkspaceDetail {
+  path: string
+  manifest: Record<string, unknown>
+  runtimeState: string
+  diskUsageBytes: number
+  fileCount: number
+  files: Array<{ name: string; relativePath: string; size: number }>
+  failureReason: string
+}
 

@@ -12,6 +12,9 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircleRounded'
 import { useAppStore } from '../../store/useAppStore'
 import { LAYOUT_PRESETS } from '../../types/modes'
 import DiagnosisCard from '../DiagnosisCard'
+import InspectorPanel from '../InspectorPanel'
+import { useConfigInspector } from '../../hooks/useConfigInspector'
+import SpeakerInspectorTab from './SpeakerInspectorTab'
 import { MOCK_ISSUES } from '../../mocks/mockData'
 import type { EventViewModel } from '../../types'
 import type { InspectorTab, PatchDraft } from '../../types/modes'
@@ -37,6 +40,9 @@ export default function IRInspector({ event }: Props) {
   const [editText, setEditText] = useState('')
   const [editTranslation, setEditTranslation] = useState('')
   const [editing, setEditing] = useState(false)
+
+  // Config inspector hook
+  const configInspector = useConfigInspector(event?.id ?? null)
 
   const handleStartEdit = useCallback(() => {
     if (!event) return
@@ -182,36 +188,7 @@ export default function IRInspector({ event }: Props) {
 
         {/* Speaker tab */}
         {activeTab === 'speaker' && (
-          <Box>
-            <Typography variant="subtitle2" gutterBottom>说话人信息</Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <Box>
-                <Typography variant="caption" color="text.secondary">说话人 ID</Typography>
-                <Typography variant="body2">{event.speaker || '(未知)'}</Typography>
-              </Box>
-              <Box>
-                <Typography variant="caption" color="text.secondary">显示名称</Typography>
-                <Typography variant="body2">{event.displayName || '(未命名)'}</Typography>
-              </Box>
-              <Box>
-                <Typography variant="caption" color="text.secondary">ASR 置信度</Typography>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <Typography variant="body2">{event.confidence.toFixed(2)}</Typography>
-                  <Chip
-                    label={event.confidence < 0.7 ? '低' : event.confidence < 0.85 ? '中' : '高'}
-                    size="small"
-                    color={event.confidence < 0.7 ? 'error' : event.confidence < 0.85 ? 'warning' : 'success'}
-                    sx={{ fontSize: '0.6rem', height: 18 }}
-                  />
-                </Box>
-              </Box>
-            </Box>
-            <Divider sx={{ my: 1.5 }} />
-            <Button size="small" variant="outlined" startIcon={<OpenInNewIcon />}
-              onClick={() => { setMode('speaker'); navigateToEvent(event.id, event.start, 'timeline') }}>
-              切换到 Speaker Review 模式
-            </Button>
-          </Box>
+          <SpeakerInspectorTab event={event} />
         )}
 
         {/* TTS tab */}
@@ -305,18 +282,17 @@ export default function IRInspector({ event }: Props) {
 
         {/* Config tab — slot-level parameter editor */}
         {activeTab === 'config' && (
-          <Box>
-            <Typography variant="subtitle2" gutterBottom>槽位参数 (Config)</Typography>
-            <Box sx={{ p: 1, borderRadius: 1, bgcolor: 'rgba(255,152,0,0.08)', border: '1px solid rgba(255,152,0,0.2)', mb: 1 }}>
-              <Typography variant="caption" color="text.primary">
-                {event.text?.slice(0, 80)}...
-              </Typography>
-            </Box>
-            <Typography variant="caption" color="text.disabled">
-              参数编辑器就绪。选择事件后可查看其槽位配置（audio/asr/speaker/translation/tts/emotion/review）。
-              ConfigResolver 三级合并 API 已就绪，InspectorPanel 组件已实现（218行），待完整 API 接线。
-            </Typography>
-          </Box>
+          <InspectorPanel
+            eventId={event.id}
+            config={configInspector.config}
+            inheritedFrom={configInspector.inheritedFrom}
+            overriddenFields={configInspector.overriddenFields}
+            loading={configInspector.loading}
+            onConfigChange={configInspector.handleConfigChange}
+            onResetField={configInspector.handleResetField}
+            onResetSlot={configInspector.handleResetSlot}
+            onPreviewTTS={configInspector.handlePreviewTTS}
+          />
         )}
       </Box>
     </Box>

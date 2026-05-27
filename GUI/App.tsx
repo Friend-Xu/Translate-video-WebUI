@@ -7,9 +7,9 @@ import GlobalBar from './components/GlobalBar/index'
 import EvidenceDock from './components/EvidenceDock/index'
 import NavRail from './components/NavRail/index'
 import TimelineArena from './components/TimelineArena/index'
+import ProjectHubPage from './components/ProjectHubPage'
 import IRInspector from './components/IRInspector/index'
 import OpsDashboard from './components/OpsDashboard'
-import SpeakerReviewView from './components/ModeViews/SpeakerReviewView'
 import PatchManagementView from './components/ModeViews/PatchManagementView'
 import ExportView from './components/ModeViews/ExportView'
 import CommandPalette from './components/CommandPalette'
@@ -135,6 +135,8 @@ export default function App() {
 
   const arenaContent = (() => {
     switch (mode) {
+      case 'hub':
+        return <ProjectHubPage />
       case 'batch':
         return (
           <OpsDashboard
@@ -148,8 +150,6 @@ export default function App() {
             onSkipCurrent={skipCurrent}
           />
         )
-      case 'speaker':
-        return <SpeakerReviewView events={events} totalDuration={totalDuration} />
       case 'patch':
         return <PatchManagementView events={events} />
       case 'export':

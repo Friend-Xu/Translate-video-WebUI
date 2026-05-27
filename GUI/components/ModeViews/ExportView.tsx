@@ -61,7 +61,7 @@ function computeReadiness(
     warnings.push({
       severity: 'warning',
       message: `${unboundSpeakers.length} 个声线未绑定: ${unboundSpeakers.slice(0, 3).join(', ')}`,
-      action: { label: '绑定声线', mode: 'speaker' },
+      action: { label: '绑定声线', mode: 'timeline' },
     })
   }
   if (failedBatchCount > 0) {

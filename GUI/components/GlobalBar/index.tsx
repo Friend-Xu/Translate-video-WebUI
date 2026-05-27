@@ -19,6 +19,7 @@ export default function GlobalBar({ projectName, workspace, cpuUsage, memUsage, 
   const selectedEventId = useAppStore(s => s.selectedEventId)
   const crossModeContext = useAppStore(s => s.crossModeContext)
   const setMode = useAppStore(s => s.setMode)
+  const toggleDockCollapsed = useAppStore(s => s.toggleDockCollapsed)
 
   const openCommandPalette = () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { ctrlKey: true, key: 'k', bubbles: true }))
@@ -82,7 +83,7 @@ export default function GlobalBar({ projectName, workspace, cpuUsage, memUsage, 
         <IconButton size="small" title="Task Queue" onClick={() => setMode('batch')}>
           <TaskIcon sx={{ fontSize: 18 }} />
         </IconButton>
-        <IconButton size="small" title="Settings" onClick={openCommandPalette}>
+        <IconButton size="small" title="Settings" onClick={toggleDockCollapsed}>
           <SettingsIcon sx={{ fontSize: 18 }} />
         </IconButton>
       </Box>

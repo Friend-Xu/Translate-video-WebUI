@@ -28,7 +28,6 @@ const LANE_COLORS = ['#2196F3', '#4CAF50', '#FF9800', '#9C27B0', '#00BCD4', '#E9
 export default function TrackLayer({ track, coord, events, totalDuration, canvasWidth, waveformData, ttsWaveforms, dimmedEventIds, onEventClick, onEventDblClick, onEventContextMenu }: Props) {
   const selectedEventIds = useAppStore(s => s.selectedEventIds)
   const speakerFocus = useAppStore(s => s.speakerFocus)
-  const mode = useAppStore(s => s.mode)
   const pendingDrafts = useAppStore(s => s.pendingDrafts)
   const appliedPatches = useAppStore(s => s.appliedPatches)
   const trackScrollLeft = useAppStore(s => s.trackScrollLeft)
@@ -38,6 +37,7 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
 
   const hasSoloTrack = tracks.some(t => t.solo)
   const isDimmed = hasSoloTrack && !track.solo
+  const timelineFocus = useAppStore(s => s.timelineFocus)
 
   // Compute virtual events at top level (hooks must not be conditional)
   const baseEvents = track.type === 'diff'
@@ -69,7 +69,7 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
               const laneIdx = evt.speaker === 'SPEAKER_00' ? 0 : evt.speaker === 'SPEAKER_01' ? 1 : 0
               const hasDraft = pendingDrafts.has(evt.id)
               const isSelected = selectedEventIds.includes(evt.id)
-              const dimmed = mode === 'speaker' && speakerFocus != null && evt.speaker !== (speakerFocus as any)?.speaker
+              const dimmed = timelineFocus === 'speaker' && speakerFocus != null && evt.speaker !== (speakerFocus as any)?.speaker
               const filtered = dimmedEventIds?.has(evt.id) ?? false
 
               return (
@@ -116,6 +116,7 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
             timeToPixel={(t: number) => coord.timeToPixel(t) + trackScrollLeft}
             pixelsPerSec={coord.pixelsPerSec}
             laneHeight={track.height}
+            expanded={timelineFocus === 'speaker'}
           />
         )
       }

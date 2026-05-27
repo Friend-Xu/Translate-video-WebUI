@@ -1,10 +1,12 @@
 import { Box, Typography, Divider } from '@mui/material'
 import TimelineIcon from '@mui/icons-material/TimelineRounded'
+import HomeIcon from '@mui/icons-material/HomeRounded'
 import SpeakerIcon from '@mui/icons-material/RecordVoiceOverRounded'
 import BuildIcon from '@mui/icons-material/BuildRounded'
 import QueueIcon from '@mui/icons-material/QueuePlayNextRounded'
 import ExportIcon from '@mui/icons-material/IosShareRounded'
 import SettingsIcon from '@mui/icons-material/SettingsRounded'
+import SearchIcon from '@mui/icons-material/SearchRounded'
 import LogIcon from '@mui/icons-material/ArticleRounded'
 import BugReportIcon from '@mui/icons-material/BugReportRounded'
 import ModelIcon from '@mui/icons-material/AccountTreeRounded'
@@ -13,6 +15,7 @@ import { useAppStore } from '../../store/useAppStore'
 import { ALL_MODES, MODE_META } from '../../types/modes'
 
 const CORE_ICONS: Record<string, React.ReactNode> = {
+  hub: <HomeIcon />,
   timeline: <TimelineIcon />,
   speaker: <SpeakerIcon />,
   patch: <BuildIcon />,
@@ -23,6 +26,8 @@ const CORE_ICONS: Record<string, React.ReactNode> = {
 export default function NavRail() {
   const mode = useAppStore(s => s.mode)
   const setMode = useAppStore(s => s.setMode)
+  const timelineFocus = useAppStore(s => s.timelineFocus)
+  const setTimelineFocus = useAppStore(s => s.setTimelineFocus)
   const selectedEventIds = useAppStore(s => s.selectedEventIds)
   const speakerFocus = useAppStore(s => s.speakerFocus)
   const pendingDrafts = useAppStore(s => s.pendingDrafts)
@@ -33,8 +38,8 @@ export default function NavRail() {
 
   const hasContext = (m: typeof ALL_MODES[number]) => {
     switch (m) {
+      case 'hub': return false
       case 'timeline': return selectedEventIds.length > 0
-      case 'speaker': return speakerFocus !== null
       case 'patch': return pendingDrafts.size > 0
       case 'batch': return Object.keys(localJobStatus).length > 0
       case 'export': return false
@@ -79,6 +84,32 @@ export default function NavRail() {
         </Box>
       ))}
 
+      {/* Speaker — shortcut to timeline + speaker focus */}
+      <Box onClick={() => setTimelineFocus('speaker')} sx={{
+        width: 48, height: 48, display: 'flex', flexDirection: 'column',
+        alignItems: 'center', justifyContent: 'center', borderRadius: 2,
+        cursor: 'pointer', gap: 0.25, position: 'relative',
+        bgcolor: timelineFocus === 'speaker' ? 'action.selected' : 'transparent',
+        color: timelineFocus === 'speaker' ? MODE_META.speaker.hexColor : 'text.secondary',
+        borderLeft: timelineFocus === 'speaker' ? '3px solid' : '3px solid transparent',
+        borderColor: timelineFocus === 'speaker' ? MODE_META.speaker.hexColor : 'transparent',
+        transition: 'all 0.15s ease',
+        '&:hover': { bgcolor: 'action.hover' },
+      }}>
+        <Box sx={{ fontSize: 20, lineHeight: 1 }}><SpeakerIcon /></Box>
+        <Typography sx={{ fontSize: '0.5rem', lineHeight: 1, textAlign: 'center' }}>
+          {MODE_META.speaker.label.split(' ')[0]}
+        </Typography>
+        {speakerFocus !== null && (
+          <Box sx={{
+            width: 6, height: 6, borderRadius: '50%',
+            bgcolor: MODE_META.speaker.hexColor,
+            opacity: timelineFocus === 'speaker' ? 1 : 0.5,
+            position: 'absolute', bottom: 2,
+          }} />
+        )}
+      </Box>
+
       <Divider sx={{ width: 40, my: 0.5 }} />
 
       {/* Resource items */}
@@ -103,8 +134,12 @@ export default function NavRail() {
       <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5, pb: 1 }}>
         {[
           {
-            icon: <SettingsIcon sx={{ fontSize: 18 }} />, label: 'Settings',
+            icon: <SearchIcon sx={{ fontSize: 18 }} />, label: 'Search',
             action: openCommandPalette, active: false,
+          },
+          {
+            icon: <SettingsIcon sx={{ fontSize: 18 }} />, label: 'Settings',
+            action: toggleDockCollapsed, active: false,
           },
           {
             icon: <LogIcon sx={{ fontSize: 18 }} />, label: 'Logs',

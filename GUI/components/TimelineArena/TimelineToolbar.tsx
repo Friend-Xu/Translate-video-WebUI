@@ -14,6 +14,7 @@ import VisibilityIcon from '@mui/icons-material/VisibilityRounded'
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHighRounded'
 import LayersClearIcon from '@mui/icons-material/LayersClearRounded'
 import PsychologyIcon from '@mui/icons-material/PsychologyRounded'
+import SpeakerIcon from '@mui/icons-material/RecordVoiceOverRounded'
 import { useAppStore } from '../../store/useAppStore'
 
 interface Props {
@@ -54,6 +55,8 @@ export default function TimelineToolbar({
   const tracks = useAppStore(s => s.tracks)
   const toggleTrackVisibility = useAppStore(s => s.toggleTrackVisibility)
   const applyAllDrafts = useAppStore(s => s.applyAllDrafts)
+  const timelineFocus = useAppStore(s => s.timelineFocus)
+  const setTimelineFocus = useAppStore(s => s.setTimelineFocus)
   const [visAnchorEl, setVisAnchorEl] = useState<HTMLElement | null>(null)
 
   const btnSx = { p: 0.5, color: 'text.secondary', '&:hover': { color: 'text.primary' } }
@@ -144,6 +147,14 @@ export default function TimelineToolbar({
           <IconButton size="small" sx={btnSx} onClick={(e) => setVisAnchorEl(e.currentTarget)}>
             <VisibilityIcon fontSize="small" />
           </IconButton>
+        </Tooltip>
+        <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+        <Tooltip title={timelineFocus === 'speaker' ? '退出说话人聚焦' : '说话人聚焦模式'}>
+          <ToggleButton size="small" value="speaker" selected={timelineFocus === 'speaker'}
+            onChange={() => setTimelineFocus(timelineFocus === 'speaker' ? 'default' : 'speaker')}
+            sx={activeSx(timelineFocus === 'speaker')}>
+            <SpeakerIcon fontSize="small" />
+          </ToggleButton>
         </Tooltip>
         <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
         <Tooltip title="局部重算选中事件">

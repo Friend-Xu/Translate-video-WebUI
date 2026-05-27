@@ -1,14 +1,17 @@
 import { create } from 'zustand'
-import type { PatchPreview, SpeakerInfo, TimelinePatchData, ExportPreset, WorkspaceManifest, EventViewModel, WaveformData, DataSource } from '../types'
+import type { PatchPreview, SpeakerInfo, TimelinePatchData, ExportPreset, WorkspaceManifest, EventViewModel, WaveformData, DataSource, WorkflowPreset, WorkspaceSummary } from '../types'
 import type { Mode, PatchDraft, IssueFilter, JobState, CrossModeContext, SpeakerLaneData, SpeakerQuality, VoiceCard } from '../types/modes'
 import type { TrackDefinition } from '../types/timeline'
 import type { TrackWaveformData } from '../types'
-import { DEFAULT_TRACKS, TRACK_VISIBILITY_MAP } from '../types/timeline'
+import { DEFAULT_TRACKS, TRACK_VISIBILITY_MAP, SPEAKER_TRACK_PRESET } from '../types/timeline'
+import { MOCK_SPEAKER_LOAD } from '../mocks/mockData'
 
 export type { Mode, PatchDraft, IssueFilter, JobState }
+export type TimelineFocus = 'default' | 'speaker' | 'patch'
 
 export interface AppState {
   mode: Mode
+  timelineFocus: TimelineFocus
   selectedEventIds: string[]
   selectedEventId: string | null
   playheadPosition: number
@@ -54,8 +57,13 @@ export interface AppState {
   loading: boolean
   error: string | null
 
+  // Hub state (Phase 1)
+  workflowPresets: WorkflowPreset[]
+  workspaceList: WorkspaceSummary[]
+
   // Actions — Mode
   setMode: (mode: Mode) => void
+  setTimelineFocus: (focus: TimelineFocus) => void
   navigateToEvent: (eventId: string, startTime: number, sourceMode?: Mode) => void
 
   // Actions — Selection
@@ -100,6 +108,7 @@ export interface AppState {
 
   // Actions — Speaker Review
   setSpeakerLanes: (lanes: SpeakerLaneData[]) => void
+  fetchSpeakerLanes: (workspace?: string) => Promise<void>
   setSelectedSpeaker: (speakerId: string | null) => void
   toggleSpeakerSelection: (speakerId: string) => void
   setVoicePresets: (presets: VoiceCard[]) => void
@@ -118,10 +127,16 @@ export interface AppState {
   loadWorkspace: (workspacePath: string) => Promise<void>
   clearWorkspace: () => void
   setDataSource: (source: DataSource) => void
+
+  // Actions — Hub (Phase 1)
+  fetchWorkflowPresets: () => Promise<void>
+  fetchWorkspaceList: () => Promise<void>
+  createWorkspace: (videoPath: string, presetId: string, name?: string) => Promise<string>
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
-  mode: 'timeline',
+  mode: 'hub' as Mode,
+  timelineFocus: 'default' as TimelineFocus,
   selectedEventIds: [],
   selectedEventId: null,
   playheadPosition: 0,
@@ -165,8 +180,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   loading: false,
   error: null,
 
+  // Hub defaults (Phase 1)
+  workflowPresets: [],
+  workspaceList: [],
+
   // ── Mode ──
   setMode: (mode) => {
+    // Clear timelineFocus when switching away from timeline
+    if (mode !== 'timeline') {
+      set({ timelineFocus: 'default' })
+    }
+
     const { mode: oldMode, modeSessions, tracks } = get()
     if (oldMode === mode) return
 
@@ -179,7 +203,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     const restored = modeSessions[mode] || {}
 
     // Apply track visibility preset for the new mode
-    const preset = TRACK_VISIBILITY_MAP[mode] || {}
+    // When timelineFocus is 'speaker', overlay speaker track presets
+    const focusPreset = get().timelineFocus === 'speaker' ? SPEAKER_TRACK_PRESET : {}
+    const modePreset = TRACK_VISIBILITY_MAP[mode] || {}
+    const preset = { ...modePreset, ...focusPreset }
     const overrides = (restored.trackOverrides as Record<string, Partial<TrackDefinition>>) || {}
     const newTracks = tracks.map(track => {
       const modePreset = preset[track.type]
@@ -217,6 +244,36 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     set({ crossModeContext: ctx, selectedEventIds: [eventId], selectedEventId: eventId, playheadPosition: startTime })
     if (get().mode !== 'timeline') get().setMode('timeline')
+  },
+
+  setTimelineFocus: (focus) => {
+    const { mode, tracks } = get()
+    if (mode !== 'timeline' && focus !== 'default') {
+      // Entering a focus mode from non-timeline: switch to timeline first
+      set({ timelineFocus: focus })
+      get().setMode('timeline')
+      return
+    }
+    // Apply or clear speaker track visibility overrides
+    const speakerPreset = focus === 'speaker' ? SPEAKER_TRACK_PRESET : {}
+    const newTracks = tracks.map(track => {
+      const focusOverride = speakerPreset[track.type]
+      if (focus === 'speaker' && focusOverride) {
+        return { ...track, ...focusOverride }
+      }
+      if (focus === 'default') {
+        // Restore defaults from DEFAULT_TRACKS for speaker-affected types
+        const def = DEFAULT_TRACKS.find(d => d.id === track.id)
+        if (def && speakerPreset[track.type]) {
+          return { ...track, visible: def.visible, locked: def.locked, solo: def.solo, muted: def.muted }
+        }
+      }
+      return track
+    })
+    set({ timelineFocus: focus, tracks: newTracks })
+    if (focus === 'speaker') {
+      get().fetchSpeakerLanes()
+    }
   },
 
   // ── Selection ──
@@ -410,6 +467,57 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ speakerLanes: lanes })
   },
 
+  fetchSpeakerLanes: async (workspace) => {
+    const LANE_COLORS = ['#FF9800', '#2196F3', '#4CAF50', '#9C27B0', '#E91E63', '#00BCD4']
+    try {
+      const body: Record<string, string> = {}
+      const ws = workspace || get().workspace
+      if (ws) body.workspace = ws
+      const res = await fetch('/api/speaker/diarization/load', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) throw new Error('API not available')
+      const data = await res.json()
+      const lanes: SpeakerLaneData[] = (data.speaker_lanes || []).map((l: any, i: number) => ({
+        ...l,
+        color: l.color || LANE_COLORS[i % LANE_COLORS.length],
+        segments: (l.segments || []).map((s: any, j: number) => ({
+          ...s,
+          eventId: s.eventId || `${l.speaker}_seg_${j}`,
+        })),
+      }))
+      set({ speakerLanes: lanes })
+      if (data.voice_presets) set({ voicePresets: data.voice_presets })
+    } catch {
+      // Fallback to mock data
+      const mock = MOCK_SPEAKER_LOAD
+      const lanes: SpeakerLaneData[] = mock.speaker_lanes.map((l: any, i: number) => ({
+        speaker: l.speaker,
+        display_name: mock.speakerNames[l.speaker] || l.speaker,
+        voice_id: '',
+        color: LANE_COLORS[i % LANE_COLORS.length],
+        segments: (l.segments || []).map((s: any, j: number) => ({
+          start: s.start, end: s.end,
+          text: s.text || '',
+          translation: s.translation,
+          confidence: s.confidence || 0.9,
+          eventId: s.eventId || `${l.speaker}_seg_${j}`,
+        })),
+        segment_count: l.segments?.length || 0,
+        total_duration: l.segments ? l.segments.reduce((sum: number, s: any) => sum + (s.end - s.start), 0) : 0,
+      }))
+      set({ speakerLanes: lanes })
+      set({ voicePresets: [
+        { id: 'vc_001', name: '晓晓 (女声)', language: 'zh-CN', sampleText: '你好，欢迎使用语音合成系统。', engine: 'edge', locked: false },
+        { id: 'vc_002', name: '云希 (男声)', language: 'zh-CN', sampleText: '这是来自微软的边缘语音合成。', engine: 'edge', locked: false },
+        { id: 'vc_004', name: 'ChatTTS Seed 2', language: 'zh-CN', sampleText: 'ChatTTS 多样本音色。', engine: 'chattts', locked: false },
+        { id: 'vc_005', name: 'CosyVoice v2 Default', language: 'zh-CN', sampleText: 'CosyVoice 跨语言合成。', engine: 'cosyvoice', locked: true },
+      ]})
+    }
+  },
+
   // ── Export ──
   setExportPresets: (presets) => set({ exportPresets: presets }),
 
@@ -514,4 +622,47 @@ export const useAppStore = create<AppState>((set, get) => ({
   }),
 
   setDataSource: (source) => set({ dataSource: source }),
+
+  // ── Hub Actions (Phase 1) ──
+
+  fetchWorkflowPresets: async () => {
+    try {
+      const res = await fetch('/api/workflow/presets')
+      if (res.ok) {
+        const data = await res.json()
+        set({ workflowPresets: data.presets || [] })
+      }
+    } catch { /* non-critical */ }
+  },
+
+  fetchWorkspaceList: async () => {
+    try {
+      const res = await fetch('/api/workspaces')
+      if (res.ok) {
+        const data = await res.json()
+        set({ workspaceList: data.workspaces || [] })
+      }
+    } catch { /* non-critical */ }
+  },
+
+  createWorkspace: async (videoPath, presetId, name) => {
+    set({ loading: true, error: null })
+    try {
+      const res = await fetch('/api/workspace/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ video_path: videoPath, workflow_preset: presetId, name: name || '' }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error((err as any).detail || '创建工作区失败')
+      }
+      const data = await res.json()
+      set({ workspace: data.workspace, manifest: data.manifest, loading: false })
+      return data.workspace as string
+    } catch (err) {
+      set({ loading: false, error: err instanceof Error ? err.message : '未知错误' })
+      throw err
+    }
+  },
 }))
