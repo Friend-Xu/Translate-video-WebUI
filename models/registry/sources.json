@@ -1,0 +1,34 @@
+{
+  "description": "TRM 镜像源配置 — 按优先级排序",
+  "primary": {
+    "name": "hf-mirror.com",
+    "base_url": "https://hf-mirror.com",
+    "type": "hf_mirror",
+    "enabled": true
+  },
+  "fallbacks": [
+    {
+      "name": "modelscope.cn",
+      "base_url": "https://modelscope.cn",
+      "type": "modelscope",
+      "enabled": false
+    },
+    {
+      "name": "direct_hf",
+      "base_url": "https://huggingface.co",
+      "type": "hf_direct",
+      "enabled": false
+    }
+  ],
+  "network": {
+    "max_concurrent": 2,
+    "chunk_size_mb": 64,
+    "retry_count": 3,
+    "timeout_seconds": 300,
+    "resume_partial": true
+  },
+  "verify": {
+    "sha256_required": true,
+    "allow_unverified": false
+  }
+}

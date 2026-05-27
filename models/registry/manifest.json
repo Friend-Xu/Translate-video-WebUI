@@ -1,0 +1,387 @@
+{
+  "$schema": "models/registry/manifest.schema.json",
+  "description": "TRM 模型清单 — 所有已知模型的唯一定义。镜像下载器据此下载，运行时据此解析路径。",
+  "models": [
+    {
+      "id": "whisper-turbo",
+      "name": "faster-whisper large-v3-turbo",
+      "version": "1.0.0",
+      "type": "asr",
+      "engine": "faster-whisper",
+      "runtime_path": "whisper-turbo",
+      "check_files": ["model.bin", "tokenizer.json", "preprocessor_config.json"],
+      "size_gb": 1.6,
+      "vram_gb": 2.5,
+      "description": "Whisper large-v3 turbo, CTranslate2 加速, 推荐用于语音转字幕",
+      "repo_id": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+      "download": {
+        "format": "raw",
+        "mirrors": [
+          "https://hf-mirror.com/mobiuslabsgmbh/faster-whisper-large-v3-turbo"
+        ]
+      },
+      "fallback_paths": ["models/whisper/models--mobiuslabsgmbh--faster-whisper-large-v3-turbo", "models/whisper/turbo"]
+    },
+    {
+      "id": "whisper-medium",
+      "name": "faster-whisper medium",
+      "version": "1.0.0",
+      "type": "asr",
+      "engine": "faster-whisper",
+      "runtime_path": "whisper-medium",
+      "check_files": ["model.bin", "tokenizer.json"],
+      "size_gb": 1.5,
+      "vram_gb": 1.5,
+      "description": "Whisper medium, 速度较快精度适中",
+      "repo_id": "Systran/faster-whisper-medium",
+      "download": {
+        "format": "raw",
+        "mirrors": [
+          "https://hf-mirror.com/Systran/faster-whisper-medium"
+        ]
+      },
+      "fallback_paths": ["models/whisper/models--Systran--faster-whisper-medium", "models/whisper/medium"]
+    },
+    {
+      "id": "demucs",
+      "name": "Demucs htdemucs",
+      "version": "4.0",
+      "type": "separation",
+      "engine": "demucs",
+      "runtime_path": "demucs",
+      "check_files": ["*.th"],
+      "size_gb": 0.08,
+      "vram_gb": 0.5,
+      "description": "Hybrid Transformer Demucs, 人声/伴奏分离 4源",
+      "repo_id": "",
+      "download": {
+        "format": "torch_hub",
+        "torch_hub_repo": "facebookresearch/demucs",
+        "torch_hub_model": "htdemucs",
+        "mirrors": [
+          "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th"
+        ]
+      },
+      "fallback_paths": ["models/Demucs/hub/checkpoints", "models/hub/checkpoints"]
+    },
+    {
+      "id": "silero-vad",
+      "name": "Silero VAD",
+      "version": "4.0",
+      "type": "vad",
+      "engine": "silero",
+      "runtime_path": "silero-vad",
+      "check_files": ["silero_vad.jit", "silero_vad.onnx"],
+      "size_gb": 0.001,
+      "vram_gb": 0.1,
+      "description": "Silero VAD 语音活动检测, JIT + ONNX",
+      "repo_id": "",
+      "download": { "format": "raw", "mirrors": [] },
+      "fallback_paths": ["models/vad"]
+    },
+    {
+      "id": "wav2vec2-en",
+      "name": "wav2vec2 English Alignment",
+      "version": "1.0.0",
+      "type": "alignment",
+      "engine": "wav2vec2",
+      "runtime_path": "wav2vec2-en",
+      "check_files": ["model.safetensors", "config.json", "processor_config.json"],
+      "size_gb": 1.2,
+      "vram_gb": 0.5,
+      "description": "wav2vec2 英语字级时间轴对齐",
+      "repo_id": "jonatasgrosman/wav2vec2-large-xlsr-53-english",
+      "download": {
+        "format": "raw",
+        "mirrors": [
+          "https://hf-mirror.com/jonatasgrosman/wav2vec2-large-xlsr-53-english"
+        ]
+      },
+      "fallback_paths": ["models/wav2vec2/en"]
+    },
+    {
+      "id": "wav2vec2-ja",
+      "name": "wav2vec2 Japanese Alignment",
+      "version": "1.0.0",
+      "type": "alignment",
+      "engine": "wav2vec2",
+      "runtime_path": "wav2vec2-ja",
+      "check_files": ["model.safetensors", "config.json", "preprocessor_config.json"],
+      "size_gb": 1.2,
+      "vram_gb": 0.5,
+      "description": "wav2vec2 日语字级时间轴对齐",
+      "repo_id": "jonatasgrosman/wav2vec2-large-xlsr-53-japanese",
+      "download": {
+        "format": "raw",
+        "mirrors": [
+          "https://hf-mirror.com/jonatasgrosman/wav2vec2-large-xlsr-53-japanese"
+        ]
+      },
+      "fallback_paths": ["models/wav2vec2/ja"]
+    },
+    {
+      "id": "wav2vec2-zh",
+      "name": "wav2vec2 Chinese Alignment",
+      "version": "1.0.0",
+      "type": "alignment",
+      "engine": "wav2vec2",
+      "runtime_path": "wav2vec2-zh",
+      "check_files": ["model.safetensors", "config.json", "preprocessor_config.json"],
+      "size_gb": 1.2,
+      "vram_gb": 0.5,
+      "description": "wav2vec2 中文字级时间轴对齐",
+      "repo_id": "jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn",
+      "download": {
+        "format": "raw",
+        "mirrors": [
+          "https://hf-mirror.com/jonatasgrosman/wav2vec2-large-xlsr-53-chinese-zh-cn"
+        ]
+      },
+      "fallback_paths": ["models/wav2vec2/zh"]
+    },
+    {
+      "id": "minilm",
+      "name": "MiniLM 语义校验",
+      "version": "1.0.0",
+      "type": "semantic",
+      "engine": "minilm",
+      "runtime_path": "minilm",
+      "check_files": ["model.safetensors", "tokenizer.json", "config.json"],
+      "size_gb": 0.46,
+      "vram_gb": 0.5,
+      "description": "多语言 MiniLM-L12-v2, 跨语言翻译语义相似度校验",
+      "repo_id": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+      "download": {
+        "format": "raw",
+        "mirrors": [
+          "https://hf-mirror.com/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+        ]
+      },
+      "fallback_paths": ["models/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"]
+    },
+    {
+      "id": "qwen2-05b",
+      "name": "Qwen2-0.5B 流畅度",
+      "version": "1.0.0",
+      "type": "ppl",
+      "engine": "qwen2",
+      "runtime_path": "qwen2-05b",
+      "check_files": ["model.safetensors", "tokenizer.json", "config.json"],
+      "size_gb": 0.95,
+      "vram_gb": 2.0,
+      "description": "Qwen2-0.5B, 句子困惑度评估, 翻译腔检测",
+      "repo_id": "Qwen/Qwen2-0.5B",
+      "download": {
+        "format": "raw",
+        "mirrors": [
+          "https://hf-mirror.com/Qwen/Qwen2-0.5B"
+        ]
+      },
+      "fallback_paths": ["models/Qwen/Qwen2-0.5B"]
+    },
+    {
+      "id": "punctuate-all",
+      "name": "punctuate-all 标点恢复",
+      "version": "1.0.0",
+      "type": "punctuation",
+      "engine": "punctuate",
+      "runtime_path": "punctuate-all",
+      "check_files": ["pytorch_model.bin", "config.json", "tokenizer.json"],
+      "size_gb": 1.1,
+      "vram_gb": 1.0,
+      "description": "英文标点恢复, NLP Token 分类",
+      "repo_id": "kredor/punctuate-all",
+      "download": {
+        "format": "raw",
+        "mirrors": [
+          "https://hf-mirror.com/kredor/punctuate-all"
+        ]
+      },
+      "fallback_paths": ["models/punctuate-all"]
+    },
+    {
+      "id": "chattts",
+      "name": "ChatTTS",
+      "version": "1.0.0",
+      "type": "tts",
+      "engine": "chattts",
+      "runtime_path": "chattts",
+      "check_files": ["config", "asset"],
+      "size_gb": 2.37,
+      "vram_gb": 3.0,
+      "description": "离线中文对话式 TTS, 支持音色种子控制",
+      "repo_id": "2noise/ChatTTS",
+      "download": {
+        "format": "raw",
+        "mirrors": [
+          "https://hf-mirror.com/2noise/ChatTTS"
+        ]
+      },
+      "fallback_paths": ["models/ChatTTS"]
+    },
+    {
+      "id": "cosyvoice",
+      "name": "CosyVoice 2.0",
+      "version": "2.0.0",
+      "type": "tts",
+      "engine": "cosyvoice",
+      "runtime_path": "cosyvoice-v2",
+      "check_files": ["cosyvoice2.yaml"],
+      "size_gb": 2.5,
+      "vram_gb": 5.0,
+      "description": "CosyVoice 2.0 离线 zero-shot TTS + 音色克隆",
+      "repo_id": "FunAudioLLM/CosyVoice2-0.5B",
+      "download": {
+        "format": "raw",
+        "mirrors": [
+          "https://hf-mirror.com/FunAudioLLM/CosyVoice2-0.5B"
+        ]
+      },
+      "fallback_paths": ["models/CosyVoice2-0.5B"]
+    },
+    {
+      "id": "cosyvoice3",
+      "name": "CosyVoice 3.0",
+      "version": "3.0.0",
+      "type": "tts",
+      "engine": "cosyvoice",
+      "runtime_path": "cosyvoice-v3",
+      "check_files": ["cosyvoice3.yaml"],
+      "size_gb": 3.0,
+      "vram_gb": 6.0,
+      "description": "CosyVoice 3.0 离线 zero-shot TTS, 中文 CER 0.81%",
+      "repo_id": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512",
+      "download": {
+        "format": "raw",
+        "mirrors": [
+          "https://hf-mirror.com/FunAudioLLM/Fun-CosyVoice3-0.5B-2512"
+        ]
+      },
+      "fallback_paths": ["models/CosyVoice3-0.5B"]
+    },
+    {
+      "id": "openvoice-v2",
+      "name": "OpenVoice v2",
+      "version": "2.0.0",
+      "type": "voice_clone",
+      "engine": "openvoice",
+      "runtime_path": "openvoice-v2",
+      "check_files": ["converter"],
+      "size_gb": 0.13,
+      "vram_gb": 2.0,
+      "description": "OpenVoice v2 音色转换, converter checkpoint",
+      "repo_id": "",
+      "download": { "format": "raw", "mirrors": [] },
+      "fallback_paths": ["models/openvoice_v2"]
+    },
+    {
+      "id": "edgetts",
+      "name": "EdgeTTS",
+      "version": "1.0.0",
+      "type": "cloud",
+      "engine": "edgetts",
+      "runtime_path": "_cloud_/edgetts",
+      "check_files": [],
+      "size_gb": 0.0,
+      "vram_gb": 0.0,
+      "description": "微软 Edge TTS 云端服务, 需联网",
+      "repo_id": "",
+      "download": { "format": "cloud" }
+    },
+    {
+      "id": "indextts",
+      "name": "IndexTTS 2.0",
+      "version": "2.0.0",
+      "type": "tts",
+      "engine": "indextts",
+      "runtime_path": "indextts",
+      "check_files": ["gpt.pth", "s2mel.pth"],
+      "size_gb": 5.9,
+      "vram_gb": 7.8,
+      "description": "B站 IndexTTS 2.0, 自回归 GPT + BigVGAN, 零样本音色克隆",
+      "repo_id": "IndexTeam/IndexTTS-2",
+      "download": {
+        "format": "raw",
+        "mirrors": [
+          "https://hf-mirror.com/IndexTeam/IndexTTS-2"
+        ]
+      },
+      "fallback_paths": ["models/IndexTTS/index-tts-batch/checkpoints"]
+    },
+    {
+      "id": "emotion2vec",
+      "name": "emotion2vec+ large",
+      "version": "1.0.0",
+      "type": "emotion",
+      "engine": "emotion2vec",
+      "runtime_path": "emotion2vec",
+      "check_files": ["model.pt", "configuration.json"],
+      "size_gb": 1.9,
+      "vram_gb": 1.0,
+      "description": "阿里 DAMO emotion2vec+ large, 9类情感识别 + 1024维情感嵌入",
+      "repo_id": "",
+      "download": { "format": "raw", "mirrors": [] },
+      "fallback_paths": ["models/emotion2vec"]
+    },
+    {
+      "id": "pyannote-diarization",
+      "name": "pyannote speaker-diarization-3.1",
+      "version": "3.1.0",
+      "type": "speaker",
+      "engine": "pyannote",
+      "runtime_path": "pyannote-diarization",
+      "check_files": ["config.yaml"],
+      "size_gb": 0.1,
+      "vram_gb": 0.0,
+      "description": "pyannote.audio 3.1 说话人分离 pipeline 配置",
+      "repo_id": "pyannote/speaker-diarization-3.1",
+      "download": {
+        "format": "raw",
+        "mirrors": [
+          "https://hf-mirror.com/pyannote/speaker-diarization-3.1"
+        ]
+      },
+      "fallback_paths": ["models/pyannote/speaker-diarization-3.1"]
+    },
+    {
+      "id": "pyannote-segmentation",
+      "name": "pyannote segmentation-3.0",
+      "version": "3.0.0",
+      "type": "speaker",
+      "engine": "pyannote",
+      "runtime_path": "pyannote-segmentation",
+      "check_files": ["pytorch_model.bin"],
+      "size_gb": 0.3,
+      "vram_gb": 0.5,
+      "description": "SincNet 语音/非语音二分类 + 说话人切换检测",
+      "repo_id": "pyannote/segmentation-3.0",
+      "download": {
+        "format": "raw",
+        "mirrors": [
+          "https://hf-mirror.com/pyannote/segmentation-3.0"
+        ]
+      },
+      "fallback_paths": ["models/pyannote/segmentation-3.0"]
+    },
+    {
+      "id": "pyannote-embedding",
+      "name": "pyannote wespeaker-voxceleb-resnet34-LM",
+      "version": "1.0.0",
+      "type": "speaker",
+      "engine": "pyannote",
+      "runtime_path": "pyannote-embedding",
+      "check_files": ["pytorch_model.bin"],
+      "size_gb": 0.2,
+      "vram_gb": 0.5,
+      "description": "ResNet34 声纹嵌入, WeSpeaker 预训练, ECAPA-TDNN 192维输出",
+      "repo_id": "pyannote/wespeaker-voxceleb-resnet34-LM",
+      "download": {
+        "format": "raw",
+        "mirrors": [
+          "https://hf-mirror.com/pyannote/wespeaker-voxceleb-resnet34-LM"
+        ]
+      },
+      "fallback_paths": ["models/pyannote/wespeaker-voxceleb-resnet34-LM"]
+    }
+  ]
+}
