@@ -94,7 +94,7 @@ export default function TrackSystem({ events, totalDuration, canvasWidth, coord,
     <Box ref={trackAreaRef} sx={{ height: '100%', width: '100%', position: 'relative', overflow: 'hidden' }}>
       {/* Time ruler row */}
       <Box sx={{ display: 'flex', flexShrink: 0 }}>
-        <Box sx={{ width: HEADER_W, minWidth: HEADER_W, bgcolor: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.12)' }} />
+        <Box sx={{ width: HEADER_W, minWidth: HEADER_W, bgcolor: '#1e1e1e', borderBottom: '1px solid rgba(255,255,255,0.08)' }} />
         <Box sx={{ flexGrow: 1 }}>
           <TimeRuler
             coord={coord}
@@ -111,7 +111,7 @@ export default function TrackSystem({ events, totalDuration, canvasWidth, coord,
 
       {/* Track rows */}
       <Box sx={{ display: 'flex', overflow: 'hidden' }}>
-        <TrackHeader events={events} />
+        <TrackHeader />
         <Box sx={{ flexGrow: 1, overflow: 'hidden' }}>
           {tracks.map(track => (
             <TrackLayer

@@ -7,13 +7,14 @@ import VolumeOffIcon from '@mui/icons-material/VolumeOffRounded'
 import VolumeUpIcon from '@mui/icons-material/VolumeUpRounded'
 import { useAppStore } from '../../store/useAppStore'
 import type { TrackDefinition } from '../../types/timeline'
-import type { EventViewModel } from '../../types'
 import { SPEAKER_TRACK_PRESET, TRACK_VISIBILITY_MAP } from '../../types/timeline'
 
 const HEADER_W = 120
 const ICON_SIZE = 16
+const ROW_BG = '#252525'
+const ROW_BORDER = 'rgba(255,255,255,0.08)'
 
-function TrackHeaderRow({ track, events }: { track: TrackDefinition; events: EventViewModel[] }) {
+function TrackHeaderRow({ track }: { track: TrackDefinition }) {
   const toggleVisibility = useAppStore(s => s.toggleTrackVisibility)
   const toggleLock = useAppStore(s => s.toggleTrackLock)
   const toggleSolo = useAppStore(s => s.toggleTrackSolo)
@@ -31,15 +32,6 @@ function TrackHeaderRow({ track, events }: { track: TrackDefinition; events: Eve
 
   const dimmed = isFocusOverridden || isModeHidden
   const hidden = isManualHidden && !dimmed
-
-  // Speaker track height matches TrackLayer calculation
-  const rowHeight = (() => {
-    if (track.renderer !== 'speaker-lane') return track.height
-    const speakerCount = new Set(events.map(e => e.speaker).filter(Boolean)).size
-    if (speakerCount === 0) return track.height
-    const laneH = timelineFocus === 'speaker' ? 80 : Math.max(24, Math.floor(track.height / speakerCount))
-    return Math.max(track.height, speakerCount * laneH)
-  })()
 
   const handleResizeStart = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -63,23 +55,23 @@ function TrackHeaderRow({ track, events }: { track: TrackDefinition; events: Eve
 
   return (
     <Box sx={{
-      height: rowHeight, display: 'flex', alignItems: 'center', gap: 0,
-      borderBottom: '1px solid rgba(255,255,255,0.06)',
-      px: 0.5, opacity: hidden ? 0.3 : dimmed ? 0.4 : 1,
+      height: track.height, display: 'flex', alignItems: 'center', gap: 0,
+      borderBottom: `1px solid ${ROW_BORDER}`,
+      px: 0.75, opacity: hidden ? 0.3 : dimmed ? 0.4 : 1,
       transition: 'opacity 0.2s',
-      bgcolor: hidden ? 'transparent' : 'rgba(255,255,255,0.02)',
+      bgcolor: hidden ? 'transparent' : ROW_BG,
       position: 'relative',
     }}>
       {/* Color indicator */}
       <Box sx={{
-        width: 4, height: 14, borderRadius: 1,
-        bgcolor: track.color || 'grey.500',
-        flexShrink: 0, mr: 0.75,
+        width: 4, height: 16, borderRadius: 1,
+        bgcolor: track.color || '#888',
+        flexShrink: 0, mr: 0.75, opacity: 0.9,
       }} />
 
       {/* Track label */}
       <Typography noWrap sx={{
-        fontSize: '0.7rem', color: 'grey.300', fontWeight: 500,
+        fontSize: '0.7rem', color: '#fff', fontWeight: 500,
         flex: 1, minWidth: 0, mr: 0.5,
         userSelect: 'none',
       }}>
@@ -90,13 +82,13 @@ function TrackHeaderRow({ track, events }: { track: TrackDefinition; events: Eve
       <Box sx={{ display: 'flex', gap: 0, flexShrink: 0 }}>
         <Tooltip title={track.visible ? '隐藏轨道' : '显示轨道'} placement="top">
           <IconButton size="small" onClick={() => toggleVisibility(track.id)}
-            sx={{ p: 0.1, '& .MuiSvgIcon-root': { fontSize: ICON_SIZE } }}>
+            sx={{ p: 0.1, color: '#ccc', '& .MuiSvgIcon-root': { fontSize: ICON_SIZE } }}>
             {track.visible ? <VisibilityIcon fontSize="inherit" /> : <VisibilityOffIcon fontSize="inherit" />}
           </IconButton>
         </Tooltip>
         <Tooltip title={track.locked ? '解锁轨道' : '锁定轨道'} placement="top">
           <IconButton size="small" onClick={() => toggleLock(track.id)}
-            sx={{ p: 0.1, '& .MuiSvgIcon-root': { fontSize: ICON_SIZE } }}>
+            sx={{ p: 0.1, color: '#ccc', '& .MuiSvgIcon-root': { fontSize: ICON_SIZE } }}>
             {track.locked ? <LockIcon fontSize="inherit" /> : <LockOpenIcon fontSize="inherit" />}
           </IconButton>
         </Tooltip>
@@ -108,7 +100,7 @@ function TrackHeaderRow({ track, events }: { track: TrackDefinition; events: Eve
           <IconButton size="small" onClick={() => toggleSolo(track.id)}
             sx={{
               p: 0.1, minWidth: 16,
-              color: track.solo ? 'warning.main' : 'text.secondary',
+              color: track.solo ? '#FFA726' : '#999',
             }}>
             <span style={{ fontSize: '0.55rem', fontWeight: 700, lineHeight: 1 }}>S</span>
           </IconButton>
@@ -116,14 +108,14 @@ function TrackHeaderRow({ track, events }: { track: TrackDefinition; events: Eve
         {(track.type === 'tts' || track.type === 'speaker') && (
           <Tooltip title={track.muted ? '取消静音' : '静音'} placement="top">
             <IconButton size="small" onClick={() => toggleMute(track.id)}
-              sx={{ p: 0.1, '& .MuiSvgIcon-root': { fontSize: ICON_SIZE } }}>
+              sx={{ p: 0.1, color: '#ccc', '& .MuiSvgIcon-root': { fontSize: ICON_SIZE } }}>
               {track.muted ? <VolumeOffIcon fontSize="inherit" /> : <VolumeUpIcon fontSize="inherit" />}
             </IconButton>
           </Tooltip>
         )}
       </Box>
 
-      {/* Resize handle — visible line + invisible hit area */}
+      {/* Resize handle */}
       <Box
         onMouseDown={handleResizeStart}
         sx={{
@@ -131,23 +123,22 @@ function TrackHeaderRow({ track, events }: { track: TrackDefinition; events: Eve
           cursor: 'row-resize', zIndex: 1,
         }}
       />
-      {/* Visible bottom border as resize cue */}
       <Box sx={{
         position: 'absolute', bottom: -1, left: 8, right: 8, height: 1,
-        bgcolor: 'rgba(255,255,255,0.2)',
+        bgcolor: 'rgba(255,255,255,0.35)',
         pointerEvents: 'none',
       }} />
     </Box>
   )
 }
 
-export default function TrackHeader({ events }: { events: EventViewModel[] }) {
+export default function TrackHeader() {
   const tracks = useAppStore(s => s.tracks)
 
   return (
-    <Box sx={{ width: HEADER_W, minWidth: HEADER_W, bgcolor: 'rgba(255,255,255,0.02)' }} data-track-header="true">
+    <Box sx={{ width: HEADER_W, minWidth: HEADER_W, bgcolor: '#1e1e1e' }} data-track-header="true">
       {tracks.map(track => (
-        <TrackHeaderRow key={track.id} track={track} events={events} />
+        <TrackHeaderRow key={track.id} track={track} />
       ))}
     </Box>
   )
