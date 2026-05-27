@@ -59,8 +59,8 @@ export const MODE_META: Record<Mode, ModeMeta> = {
   },
 }
 
-export type InspectorTab = 'content' | 'timing' | 'speaker' | 'tts' | 'patch' | 'history'
-export const ALL_INSPECTOR_TABS: InspectorTab[] = ['content', 'timing', 'speaker', 'tts', 'patch', 'history']
+export type InspectorTab = 'content' | 'timing' | 'speaker' | 'tts' | 'patch' | 'history' | 'config'
+export const ALL_INSPECTOR_TABS: InspectorTab[] = ['content', 'timing', 'speaker', 'tts', 'patch', 'history', 'config']
 
 export interface LayoutPreset {
   railComponent: string | null

@@ -856,3 +856,27 @@ export interface SlotSchemaInfo {
   properties: string[]
 }
 
+// ── Workspace Data Types (TRV-PLAN-2026-001 §8.1) ──────────────────────────────
+
+/** Workspace manifest as read from project.json */
+export interface WorkspaceManifest {
+  version: number
+  video_path: string
+  created_at: string
+  updated_at: string
+  pipeline: Record<string, 'completed' | 'running' | 'failed'>
+  files: Record<string, string>
+}
+
+/** Workspace summary for the selector list */
+export interface WorkspaceSummary {
+  path: string
+  name: string
+  updatedAt: string
+  pipelineStatus: string
+  videoPath: string
+}
+
+/** Data source mode */
+export type DataSource = 'mock' | 'workspace'
+

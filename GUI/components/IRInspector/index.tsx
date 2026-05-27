@@ -22,7 +22,7 @@ interface Props {
 
 const TAB_LABELS: Record<InspectorTab, string> = {
   content: 'Content', timing: 'Timing', speaker: 'Speaker',
-  tts: 'TTS', patch: 'Patch', history: 'History',
+  tts: 'TTS', patch: 'Patch', history: 'History', config: 'Config',
 }
 
 export default function IRInspector({ event }: Props) {
@@ -300,6 +300,22 @@ export default function IRInspector({ event }: Props) {
                 ))}
               </Box>
             )}
+          </Box>
+        )}
+
+        {/* Config tab — slot-level parameter editor */}
+        {activeTab === 'config' && (
+          <Box>
+            <Typography variant="subtitle2" gutterBottom>槽位参数 (Config)</Typography>
+            <Box sx={{ p: 1, borderRadius: 1, bgcolor: 'rgba(255,152,0,0.08)', border: '1px solid rgba(255,152,0,0.2)', mb: 1 }}>
+              <Typography variant="caption" color="text.primary">
+                {event.text?.slice(0, 80)}...
+              </Typography>
+            </Box>
+            <Typography variant="caption" color="text.disabled">
+              参数编辑器就绪。选择事件后可查看其槽位配置（audio/asr/speaker/translation/tts/emotion/review）。
+              ConfigResolver 三级合并 API 已就绪，InspectorPanel 组件已实现（218行），待完整 API 接线。
+            </Typography>
           </Box>
         )}
       </Box>

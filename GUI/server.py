@@ -41,7 +41,7 @@ import yaml
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel
@@ -3160,6 +3160,19 @@ async def find_file(name: str = "", size: int = 0) -> dict:
                 return {"path": str(item), "name": item.name, "size": item.stat().st_size}
 
     raise HTTPException(status_code=404, detail=f"File not found: {name}")
+
+
+@app.get("/api/files/video")
+async def serve_video(path: str):
+    """Stream a local video file for browser playback.
+
+    Browsers cannot access local filesystem paths directly.
+    This endpoint proxies the file so the video player can seek.
+    """
+    video_path = Path(path)
+    if not video_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Video not found: {path}")
+    return FileResponse(video_path, media_type="video/mp4")
 
 
 @app.post("/api/files/upload")

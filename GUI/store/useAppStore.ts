@@ -1,7 +1,8 @@
 import { create } from 'zustand'
-import type { PatchPreview, SpeakerInfo, TimelinePatchData, ExportPreset } from '../types'
+import type { PatchPreview, SpeakerInfo, TimelinePatchData, ExportPreset, WorkspaceManifest, EventViewModel, WaveformData, DataSource } from '../types'
 import type { Mode, PatchDraft, IssueFilter, JobState, CrossModeContext, SpeakerLaneData, SpeakerQuality, VoiceCard } from '../types/modes'
 import type { TrackDefinition } from '../types/timeline'
+import type { TrackWaveformData } from '../types'
 import { DEFAULT_TRACKS, TRACK_VISIBILITY_MAP } from '../types/timeline'
 
 export type { Mode, PatchDraft, IssueFilter, JobState }
@@ -42,6 +43,16 @@ export interface AppState {
   exportPresets: ExportPreset[]
   activePresetId: string | null
   exportPreviewText: { zh: string; en: string }
+
+  // Workspace state (TRV-PLAN-2026-001 §8.2)
+  dataSource: DataSource
+  workspace: string
+  events: EventViewModel[]
+  waveform: WaveformData | null
+  ttsWaveforms: TrackWaveformData[] | null
+  manifest: WorkspaceManifest | null
+  loading: boolean
+  error: string | null
 
   // Actions — Mode
   setMode: (mode: Mode) => void
@@ -102,6 +113,11 @@ export interface AppState {
   duplicatePreset: (id: string) => void
   setActivePreset: (id: string | null) => void
   setExportPreviewText: (text: { zh: string; en: string }) => void
+
+  // Actions — Workspace (TRV-PLAN-2026-001 §8.2)
+  loadWorkspace: (workspacePath: string) => Promise<void>
+  clearWorkspace: () => void
+  setDataSource: (source: DataSource) => void
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -138,6 +154,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   exportPresets: [],
   activePresetId: null,
   exportPreviewText: { zh: 'Minecraft我的世界 村民交易', en: 'Minecraft Villager Trade x64' },
+
+  // Workspace defaults (TRV-PLAN-2026-001)
+  dataSource: 'mock' as DataSource,
+  workspace: '',
+  events: [],
+  waveform: null,
+  ttsWaveforms: null,
+  manifest: null,
+  loading: false,
+  error: null,
 
   // ── Mode ──
   setMode: (mode) => {
@@ -423,4 +449,69 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setActivePreset: (id) => set({ activePresetId: id }),
   setExportPreviewText: (text) => set({ exportPreviewText: text }),
+
+  // ── Workspace Actions (TRV-PLAN-2026-001 §8.2) ──
+
+  loadWorkspace: async (workspacePath) => {
+    set({ loading: true, error: null, dataSource: 'workspace' })
+
+    try {
+      // Step 1: Load manifest
+      const manifestRes = await fetch(
+        `/api/project/manifest/resolve?workspace=${encodeURIComponent(workspacePath)}`
+      )
+      if (!manifestRes.ok) {
+        const errData = await manifestRes.json().catch(() => ({}))
+        throw new Error((errData as any).detail || `项目不存在: ${workspacePath}`)
+      }
+      const manifestData = await manifestRes.json()
+
+      // Step 2: Load events via speaker/diarization/load
+      const loadRes = await fetch('/api/speaker/diarization/load', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace: workspacePath }),
+      })
+      if (!loadRes.ok) throw new Error('无法加载时间轴数据')
+      const loadData = await loadRes.json()
+
+      const events = Object.values(loadData.inspector_data || {}) as EventViewModel[]
+
+      // Step 3: Load waveform (non-fatal)
+      let waveform: WaveformData | null = null
+      try {
+        const wfRes = await fetch(
+          `/api/speaker/diarization/waveform?workspace=${encodeURIComponent(workspacePath)}`
+        )
+        if (wfRes.ok) waveform = await wfRes.json()
+      } catch { /* non-fatal */ }
+
+      set({
+        workspace: workspacePath,
+        events,
+        waveform,
+        manifest: manifestData.manifest,
+        loading: false,
+        error: null,
+      })
+    } catch (err) {
+      set({
+        loading: false,
+        error: err instanceof Error ? err.message : '未知错误',
+      })
+    }
+  },
+
+  clearWorkspace: () => set({
+    dataSource: 'mock',
+    workspace: '',
+    events: [],
+    waveform: null,
+    ttsWaveforms: null,
+    manifest: null,
+    loading: false,
+    error: null,
+  }),
+
+  setDataSource: (source) => set({ dataSource: source }),
 }))

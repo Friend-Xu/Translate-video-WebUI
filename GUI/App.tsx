@@ -21,6 +21,7 @@ import { useAppStore } from './store/useAppStore'
 import { ErrorBanner } from './components/LoadingSkeleton'
 import { MOCK_EVENTS, MOCK_WAVEFORM, MOCK_TTS_WAVEFORMS } from './mocks/mockData'
 import { mockSystemStatus } from './mocks/mockHandlers'
+import WorkspaceSelector from './components/WorkspaceSelector'
 
 export default function App() {
   const { config, updateConfig } = useConfig()
@@ -114,7 +115,23 @@ export default function App() {
     }
   }, [updateConfig, showMsg])
 
-  const selectedEvent = MOCK_EVENTS.find(e => e.id === selectedEventId) || null
+  // Workspace data (TRV-PLAN-2026-001)
+  const dataSource = useAppStore(s => s.dataSource)
+  const storeEvents = useAppStore(s => s.events)
+  const storeWaveform = useAppStore(s => s.waveform)
+  const manifest = useAppStore(s => s.manifest)
+  const isWorkspace = dataSource === 'workspace' && storeEvents.length > 0
+
+  const events = isWorkspace ? storeEvents : MOCK_EVENTS
+  const waveform = isWorkspace && storeWaveform ? storeWaveform : MOCK_WAVEFORM
+  const totalDuration = isWorkspace
+    ? Math.max(...storeEvents.map(e => e.end), 80)
+    : 80
+  const videoSrc = isWorkspace && manifest?.video_path
+    ? `/api/files/video?path=${encodeURIComponent(manifest.video_path)}`
+    : null
+
+  const selectedEvent = events.find(e => e.id === selectedEventId) || null
 
   const arenaContent = (() => {
     switch (mode) {
@@ -132,19 +149,20 @@ export default function App() {
           />
         )
       case 'speaker':
-        return <SpeakerReviewView events={MOCK_EVENTS} totalDuration={80} />
+        return <SpeakerReviewView events={events} totalDuration={totalDuration} />
       case 'patch':
-        return <PatchManagementView events={MOCK_EVENTS} />
+        return <PatchManagementView events={events} />
       case 'export':
-        return <ExportView events={MOCK_EVENTS} />
+        return <ExportView events={events} />
       case 'timeline':
       default:
         return (
           <TimelineArena
-            events={MOCK_EVENTS}
-            waveform={MOCK_WAVEFORM}
-            totalDuration={80}
+            events={events}
+            waveform={waveform}
+            totalDuration={totalDuration}
             ttsWaveforms={MOCK_TTS_WAVEFORMS}
+            videoSrc={videoSrc}
             onDropVideo={handleFileDropped}
           />
         )
@@ -159,13 +177,16 @@ export default function App() {
 
       <AppShell
         pulseBar={
-          <GlobalBar
-            projectName={config.videoPath ? config.videoPath.split(/[/\\]/).pop() : undefined}
-            workspace={config.videoPath ? config.videoPath.split(/[/\\]/).slice(0, -1).join('/') : undefined}
-            cpuUsage={sysStatus?.cpuUsage}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0 }}>
+            <GlobalBar
+              projectName={config.videoPath ? config.videoPath.split(/[/\\]/).pop() : undefined}
+              workspace={config.videoPath ? config.videoPath.split(/[/\\]/).slice(0, -1).join('/') : undefined}
+              cpuUsage={sysStatus?.cpuUsage}
             memUsage={sysStatus?.memUsage}
             gpuUsage={sysStatus?.gpuUsage}
           />
+          <WorkspaceSelector />
+          </Box>
         }
         railContent={<NavRail />}
         arenaContent={arenaContent}
@@ -177,8 +198,8 @@ export default function App() {
             logFirstIndex={logFirstIndex.current}
             logTotal={logTotal.current}
             onLoadOlder={() => loadOlderLogs(status.jobId)}
-            events={MOCK_EVENTS}
-            passTrace={MOCK_EVENTS.length > 0 ? MOCK_EVENTS[0].passTrace : undefined}
+            events={events}
+            passTrace={events.length > 0 ? events[0].passTrace : undefined}
             batchStatus={batch}
           />
         }
