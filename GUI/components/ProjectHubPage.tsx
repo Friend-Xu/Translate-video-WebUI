@@ -99,6 +99,11 @@ export default function ProjectHubPage() {
       .catch(() => {})
   }, [fetchWorkflowPresets, fetchWorkspaceList])
 
+  // Refresh workspace list when returning to hub
+  useEffect(() => {
+    if (phase === 'hub') fetchWorkspaceList()
+  }, [phase, fetchWorkspaceList])
+
   // SSE connection
   useSSE(status.jobId, appendLog, () => {}, () => {})
 

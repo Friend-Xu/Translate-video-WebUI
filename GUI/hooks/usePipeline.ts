@@ -28,6 +28,17 @@ export function usePipeline() {
   })
   const [logs, setLogs] = useState<LogEntry[]>([])
 
+  // Ref to avoid closure stale-value issues with jobId in cancelPipeline
+  const jobIdRef = useRef<string | null>(null)
+
+  const _setStatusAndRef = useCallback((updater: PipelineStatus | ((prev: PipelineStatus) => PipelineStatus)) => {
+    setStatus(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater
+      jobIdRef.current = next.jobId
+      return next
+    })
+  }, [])
+
   // Virtual window: logs array is a sliding window into the full log file.
   // firstItemIndex is 0 during auto-follow; only set when prepending history.
   const firstItemIndex = useRef(0)
@@ -115,13 +126,13 @@ export function usePipeline() {
 
   const handleDone = useCallback((finalStatus: string) => {
     flushBatch()
-    setStatus(prev => ({
+    _setStatusAndRef(prev => ({
       ...prev,
       state: finalStatus as PipelineStatus['state'],
       progress: finalStatus === 'completed' ? 100 : prev.progress,
       currentStep: finalStatus === 'completed' ? '处理完成' : '处理结束',
     }))
-  }, [flushBatch])
+  }, [flushBatch, _setStatusAndRef])
 
   // Poll status while running
   const pollStatus = useCallback(async (jobId: string) => {
@@ -220,7 +231,7 @@ export function usePipeline() {
       }
 
       const { job_id } = await res.json()
-      setStatus(prev => ({ ...prev, jobId: job_id, currentStep: '流水线运行中...' }))
+      _setStatusAndRef(prev => ({ ...prev, jobId: job_id, currentStep: '流水线运行中...' }))
 
       // Load initial log tail from file, then start polling + SSE
       await loadLogTail(job_id)
@@ -233,17 +244,18 @@ export function usePipeline() {
   }, [appendLog, pollStatus, loadLogTail])
 
   const cancelPipeline = useCallback(async () => {
-    if (!status.jobId) return
+    const jid = jobIdRef.current
+    if (!jid) return
     try {
-      await fetch(`${API}/${status.jobId}/cancel`, { method: 'POST' })
-      setStatus(prev => ({ ...prev, state: 'cancelled', currentStep: '已取消' }))
+      await fetch(`${API}/${jid}/cancel`, { method: 'POST' })
+      _setStatusAndRef(prev => ({ ...prev, state: 'cancelled', currentStep: '已取消' }))
       appendLog({ level: 'WARN', message: '任务已取消', timestamp: new Date().toLocaleTimeString() })
     } catch { /* ignore */ }
-  }, [status.jobId, appendLog])
+  }, [appendLog, _setStatusAndRef])
 
   return {
     status,
-    setStatus,
+    setStatus: _setStatusAndRef,
     logs,
     appendLog,
     handleDone,
