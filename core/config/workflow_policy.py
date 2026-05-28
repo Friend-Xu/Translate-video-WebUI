@@ -100,22 +100,21 @@ class WorkflowPolicy:
         policy = cls(
             name=f"preset_{target_lang}",
             version="1.0",
-            global_passes=["media_validator", "demucs_adapter"],
         )
         policy.stages = {
             WorkflowStage.LOAD: StageConfig(
                 stage=WorkflowStage.LOAD,
-                passes=["media_validator", "audio_preprocess"],
+                passes=["media_validate"],
                 auto_advance=True,
             ),
             WorkflowStage.EXTRACT: StageConfig(
                 stage=WorkflowStage.EXTRACT,
-                passes=["asr", "asr_to_ir", "semantic_merge"],
+                passes=["asr", "asr_to_ir", "speaker", "semantic_merge"],
                 auto_advance=True,
             ),
             WorkflowStage.TRANSLATE: StageConfig(
                 stage=WorkflowStage.TRANSLATE,
-                passes=["llm_translation", "translation_quality"],
+                passes=["translate", "quality_check"],
                 auto_advance=False,
                 gate="text_gate",
                 gate_routing={
@@ -128,7 +127,7 @@ class WorkflowPolicy:
             ),
             WorkflowStage.TTS: StageConfig(
                 stage=WorkflowStage.TTS,
-                passes=["tts_composite"],
+                passes=["tts", "emotion"],
                 auto_advance=True,
                 gate="emotion_gate",
                 gate_routing={
@@ -140,7 +139,7 @@ class WorkflowPolicy:
             ),
             WorkflowStage.EXPORT: StageConfig(
                 stage=WorkflowStage.EXPORT,
-                passes=["srt_export", "video_compose"],
+                passes=["srt_export"],
                 auto_advance=True,
             ),
         }
@@ -153,19 +152,19 @@ class WorkflowPolicy:
         policy.stages = {
             WorkflowStage.LOAD: StageConfig(
                 stage=WorkflowStage.LOAD,
-                passes=["media_validator", "audio_preprocess"],
+                passes=["media_validate"],
             ),
             WorkflowStage.EXTRACT: StageConfig(
                 stage=WorkflowStage.EXTRACT,
-                passes=["asr", "asr_to_ir", "semantic_merge"],
+                passes=["asr", "asr_to_ir", "speaker", "semantic_merge"],
             ),
             WorkflowStage.TRANSLATE: StageConfig(
                 stage=WorkflowStage.TRANSLATE,
-                passes=["llm_translation"],
+                passes=["translate"],
             ),
             WorkflowStage.TTS: StageConfig(
                 stage=WorkflowStage.TTS,
-                passes=["tts_composite"],
+                passes=["tts"],
             ),
             WorkflowStage.EXPORT: StageConfig(
                 stage=WorkflowStage.EXPORT,

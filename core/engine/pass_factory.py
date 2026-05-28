@@ -31,17 +31,30 @@ from core.passes.openvoice_composite_pass import OpenVoiceCompositePass
 
 # 所有已知 Pass 名称 → 构造函数（不含运行时参数）
 _PASS_REGISTRY: dict[str, type] = {
+    # LOAD stage
+    "media_validate": AudioPreprocessCompositePass,
     "media_validator": AudioPreprocessCompositePass,
+    "demucs": AudioPreprocessCompositePass,
     "audio_preprocess": AudioPreprocessCompositePass,
+    # EXTRACT stage
     "asr": ASRCompositePass,
     "asr_to_ir": ASRToIRPass,
-    "semantic_merge": SemanticMergePass,
-    "llm_translation": LLMTranslationPass,
-    "translation_quality": TranslationQualityPass,
-    "emotion_composite": EmotionCompositePass,
+    "speaker": SpeakerCompositePass,
     "speaker_composite": SpeakerCompositePass,
-    "srt_export": SRTExportPass,
+    "semantic_merge": SemanticMergePass,
+    # TRANSLATE stage
+    "translate": LLMTranslationPass,
+    "llm_translation": LLMTranslationPass,
+    "quality_check": TranslationQualityPass,
+    "translation_quality": TranslationQualityPass,
+    # TTS stage
+    "tts": TTSCompositePass,
     "tts_composite": TTSCompositePass,
+    "emotion": EmotionCompositePass,
+    "emotion_composite": EmotionCompositePass,
+    # EXPORT stage
+    "srt_export": SRTExportPass,
+    # Individual engine passes
     "cosyvoice_composite": CosyVoiceCompositePass,
     "edge_tts_composite": EdgeTTSCompositePass,
     "indextts_composite": IndexTTSCompositePass,
