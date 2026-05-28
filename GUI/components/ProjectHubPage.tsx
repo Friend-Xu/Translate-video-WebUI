@@ -246,9 +246,13 @@ export default function ProjectHubPage() {
       <Box sx={{ height: '100%', overflow: 'auto', p: 4 }}>
         <Box sx={{ mb: 4, textAlign: 'center' }}>
           <Typography variant="h4" fontWeight={700} gutterBottom>Timeline Runtime System</Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 600, mx: 'auto' }}>
+          <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 600, mx: 'auto', mb: 1.5 }}>
             将视频转化为可编辑的 Timeline IR，选择一个 Workflow Preset 开始。
           </Typography>
+          <Button size="small" variant="text" startIcon={<FolderOpenRounded />}
+            onClick={() => fetch('/api/files/open-path', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: 'source_file' }) }).catch(() => {}) }>
+            打开项目根目录
+          </Button>
         </Box>
 
         {/* Drop zone */}
@@ -265,7 +269,13 @@ export default function ProjectHubPage() {
                   <Typography variant="caption" color="text.secondary">{(selectedVideo.size / 1024 / 1024).toFixed(0)} MB</Typography>
                 </Box>
               </Box>
-              <Button size="small" variant="outlined" onClick={() => setSelectedVideo(null)}>更换</Button>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Button size="small" variant="text" sx={{ minWidth: 0, px: 0.5 }}
+                  onClick={() => fetch('/api/files/open-folder', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ video_path: selectedVideo.path }) }).catch(() => {}) }>
+                  <FolderOpenRounded fontSize="small" />
+                </Button>
+                <Button size="small" variant="outlined" onClick={() => setSelectedVideo(null)}>更换</Button>
+              </Box>
             </Box>
           ) : (
             <>
