@@ -271,7 +271,7 @@ export default function ProjectHubPage() {
               </Box>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <Button size="small" variant="text" sx={{ minWidth: 0, px: 0.5 }}
-                  onClick={() => fetch('/api/files/open-folder', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ video_path: selectedVideo.path }) }).catch(() => {}) }>
+                  onClick={() => fetch(`/api/files/open-folder?video_path=${encodeURIComponent(selectedVideo.path)}`, { method: 'POST' }).catch(() => {}) }>
                   <FolderOpenRounded fontSize="small" />
                 </Button>
                 <Button size="small" variant="outlined" onClick={() => setSelectedVideo(null)}>更换</Button>
