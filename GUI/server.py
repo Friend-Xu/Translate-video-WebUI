@@ -4885,8 +4885,10 @@ def _persist_core_timeline(state, workspace_path: str) -> None:
             trans_text = raw.get("text", "") or ""
         else:
             trans_text = str(raw) if raw else ""
-        # Extract speaker from rendered data
+        # Extract speaker from rendered data (may be dict or string)
         spk = r.get("speaker", "")
+        if isinstance(spk, dict):
+            spk = spk.get("speaker_id", "") or spk.get("id", "") or ""
         derivatives_map[eid] = {
             "translation": trans_text,
             "words": r.get("words", []),
