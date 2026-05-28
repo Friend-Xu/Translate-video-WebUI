@@ -31,7 +31,13 @@ class TranslationQualityPass(TimelinePass):
         segments = []
         for es in state.sorted_events():
             text = es.ir.text_ref or ""
-            trans = es.translation.get("text", "") or es.derivatives.get("translation", "")
+            raw_trans = es.translation
+            if isinstance(raw_trans, dict):
+                trans = raw_trans.get("text", "")
+            else:
+                trans = raw_trans or es.derivatives.get("translation", "")
+            if not isinstance(trans, str):
+                trans = str(trans)
             if trans and text:
                 segments.append((es.id, text, trans))
 
