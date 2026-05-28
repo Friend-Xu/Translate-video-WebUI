@@ -464,8 +464,12 @@ class PatchEngine:
                 continue
             slot = slot_map.get(key)
             if slot is not None:
-                before_snap[key] = dict(slot)
-                slot.update(val if isinstance(val, dict) else {"value": val})
+                try:
+                    before_snap[key] = dict(slot) if not isinstance(slot, str) else str(slot)
+                except (ValueError, TypeError):
+                    before_snap[key] = str(slot)
+                if isinstance(slot, dict):
+                    slot.update(val if isinstance(val, dict) else {"value": val})
 
         target.add_patch(patch)
         return {
