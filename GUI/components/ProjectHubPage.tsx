@@ -88,7 +88,7 @@ export default function ProjectHubPage() {
   const [apiDialogOpen, setApiDialogOpen] = useState(false)
   const [pipelineConfig, setPipelineConfig] = useState<PipelineConfig>(DEFAULT_CONFIG)
 
-  const { status, logs, appendLog, cancelPipeline, setStatus, pollStatus, loadLogTail } = usePipeline()
+  const { status, logs, appendLog, cancelPipeline, setStatus, pollStatus, loadLogTail } = usePipeline('/api/core/pipeline')
 
   // Load data on mount
   useEffect(() => {
@@ -106,7 +106,7 @@ export default function ProjectHubPage() {
   }, [phase, fetchWorkspaceList])
 
   // SSE connection
-  useSSE(status.jobId, appendLog, () => {}, () => {})
+  useSSE(status.jobId, appendLog, () => {}, () => {}, '/api/core/pipeline')
 
   // Load video info when manifest is available
   useEffect(() => {

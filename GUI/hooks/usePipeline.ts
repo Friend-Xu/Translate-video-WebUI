@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react'
 import type { PipelineConfig, PipelineStatus, LogEntry } from '../types'
 
-const API = '/api/pipeline'
+const API_OLD = '/api/pipeline'
 const MAX_WINDOW = 500      // max loaded entries in memory
 const TAIL_LIMIT = 200       // initial fetch size
 const PAGE_LIMIT = 200       // scroll-up page size
@@ -22,7 +22,7 @@ function parseLine(raw: string): LogEntry {
   return { _id: nextId(), level, message, timestamp: new Date().toLocaleTimeString() }
 }
 
-export function usePipeline() {
+export function usePipeline(apiBase: string = API_OLD) {
   const [status, setStatus] = useState<PipelineStatus>({
     state: 'idle', progress: 0, currentStep: '就绪', jobId: null, detail: '',
   })
@@ -80,7 +80,7 @@ export function usePipeline() {
   // Load initial tail from workspace log file
   const loadLogTail = useCallback(async (jobId: string) => {
     try {
-      const res = await fetch(`${API}/${jobId}/logs/tail?limit=${TAIL_LIMIT}`)
+      const res = await fetch(`${apiBase}/${jobId}/logs/tail?limit=${TAIL_LIMIT}`)
       if (!res.ok) return
       const data = await res.json()
       const entries: LogEntry[] = (data.lines || []).map(parseLine)
@@ -102,7 +102,7 @@ export function usePipeline() {
 
     loadingOlder.current = true
     try {
-      const res = await fetch(`${API}/${jobId}/logs/range?before=${before}&limit=${PAGE_LIMIT}`)
+      const res = await fetch(`${apiBase}/${jobId}/logs/range?before=${before}&limit=${PAGE_LIMIT}`)
       if (!res.ok) return
       const data = await res.json()
       const olderEntries: LogEntry[] = (data.lines || []).map(parseLine)
@@ -138,7 +138,7 @@ export function usePipeline() {
   const pollStatus = useCallback(async (jobId: string) => {
     const poll = async () => {
       try {
-        const res = await fetch(`${API}/${jobId}/status`)
+        const res = await fetch(`${apiBase}/${jobId}/status`)
         if (!res.ok) return
         const data = await res.json()
         setStatus(prev => ({
@@ -163,7 +163,7 @@ export function usePipeline() {
     setStatus({ state: 'running', progress: 5, currentStep: '启动中...', jobId: null, detail: '' })
 
     try {
-      const res = await fetch(`${API}/run`, {
+      const res = await fetch(`${apiBase}/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -247,7 +247,7 @@ export function usePipeline() {
     const jid = jobIdRef.current
     if (!jid) return
     try {
-      await fetch(`${API}/${jid}/cancel`, { method: 'POST' })
+      await fetch(`${apiBase}/${jid}/cancel`, { method: 'POST' })
       _setStatusAndRef(prev => ({ ...prev, state: 'cancelled', currentStep: '已取消' }))
       appendLog({ level: 'WARN', message: '任务已取消', timestamp: new Date().toLocaleTimeString() })
     } catch { /* ignore */ }

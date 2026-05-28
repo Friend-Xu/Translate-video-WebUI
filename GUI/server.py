@@ -5241,6 +5241,29 @@ async def get_core_audit(job_id: str) -> dict:
     }
 
 
+# ── core/ Pipeline 日志和取消端点（委托到 /api/pipeline/ 对应端点）──
+
+@app.get("/api/core/pipeline/{job_id}/logs")
+async def get_core_logs(job_id: str, request: Request) -> StreamingResponse:
+    """core/ Pipeline SSE 日志流。"""
+    return await stream_logs(job_id, request)
+
+
+@app.get("/api/core/pipeline/{job_id}/logs/tail")
+async def get_core_log_tail(job_id: str, limit: int = 200) -> dict:
+    return await logs_tail(job_id, limit)
+
+
+@app.get("/api/core/pipeline/{job_id}/logs/range")
+async def get_core_log_range(job_id: str, before: int = 0, limit: int = 200) -> dict:
+    return await logs_range(job_id, before, limit)
+
+
+@app.post("/api/core/pipeline/{job_id}/cancel")
+async def cancel_core_job(job_id: str) -> dict:
+    return await cancel_job(job_id)
+
+
 # ---------------------------------------------------------------------------
 # Schema validation endpoint
 # ---------------------------------------------------------------------------

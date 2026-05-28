@@ -11,6 +11,7 @@ export function useSSE(
   onLog: (entry: LogEntry) => void,
   onDone: (status: string) => void,
   onClear?: () => void,
+  apiBase: string = '/api/pipeline',
 ) {
   const sourceRef = useRef<EventSource | null>(null)
   const [connectionState, setConnectionState] = useState<ConnectionState>('closed')
@@ -29,7 +30,7 @@ export function useSSE(
 
     onClear?.()
 
-    const es = new EventSource(`/api/pipeline/${jobId}/logs`)
+    const es = new EventSource(`${apiBase}/${jobId}/logs`)
     sourceRef.current = es
 
     es.onopen = () => {
