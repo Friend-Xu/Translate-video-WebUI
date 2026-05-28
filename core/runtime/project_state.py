@@ -37,10 +37,15 @@ class TimelineProjectState:
         self.global_patches.sort(key=lambda p: p.timestamp)
 
     def get_global_audio_ref(self) -> str | None:
-        """从 global_patches 中提取 vocals_ref 或 audio_ref（由 LOAD stage 写入）。"""
+        """从 global_patches 中提取 vocals_ref 或 audio_ref（由 LOAD stage 写入）。
+        vocals_ref 优先，用于 speaker diarization。"""
+        result = None
         for p in self.global_patches:
             if p.op.name == "ANNOTATE":
-                ref = p.value.get("vocals_ref", "") or p.value.get("audio_ref", "")
-                if ref:
-                    return ref
-        return None
+                v = p.value
+                # vocals_ref 优先级高于 audio_ref
+                if v.get("vocals_ref", ""):
+                    result = v["vocals_ref"]
+                elif v.get("audio_ref", "") and result is None:
+                    result = v["audio_ref"]
+        return result
