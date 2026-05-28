@@ -110,6 +110,8 @@ class WhisperAdapter:
             for seg in chunk_segments:
                 seg_start = max(seg.start, start)
                 seg_end = min(seg.end, end)
+                if seg_start >= seg_end:
+                    continue
                 words = [
                     {"word": w.word.strip(), "start": w.start, "end": w.end, "score": w.probability}
                     for w in (seg.words or [])
