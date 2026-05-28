@@ -402,7 +402,15 @@ export default function ProjectHubPage() {
                   <Grid key={ws.path} size={{ xs: 12, sm: 6, md: 4 }}>
                     <Card sx={{ border: '1px solid', borderColor: isRunning ? 'info.main' : 'divider' }}>
                       <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                        <FolderOpenRounded sx={{ color: 'text.disabled', fontSize: 28 }} />
+                        <FolderOpenRounded sx={{ color: 'text.disabled', fontSize: 28, cursor: 'pointer', flexShrink: 0, '&:hover': { color: 'primary.main' } }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            fetch('/api/files/open-path', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ path: ws.path }),
+                            }).catch(() => {})
+                          }} />
                         <Box sx={{ flexGrow: 1, minWidth: 0, cursor: isRunning ? 'pointer' : (ws.runtimeState === 'ready' || ws.runtimeState === 'complete') ? 'pointer' : 'default' }}
                           onClick={() => {
                             if (ws.runtimeState === 'ready' || ws.runtimeState === 'complete') handleOpenWorkspace(ws)
