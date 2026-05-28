@@ -363,12 +363,24 @@ export default function ProjectHubPage() {
               {failedWorkspaces.map(ws => (
                 <Grid key={ws.path} size={{ xs: 12, sm: 6, md: 4 }}>
                   <Card sx={{ border: '1px solid', borderColor: 'error.main', opacity: 0.85 }}>
-                    <CardActionArea onClick={() => handleOpenWorkspace(ws)}>
-                      <CardContent sx={{ py: 1.5 }}>
+                    <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <Box sx={{ flexGrow: 1, cursor: 'pointer' }} onClick={() => handleOpenWorkspace(ws)}>
                         <Typography variant="body2" fontWeight={600}>{ws.name}</Typography>
                         <Chip label="FAILED" size="small" color="error" sx={{ fontSize: '0.6rem', height: 18, mt: 0.5 }} />
-                      </CardContent>
-                    </CardActionArea>
+                      </Box>
+                      <Box sx={{ flexShrink: 0, cursor: 'pointer', color: 'text.disabled', '&:hover': { color: 'error.main' }, ml: 1 }}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (!window.confirm(`删除项目 "${ws.name}"？此操作不可撤销。`)) return
+                          fetch('/api/workspace/delete', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ path: ws.path }),
+                          }).then(() => fetchWorkspaceList()).catch(() => {})
+                        }}>
+                        <DeleteOutlineRounded fontSize="small" />
+                      </Box>
+                    </CardContent>
                   </Card>
                 </Grid>
               ))}
