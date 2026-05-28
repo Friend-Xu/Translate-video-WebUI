@@ -384,19 +384,35 @@ export default function ProjectHubPage() {
             <Grid container spacing={1}>
               {[...readyWorkspaces, ...otherWorkspaces].map(ws => {
                 const st = STATE_LABELS[ws.runtimeState] || STATE_LABELS.uninitialized
+                const isRunning = ws.runtimeState === 'bootstrapping' || ws.runtimeState === 'computing'
                 return (
                   <Grid key={ws.path} size={{ xs: 12, sm: 6, md: 4 }}>
-                    <Card sx={{ border: '1px solid', borderColor: 'divider' }}>
-                      <CardActionArea onClick={() => { if (ws.runtimeState === 'ready' || ws.runtimeState === 'complete') handleOpenWorkspace(ws) }}>
-                        <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                          <FolderOpenRounded sx={{ color: 'text.disabled', fontSize: 28 }} />
-                          <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                            <Typography variant="body2" fontWeight={600} noWrap>{ws.name}</Typography>
-                            <Typography variant="caption" color="text.secondary" noWrap>{ws.videoPath?.split(/[/\\]/).pop() || ws.path}</Typography>
+                    <Card sx={{ border: '1px solid', borderColor: isRunning ? 'info.main' : 'divider' }}>
+                      <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                        <FolderOpenRounded sx={{ color: 'text.disabled', fontSize: 28 }} />
+                        <Box sx={{ flexGrow: 1, minWidth: 0, cursor: isRunning ? 'pointer' : (ws.runtimeState === 'ready' || ws.runtimeState === 'complete') ? 'pointer' : 'default' }}
+                          onClick={() => {
+                            if (ws.runtimeState === 'ready' || ws.runtimeState === 'complete') handleOpenWorkspace(ws)
+                            else if (isRunning) { loadWorkspace(ws.path); setPhase('running') }
+                          }}>
+                          <Typography variant="body2" fontWeight={600} noWrap>{ws.name}</Typography>
+                          <Typography variant="caption" color="text.secondary" noWrap>{ws.videoPath?.split(/[/\\]/).pop() || ws.path}</Typography>
+                        </Box>
+                        <Chip label={st.label} size="small" color={st.color} sx={{ fontSize: '0.6rem', height: 20, flexShrink: 0 }} />
+                        {isRunning && (
+                          <Box sx={{ flexShrink: 0, cursor: 'pointer', color: 'error.main' }}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              fetch('/api/pipeline/cancel-by-workspace', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ workspace_path: ws.path }),
+                              }).then(() => fetchWorkspaceList()).catch(() => {})
+                            }}>
+                            <StopRounded fontSize="small" />
                           </Box>
-                          <Chip label={st.label} size="small" color={st.color} sx={{ fontSize: '0.6rem', height: 20, flexShrink: 0 }} />
-                        </CardContent>
-                      </CardActionArea>
+                        )}
+                      </CardContent>
                     </Card>
                   </Grid>
                 )
@@ -417,7 +433,7 @@ export default function ProjectHubPage() {
     <Box sx={{ height: '100%', overflow: 'auto', p: 3 }}>
       <Box sx={{ mb: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-          <Button size="small" variant="text" onClick={() => { setPhase('hub'); setSelectedVideo(null) }} sx={{ fontSize: '0.7rem' }}>
+          <Button size="small" variant="text" onClick={() => { setPhase('hub') }} sx={{ fontSize: '0.7rem' }}>
             ← 返回项目中心
           </Button>
         </Box>

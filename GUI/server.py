@@ -1304,6 +1304,29 @@ async def stream_logs(job_id: str, request: Request) -> StreamingResponse:
     )
 
 
+@app.post("/api/pipeline/cancel-by-workspace")
+async def cancel_by_workspace(body: dict) -> dict:
+    """Cancel a running job by workspace path."""
+    ws = body.get("workspace_path", "")
+    if not ws:
+        raise HTTPException(status_code=400, detail="Missing workspace_path")
+    for job_id, job in _jobs.items():
+        if getattr(job, "workspace_path", "") == ws and job.status == "running":
+            if job.process and job.process.returncode is None:
+                job.process.terminate()
+                try:
+                    job.process.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    job.process.kill()
+            job.status = "cancelled"
+            job.current_step = "已取消"
+            job.append_log("[WARN] 任务已取消")
+            _save_job(job)
+            _update_workspace_runtime_state(ws, RuntimeState.FAILED)
+            return {"ok": True}
+    raise HTTPException(status_code=404, detail="No running job for this workspace")
+
+
 @app.post("/api/pipeline/{job_id}/cancel")
 async def cancel_job(job_id: str) -> dict:
     job = _jobs.get(job_id)
