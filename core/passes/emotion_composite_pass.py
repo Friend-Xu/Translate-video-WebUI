@@ -9,7 +9,7 @@ from core.runtime import TimelineProjectState, PatchEngine
 class EmotionCompositePass(TimelinePass):
 
     name = "emotion_composite"
-    depends_on = ["speaker_composite", "llm_translation"]
+    depends_on: list[str] = []
 
     def __init__(self, skip_emotion: bool = False, skip_alignment: bool = False,
                  gate_mode: str = "strict"):

@@ -20,7 +20,7 @@ class TTSCompositePass(TimelinePass):
     """TTS 域完整编排。"""
 
     name = "tts_composite"
-    depends_on = ["speaker_composite"]
+    depends_on: list[str] = []
 
     def __init__(self, output_dir: str = "", speaker_seed: int | None = None):
         self.output_dir = output_dir

@@ -40,7 +40,7 @@ class IndexTTSCompositePass(TimelinePass):
     """
 
     name = "indextts_composite"
-    depends_on = ["speaker_composite"]
+    depends_on: list[str] = []
 
     def __init__(self, output_dir: str = "",
                  fp16: bool = True):
