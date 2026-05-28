@@ -44,14 +44,16 @@ class DemucsAdapter:
             from pipeline.demucs_instr import extract_instrumental
 
             output_dir = ctx.output_dir or os.path.dirname(ctx.audio_path) or "."
+            extract_dir = os.path.join(output_dir, "01_extract") if not output_dir.endswith("01_extract") else output_dir
+            os.makedirs(extract_dir, exist_ok=True)
             instrumental_path = extract_instrumental(
-                ctx.audio_path, output_dir,
+                ctx.audio_path, extract_dir,
                 model_name=ctx.model_name,
             )
 
             base = os.path.basename(ctx.audio_path)
             stem = os.path.splitext(base)[0]
-            demucs_dir = os.path.join(output_dir, ctx.model_name, stem)
+            demucs_dir = os.path.join(extract_dir, ctx.model_name, stem)
             vocals_path = os.path.join(demucs_dir, "vocals.wav")
             no_vocals_path = instrumental_path
 

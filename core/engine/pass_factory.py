@@ -67,13 +67,17 @@ _RUNTIME_ARGS: dict[str, list[str]] = {
     "demucs": ["video_path", "output_dir"],
     "audio_preprocess": ["video_path", "output_dir"],
     "asr_to_ir": ["segments", "speaker_timeline"],
-    "asr": ["audio_path"],
+    "asr": ["audio_path", "workspace_dir"],
+    "speaker": ["vocals_path", "output_dir"],
+    "speaker_composite": ["vocals_path", "output_dir"],
     "translate": ["translate_fn"],
     "llm_translation": ["translate_fn"],
     "srt_export": ["output_path"],
-    "tts_composite": ["engine"],
-    "cosyvoice_composite": ["engine"],
-    "edge_tts_composite": ["engine"],
+    "tts_composite": ["output_dir"],
+    "emotion": ["workspace_dir"],
+    "emotion_composite": ["workspace_dir"],
+    "cosyvoice_composite": ["output_dir"],
+    "edge_tts_composite": ["output_dir"],
 }
 
 AVAILABLE_PASS_NAMES = sorted(_PASS_REGISTRY.keys())
@@ -88,6 +92,7 @@ def create_pass_factory(
     video_path: str = "",
     audio_path: str = "",
     output_dir: str = "",
+    workspace_dir: str = "",
 ) -> Callable[[str], TimelinePass | None]:
     """通过闭包注入运行时依赖，返回 Pass 工厂函数。"""
 
@@ -100,6 +105,7 @@ def create_pass_factory(
         "video_path": video_path,
         "audio_path": audio_path,
         "output_dir": output_dir,
+        "workspace_dir": workspace_dir,
     }
 
     def _factory(name: str) -> TimelinePass | None:

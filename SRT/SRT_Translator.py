@@ -973,38 +973,43 @@ class SRTTranslator:
     def _translate_from_timeline(
         self, timeline_path: str, srt_path: str
     ) -> Tuple[str, str]:
-        """从 Timeline IR 读取 segments，翻译后回写 translation 字段。"""
-        from timeline import load_json, save_json as save_timeline
-        import pysrt, copy
+        """从 timeline.json (兼容 v1/v2) 读取 segments，翻译后回写 translation。"""
+        import json as _json, pysrt, copy
 
         logger.info(f"开始 Timeline 翻译: {timeline_path}")
-        tl = load_json(timeline_path)
-        self.log.video = tl.audio_id
+        with open(timeline_path, "r", encoding="utf-8") as f:
+            tl = _json.load(f)
 
-        # 构建 pysrt SubRipItem 列表（适配现有翻译管线）
+        is_v2 = tl.get("schema_version") == "2.0"
+        source_segments = tl.get("events", []) if is_v2 else tl.get("timeline", [])
+        self.log.video = (tl.get("project", {}).get("id", "")
+                          if is_v2 else tl.get("audio_id", ""))
+
+        # 构建 pysrt SubRipItem 列表
         subs = pysrt.SubRipFile()
-        for seg in tl.timeline:
-            if not seg.text.strip():
+        for seg in source_segments:
+            text = (seg.get("text") if isinstance(seg, dict) else seg.text).strip()
+            if not text:
                 continue
+            seg_id = seg.get("id") if isinstance(seg, dict) else seg.id
+            seg_start = seg.get("start") if isinstance(seg, dict) else seg.start
+            seg_end = seg.get("end") if isinstance(seg, dict) else seg.end
             item = pysrt.SubRipItem(
-                index=int(seg.id.split("_")[1]) if "_" in seg.id else 0,
-                start=pysrt.SubRipTime(seconds=seg.start),
-                end=pysrt.SubRipTime(seconds=seg.end),
-                text=seg.text,
+                index=int(seg_id.split("_")[1]) if "_" in seg_id else 0,
+                start=pysrt.SubRipTime(seconds=seg_start),
+                end=pysrt.SubRipTime(seconds=seg_end),
+                text=text,
             )
             subs.append(item)
-        # 重新编号
         for i, sub in enumerate(subs, 1):
             sub.index = i
 
         self._all_subs = subs
 
-        # 语言检测
         if self.source_lang == "auto":
             self.source_lang = detect_source_language(subs)
             logger.info(f"检测到源语言: {self.source_lang}")
 
-        # 语义分组（同 speaker 不强制切分，交给现有逻辑）
         groups = group_semantically(
             subs,
             max_size=self.config.get("max_group_size", 8),
@@ -1013,7 +1018,6 @@ class SRTTranslator:
         )
         self.log.total_groups = len(groups)
 
-        # 翻译每组
         translate_fn = self._translate_group_with_fallback
         if self.multi_agent_enabled:
             translate_fn = self._translate_group_multi_agent
@@ -1023,24 +1027,26 @@ class SRTTranslator:
         for gi, group in enumerate(groups, 1):
             translate_fn(gi, group)
 
-        # 回写 translation 到 Timeline
+        # 回写 translation
         for sub in subs:
-            for seg in tl.timeline:
-                if seg.text.strip() == "":
-                    continue
-                # 通过 index 映射翻译结果
-                idx = int(seg.id.split("_")[1]) if "_" in seg.id else 0
+            for seg in source_segments:
+                if isinstance(seg, dict):
+                    idx = int(seg.get("id", "").split("_")[1]) if "_" in seg.get("id", "") else 0
+                else:
+                    idx = int(seg.id.split("_")[1]) if "_" in seg.id else 0
                 if idx == sub.index:
-                    seg.translation = sub.text
+                    if isinstance(seg, dict):
+                        seg["translation"] = sub.text
+                    else:
+                        seg.translation = sub.text
                     break
 
-        # 保存翻译后的 timeline 到 02_translate/
         out_dir = os.path.dirname(srt_path)
         out_timeline = os.path.join(out_dir, "timeline.json")
-        save_timeline(tl, out_timeline)
+        with open(out_timeline, "w", encoding="utf-8") as f:
+            _json.dump(tl, f, ensure_ascii=False, indent=2)
         logger.info(f"Timeline 翻译已保存: {out_timeline}")
 
-        # 同时输出 SRT（兼容下游 TTS）
         base = os.path.splitext(srt_path)[0]
         auto_path = f"{base}-auto.srt"
         subs.save(auto_path, encoding="utf-8")

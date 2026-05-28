@@ -23,6 +23,7 @@ from core.runtime.snapshot import SnapshotManager, TimelineSnapshot
 from core.runtime.patch_store import PatchStore
 from core.runtime.gate_validator import GateValidator, GateRejection
 from core.runtime.patch_planner import PatchPlanner
+from core.runtime.workspace import WorkspaceResolver
 
 __all__ = [
     "Patch", "OpCode",
@@ -37,4 +38,5 @@ __all__ = [
     "PatchStore",
     "GateValidator", "GateRejection",
     "PatchPlanner",
+    "WorkspaceResolver",
 ]

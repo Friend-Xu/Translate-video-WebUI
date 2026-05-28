@@ -171,7 +171,9 @@ class CosyVoiceCompositePass(TimelinePass):
 
     def _build_context(self, es,
                        prompt_map: dict[str, str]) -> CosyVoiceSegmentContext:
-        translation = es.translation.get("text", "") or es.ir.text_ref
+        trans_raw = es.translation
+        translation = (trans_raw.get("text", "") if isinstance(trans_raw, dict) else str(trans_raw or "")) or es.ir.text_ref
+        trans_lang = trans_raw.get("lang", "") if isinstance(trans_raw, dict) else ""
         speaker_id = es.speaker.get("speaker_id")
         return CosyVoiceSegmentContext(
             segment_id=es.id,
@@ -181,7 +183,7 @@ class CosyVoiceCompositePass(TimelinePass):
             speaker_embedding_ref=prompt_map.get(speaker_id or "", ""),
             duration_target=es.end - es.start,
             semantic_embedding_ref=es.semantic.get("embedding_ref", ""),
-            lang=es.translation.get("lang", "") or self.default_lang,
+            lang=trans_lang or self.default_lang,
             model_version=self.model_version,
             speed=self.default_speed,
             mode="cross_lingual",

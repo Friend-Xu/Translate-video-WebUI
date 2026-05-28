@@ -67,9 +67,14 @@ class AudioPreprocessCompositePass(TimelinePass):
 
         import os
 
-        # Ensure output directory exists
-        out_dir = self.output_dir or os.path.join(os.path.dirname(video_path) or ".", "")
-        os.makedirs(os.path.join(out_dir, "01_extract"), exist_ok=True)
+        # Ensure output directory — always use 01_extract/ under workspace
+        stem = os.path.splitext(os.path.basename(video_path))[0]
+        if self.output_dir:
+            ws_root = self.output_dir
+        else:
+            ws_root = os.path.join(os.path.dirname(video_path) or ".", f"{stem}_project")
+        extract_dir = os.path.join(ws_root, "01_extract")
+        os.makedirs(extract_dir, exist_ok=True)
 
         # Step 1: 缺陷诊断
         if not self.skip_defect_check:
@@ -84,9 +89,8 @@ class AudioPreprocessCompositePass(TimelinePass):
 
             # Step 2: 音频提取 + C2 修复
             audio_path = os.path.join(
-                self.output_dir or os.path.dirname(video_path) or ".",
-                "01_extract",
-                f"{os.path.splitext(os.path.basename(video_path))[0]}_extracted.wav",
+                extract_dir,
+                f"{stem}_extracted.wav",
             )
             defect_ctx.output_audio_path = audio_path
             patch = validator.repair_and_extract(defect_ctx)
@@ -99,7 +103,7 @@ class AudioPreprocessCompositePass(TimelinePass):
             demucs_input = audio_path if 'audio_path' in dir() else video_path
             demucs_ctx = DemucsContext(
                 audio_path=demucs_input,
-                output_dir=self.output_dir or os.path.dirname(video_path) or ".",
+                output_dir=ws_root,
             )
             demucs = DemucsAdapter()
             patch = demucs.separate(demucs_ctx)

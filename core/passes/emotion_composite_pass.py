@@ -12,9 +12,10 @@ class EmotionCompositePass(TimelinePass):
     depends_on: list[str] = []
 
     def __init__(self, skip_emotion: bool = False, skip_alignment: bool = False,
-                 gate_mode: str = "strict"):
+                 gate_mode: str = "strict", workspace_dir: str = ""):
         self.skip_emotion = skip_emotion; self.skip_alignment = skip_alignment
         self.gate_mode = gate_mode
+        self._workspace_dir = workspace_dir
         self._resolved_config: dict | None = None
 
     def configure(self, resolved_config: dict | None = None) -> None:
@@ -37,13 +38,14 @@ class EmotionCompositePass(TimelinePass):
         from core.emotion.emotion_space import EmotionVector
 
         engine = PatchEngine()
-        recognizer = EmotionRecognizerAdapter()
+        recognizer = EmotionRecognizerAdapter(output_dir=self._workspace_dir)
         scorer = EmotionScorer(); gate = EmotionGate(mode=self.gate_mode)
         router = EmotionTTSRouter(); prev = None
 
         for es in state.sorted_events():
             text = es.ir.text_ref or ""
-            trans = es.translation.get("text", "") or es.derivatives.get("translation", "")
+            trans_raw = es.translation
+            trans = (trans_raw.get("text", "") if isinstance(trans_raw, dict) else str(trans_raw or "")) or es.derivatives.get("translation", "")
 
             ctx = EmotionRecognizerContext(text=text, segment_id=es.id,
                                            start=es.start, end=es.end)

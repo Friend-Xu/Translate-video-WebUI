@@ -33,8 +33,9 @@ class WhisperAdapter:
     自包含 VAD + 转录逻辑，不依赖旧 pipeline/ 模块。
     """
 
-    def __init__(self, context: EngineContext):
+    def __init__(self, context: EngineContext, workspace_dir: str = ""):
         self.ctx = context
+        self.workspace_dir = workspace_dir
 
     def configure(self, event_config=None):
         if not event_config:
@@ -51,7 +52,10 @@ class WhisperAdapter:
     # ── public API ────────────────────────────────────────────
 
     def run(self) -> list[Patch]:
-        """执行完整转录流程 (VAD → faster-whisper)，返回 Patch 列表。"""
+        """执行完整转录流程 (VAD → faster-whisper)，返回 Patch 列表。
+
+        同时将原始转录结果 + VAD 分段写入工作目录 01_extract/。
+        """
         t0 = time.time()
 
         # Step 1: Silero VAD 分段
@@ -61,6 +65,10 @@ class WhisperAdapter:
         segments, language, stats = self._transcribe(vad_segments)
 
         stats["transcribe_time"] = time.time() - t0
+
+        # Step 3: 持久化原始转录结果
+        self._persist_transcript(segments, language, stats, vad_segments)
+
         return self._result_to_patches(segments, language, stats)
 
     # ── VAD (from SRT/VAD_Segmenter) ──────────────────────────
@@ -174,6 +182,31 @@ class WhisperAdapter:
         ))
 
         return patches
+
+    def _persist_transcript(self, segments: list[dict], language: str,
+                            stats: dict, vad_segments: list[tuple[float, float]]) -> None:
+        """将原始转录结果写入 01_extract/transcript.json 和 vad_segments.json。"""
+        import json
+        if not self.workspace_dir:
+            return
+        extract_dir = os.path.join(self.workspace_dir, "01_extract")
+        os.makedirs(extract_dir, exist_ok=True)
+
+        transcript_path = os.path.join(extract_dir, "transcript.json")
+        with open(transcript_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "segments": segments,
+                "language": language,
+                "words": [w for seg in segments for w in seg.get("words", [])],
+                "stats": stats,
+            }, f, ensure_ascii=False, indent=2)
+
+        vad_path = os.path.join(extract_dir, "vad_segments.json")
+        with open(vad_path, "w", encoding="utf-8") as f:
+            json.dump(
+                [{"start": s, "end": e} for s, e in vad_segments],
+                f, ensure_ascii=False, indent=2,
+            )
 
     @staticmethod
     def _avg_word_confidence(words: list[dict]) -> float:

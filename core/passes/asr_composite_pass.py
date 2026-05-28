@@ -32,11 +32,13 @@ class ASRCompositePass(TimelinePass):
 
     def __init__(self, audio_path: str = "", context: EngineContext | None = None,
                  enable_speaker_refine: bool = False,
-                 speaker_timeline: list | None = None):
+                 speaker_timeline: list | None = None,
+                 workspace_dir: str = ""):
         self.audio_path = audio_path
         self.ctx = context or EngineContext(audio_path=audio_path)
         self.enable_speaker_refine = enable_speaker_refine
         self.speaker_timeline = speaker_timeline
+        self._workspace_dir = workspace_dir
 
     def apply(self, state: TimelineProjectState | None = None) -> TimelineProjectState:
         """执行完整 ASR 流程，返回填充了 asr/semantic 槽位的 ProjectState。"""
@@ -51,7 +53,7 @@ class ASRCompositePass(TimelinePass):
             ctx.audio_path = audio
 
         # Step 1: Whisper → SEGMENT_INSERT patches
-        whisper = WhisperAdapter(ctx)
+        whisper = WhisperAdapter(ctx, workspace_dir=self._workspace_dir)
         asr_patches = whisper.run()
         segment_patches = [p for p in asr_patches if p.op == OpCode.SEGMENT_INSERT]
         meta_patches = [p for p in asr_patches if p.op == OpCode.ANNOTATE]

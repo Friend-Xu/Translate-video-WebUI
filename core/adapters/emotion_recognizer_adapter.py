@@ -25,6 +25,9 @@ class EmotionRecognizerAdapter:
         if "text_weight" in event_config: self._text_weight = event_config["text_weight"]
         if "text_model" in event_config: self._text_model = event_config["text_model"]
         if "enabled" in event_config: self._enabled = event_config["enabled"]
+    def __init__(self, output_dir: str = ""):
+        self._output_dir = output_dir
+
     def recognize(self, ctx: EmotionRecognizerContext) -> Patch:
         if ctx.audio_path:
             return self.recognize_from_audio(ctx)
@@ -56,7 +59,8 @@ class EmotionRecognizerAdapter:
             if os.path.exists(ctx.audio_path):
                 from funasr import AutoModel
                 model = AutoModel(model="iic/emotion2vec_plus_large")
-                result = model.generate(ctx.audio_path, output_dir="./tmp_emo")
+                emo_dir = os.path.join(self._output_dir, "03_tts", "tmp_emo") if self._output_dir else "./tmp_emo"
+                result = model.generate(ctx.audio_path, output_dir=emo_dir)
                 if result and len(result) > 0:
                     ev = EmotionVector.from_9class_scores(result[0].get("scores", {}))
         except Exception:

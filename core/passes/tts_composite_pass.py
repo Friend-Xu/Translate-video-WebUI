@@ -84,7 +84,13 @@ class TTSCompositePass(TimelinePass):
         return state
 
     def _build_context(self, es) -> TTSSegmentContext:
-        translation = es.translation.get("text", "") or es.ir.text_ref
+        raw = es.translation
+        if isinstance(raw, dict):
+            translation = raw.get("text", "") or es.ir.text_ref
+        elif isinstance(raw, str) and raw.strip():
+            translation = raw
+        else:
+            translation = es.ir.text_ref
         return TTSSegmentContext(
             segment_id=es.id,
             translation_text=translation,

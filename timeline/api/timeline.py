@@ -19,10 +19,59 @@ from timeline.recovery.snapshot import create_snapshot, should_snapshot
 from timeline.io import load_json as load_timeline, save_json as save_timeline
 
 
+def _load_timeline_segments(timeline_path: str) -> tuple[list[dict], dict]:
+    """统一读 timeline.json，返回 (events_list, full_v2_dict)。
+
+    自动检测 v1/v2 格式。v1: {audio_id, timeline:[], speaker_map:{}}。
+    v2: {schema_version, events:[], speakers:{}, ...} — 直接返回。
+    """
+    import json as _json
+    with open(timeline_path, "r", encoding="utf-8") as f:
+        data = _json.load(f)
+    if "schema_version" in data and data["schema_version"] == "2.0":
+        return data.get("events", []), data
+    # 旧格式: 转换为 events 列表（不建 speaker 映射）
+    events = []
+    for seg in data.get("timeline", []):
+        trans = seg.get("translation", "")
+        if isinstance(trans, dict):
+            trans = trans.get("text", "") or ""
+        events.append({
+            "id": seg.get("id", ""),
+            "start": seg.get("start", 0),
+            "end": seg.get("end", 0),
+            "text": seg.get("text", ""),
+            "translation": trans,
+            "speaker": seg.get("speaker"),
+            "overlap": seg.get("overlap", False),
+            "words": seg.get("words", []),
+        })
+    return events, data
+
+
+def _save_timeline_segments(events: list[dict], full_data: dict, timeline_path: str):
+    """写回 timeline.json，保持原格式。"""
+    import json as _json
+    if "schema_version" in full_data and full_data["schema_version"] == "2.0":
+        full_data["events"] = events
+    else:
+        timeline = []
+        for evt in events:
+            timeline.append({
+                "id": evt.get("id", ""), "type": "speech",
+                "start": evt.get("start", 0), "end": evt.get("end", 0),
+                "text": evt.get("text", ""), "translation": evt.get("translation", ""),
+                "speaker": evt.get("speaker"), "overlap": evt.get("overlap", False),
+                "words": evt.get("words", []),
+            })
+        full_data["timeline"] = timeline
+    with open(timeline_path, "w", encoding="utf-8") as f:
+        _json.dump(full_data, f, ensure_ascii=False, indent=2)
+
+
 def generate_candidate_patches(timeline_path: str) -> dict:
     """Generate AI-suggested patches. Read-only, no modification."""
-    tl = load_timeline(timeline_path)
-    segments = [s.to_dict() for s in tl.timeline]
+    segments, _ = _load_timeline_segments(timeline_path)
     pair_signals = extract_signals(segments)
     seg_signals = [extract_segment_signals(s) for s in segments]
     scores = score_all(pair_signals, seg_signals)
@@ -38,8 +87,7 @@ def apply_user_patch(
 ) -> dict:
     """Apply a single patch: validate → apply → log."""
     patch = TimelinePatch.from_dict(patch_dict)
-    tl = load_timeline(timeline_path)
-    segments = [s.to_dict() for s in tl.timeline]
+    segments, full_data = _load_timeline_segments(timeline_path)
     existing = _load_patch_log(patch_log_path) if patch_log_path else []
 
     safe, reason = is_safe_to_apply(patch, existing, segments)
@@ -51,8 +99,7 @@ def apply_user_patch(
 
     patch.parent_version = _hash_segments(segments)
     new_segments, diff = apply_patch(segments, patch)
-    _update_timeline_segments(tl, new_segments)
-    save_timeline(tl, timeline_path)
+    _save_timeline_segments(new_segments, full_data, timeline_path)
 
     if patch_log_path:
         existing.append(patch)
@@ -64,36 +111,13 @@ def apply_user_patch(
         with open(snap_path, "w", encoding="utf-8") as f:
             json.dump(snap, f, ensure_ascii=False, indent=2)
 
-    # ── 双写验证 ──
-    _dual_write_verify_patch(tl, patch)
-
     return {"status": "applied", "patch_id": patch.patch_id, "diff": diff}
-
-
-def _dual_write_verify_patch(tl, patch: TimelinePatch) -> None:
-    """双写验证：应用 patch 到新旧 IR 并比对。不阻断主路径。"""
-    import logging
-    _logger = logging.getLogger("timeline.api.dual_write")
-    try:
-        from timeline.dual_write import dual_write_patch
-        result = dual_write_patch(tl, patch)
-        if result["status"] == "ok":
-            _logger.info("双写验证 ok: patch=%s", patch.patch_id)
-        elif result["status"] == "diff":
-            _logger.warning("双写验证 diff: patch=%s count=%d",
-                            patch.patch_id, result.get("diff_count", 0))
-        else:
-            _logger.error("双写验证 error: patch=%s reason=%s",
-                          patch.patch_id, result.get("reason", "unknown"))
-    except Exception as e:
-        _logger.error("双写验证异常: patch=%s error=%s", patch.patch_id, e)
 
 
 def undo_last_patch(
     source_timeline_path: str, working_timeline_path: str, patch_log_path: str,
 ) -> dict:
-    source = load_timeline(source_timeline_path)
-    source_segs = [s.to_dict() for s in source.timeline]
+    source_segs, _ = _load_timeline_segments(source_timeline_path)
     existing = _load_patch_log(patch_log_path)
     if not existing:
         return {"status": "no_patches"}
@@ -102,9 +126,8 @@ def undo_last_patch(
         return {"status": "error"}
     removed = existing.pop()
     _save_patch_log(existing, patch_log_path)
-    tl = load_timeline(working_timeline_path)
-    _update_timeline_segments(tl, reverted)
-    save_timeline(tl, working_timeline_path)
+    _, full_data = _load_timeline_segments(working_timeline_path)
+    _save_timeline_segments(reverted, full_data, working_timeline_path)
     return {"status": "undone", "patch_id": removed.patch_id}
 
 
@@ -123,23 +146,6 @@ def _save_patch_log(patches: list[TimelinePatch], path: str):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         json.dump([p.to_dict() for p in patches], f, ensure_ascii=False, indent=2)
-
-
-def _update_timeline_segments(tl, new_segments: list[dict]):
-    from timeline.ir import TimelineSegment
-    for i, seg_data in enumerate(new_segments):
-        if i < len(tl.timeline):
-            seg = tl.timeline[i]
-            seg.text = seg_data.get("text", seg.text)
-            seg.start = seg_data.get("start", seg.start)
-            seg.end = seg_data.get("end", seg.end)
-            seg.speaker = seg_data.get("speaker", seg.speaker)
-            seg.translation = seg_data.get("translation", seg.translation)
-            seg.overlap = seg_data.get("overlap", seg.overlap)
-        else:
-            tl.timeline.append(TimelineSegment.from_dict(seg_data))
-    while len(tl.timeline) > len(new_segments):
-        tl.timeline.pop()
 
 
 def _hash_segments(segments: list[dict]) -> str:
