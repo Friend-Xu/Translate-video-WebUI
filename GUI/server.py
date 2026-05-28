@@ -4939,18 +4939,26 @@ def _run_core_pipeline_sync(job: Job, req: CoreRunRequest) -> None:
 
         def _translate(tagged_text: str) -> str:
             import requests
+            system_prompt = (
+                cfg.get("custom_prompt", {}).get("single_prompt", "")
+                or "你是专业字幕翻译器。直接返回翻译结果，不要解释。"
+            )
+            temperature = cfg.get("temperature", 0.1)
+            max_tokens = cfg.get("max_tokens", 4000)
+            timeout = cfg.get("timeout", 120)
+            base_url = cfg.get("api_base_url", "https://api.deepseek.com")
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             payload = {
                 "model": model,
                 "messages": [
-                    {"role": "system", "content": "你是专业字幕翻译器。"},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": tagged_text},
                 ],
-                "temperature": 0.1, "max_tokens": 4000,
+                "temperature": temperature, "max_tokens": max_tokens,
             }
             resp = requests.post(
-                "https://api.deepseek.com/v1/chat/completions",
-                json=payload, headers=headers, timeout=120,
+                f"{base_url}/v1/chat/completions",
+                json=payload, headers=headers, timeout=timeout,
             )
             resp.raise_for_status()
             return resp.json()["choices"][0]["message"]["content"].strip()
