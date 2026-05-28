@@ -49,6 +49,7 @@ class MediaValidatorAdapter:
             target_id="audio",
             op=OpCode.ANNOTATE,
             value={
+                "_global": True,
                 "defect_status": result.status,
                 "defect_type": result.defect_type or "none",
                 "container_duration": getattr(result, "container_duration", 0),
@@ -102,6 +103,7 @@ class MediaValidatorAdapter:
             target_id="audio",
             op=OpCode.ANNOTATE,
             value={
+                "_global": True,
                 "audio_ref": audio_path,
                 "sample_rate": ctx.sample_rate,
                 "channels": ctx.channels,

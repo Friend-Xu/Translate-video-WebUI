@@ -60,6 +60,7 @@ class DemucsAdapter:
                 target_id="audio",
                 op=OpCode.ANNOTATE,
                 value={
+                    "_global": True,
                     "vocals_ref": vocals_path if os.path.isfile(vocals_path) else ctx.audio_path,
                     "bgm_ref": no_vocals_path if os.path.isfile(no_vocals_path) else "",
                     "model": ctx.model_name,
@@ -75,6 +76,7 @@ class DemucsAdapter:
                 target_id="audio",
                 op=OpCode.ANNOTATE,
                 value={
+                    "_global": True,
                     "vocals_ref": ctx.audio_path,
                     "bgm_ref": "",
                     "model": "none",
