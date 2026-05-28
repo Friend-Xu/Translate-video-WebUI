@@ -368,17 +368,30 @@ export default function ProjectHubPage() {
                         <Typography variant="body2" fontWeight={600}>{ws.name}</Typography>
                         <Chip label="FAILED" size="small" color="error" sx={{ fontSize: '0.6rem', height: 18, mt: 0.5 }} />
                       </Box>
-                      <Box sx={{ flexShrink: 0, cursor: 'pointer', color: 'text.disabled', '&:hover': { color: 'error.main' }, ml: 1 }}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          if (!window.confirm(`删除项目 "${ws.name}"？此操作不可撤销。`)) return
-                          fetch('/api/workspace/delete', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ path: ws.path }),
-                          }).then(() => fetchWorkspaceList()).catch(() => {})
-                        }}>
-                        <DeleteOutlineRounded fontSize="small" />
+                      <Box sx={{ display: 'flex', gap: 0.5, ml: 1 }}>
+                        <Box sx={{ cursor: 'pointer', color: 'text.disabled', '&:hover': { color: 'primary.main' } }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            fetch('/api/files/open-path', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ path: ws.path }),
+                            }).catch(() => {})
+                          }}>
+                          <FolderOpenRounded fontSize="small" />
+                        </Box>
+                        <Box sx={{ cursor: 'pointer', color: 'text.disabled', '&:hover': { color: 'error.main' } }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (!window.confirm(`删除项目 "${ws.name}"？此操作不可撤销。`)) return
+                            fetch('/api/workspace/delete', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ path: ws.path }),
+                            }).then(() => fetchWorkspaceList()).catch(() => {})
+                          }}>
+                          <DeleteOutlineRounded fontSize="small" />
+                        </Box>
                       </Box>
                     </CardContent>
                   </Card>
