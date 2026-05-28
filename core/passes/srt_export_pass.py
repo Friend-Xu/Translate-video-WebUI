@@ -32,12 +32,17 @@ class SRTExportPass(TimelinePass):
         lines = []
         index = 1
         for r in rendered:
-            text = r.get("translation") or r.get("text", "")
-            if not text.strip():
+            raw_trans = r.get("translation", "")
+            # translation may be a dict {text, target_lang, ...} or a plain string
+            if isinstance(raw_trans, dict):
+                raw_trans = raw_trans.get("text", "") or ""
+            text = raw_trans or r.get("text", "")
+            if not text or not str(text).strip():
                 continue
+            text = str(text).strip()
             lines.append(str(index))
             lines.append(f"{self._to_srt_time(r['start'])} --> {self._to_srt_time(r['end'])}")
-            lines.append(text.strip())
+            lines.append(text)
             lines.append("")
             index += 1
         return "\n".join(lines)
