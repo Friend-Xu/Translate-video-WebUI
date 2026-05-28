@@ -4879,9 +4879,18 @@ def _persist_core_timeline(state, workspace_path: str) -> None:
     derivatives_map = {}
     for r in rendered:
         eid = r.get("id", "")
+        raw = r.get("translation", "")
+        # translation may be a dict {text, ppl, ...} after quality_check
+        if isinstance(raw, dict):
+            trans_text = raw.get("text", "") or ""
+        else:
+            trans_text = str(raw) if raw else ""
+        # Extract speaker from rendered data
+        spk = r.get("speaker", "")
         derivatives_map[eid] = {
-            "translation": r.get("translation", ""),
+            "translation": trans_text,
             "words": r.get("words", []),
+            "speaker": spk if spk else None,
         }
 
     timeline_ir = from_project_ir(state.ir, derivatives_map)
