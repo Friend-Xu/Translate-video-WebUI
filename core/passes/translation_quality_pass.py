@@ -75,6 +75,8 @@ class TranslationQualityPass(TimelinePass):
                 ppl_ratio=trans_dict.get("ppl_ratio"),
                 source_len=len(src), target_len=len(trans),
             )
+            if isinstance(es.translation, str):
+                es._data["translation"] = {"text": es.translation}
             es.translation["quality_score"] = ts.composite
             es.provenance["translation_quality"] = {
                 "composite": ts.composite,
