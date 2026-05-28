@@ -30,7 +30,7 @@ class ASRCompositePass(TimelinePass):
     name = "asr_composite"
     depends_on: list[str] = []
 
-    def __init__(self, audio_path: str, context: EngineContext | None = None,
+    def __init__(self, audio_path: str = "", context: EngineContext | None = None,
                  enable_speaker_refine: bool = False,
                  speaker_timeline: list | None = None):
         self.audio_path = audio_path

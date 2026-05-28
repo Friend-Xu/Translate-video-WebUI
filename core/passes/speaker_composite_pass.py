@@ -33,7 +33,7 @@ class SpeakerCompositePass(TimelinePass):
     name = "speaker_composite"
     depends_on = ["asr_composite"]
 
-    def __init__(self, vocals_path: str, output_dir: str = "",
+    def __init__(self, vocals_path: str = "", output_dir: str = "",
                  enable_clustering: bool = True,
                  enable_drift_detection: bool = True,
                  max_refinement_iterations: int = 2):
