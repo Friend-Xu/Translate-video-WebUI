@@ -11,7 +11,7 @@ class SRTExportPass(TimelinePass):
     """SynthesisEngine.render_all() → .srt 文件"""
 
     name = "srt_export"
-    depends_on = ["asr_to_ir"]
+    depends_on = ["asr_composite"]
 
     def __init__(self, output_path: str = ""):
         self.output_path = output_path
