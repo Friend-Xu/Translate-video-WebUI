@@ -1097,6 +1097,7 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
                 job.id, job.process.returncode, status_name,
             )
             _save_job(job)
+            _update_workspace_runtime_state(job.workspace_path, RuntimeState.FAILED)
             return
 
     except Exception as e:
@@ -1106,6 +1107,7 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
         job.append_log(f"[ERROR] {e}")
         logger.exception("流水线异常 (job=%s)", job.id)
         _save_job(job)
+        _update_workspace_runtime_state(job.workspace_path, RuntimeState.FAILED)
     finally:
         root_logger.removeHandler(sse_handler)
         job.close_log_file()
@@ -1147,6 +1149,7 @@ async def start_pipeline(req: RunRequest) -> RunResponse:
     _jobs[job_id] = job
     job._loop = asyncio.get_running_loop()
     _save_job(job)
+    _update_workspace_runtime_state(workspace_path, RuntimeState.BOOTSTRAPPING)
 
     apply_subtitle_settings()
     _sync_translate_config(target_lang=req.target_lang)
@@ -1316,6 +1319,7 @@ async def cancel_job(job_id: str) -> dict:
         job.current_step = "已取消"
         job.append_log("[WARN] 任务已取消")
         _save_job(job)
+        _update_workspace_runtime_state(job.workspace_path, RuntimeState.FAILED)
     return {"ok": True}
 
 
