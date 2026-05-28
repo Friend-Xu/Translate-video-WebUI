@@ -14,7 +14,7 @@ class SemanticMergePass(TimelinePass):
     """语义合并 — 同 speaker + 短间隔 + 无句末标点 → merge"""
 
     name = "semantic_merge"
-    depends_on = ["asr_to_ir"]
+    depends_on = ["asr"]
 
     def __init__(self, gap_threshold: float = 0.3):
         self.gap_threshold = gap_threshold
