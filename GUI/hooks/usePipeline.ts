@@ -243,11 +243,14 @@ export function usePipeline() {
 
   return {
     status,
+    setStatus,
     logs,
     appendLog,
     handleDone,
     startPipeline,
     cancelPipeline,
+    pollStatus,
+    loadLogTail,
     logFirstIndex: firstItemIndex,
     logTotal: totalLines,
     loadOlderLogs,

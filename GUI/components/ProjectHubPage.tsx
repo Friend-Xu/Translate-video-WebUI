@@ -87,7 +87,7 @@ export default function ProjectHubPage() {
   const [apiDialogOpen, setApiDialogOpen] = useState(false)
   const [pipelineConfig, setPipelineConfig] = useState<PipelineConfig>(DEFAULT_CONFIG)
 
-  const { status, logs, appendLog, cancelPipeline } = usePipeline()
+  const { status, logs, appendLog, cancelPipeline, setStatus, pollStatus, loadLogTail } = usePipeline()
 
   // Load data on mount
   useEffect(() => {
@@ -208,11 +208,16 @@ export default function ProjectHubPage() {
         const err = await res.json().catch(() => ({}))
         throw new Error((err as any).detail || '启动失败')
       }
+      const { job_id } = await res.json()
+      // Wire up job_id so SSE/polling/cancel work
+      setStatus(prev => ({ ...prev, jobId: job_id, currentStep: '流水线运行中...' }))
+      loadLogTail(job_id)
+      pollStatus(job_id)
     } catch (e) {
       appendLog({ _id: Date.now(), level: 'ERROR', message: `启动失败: ${e}`, timestamp: new Date().toISOString() } as LogEntry)
       setPhase('review')
     }
-  }, [workspace, manifest?.video_path, lang, targetLang, engine, asrModel, device, computeType, skipDemucs, skipExtract, skipTranslate, skipTts, skipSemanticValidation, skipNaturalnessCheck, appendLog])
+  }, [workspace, manifest?.video_path, lang, targetLang, engine, asrModel, device, computeType, skipDemucs, skipExtract, skipTranslate, skipTts, skipSemanticValidation, skipNaturalnessCheck, appendLog, setStatus, loadLogTail, pollStatus])
 
   const handleCancel = useCallback(() => {
     cancelPipeline()
