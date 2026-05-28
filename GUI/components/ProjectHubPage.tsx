@@ -16,6 +16,7 @@ import ErrorOutlineRounded from '@mui/icons-material/ErrorOutlineRounded'
 import CheckCircleRounded from '@mui/icons-material/CheckCircleRounded'
 import PlayArrowRounded from '@mui/icons-material/PlayArrowRounded'
 import StopRounded from '@mui/icons-material/StopRounded'
+import DeleteOutlineRounded from '@mui/icons-material/DeleteOutlineRounded'
 import OpenInNewRounded from '@mui/icons-material/OpenInNewRounded'
 import VideoFileRounded from '@mui/icons-material/VideoFileRounded'
 import SettingsIcon from '@mui/icons-material/SettingsRounded'
@@ -412,6 +413,18 @@ export default function ProjectHubPage() {
                             <StopRounded fontSize="small" />
                           </Box>
                         )}
+                        <Box sx={{ flexShrink: 0, cursor: 'pointer', color: 'text.disabled', '&:hover': { color: 'error.main' } }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (!window.confirm(`删除项目 "${ws.name}"？此操作不可撤销。`)) return
+                            fetch('/api/workspace/delete', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ path: ws.path }),
+                            }).then(() => fetchWorkspaceList()).catch(() => {})
+                          }}>
+                          <DeleteOutlineRounded fontSize="small" />
+                        </Box>
                       </CardContent>
                     </Card>
                   </Grid>

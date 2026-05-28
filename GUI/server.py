@@ -4664,6 +4664,30 @@ async def list_workspaces() -> dict:
     return {"workspaces": workspaces}
 
 
+@app.post("/api/workspace/delete")
+async def delete_workspace(body: dict) -> dict:
+    """Delete a workspace directory and its contents."""
+    path = body.get("path", "")
+    if not path:
+        raise HTTPException(status_code=400, detail="Missing path")
+    ws_dir = Path(path)
+    if not ws_dir.is_dir() or not ws_dir.name.endswith("_project"):
+        raise HTTPException(status_code=400, detail="Not a workspace directory")
+    # Cancel any running job for this workspace
+    for job_id, job in list(_jobs.items()):
+        if getattr(job, "workspace_path", "") == str(ws_dir):
+            if job.process and job.process.returncode is None:
+                job.process.terminate()
+                try:
+                    job.process.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    job.process.kill()
+            del _jobs[job_id]
+    import shutil
+    shutil.rmtree(str(ws_dir), ignore_errors=True)
+    return {"ok": True}
+
+
 @app.get("/api/workspace/detail")
 async def get_workspace_detail(path: str = "") -> dict:
     """Get detailed workspace status: manifest, disk usage, file listing."""
