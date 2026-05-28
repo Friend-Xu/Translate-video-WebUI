@@ -82,10 +82,18 @@ class MediaValidatorAdapter:
             os.makedirs(ws_dir, exist_ok=True)
             audio_path = os.path.join(ws_dir, f"{base}_extracted.wav")
 
-        actual_dur = ensure_audio_duration(
+        ensure_audio_duration(
             ctx.video_path, audio_path,
             sr=ctx.sample_rate, ch=ctx.channels,
         )
+
+        # Get actual duration from the output wav
+        try:
+            import soundfile as sf
+            info = sf.info(audio_path)
+            actual_dur = info.duration
+        except Exception:
+            actual_dur = 0.0
 
         repair_applied = result.defect_type in ("C2", "A2")
 
@@ -97,7 +105,7 @@ class MediaValidatorAdapter:
                 "audio_ref": audio_path,
                 "sample_rate": ctx.sample_rate,
                 "channels": ctx.channels,
-                "duration": round(actual_dur, 3) if actual_dur else 0,
+                "duration": round(actual_dur, 3),
                 "repair_applied": repair_applied,
                 "repair_method": "aresample" if repair_applied else "none",
                 "defect_type": result.defect_type or "none",
