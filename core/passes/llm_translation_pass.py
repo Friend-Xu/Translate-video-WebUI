@@ -47,7 +47,9 @@ class LLMTranslationPass(TimelinePass):
 
         try:
             result = self._translate_fn(tagged_text)
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f'LLM translation failed: {e}')
             return state
 
         if isinstance(result, dict):
