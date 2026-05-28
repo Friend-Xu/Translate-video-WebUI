@@ -42,8 +42,16 @@ class ASRCompositePass(TimelinePass):
         """执行完整 ASR 流程，返回填充了 asr/semantic 槽位的 ProjectState。"""
         engine = PatchEngine()
 
+        # 如果 audio_path 为空，从之前 stage 的 state 中推导
+        audio = self.audio_path
+        if not audio and state is not None:
+            audio = state.get_global_audio_ref() or ""
+        ctx = self.ctx
+        if not ctx.audio_path:
+            ctx.audio_path = audio
+
         # Step 1: Whisper → SEGMENT_INSERT patches
-        whisper = WhisperAdapter(self.ctx)
+        whisper = WhisperAdapter(ctx)
         asr_patches = whisper.run()
         segment_patches = [p for p in asr_patches if p.op == OpCode.SEGMENT_INSERT]
         meta_patches = [p for p in asr_patches if p.op == OpCode.ANNOTATE]
