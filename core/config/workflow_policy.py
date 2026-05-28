@@ -110,7 +110,7 @@ class WorkflowPolicy:
             ),
             WorkflowStage.EXTRACT: StageConfig(
                 stage=WorkflowStage.EXTRACT,
-                passes=["asr_composite", "asr_to_ir", "semantic_merge"],
+                passes=["asr", "asr_to_ir", "semantic_merge"],
                 auto_advance=True,
             ),
             WorkflowStage.TRANSLATE: StageConfig(
@@ -157,7 +157,7 @@ class WorkflowPolicy:
             ),
             WorkflowStage.EXTRACT: StageConfig(
                 stage=WorkflowStage.EXTRACT,
-                passes=["asr_composite", "asr_to_ir", "semantic_merge"],
+                passes=["asr", "asr_to_ir", "semantic_merge"],
             ),
             WorkflowStage.TRANSLATE: StageConfig(
                 stage=WorkflowStage.TRANSLATE,
