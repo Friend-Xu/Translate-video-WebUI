@@ -67,10 +67,12 @@ class TranslationQualityPass(TimelinePass):
             es = state.get_event(seg_id)
             if es is None:
                 continue
-            sim = es.translation.get("similarity", 0.0)
+            trans_slot = es.translation
+            trans_dict = trans_slot if isinstance(trans_slot, dict) else {"text": trans_slot}
+            sim = trans_dict.get("similarity", 0.0)
             ts = scorer.score(
                 semantic_similarity=sim,
-                ppl_ratio=es.translation.get("ppl_ratio"),
+                ppl_ratio=trans_dict.get("ppl_ratio"),
                 source_len=len(src), target_len=len(trans),
             )
             es.translation["quality_score"] = ts.composite
