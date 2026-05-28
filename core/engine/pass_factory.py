@@ -68,6 +68,7 @@ _RUNTIME_ARGS: dict[str, list[str]] = {
     "audio_preprocess": ["video_path", "output_dir"],
     "asr_to_ir": ["segments", "speaker_timeline"],
     "asr": ["audio_path"],
+    "translate": ["translate_fn"],
     "llm_translation": ["translate_fn"],
     "srt_export": ["output_path"],
     "tts_composite": ["engine"],
