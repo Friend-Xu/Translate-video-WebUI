@@ -55,6 +55,13 @@ class PatchEngine:
     def apply(
         self, state: TimelineProjectState, patch: Patch
     ) -> dict:
+        # 批次04 §六: 幂等键检查 — 相同 idempotency_key 不重复应用
+        if patch.idempotency_key:
+            target = state.get_event(patch.target_id)
+            if target is not None:
+                for existing in target.patches:
+                    if getattr(existing, "idempotency_key", None) == patch.idempotency_key:
+                        return {"status": "skipped", "reason": "idempotent"}
         handler = self._dispatch.get(patch.op)
         if handler is None:
             return {"status": "error", "reason": f"unknown op: {patch.op}"}
@@ -64,6 +71,35 @@ class PatchEngine:
         self, state: TimelineProjectState, patches: list[Patch]
     ) -> list[dict]:
         return [self.apply(state, p) for p in patches]
+
+    def dry_run(
+        self, state: TimelineProjectState, patch: Patch
+    ) -> dict:
+        """预览 patch 效果，不修改原始 state。(批次04 §二)"""
+        from copy import deepcopy
+        snapshot = deepcopy(state)
+        result = self.apply(snapshot, patch)
+        if result.get("status") != "applied":
+            return {
+                "valid": False,
+                "reason": result.get("reason", "apply failed"),
+                "affected_events": [],
+                "dirty_slots": [],
+            }
+        affected = [patch.target_id] + result.get("propagated_to", [])
+        target = snapshot.get_event(patch.target_id)
+        orig = state.get_event(patch.target_id)
+        dirty = []
+        if target is not None and orig is not None:
+            for slot in ("asr", "translation", "tts", "speaker", "emotion"):
+                if getattr(target, slot, None) != getattr(orig, slot, None):
+                    dirty.append((patch.target_id, slot))
+        return {
+            "valid": True,
+            "reason": None,
+            "affected_events": affected,
+            "dirty_slots": dirty,
+        }
 
     # ── legacy ops ──────────────────────────────────────
 

@@ -30,7 +30,10 @@ class SnapshotManager:
             snapshot_id=f"snap_{int(time.time() * 1000)}",
             timestamp=time.time(),
             event_states_snapshot={
-                eid: dict(es.derivatives)
+                eid: {
+                    "derivatives": dict(es.derivatives),
+                    "patch_count": len(es.patches),  # 批次04 §四
+                }
                 for eid, es in state.event_states.items()
             },
             global_patches_count=len(state.global_patches),
@@ -42,11 +45,17 @@ class SnapshotManager:
         return snap
 
     def restore(self, state: TimelineProjectState, snapshot: TimelineSnapshot) -> TimelineProjectState:
-        for eid, derivs in snapshot.event_states_snapshot.items():
+        for eid, saved in snapshot.event_states_snapshot.items():
             es = state.get_event(eid)
-            if es:
-                es.derivatives.clear()
-                es.derivatives.update(derivs)
+            if es is None:
+                continue
+            # 兼容两种格式: 旧格式 {key: val, ...}，新格式 {"derivatives": {...}, "patch_count": N}
+            derivs = saved.get("derivatives", saved) if isinstance(saved, dict) else {}
+            es.derivatives.clear()
+            es.derivatives.update(derivs)
+            pc = saved.get("patch_count") if isinstance(saved, dict) else None
+            if pc is not None and len(es.patches) > pc:
+                es.patches = es.patches[:pc]
         return state
 
     def replay_from(self, state: TimelineProjectState, snapshot: TimelineSnapshot) -> TimelineProjectState:

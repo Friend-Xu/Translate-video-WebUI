@@ -402,11 +402,11 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
 
 
 def step_translate_core(video: str, force: bool = False) -> str:
-    """步骤 2 (core): 使用 core/ PassManager 完成翻译 + SRT 导出。"""
-    from core.passes import ASRToIRPass, SemanticMergePass, LLMTranslationPass, SRTExportPass
-    from core.engine import PassManager
-    from core.runtime import SynthesisEngine, TimelineProjectState
-    from core.ir import TimelineProjectIR
+    """步骤 2 (core): 使用 WorkflowOrchestrator 驱动翻译 + SRT 导出。(批次02 §四第二步)"""
+    from core.engine import WorkflowOrchestrator
+    from core.engine.pass_factory import create_pass_factory
+    from core.config import GlobalConfig, WorkflowPolicy
+    from core.engine.progress import ProgressReport
 
     ws_dir = _workspace_dir(video)
     ws = workspace_paths(video) or {}
@@ -416,11 +416,12 @@ def step_translate_core(video: str, force: bool = False) -> str:
         print("\n[2/3] 翻译 (core) — 已完成 (checkpoint)，跳过")
         return ws.get("machine_srt") or os.path.join(ws_dir, "02_translate", "machine.srt")
 
-    logger.info("[STAGE] [2/4] core/ PassManager 翻译开始")
-    print("\n[2/3] 翻译 (core PassManager)...")
+    logger.info("[STAGE] [2/4] WorkflowOrchestrator 翻译开始")
+    print("\n[2/3] 翻译 (WorkflowOrchestrator)...")
     ck.start_step("translate_core")
     ck.save()
 
+    # 读取 transcript 数据
     transcript_path = os.path.join(ws_dir, "01_extract", "transcript.json")
     speaker_timeline_path = os.path.join(ws_dir, "01_extract", "speaker_timeline.json")
 
@@ -437,11 +438,7 @@ def step_translate_core(video: str, force: bool = False) -> str:
             for t in st_data.get("turns", [])
         ]
 
-    asr_pass = ASRToIRPass(segments=segments, speaker_timeline=speaker_timeline)
-    pm = PassManager()
-    pm.register(asr_pass)
-    pm.register(SemanticMergePass())
-    # Real translate via DeepSeek
+    # 加载 LLM 翻译函数
     import yaml
     cfg_path = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
     with open(cfg_path, "r", encoding="utf-8") as f:
@@ -464,22 +461,53 @@ def step_translate_core(video: str, force: bool = False) -> str:
         resp.raise_for_status()
         return resp.json()["choices"][0]["message"]["content"].strip()
 
-    pm.register(LLMTranslationPass(translate_fn=_translate))
-    state = pm.run(TimelineProjectState(TimelineProjectIR({}, {})))
-    print(f"  PassManager 完成: {len(state.ir.events)} events")
-
+    # 构建 Pass 工厂（闭包注入运行时依赖）
     machine_srt = os.path.join(ws_dir, "02_translate", "machine.srt")
     os.makedirs(os.path.dirname(machine_srt), exist_ok=True)
-    srt_pass = SRTExportPass(output_path=machine_srt)
-    srt_pass.apply(state)
+    factory = create_pass_factory(
+        translate_fn=_translate,
+        segments=segments,
+        speaker_timeline=speaker_timeline,
+        output_path=machine_srt,
+    )
 
+    # 构建编排器（使用 quick_preset，绕过 Gate 快速跑通 TRANSLATE → EXPORT）
+    policy = WorkflowPolicy.quick_preset("zh")
+    global_config = GlobalConfig()
+    orchestrator = WorkflowOrchestrator(
+        policy=policy,
+        global_config=global_config,
+        pass_factory=factory,
+    )
+
+    # 进度回调：CLI 格式化输出 + [JSON] 结构化行供 WebUI 消费 (批次11 §阶段A)
+    def _orchestrator_progress(report: ProgressReport) -> None:
+        print(f"  [{report.stage_label}] {report.message}")
+        json_line = json.dumps(report.to_dict(), ensure_ascii=False)
+        print(f"[JSON] {json_line}")
+
+    orchestrator.set_progress_callback(_orchestrator_progress)
+
+    try:
+        state = orchestrator.run(video)
+    except RuntimeError as e:
+        logger.error(f"WorkflowOrchestrator 失败: {e}")
+        print(f"  [X] 编排器执行失败: {e}")
+        ck.fail_step("translate_core", str(e))
+        ck.save()
+        raise
+
+    print(f"  PassManager 完成: {len(state.ir.events)} events")
+    print(f"  SRT 导出: {machine_srt}")
+
+    # 导出 timeline_v2.json
+    from core.runtime import SynthesisEngine
     synth = SynthesisEngine()
     rendered = synth.render_all(state)
     timeline_v2_path = os.path.join(ws_dir, "02_translate", "timeline_v2.json")
     with open(timeline_v2_path, "w", encoding="utf-8") as f:
         json.dump(rendered, f, ensure_ascii=False, indent=2)
 
-    print(f"  SRT 导出: {machine_srt}")
     ck.complete_step("translate_core")
     ck.save()
     print("  [OK] 翻译 (core) 完成")

@@ -1762,15 +1762,12 @@ class SRTTranslator:
     def _verify_naturalness_result(self, source: str, old_text: str,
                                    refined: str, old_sim: float,
                                    old_ratio: float, baseline: float) -> dict:
-        """闭环验证：判断自然度重翻是否可接受。
-
-        verification_mode 控制验证策略：
-        - "joint_formula": Gate A (sim>=0.70) + Gate B (联合得分 β*(1-ratio)+γ*sim 提升)
-        - "logic_gate":    Gate A (sim>=0.70) + Gate C (sim_drop + 长度比, NEW)
-                           + Gate B (PPL 下降 + 长度守卫, NEW)
+        """闭环验证：委托到 core/ TextGate.decide()。(批次05 §五)
 
         Returns: {accepted: bool, kept: str, reason: str, new_sim, new_ratio, ...}
         """
+        from core.gates.text_gate import TextGate
+
         verifier = self._get_verifier()
         if not verifier:
             return {"accepted": True, "kept": "second", "reason": "verifier_unavailable",
@@ -1778,43 +1775,6 @@ class SRTTranslator:
 
         new_sim = verifier.verify(source, refined)["similarity"]
 
-        # Gate A: 语义安全底线（两种模式共用）
-        if new_sim < self.semantic_threshold:
-            return {"accepted": False, "kept": "first", "reason": "semantic_drift",
-                    "new_sim": new_sim, "new_ratio": 0}
-
-        # Gate C: 内容保真度（仅 logic_gate 模式）
-        # 防止 LLM 通过"注水"或"偷工减料"人为压低 PPL
-        # sim_drop_limit=0 时禁用 Gate C
-        mode = getattr(self, "verification_mode", "joint_formula")
-        if mode == "logic_gate" and self.sim_drop_limit > 0:
-            sim_drop = old_sim - new_sim
-            if sim_drop > self.sim_drop_limit:
-                return {"accepted": False, "kept": "first", "reason": "content_degraded",
-                        "new_sim": new_sim, "new_ratio": 0,
-                        "sim_drop": round(sim_drop, 4)}
-            # 长度比检测：借鉴 COMET-poly (2025) 用已知正确翻译作参照
-            # 比较重翻结果 vs 原始译文的相对源文长度比
-            src_len = len(source)
-            if src_len > 0 and len(old_text) > 0:
-                orig_len_ratio = len(old_text) / src_len
-                new_len_ratio = len(refined) / src_len
-                if new_len_ratio > orig_len_ratio * 2.0:
-                    return {"accepted": False, "kept": "first", "reason": "content_degraded",
-                            "new_sim": new_sim, "new_ratio": 0,
-                            "sim_drop": round(sim_drop, 4)}
-                if new_len_ratio < orig_len_ratio * 0.4:
-                    return {"accepted": False, "kept": "first", "reason": "content_degraded",
-                            "new_sim": new_sim, "new_ratio": 0,
-                            "sim_drop": round(sim_drop, 4)}
-                _orig_len_ratio = orig_len_ratio
-                _new_len_ratio = new_len_ratio
-            else:
-                _orig_len_ratio = _new_len_ratio = 1.0
-        else:
-            _orig_len_ratio = _new_len_ratio = 1.0
-
-        # 计算新译文 PPL
         ppl_eval = self._get_ppl_evaluator()
         if ppl_eval:
             try:
@@ -1825,38 +1785,34 @@ class SRTTranslator:
             new_ppl = old_ratio * baseline if baseline > 0 else old_ratio
         new_ratio = new_ppl / baseline if baseline > 0 else 1.0
 
-        if mode == "logic_gate":
-            # Gate B: 自然度改善（PPL 必须下降）
-            if new_ratio < old_ratio:
-                # 长度守卫：防止删内容降 PPL 的取巧行为
-                if _new_len_ratio < _orig_len_ratio * 0.5:
-                    return {"accepted": False, "kept": "first", "reason": "content_shrunk",
-                            "new_sim": new_sim, "new_ratio": new_ratio,
-                            "improvement": 0}
-                improvement = round(old_ratio - new_ratio, 4)
-                return {"accepted": True, "kept": "second", "reason": "naturalness_improved",
-                        "new_sim": new_sim, "new_ratio": new_ratio,
-                        "improvement": improvement}
-            else:
-                return {"accepted": False, "kept": "first", "reason": "no_naturalness_gain",
-                        "new_sim": new_sim, "new_ratio": new_ratio,
-                        "improvement": 0}
-        else:
-            # Gate B: 联合得分比较（默认）
-            def _score(r, s, b=1.0, g=1.0):
-                return b * (1.0 - r) + g * s
+        mode = getattr(self, "verification_mode", "joint_formula")
+        sim_drop = getattr(self, "sim_drop_limit", 0.05)
+        sem_threshold = getattr(self, "semantic_threshold", 0.70)
 
-            old_score = _score(old_ratio, old_sim)
-            new_score = _score(new_ratio, new_sim)
+        gate = TextGate(
+            mode=mode,
+            semantic_threshold=sem_threshold,
+            sim_drop_limit=sim_drop,
+        )
+        result = gate.decide(
+            old_sim, new_sim, old_ratio, new_ratio,
+            source_len=len(source), old_len=len(old_text), new_len=len(refined),
+        )
 
-            if new_score > old_score:
-                return {"accepted": True, "kept": "second", "reason": "joint_improvement",
-                        "new_sim": new_sim, "new_ratio": new_ratio,
-                        "old_score": round(old_score, 4), "new_score": round(new_score, 4)}
-            else:
-                return {"accepted": False, "kept": "first", "reason": "no_improvement",
-                        "new_sim": new_sim, "new_ratio": new_ratio,
-                        "old_score": round(old_score, 4), "new_score": round(new_score, 4)}
+        kept = "first"
+        if result.accepted:
+            kept = "second"
+        elif result.kept_version == "retry":
+            kept = "second" if result.accepted else "first"
+
+        return {
+            "accepted": result.accepted,
+            "kept": kept,
+            "reason": result.reason,
+            "new_sim": new_sim,
+            "new_ratio": new_ratio,
+            "improvement": round(old_ratio - new_ratio, 4) if new_ratio < old_ratio else 0,
+        }
 
     def _get_context_subs(self, sub_index: int, group: List) -> Tuple[List, List]:
         """获取某条字幕的上下文（前后各最多 2 条）"""

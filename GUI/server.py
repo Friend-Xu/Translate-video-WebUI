@@ -208,6 +208,7 @@ class Job:
     _loop: asyncio.AbstractEventLoop | None = None
     _log_file: object | None = None    # open file handle for {workspace}/pipeline.log
     _log_lock: object | None = None    # threading.Lock for file writes
+    _core_state: object | None = None  # core/ TimelineProjectState (批次11 §阶段B)
 
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue()
@@ -4692,6 +4693,464 @@ async def get_workspace_detail(path: str = "") -> dict:
         "fileCount": len(files),
         "files": files[:50],  # cap at 50 files
         "failureReason": failure_reason,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Core Pipeline endpoints (批次11 §阶段B)
+# ---------------------------------------------------------------------------
+
+class CoreRunRequest(BaseModel):
+    video_path: str
+    workflow_preset: str = "quick_subtitle"
+    lang: str = "auto"
+    target_lang: str = "zh"
+    engine: str = "chattts"
+    skip_tts: bool = False
+    skip_demucs: bool = False
+    asr_model: str = "turbo"
+    device: str = "cuda"
+    compute_type: str = "float16"
+
+
+class CoreRunResponse(BaseModel):
+    job_id: str
+    workspace_path: str = ""
+    policy_summary: dict = {}
+
+
+class CoreStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    orchestrator_status: str = "IDLE"
+    current_stage: str = ""
+    stages: dict = {}
+    pending_review: list[str] = []
+    metrics: dict = {}
+
+
+class CoreEventResponse(BaseModel):
+    event_id: str
+    start: float = 0.0
+    end: float = 0.0
+    source_text: str = ""
+    translation: str = ""
+    provenance: dict = {}
+    tts_audio: str = ""
+
+
+def _preset_to_policy(preset_id: str, target_lang: str) -> tuple:
+    """将 WorkflowPreset ID 映射为 WorkflowPolicy 实例。(批次11 §阶段C)"""
+    preset = get_preset(preset_id)
+    preset_passes = preset.passes if preset else []
+    skip_tts = preset.config_defaults.get("skip_tts", False) if preset else False
+
+    if preset is not None and preset.policy_fn is not None:
+        policy = preset.policy_fn(target_lang)
+    else:
+        from core.config.workflow_policy import WorkflowPolicy
+        if skip_tts:
+            policy = WorkflowPolicy.quick_preset(target_lang)
+        else:
+            policy = WorkflowPolicy.default_preset(target_lang)
+
+    return policy, preset_passes, skip_tts
+
+
+def _build_core_pass_factory(
+    video_path: str,
+    translate_fn,
+    segments: list | None,
+    speaker_timeline: list | None,
+    output_path: str,
+    engine: str,
+):
+    """构建 core/ Pass 工厂。(批次11 §阶段B)"""
+    from core.engine.pass_factory import create_pass_factory
+    return create_pass_factory(
+        translate_fn=translate_fn,
+        segments=segments,
+        speaker_timeline=speaker_timeline,
+        output_path=output_path,
+        engine=engine,
+    )
+
+
+def _load_core_transcript(video_path: str) -> tuple:
+    """加载 extract 阶段的 transcript + speaker_timeline 数据。"""
+    video = Path(video_path)
+    ws_dir = video.parent / f"{video.stem}_project"
+    transcript_path = ws_dir / "01_extract" / "transcript.json"
+    speaker_timeline_path = ws_dir / "01_extract" / "speaker_timeline.json"
+
+    segments = None
+    speaker_timeline = None
+
+    if transcript_path.is_file():
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            transcript = json.load(f)
+        segments = transcript.get("segments", [])
+
+    if speaker_timeline_path.is_file():
+        with open(speaker_timeline_path, "r", encoding="utf-8") as f:
+            st_data = json.load(f)
+        speaker_timeline = [
+            (t["speaker"], t["start"], t["end"], t.get("confidence", 0.5))
+            for t in st_data.get("turns", [])
+        ]
+
+    return segments, speaker_timeline, str(ws_dir)
+
+
+def _run_core_pipeline_sync(job: Job, req: CoreRunRequest) -> None:
+    """在线程池中同步执行 core/ WorkflowOrchestrator。(批次11 §阶段B)"""
+    from core.engine.workflow_orchestrator import WorkflowOrchestrator
+    from core.engine.progress import ProgressReport, ProgressEventType
+    from core.config.global_config import GlobalConfig
+
+    sse_handler = SSELogHandler(job.append_log)
+    root_logger = logging.getLogger()
+    root_logger.addHandler(sse_handler)
+
+    try:
+        job.status = "running"
+        job.runtime_state = "bootstrapping"
+        job.current_step = "启动 core/ Pipeline..."
+        job.append_log("[INFO] 启动 core/ WorkflowOrchestrator")
+
+        ws_dir = str(Path(req.video_path).parent / f"{Path(req.video_path).stem}_project")
+        job.workspace_path = ws_dir
+        job.open_log_file(ws_dir)
+        _update_workspace_runtime_state(ws_dir, RuntimeState.BOOTSTRAPPING)
+
+        # 1. 加载 transcript 数据
+        segments, speaker_timeline, ws_dir2 = _load_core_transcript(req.video_path)
+        if ws_dir2:
+            job.workspace_path = ws_dir2
+
+        # 2. 构建 LLM 翻译函数
+        import yaml as yaml_lib
+        cfg_path = PROJECT_ROOT / "config" / "translate.yaml"
+        if cfg_path.is_file():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = yaml_lib.safe_load(f).get("translate", {})
+        else:
+            cfg = {}
+        api_key = cfg.get("api_key", "")
+        model = cfg.get("model", "deepseek-chat")
+
+        def _translate(tagged_text: str) -> str:
+            import requests
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": "你是专业字幕翻译器。"},
+                    {"role": "user", "content": tagged_text},
+                ],
+                "temperature": 0.1, "max_tokens": 4000,
+            }
+            resp = requests.post(
+                "https://api.deepseek.com/v1/chat/completions",
+                json=payload, headers=headers, timeout=120,
+            )
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"].strip()
+
+        # 3. 输出路径
+        machine_srt = os.path.join(job.workspace_path, "02_translate", "machine.srt")
+        os.makedirs(os.path.dirname(machine_srt), exist_ok=True)
+
+        # 4. 构建 Pass 工厂
+        factory = _build_core_pass_factory(
+            video_path=req.video_path,
+            translate_fn=_translate,
+            segments=segments,
+            speaker_timeline=speaker_timeline,
+            output_path=machine_srt,
+            engine=req.engine,
+        )
+
+        # 5. 构建策略
+        policy, _, skip_tts = _preset_to_policy(req.workflow_preset, req.target_lang)
+
+        # 6. 全局配置
+        global_config = GlobalConfig.from_legacy_yaml(
+            translate_cfg_path=str(PROJECT_ROOT / "config" / "translate.yaml"),
+            tts_cfg_path=str(PROJECT_ROOT / "config" / "runtime_tts.yaml"),
+        )
+
+        orchestrator = WorkflowOrchestrator(
+            policy=policy,
+            global_config=global_config,
+            pass_factory=factory,
+        )
+
+        # 7. 进度回调 — SSE 推送结构化事件
+        def _core_progress(report: ProgressReport) -> None:
+            event_name = report.event_type.value
+
+            if event_name == "stage_started":
+                job.append_log(f"[STAGE] {report.stage_label} 开始")
+            elif event_name == "stage_progress":
+                job.append_log(
+                    f"  [{report.stage_label}] {report.current_item}/{report.total_items}"
+                )
+            elif event_name == "stage_completed":
+                job.append_log(f"[STAGE] {report.stage_label} 完成 — {report.message}")
+            elif report.event_type in (
+                ProgressEventType.WORKFLOW_COMPLETED,
+                ProgressEventType.WORKFLOW_FAILED,
+            ):
+                job.append_log(f"[WORKFLOW] {report.message}")
+
+            # SSE 结构化推送
+            if job._loop is not None and job._queues:
+                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                payload = {
+                    "event": event_name,
+                    "stage": report.stage,
+                    "stage_label": report.stage_label,
+                    "current_item": report.current_item,
+                    "total_items": report.total_items,
+                    "percent": round(report.percent, 3),
+                    "message": report.message,
+                    "ts": ts,
+                    "payload": report.payload,
+                }
+                for q in job._queues:
+                    job._loop.call_soon_threadsafe(q.put_nowait, payload)
+
+        orchestrator.set_progress_callback(_core_progress)
+
+        # 8. 执行
+        job.append_log("[INFO] WorkflowOrchestrator.run() 开始")
+        state = orchestrator.run(req.video_path)
+
+        job.status = "completed"
+        job.runtime_state = "ready"
+        job.progress = 100
+        job.current_step = "core/ Pipeline 完成"
+        job._core_state = state
+        job.append_log(f"[INFO] core/ Pipeline 完成: {len(state.ir.events)} events")
+        _update_workspace_runtime_state(job.workspace_path, RuntimeState.READY)
+        _save_job(job)
+
+        # 推送 done 事件
+        if job._loop is not None and job._queues:
+            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+            for q in job._queues:
+                job._loop.call_soon_threadsafe(
+                    q.put_nowait,
+                    {"event": "done", "status": "completed", "ts": ts},
+                )
+
+    except Exception as e:
+        job.status = "failed"
+        job.runtime_state = "failed"
+        job.current_step = "core/ Pipeline 失败"
+        job.append_log(f"[ERROR] core/ Pipeline 失败: {e}")
+        logger.exception("core/ Pipeline 异常 (job=%s)", job.id)
+        _save_job(job)
+
+        if job._loop is not None and job._queues:
+            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+            for q in job._queues:
+                job._loop.call_soon_threadsafe(
+                    q.put_nowait,
+                    {"event": "done", "status": "failed", "ts": ts,
+                     "error": str(e)},
+                )
+    finally:
+        root_logger.removeHandler(sse_handler)
+        job.close_log_file()
+
+
+@app.post("/api/core/pipeline/run", response_model=CoreRunResponse)
+async def start_core_pipeline(req: CoreRunRequest) -> CoreRunResponse:
+    """启动 core/ WorkflowOrchestrator Pipeline。(批次11 §3.1)"""
+    video = Path(req.video_path)
+    if not video.is_file():
+        raise HTTPException(status_code=400, detail=f"视频文件不存在: {req.video_path}")
+
+    job_id = uuid.uuid4().hex[:8]
+    workspace_path = str(video.parent / f"{video.stem}_project")
+
+    policy, _, _ = _preset_to_policy(req.workflow_preset, req.target_lang)
+    policy_summary = {
+        "stages": [s.value for s in policy.stage_order()],
+        "gates": {},
+    }
+    for stage, sc in policy.stages.items():
+        if sc.gate:
+            policy_summary["gates"][stage.value] = sc.gate
+
+    job = Job(
+        id=job_id,
+        status="running",
+        runtime_state="bootstrapping",
+        current_step="启动 core/ Pipeline...",
+        video_path=req.video_path,
+        workspace_path=workspace_path,
+        created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+    _jobs[job_id] = job
+    job._loop = asyncio.get_running_loop()
+    _save_job(job)
+
+    asyncio.create_task(_run_core_job(job, req))
+
+    return CoreRunResponse(
+        job_id=job_id,
+        workspace_path=workspace_path,
+        policy_summary=policy_summary,
+    )
+
+
+async def _run_core_job(job: Job, req: CoreRunRequest) -> None:
+    """在线程池中运行 core/ Pipeline。"""
+    await asyncio.to_thread(_run_core_pipeline_sync, job, req)
+
+
+@app.get("/api/core/pipeline/{job_id}/status", response_model=CoreStatusResponse)
+async def get_core_status(job_id: str) -> CoreStatusResponse:
+    """返回 core/ Pipeline 的结构化状态。(批次11 §3.2)"""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    return CoreStatusResponse(
+        job_id=job_id,
+        status=job.status,
+        orchestrator_status=job.runtime_state.upper() if job.runtime_state else "IDLE",
+        current_stage=job.current_step,
+        stages={},
+        pending_review=[],
+        metrics={},
+    )
+
+
+@app.get("/api/core/pipeline/{job_id}/events")
+async def stream_core_events(job_id: str, request: Request) -> StreamingResponse:
+    """SSE 结构化事件流。(批次11 §4.1)"""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    queue: asyncio.Queue = job.subscribe()
+
+    async def event_stream() -> AsyncIterator[str]:
+        try:
+            if job.log_file_path:
+                yield f"event: meta\ndata: {json.dumps({'log_file': job.log_file_path})}\n\n"
+
+            while True:
+                if await request.is_disconnected():
+                    return
+
+                if job.status in ("completed", "failed", "cancelled"):
+                    yield f"event: done\ndata: {json.dumps({'status': job.status})}\n\n"
+                    return
+
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    event_type = payload.pop("event", "message")
+                    data = json.dumps(payload, ensure_ascii=False)
+                    yield f"event: {event_type}\ndata: {data}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            job.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/core/pipeline/{job_id}/events/{event_id}", response_model=CoreEventResponse)
+async def get_core_event(job_id: str, event_id: str) -> CoreEventResponse:
+    """查询单个 event 的状态与 provenance。(批次11 §3.3)"""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    state = job._core_state
+    if state is None:
+        raise HTTPException(status_code=404, detail="Pipeline state 不可用")
+
+    es = state.event_states.get(event_id)
+    if es is None:
+        raise HTTPException(status_code=404, detail=f"Event {event_id} 不存在")
+
+    evt = state.ir.events.get(event_id)
+    return CoreEventResponse(
+        event_id=event_id,
+        start=evt.start if evt else 0.0,
+        end=evt.end if evt else 0.0,
+        source_text=evt.text if evt else "",
+        translation=es.derivatives.get("translation", ""),
+        provenance={
+            "gate_decision": es.provenance.get("gate_decision", ""),
+            "gate_scores": es.provenance.get("gate_scores", {}),
+            "gate_reason": es.provenance.get("gate_reason", ""),
+            "needs_human_review": es.review.get("needs_human_review", False),
+        },
+        tts_audio=es.derivatives.get("tts_audio_path", ""),
+    )
+
+
+@app.get("/api/core/pipeline/{job_id}/gate/{event_id}")
+async def get_core_gate_detail(job_id: str, event_id: str) -> dict:
+    """返回单个 event 的 Gate 判定详情。(批次11 §3.4)"""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    state = job._core_state
+    if state is None:
+        raise HTTPException(status_code=404, detail="Pipeline state 不可用")
+
+    es = state.event_states.get(event_id)
+    if es is None:
+        raise HTTPException(status_code=404, detail=f"Event {event_id} 不存在")
+
+    return {
+        "event_id": event_id,
+        "gate": es.provenance.get("gate_name", "text_gate"),
+        "decision": es.provenance.get("gate_decision", "N/A"),
+        "scores": es.provenance.get("gate_scores", {}),
+        "thresholds": es.provenance.get("gate_thresholds", {}),
+        "trace": es.provenance.get("gate_trace", {}),
+    }
+
+
+@app.get("/api/core/pipeline/{job_id}/audit")
+async def get_core_audit(job_id: str) -> dict:
+    """返回 PatchStore 审计摘要。(批次11 §3.5)"""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    state = job._core_state
+    if state is None:
+        raise HTTPException(status_code=404, detail="Pipeline state 不可用")
+
+    patches = getattr(state, "patch_log", []) or []
+    by_op: dict[str, int] = {}
+    rejected: list[dict] = []
+    for p in patches:
+        op = p.get("op", "UNKNOWN") if isinstance(p, dict) else getattr(p, "op", "UNKNOWN")
+        by_op[op] = by_op.get(op, 0) + 1
+        if isinstance(p, dict) and p.get("rejected"):
+            rejected.append({
+                "patch_id": p.get("id", ""),
+                "reason": p.get("reject_reason", ""),
+            })
+
+    return {
+        "job_id": job_id,
+        "total_patches": len(patches),
+        "patches_by_op": by_op,
+        "rejected_patches": rejected,
     }
 
 

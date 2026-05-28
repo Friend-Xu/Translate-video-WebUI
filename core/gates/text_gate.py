@@ -22,25 +22,35 @@ class TextGate:
 
     def __init__(self, semantic_threshold: float = 0.70,
                  sim_drop_limit: float = 0.05, mode: str = "logic_gate",
-                 beta: float = 0.6, gamma: float = 0.4):
+                 beta: float = 0.6, gamma: float = 0.4,
+                 max_len_ratio: float = 2.0, min_len_ratio: float = 0.4,
+                 min_shrink_ratio: float = 0.5):
         self.semantic_threshold = semantic_threshold
         self.sim_drop_limit = sim_drop_limit
         self.mode = mode
         self.beta = beta
         self.gamma = gamma
+        self.max_len_ratio = max_len_ratio
+        self.min_len_ratio = min_len_ratio
+        self.min_shrink_ratio = min_shrink_ratio
 
     def decide(self, old_sim: float, new_sim: float,
-               old_ppl_ratio: float, new_ppl_ratio: float) -> TextGateResult:
+               old_ppl_ratio: float, new_ppl_ratio: float,
+               source_len: int = 0, old_len: int = 0, new_len: int = 0,
+               ) -> TextGateResult:
+        """运行三门判定。(批次05 §二: 含长度比率守卫)"""
         if self.mode == "joint_formula":
             return self._joint(old_sim, new_sim, old_ppl_ratio, new_ppl_ratio)
-        return self._logic(old_sim, new_sim, old_ppl_ratio, new_ppl_ratio)
+        return self._logic(old_sim, new_sim, old_ppl_ratio, new_ppl_ratio,
+                           source_len, old_len, new_len)
 
     def decide_with_scores(self, old_score, new_score) -> TextGateResult:
         old_r = (1.0 / max(old_score.fluency_score, 0.001) - 1.0) if old_score.fluency_score > 0 else 1.0
         new_r = (1.0 / max(new_score.fluency_score, 0.001) - 1.0) if new_score.fluency_score > 0 else 1.0
         return self.decide(old_score.semantic_similarity, new_score.semantic_similarity, old_r, new_r)
 
-    def _logic(self, old_sim, new_sim, old_ratio, new_ratio) -> TextGateResult:
+    def _logic(self, old_sim, new_sim, old_ratio, new_ratio,
+               source_len=0, old_len=0, new_len=0) -> TextGateResult:
         t = {"mode": "logic_gate", "gates_checked": []}
         t["gates_checked"].append("A")
         if new_sim < self.semantic_threshold:
@@ -55,9 +65,39 @@ class TextGate:
                 return TextGateResult(False, "retry", "original", "content_degraded",
                                       {"old_sim": old_sim, "new_sim": new_sim,
                                        "sim_drop": round(old_sim - new_sim, 4)}, t)
+            # 长度比率守卫 (批次05 §一: 从 SRT 版本迁移)
+            if source_len > 0 and old_len > 0:
+                orig_ratio = old_len / source_len
+                new_ratio_len = new_len / source_len
+                if orig_ratio > 0:
+                    if new_ratio_len > orig_ratio * self.max_len_ratio:
+                        t["gate_C"] = "FAIL"
+                        return TextGateResult(
+                            False, "retry", "original", "content_inflated",
+                            {"old_len": old_len, "new_len": new_len,
+                             "old_ratio": round(orig_ratio, 3),
+                             "new_ratio": round(new_ratio_len, 3)}, t)
+                    if new_ratio_len < orig_ratio * self.min_len_ratio:
+                        t["gate_C"] = "FAIL"
+                        return TextGateResult(
+                            False, "retry", "original", "content_deflated",
+                            {"old_len": old_len, "new_len": new_len,
+                             "old_ratio": round(orig_ratio, 3),
+                             "new_ratio": round(new_ratio_len, 3)}, t)
             t["gate_C"] = "PASS"
         t["gates_checked"].append("B")
         if new_ratio < old_ratio:
+            # Gate B 收缩守卫 (批次05 §一: 从 SRT 版本迁移)
+            if source_len > 0 and old_len > 0:
+                orig_ratio = old_len / source_len
+                new_ratio_len = new_len / source_len
+                if orig_ratio > 0 and new_ratio_len < orig_ratio * self.min_shrink_ratio:
+                    t["gate_B"] = "FAIL"
+                    return TextGateResult(
+                        False, "retry", "original", "content_shrunk",
+                        {"old_len": old_len, "new_len": new_len,
+                         "old_ratio": round(orig_ratio, 3),
+                         "new_ratio": round(new_ratio_len, 3)}, t)
             t["gate_B"] = "PASS"
             return TextGateResult(True, "accept", "retry", "naturalness_improved",
                                   {"old_sim": old_sim, "new_sim": new_sim,
