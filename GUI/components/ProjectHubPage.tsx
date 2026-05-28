@@ -215,7 +215,7 @@ export default function ProjectHubPage() {
       }
       const { job_id } = await res.json()
       // Wire up job_id so SSE/polling/cancel work
-      setStatus(prev => ({ ...prev, jobId: job_id, currentStep: '流水线运行中...' }))
+      setStatus(prev => ({ ...prev, jobId: job_id, state: 'running', currentStep: '流水线运行中...' }))
       loadLogTail(job_id)
       pollStatus(job_id)
     } catch (e) {
