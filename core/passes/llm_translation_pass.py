@@ -18,7 +18,7 @@ class LLMTranslationPass(TimelinePass):
     """
 
     name = "llm_translation"
-    depends_on = ["asr_to_ir"]
+    depends_on: list[str] = []
 
     def __init__(self, translate_fn=None, quality_gate_enabled: bool = False):
         self._translate_fn = translate_fn or self._mock_translate
