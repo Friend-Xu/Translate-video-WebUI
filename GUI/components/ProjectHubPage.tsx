@@ -185,29 +185,26 @@ export default function ProjectHubPage() {
     finally { setStarting(false) }
   }, [selectedVideo, createWorkspace, applyPresetDefaults])
 
-  // Start bootstrap pipeline
+  // Start bootstrap pipeline (core/ new architecture)
   const handleStartBootstrap = useCallback(async () => {
     if (!workspace) return
     setPhase('running')
     const videoPath = manifest?.video_path || ''
     try {
-      const res = await fetch('/api/pipeline/run', {
+      const res = await fetch('/api/core/pipeline/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           video_path: videoPath,
+          workflow_preset: selectedPresetId,
           lang,
           target_lang: targetLang,
           engine,
-          model: asrModel,
+          asr_model: asrModel,
           device,
           compute_type: computeType,
           skip_demucs: skipDemucs,
-          skip_extract: skipExtract,
-          skip_translate: skipTranslate,
           skip_tts: skipTts,
-          skip_semantic_validation: skipSemanticValidation,
-          skip_naturalness_check: skipNaturalnessCheck,
         }),
       })
       if (!res.ok) {

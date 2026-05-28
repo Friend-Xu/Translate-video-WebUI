@@ -4853,6 +4853,29 @@ def _load_core_transcript(video_path: str) -> tuple:
     return segments, speaker_timeline, str(ws_dir)
 
 
+def _persist_core_timeline(state, workspace_path: str) -> None:
+    """将 core/ Pipeline 的输出持久化为前端可读的 timeline.json。"""
+    from core.runtime.synthesis import SynthesisEngine
+    from timeline.fusion import from_project_ir
+    from timeline.io import save_json
+
+    engine = SynthesisEngine()
+    rendered = engine.render_all(state)
+
+    # 构建 derivatives_map: event_id -> {translation, ...}
+    derivatives_map = {}
+    for r in rendered:
+        eid = r.get("id", "")
+        derivatives_map[eid] = {
+            "translation": r.get("translation", ""),
+            "words": r.get("words", []),
+        }
+
+    timeline_ir = from_project_ir(state.ir, derivatives_map)
+    out_path = os.path.join(workspace_path, "01_extract", "timeline.json")
+    save_json(timeline_ir, out_path)
+
+
 def _run_core_pipeline_sync(job: Job, req: CoreRunRequest) -> None:
     """在线程池中同步执行 core/ WorkflowOrchestrator。(批次11 §阶段B)"""
     from core.engine.workflow_orchestrator import WorkflowOrchestrator
@@ -4984,6 +5007,10 @@ def _run_core_pipeline_sync(job: Job, req: CoreRunRequest) -> None:
         job.current_step = "core/ Pipeline 完成"
         job._core_state = state
         job.append_log(f"[INFO] core/ Pipeline 完成: {len(state.ir.events)} events")
+
+        # 持久化 timeline.json 供前端读取
+        _persist_core_timeline(state, job.workspace_path)
+
         _update_workspace_runtime_state(job.workspace_path, RuntimeState.READY)
         _save_job(job)
 
