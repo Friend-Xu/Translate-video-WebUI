@@ -1276,23 +1276,27 @@ async def stream_logs(job_id: str, request: Request) -> StreamingResponse:
 
     async def event_stream() -> AsyncIterator[str]:
         try:
-            # 发送 log_file_path 供前端确认
+            # 立即发送 keepalive 注释，确认 SSE 连接建立
+            yield ": connected\n\n"
+
             if job.log_file_path:
                 yield f"event: meta\ndata: {json.dumps({'log_file': job.log_file_path})}\n\n"
 
             while True:
-                if await request.is_disconnected():
-                    return
-
                 if job.status in ("completed", "failed", "cancelled"):
                     yield f"event: done\ndata: {json.dumps({'status': job.status})}\n\n"
                     return
 
                 try:
                     payload = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    # 检查断开
+                    if await request.is_disconnected():
+                        return
                     data = json.dumps(payload, ensure_ascii=False)
                     yield f"data: {data}\n\n"
                 except asyncio.TimeoutError:
+                    if await request.is_disconnected():
+                        return
                     yield ": keepalive\n\n"
         finally:
             job.unsubscribe(queue)
