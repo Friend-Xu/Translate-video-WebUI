@@ -4818,8 +4818,9 @@ def _build_core_pass_factory(
 ):
     """构建 core/ Pass 工厂。(批次11 §阶段B)"""
     from core.engine.pass_factory import create_pass_factory
+    ws = Path(video_path).parent / f"{Path(video_path).stem}_project"
     audio_path = os.path.join(
-        ws_dir,
+        str(ws),
         "01_extract",
         f"{os.path.splitext(os.path.basename(video_path))[0]}_extracted.wav",
     )
