@@ -62,10 +62,10 @@ _PASS_REGISTRY: dict[str, type] = {
 }
 
 _RUNTIME_ARGS: dict[str, list[str]] = {
-    "media_validate": ["video_path"],
-    "media_validator": ["video_path"],
-    "demucs": ["video_path"],
-    "audio_preprocess": ["video_path"],
+    "media_validate": ["video_path", "output_dir"],
+    "media_validator": ["video_path", "output_dir"],
+    "demucs": ["video_path", "output_dir"],
+    "audio_preprocess": ["video_path", "output_dir"],
     "asr_to_ir": ["segments", "speaker_timeline"],
     "asr": ["audio_path"],
     "llm_translation": ["translate_fn"],
@@ -86,6 +86,7 @@ def create_pass_factory(
     engine: str = "chattts",
     video_path: str = "",
     audio_path: str = "",
+    output_dir: str = "",
 ) -> Callable[[str], TimelinePass | None]:
     """通过闭包注入运行时依赖，返回 Pass 工厂函数。"""
 
@@ -97,6 +98,7 @@ def create_pass_factory(
         "engine": engine,
         "video_path": video_path,
         "audio_path": audio_path,
+        "output_dir": output_dir,
     }
 
     def _factory(name: str) -> TimelinePass | None:

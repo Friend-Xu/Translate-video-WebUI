@@ -67,6 +67,10 @@ class AudioPreprocessCompositePass(TimelinePass):
 
         import os
 
+        # Ensure output directory exists
+        out_dir = self.output_dir or os.path.join(os.path.dirname(video_path) or ".", "")
+        os.makedirs(os.path.join(out_dir, "01_extract"), exist_ok=True)
+
         # Step 1: 缺陷诊断
         if not self.skip_defect_check:
             defect_ctx = AudioDefectContext(

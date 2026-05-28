@@ -69,7 +69,7 @@ class MediaValidatorAdapter:
         输出: 16kHz mono PCM16 WAV。
         """
         import os
-        from SRT.MediaValidator import MediaValidator
+        from SRT.MediaValidator import MediaValidator, ensure_audio_duration
 
         validator = MediaValidator()
         result = validator.diagnose(ctx.video_path)
@@ -77,12 +77,12 @@ class MediaValidatorAdapter:
         audio_path = ctx.output_audio_path
         if not audio_path:
             base = os.path.splitext(os.path.basename(ctx.video_path))[0]
-            audio_path = os.path.join(
-                os.path.dirname(ctx.video_path) or ".",
-                f"{base}_extracted.wav",
-            )
+            parent = os.path.dirname(ctx.video_path) or "."
+            ws_dir = os.path.join(parent, f"{base}_project", "01_extract")
+            os.makedirs(ws_dir, exist_ok=True)
+            audio_path = os.path.join(ws_dir, f"{base}_extracted.wav")
 
-        actual_dur = validator.ensure_audio_duration(
+        actual_dur = ensure_audio_duration(
             ctx.video_path, audio_path,
             sr=ctx.sample_rate, ch=ctx.channels,
         )
