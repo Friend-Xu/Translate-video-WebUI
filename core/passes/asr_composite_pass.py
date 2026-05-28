@@ -56,7 +56,10 @@ class ASRCompositePass(TimelinePass):
         segment_patches = [p for p in asr_patches if p.op == OpCode.SEGMENT_INSERT]
         meta_patches = [p for p in asr_patches if p.op == OpCode.ANNOTATE]
 
-        state = self._bootstrap_state(segment_patches)
+        new_state = self._bootstrap_state(segment_patches)
+        # Preserve global_patches from previous stages (e.g. LOAD stage audio_ref/vocals_ref)
+        new_state.global_patches = list(state.global_patches) if state is not None else []
+        state = new_state
 
         for p in meta_patches:
             state.add_global_patch(p)
