@@ -218,7 +218,7 @@ class TestPatchIdempotency:
         }
         adapter = WhisperAdapter.__new__(WhisperAdapter)
         adapter.ctx = EngineContext(audio_path="/tmp/test.wav")
-        p1 = adapter._result_to_patches(result1)
-        p2 = adapter._result_to_patches(result2)
+        p1 = adapter._result_to_patches(result1["segments"], result1["language"], result1["stats"])
+        p2 = adapter._result_to_patches(result2["segments"], result2["language"], result2["stats"])
         assert len(p1) == len(p2)
         assert p1[0].value["text"] == p2[0].value["text"]
