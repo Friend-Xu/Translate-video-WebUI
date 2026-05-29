@@ -63,7 +63,7 @@ class TestWhisperAdapter:
         }
         adapter = WhisperAdapter.__new__(WhisperAdapter)
         adapter.ctx = EngineContext(audio_path="/tmp/test.wav")
-        patches = adapter._result_to_patches(result)
+        patches = adapter._result_to_patches(result["segments"], result["language"], result["stats"])
 
         segment_patches = [p for p in patches if p.op == OpCode.SEGMENT_INSERT]
         meta_patches = [p for p in patches if p.op == OpCode.ANNOTATE]
