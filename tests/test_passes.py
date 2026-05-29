@@ -81,11 +81,11 @@ class TestSRTExportPass:
             events={
                 "evt_001": TimelineEventIR(
                     id="evt_001", start=0.0, end=2.5,
-                    text_ref="Hello world", source="asr",
+                    speaker_ref=None, text_ref="Hello world", source="asr",
                 ),
                 "evt_002": TimelineEventIR(
                     id="evt_002", start=2.5, end=5.0,
-                    text_ref="Goodbye world", source="asr",
+                    speaker_ref=None, text_ref="Goodbye world", source="asr",
                 ),
             },
             speakers={},
