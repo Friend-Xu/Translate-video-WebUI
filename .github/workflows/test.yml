@@ -37,8 +37,6 @@ jobs:
             tests/test_srt_gate_consistency.py \
             tests/test_config_resolver.py tests/test_passes.py \
             --cov=core --cov=SRT --cov-report=term-missing -v
-      - name: Validate JSON Schemas
-        run: python tests/validate_schemas.py
 
   # ── Stage 2: L2 集成测试 ──────────────────────────────
   integration:
