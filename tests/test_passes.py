@@ -91,12 +91,14 @@ class TestSRTExportPass:
             speakers={},
         )
         state = TimelineProjectState(ir)
-        state.event_states["evt_001"] = TimelineEventState(
-            id="evt_001", derivatives={"translation": "Hello world"},
-        )
-        state.event_states["evt_002"] = TimelineEventState(
-            id="evt_002", derivatives={"translation": "Goodbye world"},
-        )
+        es1 = TimelineEventState(
+            TimelineEventIR(id="evt_001", start=0.0, end=2.5, speaker_ref=None, text_ref="Hello world"))
+        es1.derivatives = {"translation": "Hello world"}
+        state.event_states["evt_001"] = es1
+        es2 = TimelineEventState(
+            TimelineEventIR(id="evt_002", start=2.5, end=5.0, speaker_ref=None, text_ref="Goodbye world"))
+        es2.derivatives = {"translation": "Goodbye world"}
+        state.event_states["evt_002"] = es2
         return state
 
     def test_srt_output_format(self, sample_state):
