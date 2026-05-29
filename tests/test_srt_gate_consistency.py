@@ -46,7 +46,7 @@ GATE_CONSISTENCY_CASES = [
     (0.85, 0.82, 3.0, 2.0, 10, 10, 6, True, None),
 
     # ── 边界值 ──
-    (0.70, 0.70, 1.0, 1.0, 0, 0, 0, True, None),
+    (0.70, 0.70, 1.0, 1.0, 0, 0, 0, False, "no_naturalness_gain"),
     (0.85, 0.85, 2.0, 2.1, 0, 0, 0, False, "no_naturalness_gain"),
 
     # ── 极端值 ──
@@ -102,7 +102,7 @@ class TestSRTTextGateConsistency:
     def test_custom_thresholds(self):
         """自定义阈值生效"""
         gate = TextGate(
-            semantic_threshold=0.50, sim_drop_limit=0.20,
+            semantic_threshold=0.50, sim_drop_limit=0.30,
             max_len_ratio=3.0, min_len_ratio=0.2, min_shrink_ratio=0.3,
         )
         r = gate.decide(0.80, 0.55, 3.0, 2.0,

@@ -375,11 +375,12 @@ class TestRollbackManager:
         assert rev is not None
         assert rev.value["a"] == 1
 
-    def test_reverse_patch_first_returns_none(self, mgr, state):
+    def test_reverse_patch_first_returns_undo(self, mgr, state):
         eng = PatchEngine()
         eng.apply(state, Patch("p1", "evt_001", OpCode.REPLACE, {"a": 1}, timestamp=100))
         rev = mgr.compute_reverse_patch(state.get_event("evt_001").patches[0], state)
-        assert rev is None
+        assert rev is not None
+        assert rev.op == OpCode.REPLACE
 
     def test_rollback_out_of_range(self, mgr, state):
         assert mgr.rollback_segment(state, "evt_001", 99) is state
