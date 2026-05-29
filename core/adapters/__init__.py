@@ -1,8 +1,13 @@
-"""core/adapters — 引擎适配层 (Chapter 1 §1.3, Layer B)
+"""core/adapters — 引擎适配层 (CLI Runtime 计划书 §5)
 
 每个 Adapter 负责将原始引擎输出转为 Patch 列表。
 Adapter 不做 IR 操作，只做格式转换。
+v2: 所有 Adapter 实现 AdapterProtocol 统一接口。
 """
+from core.adapters.protocol import (
+    AdapterProtocol, AdapterCapability, AdapterResult,
+    ErrorCategory, ResourceRequirement, AdapterRegistry,
+)
 from core.adapters.whisper_adapter import WhisperAdapter, EngineContext
 from core.adapters.wav2vec2_adapter import Wav2Vec2Adapter
 from core.adapters.pyannote_adapter import PyannoteAdapter
@@ -19,6 +24,8 @@ from core.adapters.ppl_adapter import PPLAdapter, PPLContext
 from core.adapters.emotion_recognizer_adapter import EmotionRecognizerAdapter, EmotionRecognizerContext
 
 __all__ = [
+    "AdapterProtocol", "AdapterCapability", "AdapterResult",
+    "ErrorCategory", "ResourceRequirement", "AdapterRegistry",
     "WhisperAdapter", "Wav2Vec2Adapter", "PyannoteAdapter",
     "ChatTTSAdapter", "TTSSegmentContext", "EngineContext",
     "CosyVoiceAdapter", "CosyVoiceSegmentContext",

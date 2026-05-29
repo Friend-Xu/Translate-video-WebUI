@@ -5065,148 +5065,73 @@ def _persist_core_timeline(state, workspace_path: str) -> None:
 
 
 def _run_core_pipeline_sync(job: Job, req: CoreRunRequest) -> None:
-    """在线程池中同步执行 core/ WorkflowOrchestrator。(批次11 §阶段B)"""
-    from core.engine.workflow_orchestrator import WorkflowOrchestrator
-    from core.engine.progress import ProgressReport, ProgressEventType
-    from core.config.global_config import GlobalConfig
-    from core.config.workflow_policy import WorkflowStage
+    """在线程池中同步执行 core/ Pipeline。(重构后: 调用 core.pipeline.run_pipeline)"""
+    from core.engine.event_bus import EventBus
+    from core.engine.runtime_event import RuntimeEvent, RuntimeEventType as RET
+    from core.pipeline import run_pipeline
 
     sse_handler = SSELogHandler(job.append_log)
     root_logger = logging.getLogger()
     root_logger.addHandler(sse_handler)
 
+    _stage_index = {"load": 5, "extract": 20, "translate": 50, "validate": 65, "tts": 75, "export": 90}
+
+    # SSE subscriber — 将 EventBus 事件转发到 WebUI
+    class _SSESubscriber:
+        def on_event(self, event: RuntimeEvent) -> None:
+            ev = event.event_type
+            if ev == RET.STAGE_STARTED:
+                job.current_step = f"{event.stage_label}..."
+                job.progress = _stage_index.get(event.stage, 10)
+                job.append_log(f"[STAGE] {event.stage_label} 开始")
+            elif ev == RET.STAGE_PROGRESS:
+                job.current_step = f"{event.stage_label} ({event.current_item}/{event.total_items})"
+                job.append_log(f"  [{event.stage_label}] {event.current_item}/{event.total_items}")
+            elif ev == RET.STAGE_COMPLETED:
+                job.current_step = f"{event.stage_label} 完成"
+                job.progress = _stage_index.get(event.stage, 50) + 5
+                job.append_log(f"[STAGE] {event.stage_label} 完成 — {event.message}")
+            elif ev in (RET.WORKFLOW_FAILED, RET.ERROR):
+                job.append_log(f"[ERROR] {event.message}")
+            else:
+                job.append_log(f"[{ev.value}] {event.message}")
+
+            # SSE 推送
+            if job._loop is not None and job._queues:
+                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                payload = {
+                    "event": ev.value,
+                    "stage": event.stage,
+                    "stage_label": event.stage_label,
+                    "current_item": event.current_item,
+                    "total_items": event.total_items,
+                    "percent": round(event.percent, 3) if event.percent else 0,
+                    "message": event.message,
+                    "ts": ts,
+                    "payload": event.payload,
+                }
+                for q in job._queues:
+                    job._loop.call_soon_threadsafe(q.put_nowait, payload)
+
     try:
         job.status = "running"
         job.runtime_state = "bootstrapping"
         job.current_step = "启动 core/ Pipeline..."
-        job.append_log("[INFO] 启动 core/ WorkflowOrchestrator")
+        job.append_log("[INFO] 启动 core/ Pipeline (via core.pipeline.run_pipeline)")
 
         ws_dir = str(Path(req.video_path).parent / f"{Path(req.video_path).stem}_project")
         job.workspace_path = ws_dir
         job.open_log_file(ws_dir)
         _update_workspace_runtime_state(ws_dir, RuntimeState.BOOTSTRAPPING)
 
-        # 1. 加载 transcript 数据
-        segments, speaker_timeline, ws_dir2 = _load_core_transcript(req.video_path)
-        if ws_dir2:
-            job.workspace_path = ws_dir2
+        EventBus().subscribe(_SSESubscriber())
 
-        # 2. 构建 LLM 翻译函数
-        import yaml as yaml_lib
-        cfg_path = PROJECT_ROOT / "config" / "translate.yaml"
-        if cfg_path.is_file():
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                cfg = yaml_lib.safe_load(f).get("translate", {})
-        else:
-            cfg = {}
-        api_key = cfg.get("api_key", "")
-        model = cfg.get("model", "deepseek-chat")
-
-        def _translate(tagged_text: str) -> str:
-            import requests
-            system_prompt = (
-                cfg.get("custom_prompt", {}).get("single_prompt", "")
-                or "你是专业字幕翻译器。直接返回翻译结果，不要解释。"
-            )
-            temperature = cfg.get("temperature", 0.1)
-            max_tokens = cfg.get("max_tokens", 4000)
-            timeout = cfg.get("timeout", 120)
-            base_url = cfg.get("api_base_url", "https://api.deepseek.com")
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            payload = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": tagged_text},
-                ],
-                "temperature": temperature, "max_tokens": max_tokens,
-            }
-            resp = requests.post(
-                f"{base_url}/v1/chat/completions",
-                json=payload, headers=headers, timeout=timeout,
-            )
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"].strip()
-
-        # 3. 输出路径
-        machine_srt = os.path.join(job.workspace_path, "02_translate", "machine.srt")
-        os.makedirs(os.path.dirname(machine_srt), exist_ok=True)
-
-        # 4. 构建 Pass 工厂
-        factory = _build_core_pass_factory(
-            video_path=req.video_path,
-            translate_fn=_translate,
-            segments=segments,
-            speaker_timeline=speaker_timeline,
-            output_path=machine_srt,
+        state = run_pipeline(
+            req.video_path,
+            target_lang=req.target_lang,
             engine=req.engine,
+            stages=["load", "extract", "translate", "validate"],
         )
-
-        # 5. 构建策略 — Bootstrap 只到翻译阶段，跳过高耗时的 TTS
-        policy, _, skip_tts = _preset_to_policy(req.workflow_preset, req.target_lang)
-        # Bootstrap 移除 TTS 和 emotion 阶段
-        policy.stages.pop(WorkflowStage.TTS, None)
-        policy.stages.pop(WorkflowStage.EXPORT, None)
-
-        # 6. 全局配置
-        global_config = GlobalConfig.from_legacy_yaml(
-            translate_cfg_path=str(PROJECT_ROOT / "config" / "translate.yaml"),
-            tts_cfg_path=str(PROJECT_ROOT / "config" / "runtime_tts.yaml"),
-        )
-
-        orchestrator = WorkflowOrchestrator(
-            policy=policy,
-            global_config=global_config,
-            pass_factory=factory,
-        )
-
-        # 7. 进度回调 — SSE 推送结构化事件并更新 job 状态
-        _stage_index = {"load": 5, "extract": 20, "translate": 50, "tts": 75, "export": 90}
-
-        def _core_progress(report: ProgressReport) -> None:
-            event_name = report.event_type.value
-
-            if event_name == "stage_started":
-                job.current_step = f"{report.stage_label}..."
-                job.progress = _stage_index.get(report.stage, 10)
-                job.append_log(f"[STAGE] {report.stage_label} 开始")
-            elif event_name == "stage_progress":
-                job.current_step = f"{report.stage_label} ({report.current_item}/{report.total_items})"
-                job.append_log(
-                    f"  [{report.stage_label}] {report.current_item}/{report.total_items}"
-                )
-            elif event_name == "stage_completed":
-                job.current_step = f"{report.stage_label} 完成"
-                job.progress = _stage_index.get(report.stage, 50) + 5
-                job.append_log(f"[STAGE] {report.stage_label} 完成 — {report.message}")
-            elif report.event_type in (
-                ProgressEventType.WORKFLOW_COMPLETED,
-                ProgressEventType.WORKFLOW_FAILED,
-            ):
-                job.append_log(f"[WORKFLOW] {report.message}")
-
-            # SSE 结构化推送
-            if job._loop is not None and job._queues:
-                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-                payload = {
-                    "event": event_name,
-                    "stage": report.stage,
-                    "stage_label": report.stage_label,
-                    "current_item": report.current_item,
-                    "total_items": report.total_items,
-                    "percent": round(report.percent, 3),
-                    "message": report.message,
-                    "ts": ts,
-                    "payload": report.payload,
-                }
-                for q in job._queues:
-                    job._loop.call_soon_threadsafe(q.put_nowait, payload)
-
-        orchestrator.set_progress_callback(_core_progress)
-
-        # 8. 执行
-        job.append_log("[INFO] WorkflowOrchestrator.run() 开始")
-        state = orchestrator.run(req.video_path)
 
         job.status = "completed"
         job.runtime_state = "ready"
@@ -5215,13 +5140,9 @@ def _run_core_pipeline_sync(job: Job, req: CoreRunRequest) -> None:
         job._core_state = state
         job.append_log(f"[INFO] core/ Pipeline 完成: {len(state.ir.events)} events")
 
-        # 持久化 timeline.json 供前端读取
-        _persist_core_timeline(state, job.workspace_path)
-
         _update_workspace_runtime_state(job.workspace_path, RuntimeState.READY)
         _save_job(job)
 
-        # 推送 done 事件
         if job._loop is not None and job._queues:
             ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
             for q in job._queues:

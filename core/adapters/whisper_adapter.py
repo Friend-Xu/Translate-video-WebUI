@@ -1,8 +1,10 @@
 """
-WhisperAdapter — faster-whisper → Patch 适配器 (Chapter 3 §3.2)
+WhisperAdapter — faster-whisper → Patch 适配器 (CLI Runtime 计划书 §5)
 
 直接调用 faster-whisper + Silero VAD，内联转录逻辑。
 不依赖旧 pipeline/transcriber.py。
+
+实现 AdapterProtocol，capability_id = "asr.whisper"。
 """
 from __future__ import annotations
 import logging
@@ -10,6 +12,10 @@ import os
 import time
 from dataclasses import dataclass
 from core.runtime.patch import Patch, OpCode
+from core.adapters.protocol import (
+    AdapterProtocol, AdapterCapability, AdapterResult,
+    ErrorCategory, ResourceRequirement,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +33,7 @@ class EngineContext:
     model_root: str | None = None
 
 
-class WhisperAdapter:
+class WhisperAdapter(AdapterProtocol):
     """将 faster-whisper 输出转为 SEGMENT_INSERT + ANNOTATE patch。
 
     自包含 VAD + 转录逻辑，不依赖旧 pipeline/ 模块。
@@ -37,7 +43,40 @@ class WhisperAdapter:
         self.ctx = context
         self.workspace_dir = workspace_dir
 
-    def configure(self, event_config=None):
+    # ── AdapterProtocol 实现 ──────────────────────────────────
+
+    @property
+    def capability(self) -> AdapterCapability:
+        return AdapterCapability(
+            capability_id="asr.whisper",
+            display_name="Whisper ASR (faster-whisper + Silero VAD)",
+            resources=ResourceRequirement(gpu=self.ctx.device == "cuda", vram_mb=3000),
+            failure_policy="retry",
+        )
+
+    def execute(self, **kwargs) -> AdapterResult:
+        """统一执行入口。委托 run()，包装为 AdapterResult。"""
+        try:
+            patches = self.run()
+            return AdapterResult(ok=True, patches=patches, data={"language": self.ctx.language})
+        except Exception as exc:
+            return AdapterResult(
+                ok=False, error=str(exc),
+                error_category=self._categorize(exc),
+            )
+
+    @staticmethod
+    def _categorize(exc: Exception) -> ErrorCategory:
+        msg = str(exc).lower()
+        if "cuda" in msg or "out of memory" in msg or "gpu" in msg:
+            return ErrorCategory.RETRYABLE
+        if "not found" in msg or "download" in msg:
+            return ErrorCategory.RETRYABLE
+        if "model" in msg or "unsupported" in msg:
+            return ErrorCategory.FATAL
+        return ErrorCategory.RETRYABLE
+
+    # ── 配置注入 ─────────────────────────────────────────────
         if not event_config:
             return
         if "model" in event_config:

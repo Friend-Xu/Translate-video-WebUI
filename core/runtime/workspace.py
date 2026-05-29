@@ -1,20 +1,24 @@
 """
-WorkspaceResolver — 统一工作目录路径解析
+WorkspaceResolver — 统一工作目录路径解析 + 生命周期状态机 (CLI Runtime 计划书 §7)
 
-所有文件输出收束到 {video_dir}/{stem}_project/ 下:
-  01_extract/    提取阶段 (transcript, audio, demucs, timeline)
-  02_translate/  翻译阶段 (srt, log, quality report)
-  03_tts/        TTS 阶段 (音频片段)
-  04_output/     最终输出 (dubbed.mp4)
-  .snapshots/    运行时快照
-  _embeddings/   声纹嵌入
+所有文件输出收束到 {video_dir}/{stem}_project/ 下。
+v2: 增加 Draft/Processing/Reviewable/Frozen 生命周期状态管理。
 """
 from __future__ import annotations
+import json as _json
 import os
+import datetime as _dt
 
 
 class WorkspaceResolver:
-    """给定 video_path，解析所有标准工作子目录。"""
+    """给定 video_path，解析所有标准工作子目录 + 管理生命周期状态。"""
+
+    VALID_TRANSITIONS = {
+        "draft": ["processing"],
+        "processing": ["reviewable"],
+        "reviewable": ["frozen", "processing"],  # 可回退重处理
+        "frozen": ["reviewable"],                 # 解冻
+    }
 
     def __init__(self, video_path: str):
         self.video_path = video_path
@@ -73,3 +77,50 @@ class WorkspaceResolver:
         for d in [self.extract_dir, self.translate_dir, self.tts_dir,
                    self.output_dir, self.snapshots_dir, self.embeddings_dir]:
             os.makedirs(d, exist_ok=True)
+
+    # ── 生命周期状态管理 ─────────────────────────────────────
+
+    @property
+    def manifest_path(self) -> str:
+        return os.path.join(self.workspace_root, "project.json")
+
+    def read_state(self) -> str:
+        """读取当前生命周期状态。"""
+        if not os.path.isfile(self.manifest_path):
+            return "draft"
+        with open(self.manifest_path, "r", encoding="utf-8") as f:
+            return _json.load(f).get("state", "draft")
+
+    def transition(self, new_state: str) -> bool:
+        """尝试转换状态。合法则写入 project.json 并返回 True。"""
+        current = self.read_state()
+        allowed = self.VALID_TRANSITIONS.get(current, [])
+        if new_state not in allowed:
+            return False
+        if os.path.isfile(self.manifest_path):
+            with open(self.manifest_path, "r", encoding="utf-8") as f:
+                data = _json.load(f)
+            data["state"] = new_state
+            data["updated_at"] = _dt.datetime.now().isoformat()
+            with open(self.manifest_path, "w", encoding="utf-8") as f:
+                _json.dump(data, f, indent=2, ensure_ascii=False)
+        return True
+
+    def freeze(self) -> bool:
+        """冻结 workspace — 标记为 frozen，记录时间戳。"""
+        if not os.path.isfile(self.manifest_path):
+            return False
+        with open(self.manifest_path, "r", encoding="utf-8") as f:
+            data = _json.load(f)
+        if data.get("state") not in ("reviewable",):
+            return False
+        data["state"] = "frozen"
+        data["timeline_frozen_at"] = _dt.datetime.now().isoformat()
+        data["updated_at"] = _dt.datetime.now().isoformat()
+        with open(self.manifest_path, "w", encoding="utf-8") as f:
+            _json.dump(data, f, indent=2, ensure_ascii=False)
+        return True
+
+    def is_exportable(self) -> bool:
+        """检查当前状态是否允许导出。"""
+        return self.read_state() in ("reviewable", "frozen")

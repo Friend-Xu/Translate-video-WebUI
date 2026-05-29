@@ -21,6 +21,8 @@ from core.engine.progress import (
 from core.config.workflow_policy import StageConfig, WorkflowStage
 from core.runtime.project_state import TimelineProjectState
 from core.runtime.config_resolver import ConfigResolver
+from core.engine.event_bus import EventBus
+from core.engine.runtime_event import RuntimeEvent, RuntimeEventType as RET
 
 
 class StageExecutor:
@@ -131,14 +133,32 @@ class StageExecutor:
         current: int = 0,
         payload: dict | None = None,
     ) -> None:
-        if self._on_progress is None:
-            return
-        self._on_progress(ProgressReport(
-            event_type=event_type,
+        # 向后兼容：旧的 ProgressReport 回调
+        if self._on_progress is not None:
+            self._on_progress(ProgressReport(
+                event_type=event_type,
+                stage=self._config.stage.value,
+                stage_label=self._config.stage.display_name,
+                total_items=total,
+                current_item=current,
+                message=message,
+                payload=payload or {},
+            ))
+        # EventBus — 统一事件流
+        _type_map = {
+            ProgressEventType.STAGE_STARTED: RET.STAGE_STARTED,
+            ProgressEventType.STAGE_PROGRESS: RET.STAGE_PROGRESS,
+            ProgressEventType.STAGE_COMPLETED: RET.STAGE_COMPLETED,
+            ProgressEventType.STAGE_FAILED: RET.ERROR,
+        }
+        re_type = _type_map.get(event_type, RET.LOG)
+        EventBus().emit_now(RuntimeEvent(
+            event_type=re_type,
             stage=self._config.stage.value,
             stage_label=self._config.stage.display_name,
+            node=payload.get("pass", "") if payload else "",
+            message=message,
             total_items=total,
             current_item=current,
-            message=message,
             payload=payload or {},
         ))

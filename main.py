@@ -192,15 +192,17 @@ def _save_manifest(video: str, data: dict) -> None:
 
 
 def _create_manifest(video: str) -> dict:
-    """创建初始 project.json。"""
+    """创建初始 project.json（v2 schema, 含生命周期状态）。"""
     now = datetime.datetime.now().isoformat()
     data = {
-        "version": 1,
+        "version": 2,
+        "state": "draft",
         "video_path": video.replace("\\", "/"),
         "created_at": now,
         "updated_at": now,
         "pipeline": {"extract": "pending", "translate": "pending", "tts": "pending"},
         "files": {},
+        "timeline_frozen_at": None,
     }
     _save_manifest(video, data)
     return data
@@ -1060,6 +1062,9 @@ def main():
                         help="禁用字幕拆分优化")
     parser.add_argument("--export-external-srt", action="store_true",
                         help="流水线完成后输出外挂字幕优化版")
+    parser.add_argument("--bootstrap", action="store_true",
+                        help="仅运行 Bootstrap 阶段 (extract + translate + validate)，"
+                             "完成后暂停不执行 TTS/导出")
     parser.add_argument("--ext-srt-mode", default=None,
                         choices=["target_only", "source_only", "bilingual"],
                         help="外挂字幕输出模式（覆盖配置文件）")
@@ -1152,7 +1157,16 @@ def main():
         # 翻译阶段全部 CPU（MiniLM + QualityAssessor），
         # ChatTTS 运行在独立子进程中，无需主进程 CUDA 清理。
 
-        if not args.skip_tts:
+        if args.bootstrap:
+            print("\n[3/3] TTS 合成 — 已跳过 (--bootstrap, Bootstrap 阶段完成)")
+            _manifest_set_step(video, "tts", "bootstrap_only")
+            # 标记为 Reviewable，等待用户确认后再导出
+            ws = workspace_paths(video)
+            if ws:
+                from core.runtime.workspace import WorkspaceResolver
+                wr = WorkspaceResolver(video)
+                wr.transition("reviewable")
+        elif not args.skip_tts:
             step_tts(
                 video,
                 srt_source=srt_source,

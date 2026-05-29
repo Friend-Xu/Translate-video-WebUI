@@ -47,6 +47,13 @@ def sample_project(sample_events, sample_speakers) -> TimelineProjectIR:
     return TimelineProjectIR(events=sample_events, speakers=sample_speakers)
 
 
+@pytest.fixture
+def sample_project_state(sample_project) -> "TimelineProjectState":
+    """从 sample_project 构建 TimelineProjectState"""
+    from core.runtime.project_state import TimelineProjectState
+    return TimelineProjectState(sample_project)
+
+
 # ── ASR / Pipeline 模拟数据 ────────────────────────────────
 
 @pytest.fixture

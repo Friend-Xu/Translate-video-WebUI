@@ -5,9 +5,32 @@ TimelineProjectState — 项目级运行时状态
 整个 pipeline 唯一可变容器。
 """
 from __future__ import annotations
+from enum import Enum
 from core.ir.project import TimelineProjectIR
 from core.runtime.event_state import TimelineEventState
 from core.runtime.patch import Patch
+
+
+class RuntimeState(Enum):
+    """Timeline Runtime 生命周期状态（设计文档 §7 生命周期管理）。
+
+    DRAFT      — 输入已建档，尚未跑完 bootstrap
+    PROCESSING — 正在执行 stage，仍可能发生结构性变化
+    REVIEWABLE — bootstrap 已结束，timeline 可审阅/可 patch/可校验
+    FROZEN     — 通过校验，准备进入 export，工作区进入归档态
+    EXPORTING  — 正在执行 TTS + 视频合成
+    COMPLETED  — 导出完成
+    FAILED     — 执行失败，需人工介入
+    CANCELLED  — 用户取消
+    """
+    DRAFT = "draft"
+    PROCESSING = "processing"
+    REVIEWABLE = "reviewable"
+    FROZEN = "frozen"
+    EXPORTING = "exporting"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class TimelineProjectState:

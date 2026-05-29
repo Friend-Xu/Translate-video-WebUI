@@ -1,13 +1,19 @@
 """
-ChatTTSAdapter — ChatTTS → Patch 适配器 (Chapter 5 §5.1-5.3)
+ChatTTSAdapter — ChatTTS → Patch 适配器 (CLI Runtime 计划书 §5)
 
 封装现有 ChatTTSEngine 子进程协议，输入从 Segment Context 读取，
 输出 UPDATE_TTS_AUDIO patch。
+
+实现 AdapterProtocol，capability_id = "tts.chattts"。
 """
 from __future__ import annotations
 from dataclasses import dataclass
 from core.runtime.patch import Patch, OpCode
 from core.ir.speaker import SpeakerNodeIR
+from core.adapters.protocol import (
+    AdapterProtocol, AdapterCapability, AdapterResult,
+    ErrorCategory, ResourceRequirement,
+)
 
 
 @dataclass
@@ -27,7 +33,7 @@ class TTSSegmentContext:
     next_segment_id: str = ""
 
 
-class ChatTTSAdapter:
+class ChatTTSAdapter(AdapterProtocol):
     """将 ChatTTS 输出转为 UPDATE_TTS_AUDIO patch。
 
     封装现有 ChatTTSEngine 子进程协议，不做修改。
@@ -42,6 +48,29 @@ class ChatTTSAdapter:
         self._model_path = model_path
         self._output_dir = output_dir
         self._engine = None
+
+    # ── AdapterProtocol 实现 ──────────────────────────────────
+
+    @property
+    def capability(self) -> AdapterCapability:
+        return AdapterCapability(
+            capability_id="tts.chattts",
+            display_name="ChatTTS (persistent subprocess)",
+            resources=ResourceRequirement(gpu=True, vram_mb=4000, exclusive=True),
+            failure_policy="retry",
+        )
+
+    def execute(self, **kwargs) -> AdapterResult:
+        segment_ctx = kwargs.get("segment_ctx")
+        if segment_ctx is None:
+            return AdapterResult(ok=False, error="missing segment_ctx", error_category=ErrorCategory.CONFIG)
+        try:
+            patch = self.synthesize(segment_ctx)
+            return AdapterResult(ok=True, patches=[patch])
+        except Exception as exc:
+            return AdapterResult(ok=False, error=str(exc), error_category=ErrorCategory.RETRYABLE)
+
+    # ── 配置注入 ─────────────────────────────────────────────
 
     def configure(self, event_config = None):
         if not event_config: return

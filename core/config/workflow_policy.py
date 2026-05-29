@@ -17,10 +17,14 @@ from enum import Enum
 
 
 class WorkflowStage(Enum):
-    """工作流五阶段（定稿 §1.3 五模式工作台 → 五阶段管线）。"""
+    """工作流六阶段 — Bootstrap(LOAD→EXTRACT→TRANSLATE→VALIDATE) + Export(TTS→EXPORT)。
+
+    Bootstrap 负责将原始视频转为可审阅 timeline，Export 在人工确认后执行 TTS 和最终合成。
+    """
     LOAD = "load"
     EXTRACT = "extract"
     TRANSLATE = "translate"
+    VALIDATE = "validate"
     TTS = "tts"
     EXPORT = "export"
 
@@ -30,6 +34,7 @@ class WorkflowStage(Enum):
             "load": "视频加载",
             "extract": "字幕提取",
             "translate": "翻译与审校",
+            "validate": "时间轴校验",
             "tts": "语音合成",
             "export": "导出交付",
         }
@@ -39,13 +44,25 @@ class WorkflowStage(Enum):
     def index(self) -> int:
         return _STAGE_ORDER[self]
 
+    @property
+    def is_bootstrap(self) -> bool:
+        """是否属于 Bootstrap 阶段（处理阶段，不含重任务）。"""
+        return self in (WorkflowStage.LOAD, WorkflowStage.EXTRACT,
+                        WorkflowStage.TRANSLATE, WorkflowStage.VALIDATE)
+
+    @property
+    def is_export(self) -> bool:
+        """是否属于导出阶段（TTS + 视频合成）。"""
+        return self in (WorkflowStage.TTS, WorkflowStage.EXPORT)
+
 
 _STAGE_ORDER = {
     WorkflowStage.LOAD: 0,
     WorkflowStage.EXTRACT: 1,
     WorkflowStage.TRANSLATE: 2,
-    WorkflowStage.TTS: 3,
-    WorkflowStage.EXPORT: 4,
+    WorkflowStage.VALIDATE: 3,
+    WorkflowStage.TTS: 4,
+    WorkflowStage.EXPORT: 5,
 }
 
 
@@ -93,9 +110,10 @@ class WorkflowPolicy:
 
     @classmethod
     def default_preset(cls, target_lang: str = "zh") -> "WorkflowPolicy":
-        """创建默认五阶段管线预设（定稿 Ch17 一键智能模式）。
+        """创建默认六阶段管线预设。
 
-        高级用户可通过 WorkflowPolicy 编辑器自定义各阶段参数。
+        Bootstrap: LOAD → EXTRACT → TRANSLATE → VALIDATE (处理阶段)
+        Export:    TTS → EXPORT (用户确认后触发)
         """
         policy = cls(
             name=f"preset_{target_lang}",
@@ -118,12 +136,24 @@ class WorkflowPolicy:
                 auto_advance=False,
                 gate="text_gate",
                 gate_routing={
-                    "A": "tts",
+                    "A": "validate",
                     "B": "pause",
                     "C": "retry",
                 },
                 allow_pause=True,
                 max_retries=1,
+            ),
+            WorkflowStage.VALIDATE: StageConfig(
+                stage=WorkflowStage.VALIDATE,
+                passes=[],
+                auto_advance=False,
+                gate="validate_gate",
+                gate_routing={
+                    "A": "tts",
+                    "B": "pause",
+                    "C": "retry",
+                },
+                allow_pause=True,
             ),
             WorkflowStage.TTS: StageConfig(
                 stage=WorkflowStage.TTS,
@@ -162,6 +192,10 @@ class WorkflowPolicy:
                 stage=WorkflowStage.TRANSLATE,
                 passes=["translate"],
             ),
+            WorkflowStage.VALIDATE: StageConfig(
+                stage=WorkflowStage.VALIDATE,
+                passes=[],
+            ),
             WorkflowStage.TTS: StageConfig(
                 stage=WorkflowStage.TTS,
                 passes=["tts"],
@@ -172,6 +206,26 @@ class WorkflowPolicy:
             ),
         }
         return policy
+
+    @classmethod
+    def bootstrap_preset(cls, target_lang: str = "zh") -> "WorkflowPolicy":
+        """Bootstrap 预设 — 只到 VALIDATE 阶段，不含 TTS 和 EXPORT。
+
+        用于 Timeline Runtime 初始化，完成后用户可审阅/修改字幕和说话人。
+        """
+        full = cls.default_preset(target_lang)
+        full.stages.pop(WorkflowStage.TTS, None)
+        full.stages.pop(WorkflowStage.EXPORT, None)
+        return full
+
+    @classmethod
+    def export_preset(cls, target_lang: str = "zh") -> "WorkflowPolicy":
+        """导出预设 — 仅 TTS + EXPORT，依赖 Bootstrap 已完成的 timeline。"""
+        full = cls.default_preset(target_lang)
+        for s in list(full.stages.keys()):
+            if s.is_bootstrap:
+                del full.stages[s]
+        return full
 
     def get_stage(self, stage: WorkflowStage) -> StageConfig | None:
         return self.stages.get(stage)

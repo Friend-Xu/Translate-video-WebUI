@@ -9,7 +9,7 @@ v3.0: 全 14 OpCode PatchEngine + 完整回滚/快照/冲突消解/局部重算�
 """
 from core.runtime.patch import Patch, OpCode
 from core.runtime.event_state import TimelineEventState
-from core.runtime.project_state import TimelineProjectState
+from core.runtime.project_state import TimelineProjectState, RuntimeState
 from core.runtime.patch_engine import PatchEngine
 from core.runtime.synthesis import SynthesisEngine
 from core.runtime.reducer import TimelineReducer
@@ -24,6 +24,10 @@ from core.runtime.patch_store import PatchStore
 from core.runtime.gate_validator import GateValidator, GateRejection
 from core.runtime.patch_planner import PatchPlanner
 from core.runtime.workspace import WorkspaceResolver
+from core.runtime.logging import StructuredLogger, RuntimeLog
+from core.runtime.context import RuntimeContext
+from core.runtime.profiler import profile_workspace, ProfileResult
+from core.runtime.gc import collect_gc, apply_gc, archive_workspace, format_gc_summary
 
 __all__ = [
     "Patch", "OpCode",
@@ -39,4 +43,9 @@ __all__ = [
     "GateValidator", "GateRejection",
     "PatchPlanner",
     "WorkspaceResolver",
+    "StructuredLogger", "RuntimeLog",
+    "RuntimeContext",
+    "profile_workspace", "ProfileResult",
+    "collect_gc", "apply_gc", "archive_workspace", "format_gc_summary",
+    "RuntimeState",
 ]
