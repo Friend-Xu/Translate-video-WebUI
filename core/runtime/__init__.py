@@ -25,7 +25,6 @@ from core.runtime.gate_validator import GateValidator, GateRejection
 from core.runtime.patch_planner import PatchPlanner
 from core.runtime.workspace import WorkspaceResolver
 from core.runtime.logging import StructuredLogger, RuntimeLog
-from core.runtime.context import RuntimeContext
 from core.runtime.profiler import profile_workspace, ProfileResult
 from core.runtime.gc import collect_gc, apply_gc, archive_workspace, format_gc_summary
 
@@ -44,7 +43,6 @@ __all__ = [
     "PatchPlanner",
     "WorkspaceResolver",
     "StructuredLogger", "RuntimeLog",
-    "RuntimeContext",
     "profile_workspace", "ProfileResult",
     "collect_gc", "apply_gc", "archive_workspace", "format_gc_summary",
     "RuntimeState",
