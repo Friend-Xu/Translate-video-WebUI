@@ -208,6 +208,7 @@ class Job:
     _loop: asyncio.AbstractEventLoop | None = None
     _log_file: object | None = None    # open file handle for {workspace}/pipeline.log
     _log_lock: object | None = None    # threading.Lock for file writes
+    _core_state: object | None = None  # core/ TimelineProjectState (批次11 §阶段B)
 
     def subscribe(self) -> asyncio.Queue:
         q: asyncio.Queue = asyncio.Queue()
@@ -1096,6 +1097,7 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
                 job.id, job.process.returncode, status_name,
             )
             _save_job(job)
+            _update_workspace_runtime_state(job.workspace_path, RuntimeState.FAILED)
             return
 
     except Exception as e:
@@ -1105,6 +1107,7 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
         job.append_log(f"[ERROR] {e}")
         logger.exception("流水线异常 (job=%s)", job.id)
         _save_job(job)
+        _update_workspace_runtime_state(job.workspace_path, RuntimeState.FAILED)
     finally:
         root_logger.removeHandler(sse_handler)
         job.close_log_file()
@@ -1146,6 +1149,7 @@ async def start_pipeline(req: RunRequest) -> RunResponse:
     _jobs[job_id] = job
     job._loop = asyncio.get_running_loop()
     _save_job(job)
+    _update_workspace_runtime_state(workspace_path, RuntimeState.BOOTSTRAPPING)
 
     apply_subtitle_settings()
     _sync_translate_config(target_lang=req.target_lang)
@@ -1272,23 +1276,27 @@ async def stream_logs(job_id: str, request: Request) -> StreamingResponse:
 
     async def event_stream() -> AsyncIterator[str]:
         try:
-            # 发送 log_file_path 供前端确认
+            # 立即发送 keepalive 注释，确认 SSE 连接建立
+            yield ": connected\n\n"
+
             if job.log_file_path:
                 yield f"event: meta\ndata: {json.dumps({'log_file': job.log_file_path})}\n\n"
 
             while True:
-                if await request.is_disconnected():
-                    return
-
                 if job.status in ("completed", "failed", "cancelled"):
                     yield f"event: done\ndata: {json.dumps({'status': job.status})}\n\n"
                     return
 
                 try:
                     payload = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    # 检查断开
+                    if await request.is_disconnected():
+                        return
                     data = json.dumps(payload, ensure_ascii=False)
                     yield f"data: {data}\n\n"
                 except asyncio.TimeoutError:
+                    if await request.is_disconnected():
+                        return
                     yield ": keepalive\n\n"
         finally:
             job.unsubscribe(queue)
@@ -1298,6 +1306,29 @@ async def stream_logs(job_id: str, request: Request) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.post("/api/pipeline/cancel-by-workspace")
+async def cancel_by_workspace(body: dict) -> dict:
+    """Cancel a running job by workspace path."""
+    ws = body.get("workspace_path", "")
+    if not ws:
+        raise HTTPException(status_code=400, detail="Missing workspace_path")
+    for job_id, job in _jobs.items():
+        if getattr(job, "workspace_path", "") == ws and job.status == "running":
+            if job.process and job.process.returncode is None:
+                job.process.terminate()
+                try:
+                    job.process.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    job.process.kill()
+            job.status = "cancelled"
+            job.current_step = "已取消"
+            job.append_log("[WARN] 任务已取消")
+            _save_job(job)
+            _update_workspace_runtime_state(ws, RuntimeState.FAILED)
+            return {"ok": True}
+    raise HTTPException(status_code=404, detail="No running job for this workspace")
 
 
 @app.post("/api/pipeline/{job_id}/cancel")
@@ -1315,6 +1346,7 @@ async def cancel_job(job_id: str) -> dict:
         job.current_step = "已取消"
         job.append_log("[WARN] 任务已取消")
         _save_job(job)
+        _update_workspace_runtime_state(job.workspace_path, RuntimeState.FAILED)
     return {"ok": True}
 
 
@@ -3482,13 +3514,98 @@ class SpeakerLoadRequest(BaseModel):
 
 
 def _tl_has_empty_timeline(tl_path: str) -> bool:
-    """Check if timeline.json exists but has an empty 'timeline' array."""
+    """Check if timeline.json exists but has an empty 'events' (v2) or 'timeline' (v1) array."""
     try:
-        with open(tl_path, "r", encoding="utf-8") as f:
-            tl = json.load(f)
-        return len(tl.get("timeline", [])) == 0
+        tl = _load_timeline_v2(tl_path)
+        return len(tl.get("events", tl.get("timeline", []))) == 0
     except Exception:
         return True
+
+
+def _load_timeline_v2(path: str) -> dict:
+    """统一读 timeline.json，自动检测并迁移旧格式到 v2 dict。
+
+    返回 v2 格式 dict: { schema_version, project, events, speakers, metadata }
+    旧格式 ({ audio_id, version, timeline[], speaker_map{}, metadata }) 自动迁移。
+    """
+    import json as _json
+    with open(path, "r", encoding="utf-8") as f:
+        data = _json.load(f)
+
+    # 已是 v2 格式
+    if "schema_version" in data and data["schema_version"] == "2.0":
+        return data
+
+    # 旧格式迁移 → v2
+    old_timeline = data.get("timeline", [])
+    old_speaker_map = data.get("speaker_map", {})
+    old_metadata = data.get("metadata", {})
+
+    events = []
+    for seg in old_timeline:
+        translation = seg.get("translation", "")
+        if isinstance(translation, dict):
+            translation = translation.get("text", "") or ""
+
+        words = []
+        for w in seg.get("words", []):
+            words.append({
+                "word": w.get("word", ""),
+                "start": w.get("start", 0),
+                "end": w.get("end", 0),
+                "confidence": w.get("score") or w.get("confidence"),
+            })
+
+        events.append({
+            "id": seg.get("id", ""),
+            "start": seg.get("start", 0),
+            "end": seg.get("end", 0),
+            "text": seg.get("text", ""),
+            "translation": translation,
+            "speaker": seg.get("speaker"),
+            "tts_voice_id": None,
+            "confidence": 1.0,
+            "words": words,
+            "review_status": "pending",
+            "patch_ids": [],
+            "source": "asr",
+            "overlap": None,
+        })
+
+    speakers = {}
+    for sid, sm in old_speaker_map.items():
+        speakers[sid] = {
+            "id": sid,
+            "name": sm.get("alias") or sm.get("name"),
+            "voice_id": sm.get("voice_id"),
+            "color": None,
+            "is_locked": False,
+            "total_duration": None,
+            "segment_count": None,
+        }
+
+    total_dur = old_metadata.get("duration") or (
+        max((e["end"] for e in events), default=0) if events else 0
+    )
+    return {
+        "schema_version": "2.0",
+        "project": {
+            "id": "",
+            "source_video": "",
+            "source_lang": old_metadata.get("lang", ""),
+            "target_lang": "",
+            "created_at": None,
+            "updated_at": None,
+        },
+        "events": events,
+        "speakers": speakers,
+        "metadata": {
+            "total_duration": round(total_dur, 1),
+            "event_count": len(events),
+            "speaker_count": len(speakers),
+            "pipeline_version": "legacy",
+        },
+    }
 
 
 def _build_inspector_from_transcript(result: dict, segments: list,
@@ -3503,12 +3620,15 @@ def _build_inspector_from_transcript(result: dict, segments: list,
     for i, seg in enumerate(segments):
         spk = seg.get("speaker") or "UNKNOWN"
         seg_id = seg.get("id") or f"seg_{i+1:03d}"
+        trans = seg.get("translation", "")
+        if isinstance(trans, dict):
+            trans = trans.get("text", "") or ""
         entry = {
             "id": seg_id,
             "start": seg.get("start", 0),
             "end": seg.get("end", 0),
             "text": seg.get("text", ""),
-            "translation": seg.get("translation", ""),
+            "translation": trans,
             "overlap": seg.get("overlap", False),
             "words": seg.get("words", []),
         }
@@ -3532,10 +3652,13 @@ def _build_inspector_from_transcript(result: dict, segments: list,
     inspector_data: dict = {}
     for lane in lanes:
         for seg in lane["segments"]:
+            trans = seg.get("translation", "")
+            if isinstance(trans, dict):
+                trans = trans.get("text", "") or ""
             inspector_data[seg["id"]] = {
                 "id": seg["id"], "start": seg["start"], "end": seg["end"],
                 "speaker": lane["speaker"], "displayName": lane["display_name"],
-                "text": seg["text"], "translation": seg.get("translation", ""),
+                "text": seg["text"], "translation": trans,
                 "source": "asr", "confidence": 1.0,
                 "patches": [], "passTrace": [],
                 "visualState": {
@@ -3548,11 +3671,10 @@ def _build_inspector_from_transcript(result: dict, segments: list,
 
 @app.post("/api/speaker/diarization/load")
 async def speaker_load(req: SpeakerLoadRequest):
-    """加载 Timeline IR + AI Patch 建议。
+    """加载 Timeline IR (v2.0 schema) + AI Patch 建议。
 
-    返回格式:
-      { audio_id, version, speaker_lanes, patches: {high, medium, low}, patch_log }
-    speaker_lanes: [{speaker, display_name, color, segments: [{id, start, end, text, translation}]}]
+    返回 SpeakerLoadResponse (前端接口不变):
+      { audio_id, version, speaker_lanes, patches, patch_log, inspector_data, speakerNames }
     """
     workspace = req.workspace
     extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
@@ -3562,7 +3684,7 @@ async def speaker_load(req: SpeakerLoadRequest):
 
     result = {
         "audio_id": "",
-        "version": "1.0",
+        "version": "2.0",
         "speaker_lanes": [],
         "patches": {"high": [], "medium": [], "low": []},
         "patch_log": [],
@@ -3573,7 +3695,6 @@ async def speaker_load(req: SpeakerLoadRequest):
     has_timeline = os.path.isfile(tl_path)
 
     if not has_timeline:
-        # 回退到旧 speaker_timeline.json
         stl_path = os.path.join(extract_dir, "speaker_timeline.json")
         if os.path.isfile(stl_path):
             with open(stl_path, "r", encoding="utf-8") as f:
@@ -3581,8 +3702,6 @@ async def speaker_load(req: SpeakerLoadRequest):
             result["timeline"] = stl.get("turns", [])
             result["speakers"] = stl.get("speakers", [])
 
-    # ── Build inspector_data from transcript.json as fallback ──
-    # This ensures the frontend always has events even if timeline fusion (NODE 3.75) failed.
     if not has_timeline or (has_timeline and _tl_has_empty_timeline(tl_path)):
         tj_path = os.path.join(extract_dir, "transcript.json")
         if os.path.isfile(tj_path):
@@ -3600,37 +3719,38 @@ async def speaker_load(req: SpeakerLoadRequest):
     if not has_timeline:
         return result
 
-    with open(tl_path, "r", encoding="utf-8") as f:
-        tl = _json.load(f)
+    tl = _load_timeline_v2(tl_path)
 
-    result["audio_id"] = tl.get("audio_id", "")
-    result["version"] = tl.get("version", "1.0")
+    result["audio_id"] = tl.get("project", {}).get("id", "")
+    result["version"] = tl.get("schema_version", "2.0")
 
-    # 构建 speaker_lanes
+    # 构建 speaker_lanes (从 v2 events 按 speaker 分组)
     SPEAKER_COLORS = ["#4CAF50","#2196F3","#FF9800","#E91E63","#9C27B0","#00BCD4"]
+    speakers_v2 = tl.get("speakers", {})
     speaker_segments: dict[str, list] = {}
-    for seg in tl.get("timeline", []):
-        spk = seg.get("speaker") or "UNKNOWN"
+    for evt in tl.get("events", []):
+        spk = evt.get("speaker") or "UNKNOWN"
         if spk not in speaker_segments:
             speaker_segments[spk] = []
         speaker_segments[spk].append({
-            "id": seg.get("id", ""),
-            "start": seg.get("start", 0),
-            "end": seg.get("end", 0),
-            "text": seg.get("text", ""),
-            "translation": seg.get("translation", ""),
-            "overlap": seg.get("overlap", False),
-            "words": seg.get("words", []),
+            "id": evt.get("id", ""),
+            "start": evt.get("start", 0),
+            "end": evt.get("end", 0),
+            "text": evt.get("text", ""),
+            "translation": evt.get("translation", ""),
+            "overlap": (evt.get("overlap") or {}).get("overlap_duration", 0) > 0 if evt.get("overlap") else False,
+            "words": evt.get("words", []),
         })
 
     lanes = []
-    for i, (spk, segs) in enumerate(sorted(speaker_segments.items())):
-        sm = tl.get("speaker_map", {}).get(spk, {})
+    sorted_speakers = sorted(speaker_segments.items())
+    for i, (spk, segs) in enumerate(sorted_speakers):
+        spk_info = speakers_v2.get(spk, {})
         lanes.append({
             "speaker": spk,
-            "display_name": sm.get("alias", "") or spk,
-            "voice_id": sm.get("voice_id", ""),
-            "color": SPEAKER_COLORS[i % len(SPEAKER_COLORS)],
+            "display_name": spk_info.get("name") or spk,
+            "voice_id": spk_info.get("voice_id", ""),
+            "color": spk_info.get("color") or SPEAKER_COLORS[i % len(SPEAKER_COLORS)],
             "segments": segs,
             "segment_count": len(segs),
             "total_duration": round(sum(s["end"] - s["start"] for s in segs), 1),
@@ -3639,7 +3759,7 @@ async def speaker_load(req: SpeakerLoadRequest):
     result["speaker_lanes"] = lanes
     result["metadata"] = tl.get("metadata", {})
 
-    # ── 新增: pass_trace + inspector_data ──
+    # ── pass_trace + inspector_data (从 v2 events 构建) ──
     patch_log_data = result.get("patch_log", [])
     pass_names_seen: set = set()
     for p in patch_log_data:
@@ -3651,10 +3771,12 @@ async def speaker_load(req: SpeakerLoadRequest):
 
     inspector_data: dict = {}
     for lane in lanes:
+        spk_color = lane.get("color", "")
         for seg in lane["segments"]:
             inspector_data[seg["id"]] = {
                 "id": seg["id"], "start": seg["start"], "end": seg["end"],
                 "speaker": lane["speaker"], "displayName": lane["display_name"],
+                "color": spk_color,
                 "text": seg["text"], "translation": seg.get("translation", ""),
                 "source": "asr", "confidence": 1.0,
                 "patches": [], "passTrace": result["pass_trace"],
@@ -3733,18 +3855,17 @@ class SpeakerInspectRequest(BaseModel):
 
 @app.post("/api/speaker/diarization/inspect")
 async def speaker_inspect(req: SpeakerInspectRequest):
-    """返回单个 event 的完整 Inspector 数据"""
+    """返回单个 event 的完整 Inspector 数据 (v2.0 schema)"""
     import json as _json
     extract_dir = os.path.join(req.workspace, "01_extract")
     tl_path = os.path.join(extract_dir, "timeline.json")
     if not os.path.isfile(tl_path):
         raise HTTPException(status_code=404, detail="timeline.json 不存在")
 
-    with open(tl_path, "r", encoding="utf-8") as f:
-        tl = _json.load(f)
+    tl = _load_timeline_v2(tl_path)
 
     seg = None
-    for s in tl.get("timeline", []):
+    for s in tl.get("events", []):
         if s.get("id") == req.event_id:
             seg = s
             break
@@ -3760,15 +3881,19 @@ async def speaker_inspect(req: SpeakerInspectRequest):
     event_patches = [p for p in all_patches if req.event_id in p.get("targets", [])]
 
     spk = seg.get("speaker", "")
-    sm = tl.get("speaker_map", {}).get(spk, {})
-    display_name = sm.get("alias", "") or spk
+    spk_info = tl.get("speakers", {}).get(spk, {})
+    display_name = spk_info.get("name") or spk
+
+    translation = seg.get("translation", "")
+    if isinstance(translation, dict):
+        translation = translation.get("text", "") or ""
 
     return {
         "event": {
             "id": seg["id"], "start": seg["start"], "end": seg["end"],
             "speaker": spk, "displayName": display_name,
-            "text": seg.get("text", ""), "translation": seg.get("translation", ""),
-            "source": "asr", "confidence": 1.0,
+            "text": seg.get("text", ""), "translation": translation,
+            "source": seg.get("source", "asr"), "confidence": seg.get("confidence", 1.0),
             "patches": event_patches,
             "passTrace": _derive_pass_trace(all_patches),
             "visualState": {
@@ -3893,24 +4018,23 @@ def _propagate_speaker_changes(workspace: str, mapping: dict[str, str]):
         with open(sm_path, "w", encoding="utf-8") as f:
             _json.dump(sm, f, ensure_ascii=False, indent=2)
 
-    # 3. timeline.json
+    # 3. timeline.json (v2.0 schema)
     tl_path = os.path.join(extract_dir, "timeline.json")
     if os.path.isfile(tl_path):
-        with open(tl_path, "r", encoding="utf-8") as f:
-            tl = _json.load(f)
-        for seg in tl.get("timeline", []):
-            old = seg.get("speaker")
+        tl = _load_timeline_v2(tl_path)
+        for evt in tl.get("events", []):
+            old = evt.get("speaker")
             if old in mapping:
-                seg["speaker"] = mapping[old]
-            for w in seg.get("words", []):
+                evt["speaker"] = mapping[old]
+            for w in evt.get("words", []):
                 old_w = w.get("speaker")
                 if old_w in mapping:
                     w["speaker"] = mapping[old_w]
-        sm_data = tl.get("speaker_map", {})
-        new_sm = {}
-        for k, v in sm_data.items():
-            new_sm[mapping.get(k, k)] = v
-        tl["speaker_map"] = new_sm
+        spk_data = tl.get("speakers", {})
+        new_spk = {}
+        for k, v in spk_data.items():
+            new_spk[mapping.get(k, k)] = v
+        tl["speakers"] = new_spk
         with open(tl_path, "w", encoding="utf-8") as f:
             _json.dump(tl, f, ensure_ascii=False, indent=2)
 
@@ -3962,10 +4086,9 @@ async def speaker_merge(req: SpeakerMergeRequest):
         timeline_path = os.path.join(extract_dir, "timeline.json")
         patch_log_path = os.path.join(extract_dir, "timeline_patches.json")
         if os.path.isfile(timeline_path):
-            # 找出 source speaker 的所有 segment
-            from timeline import load_json
-            tl_ir = load_json(timeline_path)
-            source_seg_ids = [s.id for s in tl_ir.timeline if s.speaker == req.source]
+            from timeline.api.timeline import _load_timeline_segments
+            events, _ = _load_timeline_segments(timeline_path)
+            source_seg_ids = [s["id"] for s in events if s.get("speaker") == req.source]
             if source_seg_ids:
                 patch = merge_speaker_patch(source_seg_ids, req.target, author="user")
                 apply_user_patch(timeline_path, patch.to_dict(), patch_log_path)
@@ -4024,10 +4147,10 @@ async def speaker_split(req: SpeakerSplitRequest):
         timeline_path = os.path.join(extract_dir, "timeline.json")
         patch_log_path = os.path.join(extract_dir, "timeline_patches.json")
         if os.path.isfile(timeline_path):
-            from timeline import load_json
-            tl_ir = load_json(timeline_path)
+            from timeline.api.timeline import _load_timeline_segments
+            events, _ = _load_timeline_segments(timeline_path)
             affected_seg_ids = [
-                s.id for s in tl_ir.timeline if s.speaker == new_speaker
+                s["id"] for s in events if s.get("speaker") == new_speaker
             ]
             if affected_seg_ids:
                 patch = rename_speaker_patch(affected_seg_ids, new_speaker, author="user")
@@ -4078,9 +4201,8 @@ def _split_propagate(workspace: str, old_spk: str, new_spk: str,
 
     tl_path = os.path.join(extract_dir, "timeline.json")
     if os.path.isfile(tl_path):
-        with open(tl_path, "r", encoding="utf-8") as f:
-            tl = _json.load(f)
-        _update_segments(tl.get("timeline", []))
+        tl = _load_timeline_v2(tl_path)
+        _update_segments(tl.get("events", tl.get("timeline", [])))
         with open(tl_path, "w", encoding="utf-8") as f:
             _json.dump(tl, f, ensure_ascii=False, indent=2)
 
@@ -4112,9 +4234,9 @@ async def speaker_rename(req: SpeakerRenameRequest):
         timeline_path = os.path.join(extract_dir, "timeline.json")
         patch_log_path = os.path.join(extract_dir, "timeline_patches.json")
         if os.path.isfile(timeline_path):
-            from timeline import load_json
-            tl_ir = load_json(timeline_path)
-            seg_ids = [s.id for s in tl_ir.timeline if s.speaker == req.speaker]
+            from timeline.api.timeline import _load_timeline_segments
+            events, _ = _load_timeline_segments(timeline_path)
+            seg_ids = [s["id"] for s in events if s.get("speaker") == req.speaker]
             if seg_ids:
                 patch = rename_speaker_patch(seg_ids, req.display_name, author="user")
                 apply_user_patch(timeline_path, patch.to_dict(), patch_log_path)
@@ -4126,7 +4248,7 @@ async def speaker_rename(req: SpeakerRenameRequest):
 
 @app.post("/api/speaker/diarization/regenerate-srt")
 async def speaker_regenerate_srt(req: SpeakerRegenerateRequest):
-    """从 timeline.json 重生成 SRT（应用 speaker 编辑后的最终版本）。"""
+    """从 timeline.json (v2.0) 重生成 SRT。"""
     workspace = req.workspace
     extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
     if not extract_dir or not os.path.isdir(extract_dir):
@@ -4135,15 +4257,14 @@ async def speaker_regenerate_srt(req: SpeakerRegenerateRequest):
     tl_path = os.path.join(extract_dir, "timeline.json")
     if not os.path.isfile(tl_path):
         raise HTTPException(status_code=404, detail="timeline.json 不存在")
-    with open(tl_path, "r", encoding="utf-8") as f:
-        tl = _json.load(f)
+    tl = _load_timeline_v2(tl_path)
 
     srt_lines = []
     idx = 1
-    for seg in tl.get("timeline", []):
-        start_s = _seconds_to_srt(seg.get("start", 0))
-        end_s = _seconds_to_srt(seg.get("end", 0))
-        text = seg.get("text", "").strip()
+    for evt in tl.get("events", []):
+        start_s = _seconds_to_srt(evt.get("start", 0))
+        end_s = _seconds_to_srt(evt.get("end", 0))
+        text = evt.get("text", "").strip()
         if not text:
             continue
         srt_lines.append(f"{idx}\n{start_s} --> {end_s}\n{text}\n")
@@ -4636,6 +4757,30 @@ async def list_workspaces() -> dict:
     return {"workspaces": workspaces}
 
 
+@app.post("/api/workspace/delete")
+async def delete_workspace(body: dict) -> dict:
+    """Delete a workspace directory and its contents."""
+    path = body.get("path", "")
+    if not path:
+        raise HTTPException(status_code=400, detail="Missing path")
+    ws_dir = Path(path)
+    if not ws_dir.is_dir() or not ws_dir.name.endswith("_project"):
+        raise HTTPException(status_code=400, detail="Not a workspace directory")
+    # Cancel any running job for this workspace
+    for job_id, job in list(_jobs.items()):
+        if getattr(job, "workspace_path", "") == str(ws_dir):
+            if job.process and job.process.returncode is None:
+                job.process.terminate()
+                try:
+                    job.process.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    job.process.kill()
+            del _jobs[job_id]
+    import shutil
+    shutil.rmtree(str(ws_dir), ignore_errors=True)
+    return {"ok": True}
+
+
 @app.get("/api/workspace/detail")
 async def get_workspace_detail(path: str = "") -> dict:
     """Get detailed workspace status: manifest, disk usage, file listing."""
@@ -4693,6 +4838,552 @@ async def get_workspace_detail(path: str = "") -> dict:
         "files": files[:50],  # cap at 50 files
         "failureReason": failure_reason,
     }
+
+
+# ---------------------------------------------------------------------------
+# Core Pipeline endpoints (批次11 §阶段B)
+# ---------------------------------------------------------------------------
+
+class CoreRunRequest(BaseModel):
+    video_path: str
+    workflow_preset: str = "quick_subtitle"
+    lang: str = "auto"
+    target_lang: str = "zh"
+    engine: str = "chattts"
+    skip_tts: bool = False
+    skip_demucs: bool = False
+    asr_model: str = "turbo"
+    device: str = "cuda"
+    compute_type: str = "float16"
+
+
+class CoreRunResponse(BaseModel):
+    job_id: str
+    workspace_path: str = ""
+    policy_summary: dict = {}
+
+
+class CoreStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    orchestrator_status: str = "IDLE"
+    current_stage: str = ""
+    current_step: str = ""
+    progress: int = 0
+    stages: dict = {}
+    pending_review: list[str] = []
+    metrics: dict = {}
+
+
+class CoreEventResponse(BaseModel):
+    event_id: str
+    start: float = 0.0
+    end: float = 0.0
+    source_text: str = ""
+    translation: str = ""
+    provenance: dict = {}
+    tts_audio: str = ""
+
+
+def _preset_to_policy(preset_id: str, target_lang: str) -> tuple:
+    """将 WorkflowPreset ID 映射为 WorkflowPolicy 实例。(批次11 §阶段C)"""
+    preset = get_preset(preset_id)
+    preset_passes = preset.passes if preset else []
+    skip_tts = preset.config_defaults.get("skip_tts", False) if preset else False
+
+    if preset is not None and preset.policy_fn is not None:
+        policy = preset.policy_fn(target_lang)
+    else:
+        from core.config.workflow_policy import WorkflowPolicy
+        if skip_tts:
+            policy = WorkflowPolicy.quick_preset(target_lang)
+        else:
+            policy = WorkflowPolicy.default_preset(target_lang)
+
+    return policy, preset_passes, skip_tts
+
+
+def _build_core_pass_factory(
+    video_path: str,
+    translate_fn,
+    segments: list | None,
+    speaker_timeline: list | None,
+    output_path: str,
+    engine: str,
+):
+    """构建 core/ Pass 工厂，使用 WorkspaceResolver 统一路径。"""
+    from core.engine.pass_factory import create_pass_factory
+    from core.runtime.workspace import WorkspaceResolver
+
+    wsr = WorkspaceResolver(video_path)
+    wsr.ensure_dirs()
+    audio_path = wsr.extracted_audio_path
+
+    return create_pass_factory(
+        translate_fn=translate_fn,
+        segments=segments,
+        speaker_timeline=speaker_timeline,
+        output_path=output_path,
+        engine=engine,
+        video_path=video_path,
+        audio_path=audio_path,
+        output_dir=wsr.workspace_root,
+        workspace_dir=wsr.workspace_root,
+    )
+
+
+def _load_core_transcript(video_path: str) -> tuple:
+    """加载 extract 阶段的 transcript + speaker_timeline 数据。"""
+    video = Path(video_path)
+    ws_dir = video.parent / f"{video.stem}_project"
+    transcript_path = ws_dir / "01_extract" / "transcript.json"
+    speaker_timeline_path = ws_dir / "01_extract" / "speaker_timeline.json"
+
+    segments = None
+    speaker_timeline = None
+
+    if transcript_path.is_file():
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            transcript = json.load(f)
+        segments = transcript.get("segments", [])
+
+    if speaker_timeline_path.is_file():
+        with open(speaker_timeline_path, "r", encoding="utf-8") as f:
+            st_data = json.load(f)
+        speaker_timeline = [
+            (t["speaker"], t["start"], t["end"], t.get("confidence", 0.5))
+            for t in st_data.get("turns", [])
+        ]
+
+    return segments, speaker_timeline, str(ws_dir)
+
+
+def _persist_core_timeline(state, workspace_path: str) -> None:
+    """将 core/ Pipeline 的输出按 v2.0 schema 持久化为 timeline.json。
+
+    schemas/timeline.schema.json 定义的格式:
+      { schema_version, project, events[], speakers{}, metadata{} }
+    """
+    import json as _json
+    from core.runtime.synthesis import SynthesisEngine
+
+    engine = SynthesisEngine()
+    rendered = engine.render_all(state)
+    speakers_data = engine.render_speakers(state)
+
+    # ── project ──
+    ir = state.ir
+    project = {
+        "id": os.path.basename(workspace_path.rstrip("/\\")),
+        "source_video": ir.source_video or "",
+        "source_lang": ir.language or "",
+        "target_lang": "",
+        "created_at": None,
+        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+    # ── events ──
+    events = []
+    for r in rendered:
+        # 翻译字段: 确保是纯字符串
+        raw_trans = r.get("translation", "")
+        if isinstance(raw_trans, dict):
+            trans_text = raw_trans.get("text", "") or ""
+        else:
+            trans_text = str(raw_trans) if raw_trans else ""
+
+        # 说话人字段
+        spk = r.get("speaker", "")
+        if isinstance(spk, dict):
+            spk = spk.get("speaker_id", "") or spk.get("id", "") or ""
+
+        # words
+        words_raw = r.get("words", [])
+        words = []
+        for w in words_raw:
+            words.append({
+                "word": w.get("word", ""),
+                "start": w.get("start", 0),
+                "end": w.get("end", 0),
+                "confidence": w.get("score") or w.get("confidence"),
+            })
+
+        events.append({
+            "id": r.get("id", ""),
+            "start": r.get("start", 0),
+            "end": r.get("end", 0),
+            "text": r.get("text", ""),
+            "translation": trans_text,
+            "speaker": spk if spk else None,
+            "tts_voice_id": None,
+            "confidence": r.get("confidence", 1.0),
+            "words": words,
+            "review_status": "pending",
+            "patch_ids": [],
+            "source": r.get("source", "asr"),
+            "overlap": None,
+        })
+
+    # ── speakers ──
+    speakers: dict = {}
+    for spk in speakers_data:
+        sid = spk.get("id", "")
+        if not sid:
+            continue
+        speakers[sid] = {
+            "id": sid,
+            "name": spk.get("name"),
+            "voice_id": spk.get("voice_id"),
+            "color": spk.get("color"),
+            "is_locked": spk.get("is_locked", False),
+            "total_duration": None,
+            "segment_count": None,
+        }
+
+    # ── metadata ──
+    total_dur = ir.total_duration if hasattr(ir, 'total_duration') else (
+        max((e["end"] for e in events), default=0) if events else 0
+    )
+    metadata = {
+        "total_duration": round(total_dur, 1),
+        "event_count": len(events),
+        "speaker_count": len(speakers),
+        "pipeline_version": "core/3.0",
+    }
+
+    data = {
+        "schema_version": "2.0",
+        "project": project,
+        "events": events,
+        "speakers": speakers,
+        "metadata": metadata,
+    }
+
+    out_path = os.path.join(workspace_path, "01_extract", "timeline.json")
+    with open(out_path, "w", encoding="utf-8") as f:
+        _json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def _run_core_pipeline_sync(job: Job, req: CoreRunRequest) -> None:
+    """在线程池中同步执行 core/ Pipeline。(重构后: 调用 core.pipeline.run_pipeline)"""
+    from core.engine.event_bus import EventBus
+    from core.engine.runtime_event import RuntimeEvent, RuntimeEventType as RET
+    from core.pipeline import run_pipeline
+
+    sse_handler = SSELogHandler(job.append_log)
+    root_logger = logging.getLogger()
+    root_logger.addHandler(sse_handler)
+
+    _stage_index = {"load": 5, "extract": 20, "translate": 50, "validate": 65, "tts": 75, "export": 90}
+
+    # SSE subscriber — 将 EventBus 事件转发到 WebUI
+    class _SSESubscriber:
+        def on_event(self, event: RuntimeEvent) -> None:
+            ev = event.event_type
+            if ev == RET.STAGE_STARTED:
+                job.current_step = f"{event.stage_label}..."
+                job.progress = _stage_index.get(event.stage, 10)
+                job.append_log(f"[STAGE] {event.stage_label} 开始")
+            elif ev == RET.STAGE_PROGRESS:
+                job.current_step = f"{event.stage_label} ({event.current_item}/{event.total_items})"
+                job.append_log(f"  [{event.stage_label}] {event.current_item}/{event.total_items}")
+            elif ev == RET.STAGE_COMPLETED:
+                job.current_step = f"{event.stage_label} 完成"
+                job.progress = _stage_index.get(event.stage, 50) + 5
+                job.append_log(f"[STAGE] {event.stage_label} 完成 — {event.message}")
+            elif ev in (RET.WORKFLOW_FAILED, RET.ERROR):
+                job.append_log(f"[ERROR] {event.message}")
+            else:
+                job.append_log(f"[{ev.value}] {event.message}")
+
+            # SSE 推送
+            if job._loop is not None and job._queues:
+                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                payload = {
+                    "event": ev.value,
+                    "stage": event.stage,
+                    "stage_label": event.stage_label,
+                    "current_item": event.current_item,
+                    "total_items": event.total_items,
+                    "percent": round(event.percent, 3) if event.percent else 0,
+                    "message": event.message,
+                    "ts": ts,
+                    "payload": event.payload,
+                }
+                for q in job._queues:
+                    job._loop.call_soon_threadsafe(q.put_nowait, payload)
+
+    try:
+        job.status = "running"
+        job.runtime_state = "bootstrapping"
+        job.current_step = "启动 core/ Pipeline..."
+        job.append_log("[INFO] 启动 core/ Pipeline (via core.pipeline.run_pipeline)")
+
+        ws_dir = str(Path(req.video_path).parent / f"{Path(req.video_path).stem}_project")
+        job.workspace_path = ws_dir
+        job.open_log_file(ws_dir)
+        _update_workspace_runtime_state(ws_dir, RuntimeState.BOOTSTRAPPING)
+
+        EventBus().subscribe(_SSESubscriber())
+
+        state = run_pipeline(
+            req.video_path,
+            target_lang=req.target_lang,
+            engine=req.engine,
+            stages=["load", "extract", "translate", "validate"],
+        )
+
+        job.status = "completed"
+        job.runtime_state = "ready"
+        job.progress = 100
+        job.current_step = "core/ Pipeline 完成"
+        job._core_state = state
+        job.append_log(f"[INFO] core/ Pipeline 完成: {len(state.ir.events)} events")
+
+        _update_workspace_runtime_state(job.workspace_path, RuntimeState.READY)
+        _save_job(job)
+
+        if job._loop is not None and job._queues:
+            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+            for q in job._queues:
+                job._loop.call_soon_threadsafe(
+                    q.put_nowait,
+                    {"event": "done", "status": "completed", "ts": ts},
+                )
+
+    except Exception as e:
+        job.status = "failed"
+        job.runtime_state = "failed"
+        job.current_step = "core/ Pipeline 失败"
+        job.append_log(f"[ERROR] core/ Pipeline 失败: {e}")
+        logger.exception("core/ Pipeline 异常 (job=%s)", job.id)
+        _update_workspace_runtime_state(job.workspace_path, RuntimeState.FAILED)
+        _save_job(job)
+
+        if job._loop is not None and job._queues:
+            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+            for q in job._queues:
+                job._loop.call_soon_threadsafe(
+                    q.put_nowait,
+                    {"event": "done", "status": "failed", "ts": ts,
+                     "error": str(e)},
+                )
+    finally:
+        root_logger.removeHandler(sse_handler)
+        job.close_log_file()
+
+
+@app.post("/api/core/pipeline/run", response_model=CoreRunResponse)
+async def start_core_pipeline(req: CoreRunRequest) -> CoreRunResponse:
+    """启动 core/ WorkflowOrchestrator Pipeline。(批次11 §3.1)"""
+    video = Path(req.video_path)
+    if not video.is_file():
+        raise HTTPException(status_code=400, detail=f"视频文件不存在: {req.video_path}")
+
+    job_id = uuid.uuid4().hex[:8]
+    workspace_path = str(video.parent / f"{video.stem}_project")
+
+    policy, _, _ = _preset_to_policy(req.workflow_preset, req.target_lang)
+    policy_summary = {
+        "stages": [s.value for s in policy.stage_order()],
+        "gates": {},
+    }
+    for stage, sc in policy.stages.items():
+        if sc.gate:
+            policy_summary["gates"][stage.value] = sc.gate
+
+    job = Job(
+        id=job_id,
+        status="running",
+        runtime_state="bootstrapping",
+        current_step="启动 core/ Pipeline...",
+        video_path=req.video_path,
+        workspace_path=workspace_path,
+        created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+    _jobs[job_id] = job
+    job._loop = asyncio.get_running_loop()
+    _save_job(job)
+
+    asyncio.create_task(_run_core_job(job, req))
+
+    return CoreRunResponse(
+        job_id=job_id,
+        workspace_path=workspace_path,
+        policy_summary=policy_summary,
+    )
+
+
+async def _run_core_job(job: Job, req: CoreRunRequest) -> None:
+    """在线程池中运行 core/ Pipeline。"""
+    await asyncio.to_thread(_run_core_pipeline_sync, job, req)
+
+
+@app.get("/api/core/pipeline/{job_id}/status", response_model=CoreStatusResponse)
+async def get_core_status(job_id: str) -> CoreStatusResponse:
+    """返回 core/ Pipeline 的结构化状态。(批次11 §3.2)"""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    return CoreStatusResponse(
+        job_id=job_id,
+        status=job.status,
+        orchestrator_status=job.runtime_state.upper() if job.runtime_state else "IDLE",
+        current_stage=job.current_step,
+        current_step=job.current_step,
+        progress=job.progress,
+        stages={},
+        pending_review=[],
+        metrics={},
+    )
+
+
+@app.get("/api/core/pipeline/{job_id}/events")
+async def stream_core_events(job_id: str, request: Request) -> StreamingResponse:
+    """SSE 结构化事件流。(批次11 §4.1)"""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    queue: asyncio.Queue = job.subscribe()
+
+    async def event_stream() -> AsyncIterator[str]:
+        try:
+            if job.log_file_path:
+                yield f"event: meta\ndata: {json.dumps({'log_file': job.log_file_path})}\n\n"
+
+            while True:
+                if await request.is_disconnected():
+                    return
+
+                if job.status in ("completed", "failed", "cancelled"):
+                    yield f"event: done\ndata: {json.dumps({'status': job.status})}\n\n"
+                    return
+
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    event_type = payload.pop("event", "message")
+                    data = json.dumps(payload, ensure_ascii=False)
+                    yield f"event: {event_type}\ndata: {data}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            job.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/core/pipeline/{job_id}/events/{event_id}", response_model=CoreEventResponse)
+async def get_core_event(job_id: str, event_id: str) -> CoreEventResponse:
+    """查询单个 event 的状态与 provenance。(批次11 §3.3)"""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    state = job._core_state
+    if state is None:
+        raise HTTPException(status_code=404, detail="Pipeline state 不可用")
+
+    es = state.event_states.get(event_id)
+    if es is None:
+        raise HTTPException(status_code=404, detail=f"Event {event_id} 不存在")
+
+    evt = state.ir.events.get(event_id)
+    return CoreEventResponse(
+        event_id=event_id,
+        start=evt.start if evt else 0.0,
+        end=evt.end if evt else 0.0,
+        source_text=evt.text if evt else "",
+        translation=es.derivatives.get("translation", ""),
+        provenance={
+            "gate_decision": es.provenance.get("gate_decision", ""),
+            "gate_scores": es.provenance.get("gate_scores", {}),
+            "gate_reason": es.provenance.get("gate_reason", ""),
+            "needs_human_review": es.review.get("needs_human_review", False),
+        },
+        tts_audio=es.derivatives.get("tts_audio_path", ""),
+    )
+
+
+@app.get("/api/core/pipeline/{job_id}/gate/{event_id}")
+async def get_core_gate_detail(job_id: str, event_id: str) -> dict:
+    """返回单个 event 的 Gate 判定详情。(批次11 §3.4)"""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    state = job._core_state
+    if state is None:
+        raise HTTPException(status_code=404, detail="Pipeline state 不可用")
+
+    es = state.event_states.get(event_id)
+    if es is None:
+        raise HTTPException(status_code=404, detail=f"Event {event_id} 不存在")
+
+    return {
+        "event_id": event_id,
+        "gate": es.provenance.get("gate_name", "text_gate"),
+        "decision": es.provenance.get("gate_decision", "N/A"),
+        "scores": es.provenance.get("gate_scores", {}),
+        "thresholds": es.provenance.get("gate_thresholds", {}),
+        "trace": es.provenance.get("gate_trace", {}),
+    }
+
+
+@app.get("/api/core/pipeline/{job_id}/audit")
+async def get_core_audit(job_id: str) -> dict:
+    """返回 PatchStore 审计摘要。(批次11 §3.5)"""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    state = job._core_state
+    if state is None:
+        raise HTTPException(status_code=404, detail="Pipeline state 不可用")
+
+    patches = getattr(state, "patch_log", []) or []
+    by_op: dict[str, int] = {}
+    rejected: list[dict] = []
+    for p in patches:
+        op = p.get("op", "UNKNOWN") if isinstance(p, dict) else getattr(p, "op", "UNKNOWN")
+        by_op[op] = by_op.get(op, 0) + 1
+        if isinstance(p, dict) and p.get("rejected"):
+            rejected.append({
+                "patch_id": p.get("id", ""),
+                "reason": p.get("reject_reason", ""),
+            })
+
+    return {
+        "job_id": job_id,
+        "total_patches": len(patches),
+        "patches_by_op": by_op,
+        "rejected_patches": rejected,
+    }
+
+
+# ── core/ Pipeline 日志和取消端点（委托到 /api/pipeline/ 对应端点）──
+
+@app.get("/api/core/pipeline/{job_id}/logs")
+async def get_core_logs(job_id: str, request: Request) -> StreamingResponse:
+    """core/ Pipeline SSE 日志流。"""
+    return await stream_logs(job_id, request)
+
+
+@app.get("/api/core/pipeline/{job_id}/logs/tail")
+async def get_core_log_tail(job_id: str, limit: int = 200) -> dict:
+    return await logs_tail(job_id, limit)
+
+
+@app.get("/api/core/pipeline/{job_id}/logs/range")
+async def get_core_log_range(job_id: str, before: int = 0, limit: int = 200) -> dict:
+    return await logs_range(job_id, before, limit)
+
+
+@app.post("/api/core/pipeline/{job_id}/cancel")
+async def cancel_core_job(job_id: str) -> dict:
+    return await cancel_job(job_id)
 
 
 # ---------------------------------------------------------------------------

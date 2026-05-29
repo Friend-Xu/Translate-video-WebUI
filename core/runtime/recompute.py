@@ -36,6 +36,7 @@ _TRIGGER_MAP: dict[str, tuple[RecomputeScope, int, int]] = {
     "speaker_drift": (RecomputeScope.WINDOW, 0, 3),
     "translation_retranslate": (RecomputeScope.WINDOW, 2, 1),
     "vad_resegment": (RecomputeScope.FULL, 0, 0),
+    "config_change": (RecomputeScope.SEGMENT, 1, 1),  # 批次04 §五
 }
 
 

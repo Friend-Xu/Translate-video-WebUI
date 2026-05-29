@@ -31,7 +31,13 @@ class TranslationQualityPass(TimelinePass):
         segments = []
         for es in state.sorted_events():
             text = es.ir.text_ref or ""
-            trans = es.translation.get("text", "") or es.derivatives.get("translation", "")
+            raw_trans = es.translation
+            if isinstance(raw_trans, dict):
+                trans = raw_trans.get("text", "")
+            else:
+                trans = raw_trans or es.derivatives.get("translation", "")
+            if not isinstance(trans, str):
+                trans = str(trans)
             if trans and text:
                 segments.append((es.id, text, trans))
 
@@ -61,12 +67,16 @@ class TranslationQualityPass(TimelinePass):
             es = state.get_event(seg_id)
             if es is None:
                 continue
-            sim = es.translation.get("similarity", 0.0)
+            trans_slot = es.translation
+            trans_dict = trans_slot if isinstance(trans_slot, dict) else {"text": trans_slot}
+            sim = trans_dict.get("similarity", 0.0)
             ts = scorer.score(
                 semantic_similarity=sim,
-                ppl_ratio=es.translation.get("ppl_ratio"),
+                ppl_ratio=trans_dict.get("ppl_ratio"),
                 source_len=len(src), target_len=len(trans),
             )
+            if isinstance(es.translation, str):
+                es._data["translation"] = {"text": es.translation}
             es.translation["quality_score"] = ts.composite
             es.provenance["translation_quality"] = {
                 "composite": ts.composite,

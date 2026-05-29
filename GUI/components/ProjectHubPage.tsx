@@ -16,6 +16,7 @@ import ErrorOutlineRounded from '@mui/icons-material/ErrorOutlineRounded'
 import CheckCircleRounded from '@mui/icons-material/CheckCircleRounded'
 import PlayArrowRounded from '@mui/icons-material/PlayArrowRounded'
 import StopRounded from '@mui/icons-material/StopRounded'
+import DeleteOutlineRounded from '@mui/icons-material/DeleteOutlineRounded'
 import OpenInNewRounded from '@mui/icons-material/OpenInNewRounded'
 import VideoFileRounded from '@mui/icons-material/VideoFileRounded'
 import SettingsIcon from '@mui/icons-material/SettingsRounded'
@@ -87,7 +88,7 @@ export default function ProjectHubPage() {
   const [apiDialogOpen, setApiDialogOpen] = useState(false)
   const [pipelineConfig, setPipelineConfig] = useState<PipelineConfig>(DEFAULT_CONFIG)
 
-  const { status, logs, appendLog, cancelPipeline } = usePipeline()
+  const { status, logs, appendLog, cancelPipeline, setStatus, pollStatus, loadLogTail } = usePipeline('/api/core/pipeline')
 
   // Load data on mount
   useEffect(() => {
@@ -99,8 +100,13 @@ export default function ProjectHubPage() {
       .catch(() => {})
   }, [fetchWorkflowPresets, fetchWorkspaceList])
 
+  // Refresh workspace list when returning to hub
+  useEffect(() => {
+    if (phase === 'hub') fetchWorkspaceList()
+  }, [phase, fetchWorkspaceList])
+
   // SSE connection
-  useSSE(status.jobId, appendLog, () => {}, () => {})
+  useSSE(status.jobId, appendLog, () => {}, () => {}, '/api/core/pipeline')
 
   // Load video info when manifest is available
   useEffect(() => {
@@ -179,40 +185,42 @@ export default function ProjectHubPage() {
     finally { setStarting(false) }
   }, [selectedVideo, createWorkspace, applyPresetDefaults])
 
-  // Start bootstrap pipeline
+  // Start bootstrap pipeline (core/ new architecture)
   const handleStartBootstrap = useCallback(async () => {
     if (!workspace) return
     setPhase('running')
     const videoPath = manifest?.video_path || ''
     try {
-      const res = await fetch('/api/pipeline/run', {
+      const res = await fetch('/api/core/pipeline/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           video_path: videoPath,
+          workflow_preset: selectedPresetId,
           lang,
           target_lang: targetLang,
           engine,
-          model: asrModel,
+          asr_model: asrModel,
           device,
           compute_type: computeType,
           skip_demucs: skipDemucs,
-          skip_extract: skipExtract,
-          skip_translate: skipTranslate,
           skip_tts: skipTts,
-          skip_semantic_validation: skipSemanticValidation,
-          skip_naturalness_check: skipNaturalnessCheck,
         }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
         throw new Error((err as any).detail || '启动失败')
       }
+      const { job_id } = await res.json()
+      // Wire up job_id so SSE/polling/cancel work
+      setStatus(prev => ({ ...prev, jobId: job_id, state: 'running', currentStep: '流水线运行中...' }))
+      loadLogTail(job_id)
+      pollStatus(job_id)
     } catch (e) {
       appendLog({ _id: Date.now(), level: 'ERROR', message: `启动失败: ${e}`, timestamp: new Date().toISOString() } as LogEntry)
       setPhase('review')
     }
-  }, [workspace, manifest?.video_path, lang, targetLang, engine, asrModel, device, computeType, skipDemucs, skipExtract, skipTranslate, skipTts, skipSemanticValidation, skipNaturalnessCheck, appendLog])
+  }, [workspace, manifest?.video_path, lang, targetLang, engine, asrModel, device, computeType, skipDemucs, skipExtract, skipTranslate, skipTts, skipSemanticValidation, skipNaturalnessCheck, appendLog, setStatus, loadLogTail, pollStatus])
 
   const handleCancel = useCallback(() => {
     cancelPipeline()
@@ -246,9 +254,13 @@ export default function ProjectHubPage() {
       <Box sx={{ height: '100%', overflow: 'auto', p: 4 }}>
         <Box sx={{ mb: 4, textAlign: 'center' }}>
           <Typography variant="h4" fontWeight={700} gutterBottom>Timeline Runtime System</Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 600, mx: 'auto' }}>
+          <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 600, mx: 'auto', mb: 1.5 }}>
             将视频转化为可编辑的 Timeline IR，选择一个 Workflow Preset 开始。
           </Typography>
+          <Button size="small" variant="text" startIcon={<FolderOpenRounded />}
+            onClick={() => fetch('/api/files/open-path', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: 'source_file' }) }).catch(() => {}) }>
+            打开项目根目录
+          </Button>
         </Box>
 
         {/* Drop zone */}
@@ -265,7 +277,13 @@ export default function ProjectHubPage() {
                   <Typography variant="caption" color="text.secondary">{(selectedVideo.size / 1024 / 1024).toFixed(0)} MB</Typography>
                 </Box>
               </Box>
-              <Button size="small" variant="outlined" onClick={() => setSelectedVideo(null)}>更换</Button>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Button size="small" variant="text" sx={{ minWidth: 0, px: 0.5 }}
+                  onClick={() => fetch(`/api/files/open-folder?video_path=${encodeURIComponent(selectedVideo.path)}`, { method: 'POST' }).catch(() => {}) }>
+                  <FolderOpenRounded fontSize="small" />
+                </Button>
+                <Button size="small" variant="outlined" onClick={() => setSelectedVideo(null)}>更换</Button>
+              </Box>
             </Box>
           ) : (
             <>
@@ -342,12 +360,37 @@ export default function ProjectHubPage() {
               {failedWorkspaces.map(ws => (
                 <Grid key={ws.path} size={{ xs: 12, sm: 6, md: 4 }}>
                   <Card sx={{ border: '1px solid', borderColor: 'error.main', opacity: 0.85 }}>
-                    <CardActionArea onClick={() => handleOpenWorkspace(ws)}>
-                      <CardContent sx={{ py: 1.5 }}>
+                    <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <Box sx={{ flexGrow: 1, cursor: 'pointer' }} onClick={() => handleOpenWorkspace(ws)}>
                         <Typography variant="body2" fontWeight={600}>{ws.name}</Typography>
                         <Chip label="FAILED" size="small" color="error" sx={{ fontSize: '0.6rem', height: 18, mt: 0.5 }} />
-                      </CardContent>
-                    </CardActionArea>
+                      </Box>
+                      <Box sx={{ display: 'flex', gap: 0.5, ml: 1 }}>
+                        <Box sx={{ cursor: 'pointer', color: 'text.disabled', '&:hover': { color: 'primary.main' } }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            fetch('/api/files/open-path', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ path: ws.path }),
+                            }).catch(() => {})
+                          }}>
+                          <FolderOpenRounded fontSize="small" />
+                        </Box>
+                        <Box sx={{ cursor: 'pointer', color: 'text.disabled', '&:hover': { color: 'error.main' } }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (!window.confirm(`删除项目 "${ws.name}"？此操作不可撤销。`)) return
+                            fetch('/api/workspace/delete', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ path: ws.path }),
+                            }).then(() => fetchWorkspaceList()).catch(() => {})
+                          }}>
+                          <DeleteOutlineRounded fontSize="small" />
+                        </Box>
+                      </Box>
+                    </CardContent>
                   </Card>
                 </Grid>
               ))}
@@ -364,19 +407,55 @@ export default function ProjectHubPage() {
             <Grid container spacing={1}>
               {[...readyWorkspaces, ...otherWorkspaces].map(ws => {
                 const st = STATE_LABELS[ws.runtimeState] || STATE_LABELS.uninitialized
+                const isRunning = ws.runtimeState === 'bootstrapping' || ws.runtimeState === 'computing'
                 return (
                   <Grid key={ws.path} size={{ xs: 12, sm: 6, md: 4 }}>
-                    <Card sx={{ border: '1px solid', borderColor: 'divider' }}>
-                      <CardActionArea onClick={() => { if (ws.runtimeState === 'ready' || ws.runtimeState === 'complete') handleOpenWorkspace(ws) }}>
-                        <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                          <FolderOpenRounded sx={{ color: 'text.disabled', fontSize: 28 }} />
-                          <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                            <Typography variant="body2" fontWeight={600} noWrap>{ws.name}</Typography>
-                            <Typography variant="caption" color="text.secondary" noWrap>{ws.videoPath?.split(/[/\\]/).pop() || ws.path}</Typography>
+                    <Card sx={{ border: '1px solid', borderColor: isRunning ? 'info.main' : 'divider' }}>
+                      <CardContent sx={{ py: 1.5, display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                        <FolderOpenRounded sx={{ color: 'text.disabled', fontSize: 28, cursor: 'pointer', flexShrink: 0, '&:hover': { color: 'primary.main' } }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            fetch('/api/files/open-path', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ path: ws.path }),
+                            }).catch(() => {})
+                          }} />
+                        <Box sx={{ flexGrow: 1, minWidth: 0, cursor: isRunning ? 'pointer' : (ws.runtimeState === 'ready' || ws.runtimeState === 'complete') ? 'pointer' : 'default' }}
+                          onClick={() => {
+                            if (ws.runtimeState === 'ready' || ws.runtimeState === 'complete') handleOpenWorkspace(ws)
+                            else if (isRunning) { loadWorkspace(ws.path); setPhase('running') }
+                          }}>
+                          <Typography variant="body2" fontWeight={600} noWrap>{ws.name}</Typography>
+                          <Typography variant="caption" color="text.secondary" noWrap>{ws.videoPath?.split(/[/\\]/).pop() || ws.path}</Typography>
+                        </Box>
+                        <Chip label={st.label} size="small" color={st.color} sx={{ fontSize: '0.6rem', height: 20, flexShrink: 0 }} />
+                        {isRunning && (
+                          <Box sx={{ flexShrink: 0, cursor: 'pointer', color: 'error.main' }}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              fetch('/api/pipeline/cancel-by-workspace', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ workspace_path: ws.path }),
+                              }).then(() => fetchWorkspaceList()).catch(() => {})
+                            }}>
+                            <StopRounded fontSize="small" />
                           </Box>
-                          <Chip label={st.label} size="small" color={st.color} sx={{ fontSize: '0.6rem', height: 20, flexShrink: 0 }} />
-                        </CardContent>
-                      </CardActionArea>
+                        )}
+                        <Box sx={{ flexShrink: 0, cursor: 'pointer', color: 'text.disabled', '&:hover': { color: 'error.main' } }}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            if (!window.confirm(`删除项目 "${ws.name}"？此操作不可撤销。`)) return
+                            fetch('/api/workspace/delete', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ path: ws.path }),
+                            }).then(() => fetchWorkspaceList()).catch(() => {})
+                          }}>
+                          <DeleteOutlineRounded fontSize="small" />
+                        </Box>
+                      </CardContent>
                     </Card>
                   </Grid>
                 )
@@ -397,7 +476,7 @@ export default function ProjectHubPage() {
     <Box sx={{ height: '100%', overflow: 'auto', p: 3 }}>
       <Box sx={{ mb: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-          <Button size="small" variant="text" onClick={() => { setPhase('hub'); setSelectedVideo(null) }} sx={{ fontSize: '0.7rem' }}>
+          <Button size="small" variant="text" onClick={() => { setPhase('hub') }} sx={{ fontSize: '0.7rem' }}>
             ← 返回项目中心
           </Button>
         </Box>

@@ -49,6 +49,7 @@ class MediaValidatorAdapter:
             target_id="audio",
             op=OpCode.ANNOTATE,
             value={
+                "_global": True,
                 "defect_status": result.status,
                 "defect_type": result.defect_type or "none",
                 "container_duration": getattr(result, "container_duration", 0),
@@ -69,7 +70,7 @@ class MediaValidatorAdapter:
         输出: 16kHz mono PCM16 WAV。
         """
         import os
-        from SRT.MediaValidator import MediaValidator
+        from SRT.MediaValidator import MediaValidator, ensure_audio_duration
 
         validator = MediaValidator()
         result = validator.diagnose(ctx.video_path)
@@ -77,15 +78,23 @@ class MediaValidatorAdapter:
         audio_path = ctx.output_audio_path
         if not audio_path:
             base = os.path.splitext(os.path.basename(ctx.video_path))[0]
-            audio_path = os.path.join(
-                os.path.dirname(ctx.video_path) or ".",
-                f"{base}_extracted.wav",
-            )
+            parent = os.path.dirname(ctx.video_path) or "."
+            ws_dir = os.path.join(parent, f"{base}_project", "01_extract")
+            os.makedirs(ws_dir, exist_ok=True)
+            audio_path = os.path.join(ws_dir, f"{base}_extracted.wav")
 
-        actual_dur = validator.ensure_audio_duration(
+        ensure_audio_duration(
             ctx.video_path, audio_path,
             sr=ctx.sample_rate, ch=ctx.channels,
         )
+
+        # Get actual duration from the output wav
+        try:
+            import soundfile as sf
+            info = sf.info(audio_path)
+            actual_dur = info.duration
+        except Exception:
+            actual_dur = 0.0
 
         repair_applied = result.defect_type in ("C2", "A2")
 
@@ -94,10 +103,11 @@ class MediaValidatorAdapter:
             target_id="audio",
             op=OpCode.ANNOTATE,
             value={
+                "_global": True,
                 "audio_ref": audio_path,
                 "sample_rate": ctx.sample_rate,
                 "channels": ctx.channels,
-                "duration": round(actual_dur, 3) if actual_dur else 0,
+                "duration": round(actual_dur, 3),
                 "repair_applied": repair_applied,
                 "repair_method": "aresample" if repair_applied else "none",
                 "defect_type": result.defect_type or "none",

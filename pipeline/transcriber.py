@@ -112,7 +112,7 @@ class VADTranscriber:
 
     def run_vad(self, force: bool = False) -> List[Tuple[float, float]]:
         """执行 Silero VAD 分段，返回 [(start, end), ...]"""
-        from VAD_Segmenter import VAD_Segmenter
+        from SRT.VAD_Segmenter import VAD_Segmenter
 
         t0 = time.time()
         vad = VAD_Segmenter(self.audio_path)

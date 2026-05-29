@@ -40,7 +40,7 @@ class IndexTTSCompositePass(TimelinePass):
     """
 
     name = "indextts_composite"
-    depends_on = ["speaker_composite"]
+    depends_on: list[str] = []
 
     def __init__(self, output_dir: str = "",
                  fp16: bool = True):
@@ -163,7 +163,8 @@ class IndexTTSCompositePass(TimelinePass):
 
     def _build_context(self, es,
                        prompt_map: dict[str, str]) -> IndexTTSSegmentContext:
-        translation = es.translation.get("text", "") or es.ir.text_ref
+        trans_raw = es.translation
+        translation = (trans_raw.get("text", "") if isinstance(trans_raw, dict) else str(trans_raw or "")) or es.ir.text_ref
         speaker_id = es.speaker.get("speaker_id")
         return IndexTTSSegmentContext(
             segment_id=es.id,

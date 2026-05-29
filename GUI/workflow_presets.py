@@ -2,24 +2,20 @@
 
 Each preset defines a Pass DAG that initializes a Timeline IR from source video.
 Pipeline is NOT the system core here — it is a bootstrap executor for Timeline Runtime.
+
+批次11 §阶段C: 每个 WorkflowPreset 新增 policy_fn 字段，委托到 core/ WorkflowPolicy
+工厂方法，使 WebUI 可以直接通过 WorkflowOrchestrator 编排 Pipeline。
 """
 
 from __future__ import annotations
 
 import enum
 from dataclasses import dataclass, field
+from typing import Callable
 
 
 class RuntimeState(str, enum.Enum):
-    """Timeline Runtime lifecycle states.
-
-    UNINITIALIZED  workspace created, no pipeline run yet
-    BOOTSTRAPPING  pipeline subprocess running, initializing Timeline IR
-    READY          Timeline IR loaded, user can interactively edit
-    COMPUTING      local pass recompute in progress (patch / selective rerun)
-    FAILED         bootstrap or pass failed, recoverable
-    COMPLETE       final export rendered
-    """
+    """Timeline Runtime lifecycle states."""
 
     UNINITIALIZED = "uninitialized"
     BOOTSTRAPPING = "bootstrapping"
@@ -31,23 +27,21 @@ class RuntimeState(str, enum.Enum):
 
 @dataclass
 class WorkflowPreset:
-    """A named Pass DAG template that bootstraps a Timeline Runtime.
-
-    Each preset is a pre-configured set of passes with default config values.
-    Users select a preset in the Hub, then customize in the Bootstrap Wizard.
-    """
+    """A named Pass DAG template that bootstraps a Timeline Runtime."""
 
     id: str
-    name: str  # display name (Chinese)
-    name_en: str  # display name (English)
+    name: str
+    name_en: str
     description: str
     icon: str  # MUI icon component name
     passes: list[str]  # ordered pass IDs forming the DAG
     tags: list[str] = field(default_factory=list)
     config_defaults: dict = field(default_factory=dict)
+    # 批次11 §阶段C: 指向 WorkflowPolicy 工厂方法
+    policy_fn: Callable[[str], object] | None = None
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "id": self.id,
             "name": self.name,
             "nameEn": self.name_en,
@@ -57,19 +51,20 @@ class WorkflowPreset:
             "tags": self.tags,
             "configDefaults": self.config_defaults,
         }
+        if self.policy_fn is not None:
+            d["hasPolicy"] = True
+        return d
 
 
-# ── Pass ID reference (maps to core/passes/ module names) ──────────────
-# asr              → ASRCompositePass (whisper + wav2vec2 alignment)
-# speaker          → SpeakerCompositePass (pyannote + clustering)
-# translate        → LLMTranslationPass (DeepSeek/OpenAI API)
-# tts              → TTSCompositePass (EdgeTTS / ChatTTS / CosyVoice)
-# srt_export       → SRTExportPass
-# demucs           → AudioPreprocessCompositePass (Demucs vocal separation)
-# media_validate   → MediaValidatorAdapter (C2 defect check)
-# semantic_merge   → SemanticMergePass
-# quality_check    → TranslationQualityPass (MiniLM + PPL scoring)
-# emotion          → EmotionCompositePass
+def _quick_preset(lang: str):
+    from core.config.workflow_policy import WorkflowPolicy
+    return WorkflowPolicy.quick_preset(lang)
+
+
+def _default_preset(lang: str):
+    from core.config.workflow_policy import WorkflowPolicy
+    return WorkflowPolicy.default_preset(lang)
+
 
 PRESETS: list[WorkflowPreset] = [
     WorkflowPreset(
@@ -85,6 +80,7 @@ PRESETS: list[WorkflowPreset] = [
             "skip_demucs": True,
             "compute_type": "int8",
         },
+        policy_fn=_quick_preset,
     ),
     WorkflowPreset(
         id="cinema_dub",
@@ -103,6 +99,7 @@ PRESETS: list[WorkflowPreset] = [
             "enable_speaker_diarization": True,
             "compute_type": "float16",
         },
+        policy_fn=_default_preset,
     ),
     WorkflowPreset(
         id="translate_only",
@@ -117,6 +114,7 @@ PRESETS: list[WorkflowPreset] = [
             "skip_tts": True,
             "skip_demucs": True,
         },
+        policy_fn=_quick_preset,
     ),
     WorkflowPreset(
         id="podcast_cleanup",
@@ -134,6 +132,7 @@ PRESETS: list[WorkflowPreset] = [
             "enable_speaker_diarization": True,
             "skip_demucs": False,
         },
+        policy_fn=_quick_preset,
     ),
 ]
 

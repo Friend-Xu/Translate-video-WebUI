@@ -158,17 +158,7 @@ class GlobalConfig:
 
     @classmethod
     def load(cls, path: str) -> "GlobalConfig":
-        """从 YAML 文件加载配置，未指定的字段使用默认值。
-
-        project_config.yaml 格式:
-            project:
-              asr:
-                model: large-v3
-              tts:
-                engine: cosyvoice
-            engine:
-              device: cuda
-        """
+        """从 YAML 文件加载配置，未指定的字段使用默认值。"""
         import os
         import yaml
 
@@ -189,6 +179,53 @@ class GlobalConfig:
             for key, value in data["engine"].items():
                 if hasattr(config.engine, key):
                     setattr(config.engine, key, value)
+
+        return config
+
+    @classmethod
+    def from_legacy_yaml(
+        cls,
+        translate_cfg_path: str = "",
+        tts_cfg_path: str = "",
+    ) -> "GlobalConfig":
+        """从旧格式 YAML 构建 GlobalConfig。(批次03 §四)
+
+        读取旧 config/translate.yaml（顶层键 "translate"）和
+        config/tts.yaml（顶层键 "tts"），映射到 ProjectPolicy 嵌套结构。
+        不读取 api_key 等凭证字段——它们属于运行时环境变量。
+        """
+        import os
+        import yaml
+
+        config = cls()
+
+        if translate_cfg_path and os.path.exists(translate_cfg_path):
+            with open(translate_cfg_path, "r", encoding="utf-8") as f:
+                translate_data = yaml.safe_load(f) or {}
+            translate_cfg = translate_data.get("translate", {})
+            target = config.project.translation
+            if isinstance(translate_cfg, dict):
+                _map_leaf(translate_cfg, target, {
+                    "model": "backend_model",
+                    "target_lang": "lang",
+                })
+                gate_cfg = target.setdefault("gate", {})
+                _map_leaf(translate_cfg, gate_cfg, {
+                    "verification_mode": "mode",
+                    "semantic_threshold": "threshold_accept",
+                    "sim_drop_limit": "sim_drop_limit",
+                })
+
+        if tts_cfg_path and os.path.exists(tts_cfg_path):
+            with open(tts_cfg_path, "r", encoding="utf-8") as f:
+                tts_data = yaml.safe_load(f) or {}
+            tts_cfg = tts_data.get("tts", {})
+            target = config.project.tts
+            if isinstance(tts_cfg, dict):
+                _map_leaf(tts_cfg, target, {
+                    "engine_type": "engine",
+                    "fallback_chain": "fallback_chain",
+                })
 
         return config
 
@@ -216,9 +253,17 @@ class GlobalConfig:
 
 
 def _deep_update(target: dict, source: dict) -> None:
-    """深度更新 target dict，递归合并嵌套结构。"""
     for key, value in source.items():
         if isinstance(value, dict) and isinstance(target.get(key), dict):
             _deep_update(target[key], value)
         else:
             target[key] = value
+
+
+def _map_leaf(
+    source: dict, target: dict, mapping: dict[str, str],
+) -> None:
+    """将 source 中键按 mapping 映射写入 target（仅当源键存在时）。"""
+    for src_key, dst_key in mapping.items():
+        if src_key in source:
+            target[dst_key] = source[src_key]

@@ -122,7 +122,7 @@ class EdgeTTSAdapter:
     def _make_output_path(self, segment_id: str) -> str:
         import os
         d = self._output_dir or "."
-        return os.path.join(d, "tts", f"{segment_id}_edge.wav")
+        return os.path.join(d, "03_tts", f"{segment_id}_edge.wav")
 
     @classmethod
     def _resolve_voice(cls, lang: str) -> str:

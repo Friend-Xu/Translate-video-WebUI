@@ -9,7 +9,9 @@ if TYPE_CHECKING:
 DEFAULT_INTERVAL = 50
 
 class SnapshotManager:
-    def __init__(self, snapshot_dir=".snapshots", auto_interval=DEFAULT_INTERVAL):
+    def __init__(self, snapshot_dir="", auto_interval=DEFAULT_INTERVAL):
+        if not snapshot_dir:
+            snapshot_dir = ".snapshots"
         self._dir = snapshot_dir; self._interval = auto_interval
         self._count = 0; self._last_snap = 0
         os.makedirs(snapshot_dir, exist_ok=True)

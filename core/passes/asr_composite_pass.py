@@ -30,25 +30,38 @@ class ASRCompositePass(TimelinePass):
     name = "asr_composite"
     depends_on: list[str] = []
 
-    def __init__(self, audio_path: str, context: EngineContext | None = None,
+    def __init__(self, audio_path: str = "", context: EngineContext | None = None,
                  enable_speaker_refine: bool = False,
-                 speaker_timeline: list | None = None):
+                 speaker_timeline: list | None = None,
+                 workspace_dir: str = ""):
         self.audio_path = audio_path
         self.ctx = context or EngineContext(audio_path=audio_path)
         self.enable_speaker_refine = enable_speaker_refine
         self.speaker_timeline = speaker_timeline
+        self._workspace_dir = workspace_dir
 
     def apply(self, state: TimelineProjectState | None = None) -> TimelineProjectState:
         """执行完整 ASR 流程，返回填充了 asr/semantic 槽位的 ProjectState。"""
         engine = PatchEngine()
 
+        # 如果 audio_path 为空，从之前 stage 的 state 中推导
+        audio = self.audio_path
+        if not audio and state is not None:
+            audio = state.get_global_audio_ref() or ""
+        ctx = self.ctx
+        if not ctx.audio_path:
+            ctx.audio_path = audio
+
         # Step 1: Whisper → SEGMENT_INSERT patches
-        whisper = WhisperAdapter(self.ctx)
+        whisper = WhisperAdapter(ctx, workspace_dir=self._workspace_dir)
         asr_patches = whisper.run()
         segment_patches = [p for p in asr_patches if p.op == OpCode.SEGMENT_INSERT]
         meta_patches = [p for p in asr_patches if p.op == OpCode.ANNOTATE]
 
-        state = self._bootstrap_state(segment_patches)
+        new_state = self._bootstrap_state(segment_patches)
+        # Preserve global_patches from previous stages (e.g. LOAD stage audio_ref/vocals_ref)
+        new_state.global_patches = list(state.global_patches) if state is not None else []
+        state = new_state
 
         for p in meta_patches:
             state.add_global_patch(p)

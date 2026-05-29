@@ -20,7 +20,7 @@ class TTSCompositePass(TimelinePass):
     """TTS 域完整编排。"""
 
     name = "tts_composite"
-    depends_on = ["speaker_composite"]
+    depends_on: list[str] = []
 
     def __init__(self, output_dir: str = "", speaker_seed: int | None = None):
         self.output_dir = output_dir
@@ -84,7 +84,13 @@ class TTSCompositePass(TimelinePass):
         return state
 
     def _build_context(self, es) -> TTSSegmentContext:
-        translation = es.translation.get("text", "") or es.ir.text_ref
+        raw = es.translation
+        if isinstance(raw, dict):
+            translation = raw.get("text", "") or es.ir.text_ref
+        elif isinstance(raw, str) and raw.strip():
+            translation = raw
+        else:
+            translation = es.ir.text_ref
         return TTSSegmentContext(
             segment_id=es.id,
             translation_text=translation,

@@ -59,10 +59,13 @@ class EdgeTTSCompositePass(TimelinePass):
                 reason = "no_tts_output"
 
             # 构建最简 context
-            lang = es.translation.get("lang", "") or self.default_lang
+            trans_raw = es.translation
+            trans_lang = trans_raw.get("lang", "") if isinstance(trans_raw, dict) else ""
+            lang = trans_lang or self.default_lang
+            translation_text = (trans_raw.get("text", "") if isinstance(trans_raw, dict) else str(trans_raw or "")) or es.ir.text_ref
             ctx = EdgeTTSSegmentContext(
                 segment_id=es.id,
-                translation_text=es.translation.get("text", "") or es.ir.text_ref,
+                translation_text=translation_text,
                 lang=lang,
                 duration_target=es.end - es.start,
                 fallback_reason=reason,

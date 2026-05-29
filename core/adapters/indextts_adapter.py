@@ -143,7 +143,7 @@ class IndexTTSAdapter:
     def _make_output_path(self, segment_id: str) -> str:
         import os
         d = self._output_dir or "."
-        return os.path.join(d, "tts", f"{segment_id}_indextts.wav")
+        return os.path.join(d, "03_tts", f"{segment_id}_indextts.wav")
 
     @staticmethod
     def _calc_duration_fit(actual: float, target: float) -> float:

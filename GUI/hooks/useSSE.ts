@@ -11,9 +11,18 @@ export function useSSE(
   onLog: (entry: LogEntry) => void,
   onDone: (status: string) => void,
   onClear?: () => void,
+  apiBase: string = '/api/pipeline',
 ) {
   const sourceRef = useRef<EventSource | null>(null)
   const [connectionState, setConnectionState] = useState<ConnectionState>('closed')
+
+  // Keep latest callbacks in refs to avoid rebuilding EventSource
+  const onLogRef = useRef(onLog)
+  const onDoneRef = useRef(onDone)
+  const onClearRef = useRef(onClear)
+  onLogRef.current = onLog
+  onDoneRef.current = onDone
+  onClearRef.current = onClear
 
   const disconnect = useCallback(() => {
     sourceRef.current?.close()
@@ -27,14 +36,12 @@ export function useSSE(
       return
     }
 
-    onClear?.()
+    onClearRef.current?.()
 
-    const es = new EventSource(`/api/pipeline/${jobId}/logs`)
+    const es = new EventSource(`${apiBase}/${jobId}/logs`)
     sourceRef.current = es
 
-    es.onopen = () => {
-      setConnectionState('connected')
-    }
+    es.onopen = () => setConnectionState('connected')
 
     es.onmessage = (event) => {
       try {
@@ -48,32 +55,28 @@ export function useSSE(
           message = message.replace('[STAGE] ', '')
         }
         const timestamp = data.ts || new Date().toLocaleTimeString()
-        onLog({ _id: sseNextId(), level, message, timestamp })
+        onLogRef.current({ _id: sseNextId(), level, message, timestamp })
       } catch {
-        onLog({ _id: sseNextId(), level: 'INFO', message: event.data, timestamp: new Date().toLocaleTimeString() })
+        onLogRef.current({ _id: sseNextId(), level: 'INFO', message: event.data, timestamp: new Date().toLocaleTimeString() })
       }
     }
 
     es.addEventListener('done', (event) => {
       try {
         const data = JSON.parse((event as MessageEvent).data)
-        onDone(data.status)
+        onDoneRef.current(data.status)
       } catch {
-        onDone('completed')
+        onDoneRef.current('completed')
       }
       disconnect()
     })
 
     es.onerror = () => {
-      if (es.readyState === EventSource.CLOSED) {
-        setConnectionState('closed')
-      } else {
-        setConnectionState('reconnecting')
-      }
+      disconnect()
     }
 
     return disconnect
-  }, [jobId, onLog, onDone, disconnect])
+  }, [jobId, apiBase, disconnect])
 
   return { connectionState }
 }

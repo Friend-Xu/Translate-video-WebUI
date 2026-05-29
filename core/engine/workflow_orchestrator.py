@@ -23,6 +23,8 @@ from core.config.global_config import GlobalConfig
 from core.runtime.project_state import TimelineProjectState
 from core.runtime.config_resolver import ConfigResolver
 from core.ir.project import TimelineProjectIR
+from core.engine.event_bus import EventBus
+from core.engine.runtime_event import RuntimeEvent, RuntimeEventType as RET
 
 
 class WorkflowStatus(Enum):
@@ -114,6 +116,10 @@ class WorkflowOrchestrator:
         self._pending_review = []
 
         self._emit_workflow("开始执行工作流", {"video": video_path})
+        EventBus().emit_now(RuntimeEvent(
+            event_type=RET.WORKFLOW_STARTED,
+            payload={"video": video_path},
+        ))
 
         try:
             empty_ir = TimelineProjectIR(events={}, speakers={})
@@ -301,14 +307,29 @@ class WorkflowOrchestrator:
         payload: dict | None = None,
         event_type: ProgressEventType = ProgressEventType.STAGE_COMPLETED,
     ) -> None:
-        if self._on_progress is None:
-            return
-        stage = self._current_stage.value if self._current_stage else ""
-        label = self._current_stage.display_name if self._current_stage else ""
-        self._on_progress(ProgressReport(
-            event_type=event_type,
-            stage=stage,
-            stage_label=label,
+        # 向后兼容：旧的 ProgressReport 回调
+        if self._on_progress is not None:
+            stage = self._current_stage.value if self._current_stage else ""
+            label = self._current_stage.display_name if self._current_stage else ""
+            self._on_progress(ProgressReport(
+                event_type=event_type,
+                stage=stage,
+                stage_label=label,
+                message=message,
+                payload=payload or {},
+            ))
+        # EventBus — 统一事件流
+        _type_map: dict[ProgressEventType, RET] = {
+            ProgressEventType.WORKFLOW_FAILED: RET.WORKFLOW_FAILED,
+            ProgressEventType.WORKFLOW_CANCELLED: RET.WORKFLOW_CANCELLED,
+        }
+        re_type = _type_map.get(event_type, RET.STAGE_COMPLETED)
+        stage_val = self._current_stage.value if self._current_stage else ""
+        stage_lbl = self._current_stage.display_name if self._current_stage else ""
+        EventBus().emit_now(RuntimeEvent(
+            event_type=re_type,
+            stage=stage_val,
+            stage_label=stage_lbl,
             message=message,
             payload=payload or {},
         ))
