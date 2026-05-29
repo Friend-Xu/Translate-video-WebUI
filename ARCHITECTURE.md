@@ -503,7 +503,7 @@ pipeline/
 ### 已知限制
 
 1. **OpenVoice 暂为 Noop**：`NoopCloner` 空操作，音色克隆待集成
-2. **TTS 引擎状态**：Edge TTS（默认）、ChatTTS 本地引擎已可用（需 pip install chattts），Cooqui/Azure 引擎待实现
+2. **TTS 引擎状态**：Edge TTS（默认）、ChatTTS 本地引擎、CosyVoice 跨语言引擎、IndexTTS 引擎均已可用
 3. **SRT 时间戳质量问题**：`extract_subtitles.py` 生成的 SRT 首条偶有反转时间戳，`parse_srt()` 已自动修正
 4. **Windows 路径兼容**：TimingAdjuster 原用 Unix `/` 路径拼接，已改为 `os.path.join`
 
@@ -517,13 +517,13 @@ pipeline/
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        PassManager                               │
-│  按 depends_on DAG 拓扑排序，线性执行 14 个 Pass                  │
+│  按 depends_on DAG 拓扑排序，线性执行 16 个 Pass                  │
 └─────────────────────────────────────────────────────────────────┘
         │                    │                    │
         ▼                    ▼                    ▼
 ┌───────────────┐   ┌───────────────┐   ┌───────────────┐
 │   Adapter 层   │   │    Pass 层     │   │    Gate 层     │
-│  (11 adapters) │   │  (14 passes)   │   │   (2 gates)    │
+│  (14 adapters) │   │  (16 passes)   │   │   (2 gates)    │
 │                │   │                │   │                │
 │ • Whisper      │   │ • ASR          │   │ • TextGate     │
 │ • Wav2Vec2     │   │ • Speaker      │   │   A/C/B 决策   │
@@ -570,10 +570,13 @@ pipeline/
 每个 Adapter 封装一个外部引擎（Whisper, ChatTTS, MiniLM 等），
 统一返回 `Patch` 对象写入 `TimelineProjectState`。
 
-**11 个 Adapter：**
+**14 个 Adapter：**
 
 | Adapter | 封装引擎 | 输出 Patch |
 |---------|---------|-----------|
+| `MediaValidatorAdapter` | MediaValidator | AUDIO_DEFECT_DIAGNOSIS |
+| `DemucsAdapter` | Demucs htdemucs | AUDIO_SEPARATION |
+| `VADBoundaryAdapter` | Silero VAD | VAD_BOUNDARY |
 | `WhisperAdapter` | faster-whisper (CTranslate2) | UPDATE_TRANSCRIPTION |
 | `Wav2Vec2Adapter` | Wav2Vec2ForCTC | REFINE_ALIGNMENT |
 | `PyAnnoteAdapter` | pyannote.audio | UPDATE_SPEAKER |
@@ -591,7 +594,7 @@ pipeline/
 每个 Pass 是一个 `apply(state) → state` 函数，通过 `depends_on` 声明依赖，
 `PassManager` 自动拓扑排序执行。
 
-**14 个 Pass：**
+**16 个 Pass：**
 
 | Pass | 依赖 | 功能 |
 |------|------|------|
@@ -608,6 +611,7 @@ pipeline/
 | `OpenVoiceCompositePass` | tts_composite | OpenVoice fallback |
 | `EdgeTTSCompositePass` | openvoice_composite | EdgeTTS last resort |
 | `SemanticMergePass` | asr_to_ir | 语义合并相邻 segment |
+| `ValidationCompositePass` | (any) | Schema + 跨槽位约束校验 |
 | `SRTExportPass` | (末端) | State → SRT 文件 |
 
 ### Gate 层 — 质量门控
@@ -631,6 +635,87 @@ Joint Formula 模式:
 E2 (硬门槛): current.confidence < 0.3 → review
 E1 (连续性): |current.intensity - previous.intensity| > 0.7 → repair
 E3 (说话人): current.distance(speaker_baseline) > 1.5 → repair
+```
+
+### 引擎层 — 工作流编排与事件系统
+
+`core/engine/` 是 Pass 之上的编排层，管理 Workflow 生命周期、事件总线和进度报告。
+
+#### WorkflowOrchestrator — 6 阶段生命周期
+
+`WorkflowOrchestrator` 管理完整的 6 阶段流水线，集成 Gate 路由：
+
+```
+WorkflowStage = LOAD → EXTRACT → TRANSLATE → VALIDATE → TTS → EXPORT
+
+每个 Stage:
+  ├── StageExecutor.run() → PassManager.run_with_diff(stage_passes)
+  ├── 输出 ProgressReport + RuntimeEvent
+  └── Gate 路由决策 (A/B/C):
+        A → 下一 Stage
+        B → 暂停等待人工审核
+        C → 重试当前 Stage（有上限）
+```
+
+**关键方法：**
+
+| 方法 | 功能 |
+|------|------|
+| `run(video_path, policy)` | 启动完整流水线 |
+| `resume(action)` | 从 Gate B 暂停恢复，可跳过/重试/接受 |
+| `pause()` | 手动暂停，保存状态 |
+| `cancel()` | 取消运行，标记 FAILED |
+
+#### EventBus + RuntimeEvent — 发布/订阅系统
+
+```
+Adapter/Pass/Gate → emit(RuntimeEvent) → EventBus
+                                            ├── ProgressCallback（前端 SSE）
+                                            ├── StructuredLogger（磁盘日志）
+                                            └── MetricsCollector（性能指标）
+```
+
+**22 种 RuntimeEventType：**
+
+| 类别 | 事件 |
+|------|------|
+| Workflow | WORKFLOW_STARTED, WORKFLOW_COMPLETED, WORKFLOW_FAILED, WORKFLOW_PAUSED, WORKFLOW_CANCELLED |
+| Stage | STAGE_STARTED, STAGE_COMPLETED, STAGE_FAILED |
+| Pass | PASS_STARTED, PASS_COMPLETED, PASS_FAILED |
+| Patch | PATCH_APPLIED, PATCH_REJECTED, PATCH_ROLLBACK |
+| Gate | GATE_PASSED, GATE_REJECTED, GATE_PAUSED |
+| Config | CONFIG_OVERRIDE_APPLIED, CONFIG_RESET |
+| Audit | PROGRESS_REPORT, METRICS_UPDATE |
+
+#### PassFactory — 基于闭包的工厂
+
+`pass_factory.py` 将 Pass 名称映射到实例，28 个别名：
+
+```python
+AVAILABLE_PASS_NAMES = {  # 28 aliases
+    "asr":           ASRCompositePass,
+    "tts_chattts":   TTSCompositePass,
+    "tts_cosyvoice": CosyVoiceCompositePass,
+    "tts_indextts":  IndexTTSCompositePass,
+    ...
+}
+create_pass_factory(video_path, translate_fn, ...) → factory_fn
+```
+
+`_RUNTIME_ARGS` 管理 CLI 注入的运行时参数（video_path, output_dir, engine 等）。
+
+#### 引擎层模块布局
+
+```
+core/engine/
+├── pass_base.py              # TimelinePass 抽象基类
+├── pass_manager.py           # PassManager — Kahn 拓扑排序
+├── pass_factory.py           # create_pass_factory() — 28 aliases + _RUNTIME_ARGS
+├── stage_executor.py         # StageExecutor — 单阶段生命周期
+├── workflow_orchestrator.py  # WorkflowOrchestrator — 6 阶段 + Gate 路由
+├── runtime_event.py          # RuntimeEvent + RuntimeEventType (22 types)
+├── event_bus.py              # EventBus — 线程安全单例
+└── progress.py               # ProgressReport + StageProgress
 ```
 
 ### Timeline IR v2 — 9 槽位事件状态
@@ -705,7 +790,7 @@ Patch.apply(state) → 分发到 handler
 
 ```
 旧架构: main.py → extract_subtitles.py → SRT_Translator → TtsPipeline
-新架构: main.py --use-core → PassManager → 14 Pass → SynthesisEngine
+新架构: main.py --use-core → WorkflowOrchestrator → 16 Pass → SynthesisEngine
 
 迁移策略: 渐进，双系统共存。--use-core 默认不启用。
 ```
@@ -820,8 +905,8 @@ WorkflowOrchestrator.run(video, policy)
 core/
 ├── engine/           # PassManager + PassBase
 ├── ir/               # Timeline IR (不可变数据模型)
-├── adapters/         # 11 个外部引擎封装 (均含 configure() 方法)
-├── passes/           # 14 个编排 Pass
+├── adapters/         # 14 个外部引擎封装 (均含 configure() 方法)
+├── passes/           # 16 个编排 Pass
 ├── gates/            # 2 个质量门控
 ├── scoring/          # 8 个评分器
 ├── runtime/          # 补丁引擎 + 状态管理 + 配置解析
@@ -843,12 +928,18 @@ core/
 
 ```
 runtime/
-├── patch.py              # Patch 数据类 + OpCode 枚举 (14+4 操作码)
+├── patch.py              # Patch 数据类 + OpCode 枚举 (20+ 操作码)
 ├── event_state.py        # TimelineEventState — 9 槽位惰性初始化
 ├── project_state.py      # TimelineProjectState — 项目级状态容器 (+ global_config)
 ├── patch_engine.py       # PatchEngine — 核心补丁状态机 (14 handler, v3.0)
 ├── synthesis.py          # SynthesisEngine — 5 层渲染 (IR→衍生→补丁→说话人→输出)
-├── index.py              # 统一导出入口
+├── index.py              # TimelineIndex — 时间轴索引查询
+├── context.py            # RuntimeContext — 统一 CLI/WebUI 参数模型 🆕
+├── logging.py            # StructuredLogger + RuntimeLog — 结构化日志 🆕
+├── gc.py                 # GCOperation + archive_workspace() — 工作空间 GC 🆕
+├── profiler.py           # ProfileResult + profile_workspace() — 性能分析 🆕
+├── workspace.py          # WorkspaceResolver — 路径解析 + 生命周期状态机 🆕
+├── verify.py             # dual_write_verify() — 结构校验 + 双写一致性 🆕
 ├── dependency_graph.py   # DependencyGraph — 段间时间依赖图
 ├── recompute.py          # RecomputeEngine — 局部增量重算
 ├── conflict.py           # ConflictDetector + ConflictResolver
@@ -860,8 +951,7 @@ runtime/
 ├── config_resolver.py    # ConfigResolver — 三级合并引擎 + deep_merge (v3.0 🆕)
 ├── gate_validator.py     # GateValidator — 预应用校验 + Schema + 跨槽位约束 (v3.0)
 ├── patch_store.py        # PatchStore — 三层存储 (内存/磁盘/远程)
-├── patch_planner.py      # PatchPlanner — 补丁策略规划
-└── verify.py             # 结构校验 + OpCode 兼容性
+└── patch_planner.py      # PatchPlanner — 补丁策略规划
 ```
 
 ### 5 层渲染引擎 (SynthesisEngine)
@@ -1089,7 +1179,8 @@ timeline/
 ├── speaker/
 │   └── model.py         # 说话人模型
 └── ui_adapter/
-    └── mapper.py        # IR → 前端 Zustand store 映射
+    ├── mapper.py        # IR → 前端 Zustand store 映射
+    └── patch_factory.py # 前端操作 → Patch 对象工厂 🆕
 
 ## schemas/ — JSON Schema 数据规范
 
@@ -1105,7 +1196,7 @@ schemas/
     ├── speaker_config.schema.json        # 说话人识别参数
     ├── semantic_config.schema.json       # 语义分析参数
     ├── translation_config.schema.json    # 翻译引擎参数
-    ├── tts_routing.schema.json           # TTS 路由参数
+    ├── tts_config_routing.schema.json       # TTS 路由参数
     ├── tts_cosyvoice.schema.json         # CosyVoice 专属参数
     ├── tts_chattts.schema.json           # ChatTTS 专属参数
     ├── tts_edge.schema.json              # Edge TTS 专属参数
@@ -1114,7 +1205,80 @@ schemas/
 
 所有 ir_v2 Schema 均为 JSON Schema Draft-07，由 `SchemaLoader` 加载校验。
 
-## core/refiner/ — 翻译结果精炼
+## core/ constants, model, speaker, emotion, tts 子系统
+
+### core/constants/ — 命名注册表
+
+`naming.py` 提供枚举化的 Adapter/Pass/Gate 注册表，确保跨模块引用一致：
+
+```python
+class AdapterRegistry(enum.Enum):
+    WHISPER = "whisper"
+    CHATTTS = "chattts"
+    COSYVOICE = "cosyvoice"
+    ...
+
+class PassRegistry(enum.Enum):
+    ASR_COMPOSITE = "asr_composite"
+    LLM_TRANSLATION = "llm_translation"
+    ...
+
+def resolve_adapter(name: str) -> type: ...
+def resolve_pass(name: str) -> type: ...
+```
+
+### core/model/ — 模型注册与路径管理
+
+`registry.py` 管理所有外部模型的下载、缓存和路径解析：
+
+```
+ModelEntry(name, hf_repo, local_dir, version)
+    │
+    ▼
+ModelRegistry
+    ├── get_model_path(name) → Path
+    ├── require_model(name)  → 自动下载
+    └── list_models()        → list[ModelEntry]
+```
+
+所有模型通过 HF_ENDPOINT 下载到 `models/` 目录，确保项目可整体迁移。
+
+### core/speaker/ — 说话人识别子系统
+
+```
+core/speaker/
+├── embedding.py    # SpeakerEmbeddingExtractor — 说话人嵌入提取
+├── clustering.py   # SpeakerClustering + ClusterResult — 聚类算法
+├── drift.py        # SpeakerDriftDetector + DriftCandidate — 说话人漂移检测
+└── voice_memory.py # VoiceMemoryIndex + VoicePrototype + VoiceInstance + VoiceAsset
+                    # 增量构建说话人音色档案，支持跨段匹配
+```
+
+**VoiceMemoryIndex** 是核心类型——为每个说话人维护 VoicePrototype（聚合嵌入），
+每个原型关联多个 VoiceInstance（具体音频段的嵌入），支持增量更新和跨视频回忆。
+
+### core/emotion/ — 情感控制子系统
+
+```
+core/emotion/
+├── emotion_space.py       # EmotionVector — VAD 三维情感空间
+├── alignment_checker.py   # EmotionAlignmentChecker — 翻译情感一致性
+└── tts_router.py          # EmotionTTSRouter + TTSRoute — 情感驱动的 TTS 路由
+```
+
+### core/tts/ — TTS 控制子系统
+
+```
+core/tts/
+├── duration_control.py    # DurationController + duration_fit_score()
+├── cosyvoice_duration.py  # CosyVoiceDurationController — 跨语言时长预估
+├── cross_lingual.py       # CrossLingualProcessor — 跨语言文本预处理
+├── emotion.py             # EmotionModeler — TTS 情感注入
+├── fallback_decider.py    # FallbackDecider + FallbackDecision — 引擎降级决策
+└── index_emotion.py       # EmotionVectorMapper — IndexTTS 情感向量映射
+```
+
+## core/refiner/ — 翻译结果精炼（续）
 
 ```
 core/refiner/
@@ -1131,12 +1295,28 @@ core/refiner/
     ├── SRT.SRT_Translator            → 翻译
     └── TtsPipeline                   → TTS + 合并
 
-新架构 (--use-core):
+新架构 CLI (tvw.py):
+  tvw run <video> --lang zh
+    ├── tvw inspect <workspace>       → 工作空间状态检查
+    ├── tvw stage <workspace> --stage TTS
+    │       → 单阶段执行 (LOAD/EXTRACT/TRANSLATE/VALIDATE/TTS/EXPORT)
+    ├── tvw validate <workspace>      → 校验工作空间一致性
+    ├── tvw export <workspace> --format srt  → 导出最终产物
+    ├── tvw benchmark <workspace>     → 性能基准测试
+    ├── tvw profile <workspace>       → 工作空间 Profiling
+    └── tvw gc <workspace>            → 工作空间清理/归档
+
+核心入口 (main_core.py):
   main.py --use-core
     └── main_core.py
-          ├── PipelineProfile         → 统一配置
-          ├── PassManager.run()       → 14 Pass 线性执行
-          └── SynthesisEngine         → 5 层渲染输出
+          ├── WorkflowPolicy         → 统一配置
+          ├── WorkflowOrchestrator   → 6 阶段编排 (LOAD→EXTRACT→TRANSLATE→VALIDATE→TTS→EXPORT)
+          ├── PassManager.run()      → 16 Pass 线性执行
+          └── SynthesisEngine        → 5 层渲染输出
+
+WebUI 入口 (GUI/server.py):
+  POST /api/core/pipeline/run        → WorkflowOrchestrator (新架构)
+  POST /api/pipeline/run             → main.py subprocess (旧架构)
 
 双写 (transitional):
   extract_subtitles.py 同时输出
@@ -1172,8 +1352,11 @@ translate:
 
 ```
 Translate_video/
-├── extract_subtitles.py        # → 主线编排器（薄层，~200 行）
-├── translate_video.py          # → TTS 全流程入口（4 步：提取→翻译→TTS→拼接）🆕
+├── tvw.py                        # → 统一 CLI Runtime（8 命令：run/inspect/stage/validate/export/benchmark/profile/gc）🆕
+├── main.py                       # → 旧架构主入口（extract→translate→TTS）
+├── main_core.py                  # → 新架构入口（WorkflowOrchestrator + PassManager）🆕
+├── extract_subtitles.py          # → 主线编排器（薄层，~200 行）
+├── translate_video.py            # → TTS 全流程入口（4 步：提取→翻译→TTS→拼接）
 ├── pipeline/                   # 主线 + TTS 模块
 │   ├── __init__.py
 │   ├── utils.py                # 共享工具 (ffmpeg路径、格式化)
@@ -1214,6 +1397,15 @@ Translate_video/
 ├── docs/                       # 设计文档
 │   └── decisions/
 │       └── ADR-001-audio-duration-fix-strategy.md
+├── openvoice_cli/               # OpenVoice TTS CLI（vendored，8 .py 文件）🆕
+│   ├── attentions.py            # 注意力机制
+│   ├── commons.py               # 共享组件
+│   ├── models.py                # 模型定义
+│   ├── modules.py               # 网络模块
+│   ├── transforms.py            # 音频变换
+│   ├── mel_processing.py        # Mel 频谱处理
+│   ├── downloader.py            # 模型下载
+│   └── utils.py                 # 工具函数
 └── models/                     # 本地模型缓存
     ├── whisper/
     │   └── Systran/faster-whisper-{size}/  (461MB, 由 faster-whisper 自动下载)
@@ -1221,6 +1413,29 @@ Translate_video/
     ├── vad/                    # Silero VAD (flat files)
     └── hf_cache/               # 其他 HF 模型缓存
 ```
+
+## 工作空间目录结构（6 子目录）
+
+Pipeline 为每个输入视频创建结构化工作空间：
+
+```
+{video_dir}/{stem}_project/
+├── project.json            ← 清单：跟踪阶段进度 + 输出文件 + RuntimeState
+├── pipeline.log            ← 结构化日志（SSE 流式传输）
+├── 01_extract/             ← source.srt, transcript.json, audio.wav, vocals.wav
+├── 02_translate/           ← machine.srt, translate-log.json, quality_report.json
+├── 03_speaker/             ← speaker_diarization.json, voice_profiles/  🆕
+├── 04_patch/               ← timeline_patches.json (补丁历史)  🆕
+├── 05_tts/                 ← TTS 音频段 + 视频片段
+└── 06_export/              ← dubbed.mp4 (最终输出)
+
+生命周期状态:
+  draft → processing → reviewable → frozen → archived
+```
+
+相比旧 4 目录布局（01_extract/02_translate/03_tts/04_output），
+新布局新增 `03_speaker/`（说话人数据）和 `04_patch/`（补丁日志），
+`06_export/` 替代 `04_output/`。
 
 ## 模型存储布局
 
