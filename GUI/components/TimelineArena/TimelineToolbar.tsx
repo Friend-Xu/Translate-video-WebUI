@@ -15,6 +15,8 @@ import AutoFixHighIcon from '@mui/icons-material/AutoFixHighRounded'
 import LayersClearIcon from '@mui/icons-material/LayersClearRounded'
 import PsychologyIcon from '@mui/icons-material/PsychologyRounded'
 import SpeakerIcon from '@mui/icons-material/RecordVoiceOverRounded'
+import TableViewIcon from '@mui/icons-material/TableViewRounded'
+import TimelineViewIcon from '@mui/icons-material/TimelineRounded'
 import { useAppStore } from '../../store/useAppStore'
 
 interface Props {
@@ -57,6 +59,8 @@ export default function TimelineToolbar({
   const applyAllDrafts = useAppStore(s => s.applyAllDrafts)
   const timelineFocus = useAppStore(s => s.timelineFocus)
   const setTimelineFocus = useAppStore(s => s.setTimelineFocus)
+  const timelineViewMode = useAppStore(s => s.timelineViewMode)
+  const setTimelineViewMode = useAppStore(s => s.setTimelineViewMode)
   const [visAnchorEl, setVisAnchorEl] = useState<HTMLElement | null>(null)
 
   const btnSx = { p: 0.5, color: 'text.secondary', '&:hover': { color: 'text.primary' } }
@@ -149,11 +153,18 @@ export default function TimelineToolbar({
           </IconButton>
         </Tooltip>
         <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
-        <Tooltip title={timelineFocus === 'speaker' ? '退出说话人聚焦' : '说话人聚焦模式'}>
+        <Tooltip title="说话人聚焦模式">
           <ToggleButton size="small" value="speaker" selected={timelineFocus === 'speaker'}
             onChange={() => setTimelineFocus(timelineFocus === 'speaker' ? 'default' : 'speaker')}
             sx={activeSx(timelineFocus === 'speaker')}>
             <SpeakerIcon fontSize="small" />
+          </ToggleButton>
+        </Tooltip>
+        <Tooltip title={timelineViewMode === 'table' ? '切换到时间轴视图' : '切换到字幕校验表格'}>
+          <ToggleButton size="small" value="table" selected={timelineViewMode === 'table'}
+            onChange={() => setTimelineViewMode(timelineViewMode === 'table' ? 'timeline' : 'table')}
+            sx={activeSx(timelineViewMode === 'table')}>
+            {timelineViewMode === 'table' ? <TimelineViewIcon fontSize="small" /> : <TableViewIcon fontSize="small" />}
           </ToggleButton>
         </Tooltip>
         <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />

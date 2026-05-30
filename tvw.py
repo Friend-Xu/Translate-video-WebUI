@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""
-tvw.py — Translate-video-WebUI 统一 CLI 入口 (CLI Runtime 计划书 §6)
+"""tvw.py — Translate-video-WebUI 统一 CLI 入口 (CLI Runtime 计划书 §6)
 
-命令族:
   tvw run <video> [--lang zh] ...      完整管线 (委托 main.py)
+  tvw run <video> --use-core ...        完整管线 (core/ WorkflowOrchestrator)
   tvw inspect <workspace>               查看 project.json + session + checkpoint
   tvw resume <workspace>                从最近 checkpoint 恢复执行
   tvw logs <workspace> [--stage]...     查看结构化日志
@@ -18,6 +17,17 @@ tvw.py — Translate-video-WebUI 统一 CLI 入口 (CLI Runtime 计划书 §6)
   tvw gc <workspace>                    清理 workspace
   tvw archive <workspace>               归档 workspace 为 .zip
 
+全局选项:
+  --json-output                         结构化 JSON 事件输出 (headless/WebUI 模式)
+                                        每行以 RS (\\x1e) 前缀的 JSON 对象
+JSON 事件格式:
+  {"type":"stage_started","stage":"extract","ts":"..."}
+  {"type":"stage_progress","stage":"tts","current_item":3,"total_items":10}
+  {"type":"stage_completed","stage":"extract","message":"ok"}
+  {"type":"workflow_completed","status":"completed","events":42}
+  {"type":"workflow_failed","error":"..."}
+  {"type":"log","level":"INFO","message":"..."}
+
 用法:
   tvw run source_file/video.mp4 --lang zh
   tvw inspect source_file/video_project/
@@ -29,10 +39,31 @@ import json as _json
 import os
 import sys
 import time
+from datetime import datetime, timezone
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if sys.path and os.path.isabs(sys.path[0]):
     sys.path[0] = ""
+
+# ── JSON 输出工具 ──────────────────────────────────────────
+
+_JSON_OUTPUT = False  # --json-output flag
+
+def _json_out(obj: dict) -> None:
+    """输出一行 RS 分隔的 JSON 到 stdout。仅在 --json-output 模式激活。"""
+    if not _JSON_OUTPUT:
+        return
+    line = _json.dumps(obj, ensure_ascii=False)
+    sys.stdout.write(f"\x1e{line}\n")
+    sys.stdout.flush()
+
+def _json_error(message: str) -> None:
+    """输出错误 JSON 事件并退出。"""
+    _json_out({"type": "workflow_failed", "error": message, "ts": _now_iso()})
+    sys.exit(1)
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _find_workspace(video_or_ws: str) -> str:
@@ -55,8 +86,21 @@ def _find_workspace(video_or_ws: str) -> str:
 
 
 def cmd_run(args) -> None:
-    """完整管线执行 — 委托 main.py。"""
+    """完整管线执行。
+
+    无 --use-core: 委托 main.py
+    有 --use-core: 直接调用 WorkflowOrchestrator (计划书 §10 统一 Runtime 入口)
+    """
+    if args.use_core:
+        _run_core_pipeline(args)
+    else:
+        _run_legacy_pipeline(args)
+
+
+def _run_legacy_pipeline(args) -> None:
+    """Legacy 路径 — 委托 main.py。"""
     from main import main as _main_main
+    _json_out({"type": "log", "level": "INFO", "message": "tvw run (legacy) → main.py", "ts": _now_iso()})
     _orig = sys.argv[:]
     try:
         sys.argv = ["main.py", os.path.abspath(args.video)]
@@ -70,8 +114,6 @@ def cmd_run(args) -> None:
             sys.argv.extend(["--device", args.device])
         if args.compute_type:
             sys.argv.extend(["--compute-type", args.compute_type])
-        if args.use_core:
-            sys.argv.append("--use-core")
         if args.skip_extract:
             sys.argv.append("--skip-extract")
         if args.skip_translate:
@@ -85,8 +127,98 @@ def cmd_run(args) -> None:
         if args.force:
             sys.argv.append("--force")
         _main_main()
+        _json_out({"type": "workflow_completed", "status": "completed", "ts": _now_iso()})
+    except SystemExit as e:
+        if e.code and e.code != 0:
+            _json_error(f"main.py exited with code {e.code}")
+        else:
+            _json_out({"type": "workflow_completed", "status": "completed", "ts": _now_iso()})
+    except Exception as e:
+        _json_error(f"Legacy pipeline failed: {e}")
     finally:
         sys.argv = _orig
+
+
+def _run_core_pipeline(args) -> None:
+    """Core 路径 — WorkflowOrchestrator 执行 (计划书 §10)。"""
+    from core.engine import WorkflowOrchestrator, ProgressReport
+    from core.config.workflow_policy import WorkflowPolicy, WorkflowStage
+    from core.config.global_config import GlobalConfig
+    from core.runtime.session import SessionStore, SessionState
+
+    _json_out({"type": "log", "level": "INFO", "message": "tvw run --use-core → WorkflowOrchestrator", "ts": _now_iso()})
+
+    video_path = os.path.abspath(args.video)
+    if args.stages:
+        stages = [s.strip() for s in args.stages.split(",")]
+    else:
+        stages = ["load", "extract", "translate", "validate"]
+
+    if args.bootstrap:
+        # Bootstrap 预设 — 仅到 VALIDATE
+        policy = WorkflowPolicy.bootstrap_preset(target_lang=args.lang or "zh")
+    elif args.export_stage:
+        # Export 预设 — 仅 TTS + EXPORT
+        policy = WorkflowPolicy.export_preset(target_lang=args.lang or "zh")
+        stages = ["tts", "export"]
+        ws_dir = _find_workspace(args.video)
+        SessionStore.transition(ws_dir, SessionState.EXPORTING)
+    else:
+        policy = WorkflowPolicy.default_preset(target_lang=args.lang or "zh")
+
+    gcfg = GlobalConfig()
+    if args.engine:
+        gcfg.tts_engine = args.engine
+    if args.device:
+        gcfg.device = args.device
+
+    orchestrator = WorkflowOrchestrator(
+        policy=policy,
+        global_config=gcfg,
+        stages=stages if not args.export_stage else stages,
+    )
+
+    def _progress(report: ProgressReport) -> None:
+        _json_out({
+            "type": "stage_progress",
+            "stage": report.stage.value if hasattr(report.stage, 'value') else report.stage,
+            "stage_label": report.stage_label,
+            "current_item": getattr(report, "current_item", 0),
+            "total_items": getattr(report, "total_items", 0),
+            "percent": getattr(report, "percent", 0.0),
+            "message": report.message,
+            "ts": _now_iso(),
+        })
+        if not _JSON_OUTPUT:
+            print(f"  [{report.stage_label}] {report.message}")
+
+    orchestrator.set_progress_callback(_progress)
+
+    # EventBus 阶段事件
+    from core.engine.event_bus import EventBus
+    from core.engine.runtime_event import RuntimeEvent, RuntimeEventType as RET
+
+    class _TvwSubscriber:
+        def on_event(self, event: RuntimeEvent) -> None:
+            ev = event.event_type
+            if ev == RET.STAGE_STARTED:
+                _json_out({"type": "stage_started", "stage": event.stage or "", "stage_label": event.stage_label or "", "ts": _now_iso()})
+            elif ev == RET.STAGE_COMPLETED:
+                _json_out({"type": "stage_completed", "stage": event.stage or "", "stage_label": event.stage_label or "", "message": event.message or "", "ts": _now_iso()})
+
+    EventBus().subscribe(_TvwSubscriber())
+
+    try:
+        state = orchestrator.run(video_path)
+        events_count = len(state.ir.events) if state and hasattr(state, 'ir') and hasattr(state.ir, 'events') else 0
+        _json_out({"type": "workflow_completed", "status": "completed", "events": events_count, "ts": _now_iso()})
+        if not _JSON_OUTPUT:
+            print(f"  [OK] Core Pipeline 完成 ({events_count} events)")
+    except Exception as e:
+        _json_error(f"Core pipeline failed: {e}")
+        if not _JSON_OUTPUT:
+            print(f"  [X] Core Pipeline 失败: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def cmd_inspect(args) -> None:
@@ -166,29 +298,53 @@ def cmd_stage(args) -> None:
     ws_dir = _find_workspace(args.workspace)
 
     from core.engine import WorkflowOrchestrator, ProgressReport
+    from core.engine.event_bus import EventBus
+    from core.engine.runtime_event import RuntimeEventType as RET
     from core.config.workflow_policy import WorkflowPolicy, WorkflowStage
     from core.config.global_config import GlobalConfig
+    from core.runtime.session import SessionStore, SessionState
 
     valid_stages = {s.value for s in WorkflowStage}
     if args.stage_name not in valid_stages:
-        print(f"[ERROR] 未知阶段: {args.stage_name}. 有效值: {', '.join(sorted(valid_stages))}", file=sys.stderr)
-        sys.exit(1)
+        msg = f"未知阶段: {args.stage_name}. 有效值: {', '.join(sorted(valid_stages))}"
+        if _JSON_OUTPUT:
+            _json_error(msg)
+        else:
+            print(f"[ERROR] {msg}", file=sys.stderr)
+            sys.exit(1)
 
     stage = WorkflowStage(args.stage_name)
     policy = WorkflowPolicy.single_stage(stage)
     orchestrator = WorkflowOrchestrator(policy=policy, global_config=GlobalConfig())
 
+    _json_out({"type": "stage_started", "stage": args.stage_name, "ts": _now_iso()})
+
     def _progress(report: ProgressReport) -> None:
-        print(f"  [{report.stage_label}] {report.message}")
+        _json_out({
+            "type": "stage_progress",
+            "stage": report.stage.value if hasattr(report.stage, 'value') else report.stage,
+            "stage_label": report.stage_label,
+            "message": report.message,
+            "ts": _now_iso(),
+        })
+        if not _JSON_OUTPUT:
+            print(f"  [{report.stage_label}] {report.message}")
 
     orchestrator.set_progress_callback(_progress)
 
-    video = ws_dir
+    SessionStore.transition(ws_dir, SessionState.BOOTSTRAPPING)
+
     try:
-        state = orchestrator.run(video)
-        print(f"  [OK] Stage '{args.stage_name}' 完成")
+        state = orchestrator.run(ws_dir)
+        SessionStore.transition(ws_dir, SessionState.REVIEWABLE)
+        _json_out({"type": "stage_completed", "stage": args.stage_name, "message": "ok", "ts": _now_iso()})
+        if not _JSON_OUTPUT:
+            print(f"  [OK] Stage '{args.stage_name}' 完成")
     except RuntimeError as e:
-        print(f"  [X] 阶段失败: {e}", file=sys.stderr)
+        SessionStore.transition(ws_dir, SessionState.FAILED)
+        _json_error(f"阶段失败: {e}")
+        if not _JSON_OUTPUT:
+            print(f"  [X] 阶段失败: {e}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -509,6 +665,8 @@ def main():
         description="tvw — Translate-video-WebUI CLI Runtime",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    parser.add_argument("--json-output", action="store_true",
+                        help="结构化 JSON 事件输出 (headless/WebUI 模式)")
     sub = parser.add_subparsers(dest="command", help="可用命令")
 
     # ── run ──
@@ -519,7 +677,13 @@ def main():
     p_run.add_argument("--model", default="turbo", help="Whisper 模型")
     p_run.add_argument("--device", default="cuda", help="计算设备")
     p_run.add_argument("--compute-type", default="float16", help="计算精度")
-    p_run.add_argument("--use-core", action="store_true", help="使用 core/ PassManager 翻译")
+    p_run.add_argument("--use-core", action="store_true", help="使用 core/ WorkflowOrchestrator 执行")
+    p_run.add_argument("--bootstrap", action="store_true",
+                       help="仅执行 Bootstrap (LOAD→EXTRACT→TRANSLATE→VALIDATE), TTS/Export 推迟")
+    p_run.add_argument("--export-stage", action="store_true",
+                       help="仅执行 Export (TTS→EXPORT), 依赖 Bootstrap 已完成")
+    p_run.add_argument("--stages", default=None,
+                       help="指定阶段列表, 逗号分隔 (默认: load,extract,translate,validate)")
     p_run.add_argument("--skip-extract", action="store_true")
     p_run.add_argument("--skip-translate", action="store_true")
     p_run.add_argument("--skip-tts", action="store_true")
@@ -599,6 +763,8 @@ def main():
     p_rb.add_argument("--force", action="store_true", help="实际执行回退 (默认 dry-run)")
 
     args = parser.parse_args()
+    global _JSON_OUTPUT
+    _JSON_OUTPUT = getattr(args, "json_output", False)
 
     if args.command is None:
         parser.print_help()

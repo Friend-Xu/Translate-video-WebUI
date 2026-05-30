@@ -1,5 +1,6 @@
 """
 TTSAdapter 和 TtsPipeline 单元测试
+（TtsPipeline.run() E2E 需完整 TTS 引擎基础设施，无法纯 mock 通过）
 """
 
 import os
@@ -47,7 +48,6 @@ class TestResumeManager:
     """ResumeManager 测试 (基于输出文件存在性判断)"""
 
     def test_default_disabled(self, temp_dir):
-        """默认不启用续传时 is_processed 返回 False"""
         from pipeline.tts_resume import ResumeManager
         mgr = ResumeManager(video_output_dir=temp_dir)
         mgr.is_processed = lambda start, end: False
@@ -55,7 +55,6 @@ class TestResumeManager:
         assert mgr.is_processed(5000, 6000) is False
 
     def test_is_processed_checks_file(self, temp_dir):
-        """输出文件存在时 is_processed 返回 True"""
         from pipeline.tts_resume import ResumeManager
         import os
         mgr = ResumeManager(video_output_dir=temp_dir)
@@ -66,7 +65,6 @@ class TestResumeManager:
         assert mgr.is_processed(3000, 4000) is False
 
     def test_add_error(self, temp_dir):
-        """添加错误记录到内存"""
         from pipeline.tts_resume import ResumeManager
         mgr = ResumeManager(video_output_dir=temp_dir)
         mgr.add_error(0, 1000, "测试文本", "TTS失败")
@@ -75,7 +73,6 @@ class TestResumeManager:
         assert mgr.state.error_subtitles[0]["error"] == "TTS失败"
 
     def test_reset(self, temp_dir):
-        """重置清除错误记录"""
         from pipeline.tts_resume import ResumeManager
         mgr = ResumeManager(video_output_dir=temp_dir)
         mgr.add_error(1000, 2000, "text", "err")
@@ -85,7 +82,6 @@ class TestResumeManager:
         assert mgr.state.total_subs == 0
 
     def test_clear_outputs(self, temp_dir):
-        """删除所有已生成的视频段文件"""
         from pipeline.tts_resume import ResumeManager
         import os, glob
         for s, e in [(0, 1000), (1000, 2000), (2000, 3000)]:
@@ -101,7 +97,6 @@ class TestTtsPipelineResumeIntegration:
     """TtsPipeline ResumeManager 集成测试"""
 
     def test_pipeline_creates_resume_manager(self, temp_dir):
-        """TtsPipeline 自动创建 ResumeManager"""
         from pipeline.tts_config import TTSConfig
         from pipeline.tts_pipeline import TtsPipeline
 
@@ -115,7 +110,6 @@ class TestTtsPipelineResumeIntegration:
         assert pipeline._resume_manager.video_output_dir == expected_dir
 
     def test_pipeline_accepts_external_resume_manager(self, temp_dir):
-        """TtsPipeline 接受外部传入的 ResumeManager"""
         from pipeline.tts_config import TTSConfig
         from pipeline.tts_pipeline import TtsPipeline
         from pipeline.tts_resume import ResumeManager
@@ -128,7 +122,6 @@ class TestTtsPipelineResumeIntegration:
         assert pipeline._resume_manager is mgr
 
     def test_resume_skips_processed(self, temp_dir):
-        """已处理条目通过文件存在性检测被识别"""
         from pipeline.tts_config import TTSConfig
         from pipeline.tts_pipeline import TtsPipeline
         from pipeline.tts_resume import ResumeManager
@@ -140,7 +133,6 @@ class TestTtsPipelineResumeIntegration:
 
         video_dir = os.path.join(temp_dir, "video")
         os.makedirs(video_dir, exist_ok=True)
-        # 创建输出文件以标记"已处理"
         done_file = os.path.join(video_dir, "TTS_5000_8000.mp4")
         with open(done_file, "w") as f:
             f.write("dummy")
@@ -150,7 +142,6 @@ class TestTtsPipelineResumeIntegration:
         assert mgr.is_processed(1000, 4000) is False
 
     def test_processed_pairs_checked_by_file_existence(self, temp_dir):
-        """ResumeManager.is_processed 通过文件存在性判断"""
         from pipeline.tts_resume import ResumeManager
 
         video_dir = os.path.join(temp_dir, "video")
@@ -167,7 +158,6 @@ class TestTtsPipelineErrorHandling:
     """TtsPipeline 错误兜底测试"""
 
     def test_process_error_returns_error_dict(self, temp_dir):
-        """处理失败时返回含错误信息的 dict"""
         from pipeline.tts_config import TTSConfig
         from pipeline.tts_pipeline import TtsPipeline
         from pipeline.tts_resume import ResumeManager
@@ -176,21 +166,16 @@ class TestTtsPipelineErrorHandling:
         mgr = ResumeManager(video_output_dir=os.path.join(temp_dir, "video"))
         pipeline = TtsPipeline(config=cfg, resume_manager=mgr)
 
-        # 模拟当前视频片段（给 _process_single_subtitle 传递 mock）
         from unittest.mock import MagicMock
 
         mock_video = MagicMock()
         mock_video.duration = 3.0
-        mock_instr = MagicMock()
 
-        # 不给 subs_next，engine 会尝试实际合成，但我们先不跑完整的 run()
-        # 而是直接验证 _process_single_subtitle 的签名存在即可
         assert hasattr(pipeline, '_process_single_subtitle')
         assert hasattr(pipeline, '_resume_manager')
         assert pipeline._resume_manager is mgr
 
     def test_error_saved_to_resume(self, temp_dir):
-        """处理失败的条目被记录到 ResumeManager (内存追踪)"""
         from pipeline.tts_resume import ResumeManager
 
         mgr = ResumeManager(video_output_dir=os.path.join(temp_dir, "video"))
@@ -200,13 +185,10 @@ class TestTtsPipelineErrorHandling:
         assert "TTS 合成失败" in mgr.state.error_subtitles[0]["error"]
 
     def test_video_bitrate_reasonable(self):
-        """video_bitrate 默认值合理（非 5Tbps 笔误）"""
         from pipeline.tts_config import TTSConfig
         cfg = TTSConfig()
         br = cfg.video_bitrate
-        # 不应是荒谬的数值
         assert "5000000000k" not in br
-        # 应在合理范围（几 Mbps 到几十 Mbps）
         import re
         match = re.match(r"^(\d+)([kKM]?)$", br)
         assert match, f"video_bitrate 格式异常: {br}"
@@ -218,17 +200,15 @@ class TestTtsPipelineErrorHandling:
 
 
 class TestTtsPipelineE2E:
-    """TtsPipeline 端到端集成测试（全 mock）"""
+    """TtsPipeline 端到端集成测试（需要完整 TTS 引擎基础设施）"""
 
     def _create_srt(self, path: str, lines: list):
-        """创建 SRT 测试文件"""
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.writelines(lines)
 
-    @pytest.mark.xfail(reason="TtsPipeline.run() API: chinese_srt_path removed")
+    @pytest.mark.xfail(reason="TtsPipeline.run() 内部创建真实 TTS 引擎，无法纯 mock 通过")
     def test_run_with_mocked_pipeline(self, temp_dir):
-        """全 mock 的 TtsPipeline.run() 端到端测试"""
         from pipeline.tts_config import TTSConfig
         from pipeline.tts_pipeline import TtsPipeline
         from pipeline.tts_resume import ResumeManager
@@ -240,70 +220,45 @@ class TestTtsPipelineE2E:
         cfg.enable_resume = False
         cfg.output_dir = temp_dir
 
-        # 准备 SRT 文件
         cn_srt = os.path.join(temp_dir, "cn.srt")
         en_srt = os.path.join(temp_dir, "en.srt")
-        self._create_srt(cn_srt, [
-            "1\n",
-            "00:00:01,000 --> 00:00:04,000\n",
-            "第一条字幕\n",
-            "\n",
-            "2\n",
-            "00:00:05,000 --> 00:00:08,000\n",
-            "第二条字幕\n",
-        ])
-        self._create_srt(en_srt, [
-            "1\n",
-            "00:00:01,000 --> 00:00:04,000\n",
-            "Subtitle one\n",
-            "\n",
-            "2\n",
-            "00:00:05,000 --> 00:00:08,000\n",
-            "Subtitle two\n",
-        ])
+        self._create_srt(cn_srt, ["1\n", "00:00:01,000 --> 00:00:04,000\n", "第一条字幕\n", "\n",
+                                   "2\n", "00:00:05,000 --> 00:00:08,000\n", "第二条字幕\n"])
+        self._create_srt(en_srt, ["1\n", "00:00:01,000 --> 00:00:04,000\n", "Subtitle one\n", "\n",
+                                   "2\n", "00:00:05,000 --> 00:00:08,000\n", "Subtitle two\n"])
 
         resume_mgr = ResumeManager(video_output_dir=os.path.join(temp_dir, "video"))
-
         pipeline = TtsPipeline(config=cfg, resume_manager=resume_mgr)
 
-        # mock 所有 moviepy 依赖
         with patch("moviepy.VideoFileClip") as mock_video_cls, \
              patch("moviepy.AudioFileClip") as mock_audio_cls, \
-             patch.object(pipeline, '_process_single_subtitle', return_value={"success": True, "start": 1000, "end": 4000, "text_zh": "测试"}) as mock_process, \
+             patch.object(pipeline, '_process_single_subtitle',
+                          return_value={"success": True, "start": 1000, "end": 4000, "text_zh": "测试"}) as mock_process, \
              patch("pipeline.utils.get_ffmpeg_exe", return_value="ffmpeg"), \
-             patch("os.path.isfile", return_value=True), \
-             patch("subprocess.run"):
+             patch("subprocess.run"), \
+             patch.object(pipeline, '_find_vocals', return_value=None), \
+             patch("pipeline.loudness.measure_loudness", return_value={"input_i": -23.0}):
 
             mock_video = MagicMock()
             mock_video.duration = 10.0
             mock_video.subclipped.return_value = MagicMock(duration=3.0)
             mock_video_cls.return_value = mock_video
-
             mock_audio = MagicMock()
             mock_audio.duration = 3.0
             mock_audio_cls.return_value = mock_audio
 
-            pipeline.run(
-                video_path="/fake/video.mp4",
-                instrumental_path="/fake/instr.wav",
-                chinese_srt_path=cn_srt,
-                english_srt_path=en_srt,
-            )
+            pipeline.run(video_path="/fake/video.mp4",
+                         instrumental_path="/fake/instr.wav",
+                         translated_srt_path=cn_srt,
+                         source_srt_path=en_srt)
 
-            # 验证 _process_single_subtitle 被调用（至少 1 次）
             assert mock_process.call_count >= 1
-
-            # 验证处理了所有有效字幕
-            # start=1000,end=4000 和 start=5000,end=8000
-            # start 是第 3 个位置参数（索引 2）
-            all_calls = mock_process.call_args_list
-            actual_starts = [c[0][2] for c in all_calls]
+            actual_starts = [c[0][2] for c in mock_process.call_args_list]
             assert 1000 in actual_starts
             assert 5000 in actual_starts
 
-    @pytest.mark.xfail(reason="TtsPipeline.run() API: chinese_srt_path removed")
+    @pytest.mark.xfail(reason="TtsPipeline.run() 内部创建真实 TTS 引擎，无法纯 mock 通过")
     def test_run_skip_invalid_timestamps(self, temp_dir):
-        """无效时间戳字幕被跳过"""
         from pipeline.tts_config import TTSConfig
         from pipeline.tts_pipeline import TtsPipeline
         from pipeline.tts_resume import ResumeManager
@@ -316,60 +271,42 @@ class TestTtsPipelineE2E:
         cfg.output_dir = temp_dir
         cfg.resume_file = os.path.join(temp_dir, "resume.json")
 
-        # 准备含无效字幕的 SRT（end == start 触发 end <= start 跳过）
         cn_srt = os.path.join(temp_dir, "cn_bad.srt")
         en_srt = os.path.join(temp_dir, "en_bad.srt")
-        self._create_srt(cn_srt, [
-            "1\n",
-            "00:00:03,000 --> 00:00:03,000\n",  # end == start
-            "无效字幕\n",
-            "\n",
-            "2\n",
-            "00:00:05,000 --> 00:00:08,000\n",
-            "有效字幕\n",
-        ])
-        self._create_srt(en_srt, [
-            "1\n",
-            "00:00:03,000 --> 00:00:03,000\n",
-            "Invalid\n",
-            "\n",
-            "2\n",
-            "00:00:05,000 --> 00:00:08,000\n",
-            "Valid\n",
-        ])
+        self._create_srt(cn_srt, ["1\n", "00:00:03,000 --> 00:00:03,000\n", "无效字幕\n", "\n",
+                                   "2\n", "00:00:05,000 --> 00:00:08,000\n", "有效字幕\n"])
+        self._create_srt(en_srt, ["1\n", "00:00:03,000 --> 00:00:03,000\n", "Invalid\n", "\n",
+                                   "2\n", "00:00:05,000 --> 00:00:08,000\n", "Valid\n"])
 
         resume_mgr = ResumeManager(video_output_dir=os.path.join(temp_dir, "video"))
         pipeline = TtsPipeline(config=cfg, resume_manager=resume_mgr)
 
         with patch("moviepy.VideoFileClip") as mock_video_cls, \
              patch("moviepy.AudioFileClip") as mock_audio_cls, \
-             patch.object(pipeline, '_process_single_subtitle', return_value={"success": True}) as mock_process, \
+             patch.object(pipeline, '_process_single_subtitle',
+                          return_value={"success": True}) as mock_process, \
              patch("pipeline.utils.get_ffmpeg_exe", return_value="ffmpeg"), \
-             patch("os.path.isfile", return_value=True), \
-             patch("subprocess.run"):
+             patch("subprocess.run"), \
+             patch.object(pipeline, '_find_vocals', return_value=None), \
+             patch("pipeline.loudness.measure_loudness", return_value={"input_i": -23.0}):
 
             mock_video = MagicMock()
             mock_video.duration = 10.0
             mock_video.subclipped.return_value = MagicMock(duration=3.0)
             mock_video_cls.return_value = mock_video
-
             mock_audio = MagicMock()
             mock_audio.duration = 3.0
             mock_audio_cls.return_value = mock_audio
 
-            pipeline.run(
-                video_path="/fake/video.mp4",
-                instrumental_path="/fake/instr.wav",
-                chinese_srt_path=cn_srt,
-                english_srt_path=en_srt,
-            )
+            pipeline.run(video_path="/fake/video.mp4",
+                         instrumental_path="/fake/instr.wav",
+                         translated_srt_path=cn_srt,
+                         source_srt_path=en_srt)
 
-            # 只有有效字幕被处理
             assert mock_process.call_count == 1
 
-    @pytest.mark.xfail(reason="TtsPipeline.run() API: chinese_srt_path removed")
+    @pytest.mark.xfail(reason="TtsPipeline.run() 内部创建真实 TTS 引擎，无法纯 mock 通过")
     def test_run_with_resume_skips_processed(self, temp_dir):
-        """断点续传：已处理的字幕在 run() 中被跳过"""
         from pipeline.tts_config import TTSConfig
         from pipeline.tts_pipeline import TtsPipeline
         from pipeline.tts_resume import ResumeManager
@@ -383,26 +320,11 @@ class TestTtsPipelineE2E:
 
         cn_srt = os.path.join(temp_dir, "cn_resume.srt")
         en_srt = os.path.join(temp_dir, "en_resume.srt")
-        self._create_srt(cn_srt, [
-            "1\n",
-            "00:00:01,000 --> 00:00:04,000\n",
-            "已处理\n",
-            "\n",
-            "2\n",
-            "00:00:05,000 --> 00:00:08,000\n",
-            "未处理\n",
-        ])
-        self._create_srt(en_srt, [
-            "1\n",
-            "00:00:01,000 --> 00:00:04,000\n",
-            "Done\n",
-            "\n",
-            "2\n",
-            "00:00:05,000 --> 00:00:08,000\n",
-            "Pending\n",
-        ])
+        self._create_srt(cn_srt, ["1\n", "00:00:01,000 --> 00:00:04,000\n", "已处理\n", "\n",
+                                   "2\n", "00:00:05,000 --> 00:00:08,000\n", "未处理\n"])
+        self._create_srt(en_srt, ["1\n", "00:00:01,000 --> 00:00:04,000\n", "Done\n", "\n",
+                                   "2\n", "00:00:05,000 --> 00:00:08,000\n", "Pending\n"])
 
-        # 创建输出文件标记第一条已处理
         video_dir = os.path.join(temp_dir, "video")
         os.makedirs(video_dir, exist_ok=True)
         with open(os.path.join(video_dir, "TTS_1000_4000.mp4"), "w") as f:
@@ -413,31 +335,28 @@ class TestTtsPipelineE2E:
 
         with patch("moviepy.VideoFileClip") as mock_video_cls, \
              patch("moviepy.AudioFileClip") as mock_audio_cls, \
-             patch.object(pipeline, '_process_single_subtitle', return_value={"success": True}) as mock_process, \
+             patch.object(pipeline, '_process_single_subtitle',
+                          return_value={"success": True}) as mock_process, \
              patch("pipeline.utils.get_ffmpeg_exe", return_value="ffmpeg"), \
-             patch("os.path.isfile", return_value=True), \
-             patch("subprocess.run"):
+             patch("subprocess.run"), \
+             patch.object(pipeline, '_find_vocals', return_value=None), \
+             patch("pipeline.loudness.measure_loudness", return_value={"input_i": -23.0}):
 
             mock_video = MagicMock()
             mock_video.duration = 10.0
             mock_video.subclipped.return_value = MagicMock(duration=3.0)
             mock_video_cls.return_value = mock_video
-
             mock_audio = MagicMock()
             mock_audio.duration = 3.0
             mock_audio_cls.return_value = mock_audio
 
-            pipeline.run(
-                video_path="/fake/video.mp4",
-                instrumental_path="/fake/instr.wav",
-                chinese_srt_path=cn_srt,
-                english_srt_path=en_srt,
-            )
+            pipeline.run(video_path="/fake/video.mp4",
+                         instrumental_path="/fake/instr.wav",
+                         translated_srt_path=cn_srt,
+                         source_srt_path=en_srt)
 
-            # 只有第二条未处理的被处理
             assert mock_process.call_count == 1
-            called_args = mock_process.call_args[0]
-            called_start = called_args[2]  # start 是第 3 个位置参数
+            called_start = mock_process.call_args[0][2]
             assert called_start == 5000
 
 
@@ -445,33 +364,25 @@ class TestTTSAdapter:
     """TTSAdapter 兼容性测试"""
 
     def test_adapter_compatible_interface(self, temp_dir):
-        """验证 TTSAdapter 与旧版接口兼容"""
         from pipeline.tts_adapter import TTSAdapter
-
         adapter = TTSAdapter(
             video_path="/fake/video.mp4",
             video_instrumental_path="/fake/instr.wav",
             chinese_srt_path="/fake/cn.srt",
             english_srt_path="/fake/en.srt",
             TTS_audio_output_path=os.path.join(temp_dir, "output"),
-            threading_workers=3,
-            clone_color=False,
-            speed_max=5,
-            edgeTTS_vocal="zh-CN-XiaoxiaoNeural",
-            base_speed=2,
-            caption=True,
+            threading_workers=3, clone_color=False, speed_max=5,
+            edgeTTS_vocal="zh-CN-XiaoxiaoNeural", base_speed=2, caption=True,
         )
         assert adapter.model_version == "v2"
-        assert adapter.speed_max == 50  # 5*10
-        assert adapter.base_speed == 20  # 2*10
+        assert adapter.speed_max == 50
+        assert adapter.base_speed == 20
         assert adapter.vocal == "zh-CN-XiaoxiaoNeural"
         assert adapter.clone_color is False
         assert adapter.caption is True
 
     def test_adapter_model_version_settable(self, temp_dir):
-        """model_version 属性可写（兼容旧代码 tts.model_version = \"v2\"）"""
         from pipeline.tts_adapter import TTSAdapter
-
         adapter = TTSAdapter(
             video_path="/fake/v.mp4",
             video_instrumental_path="/fake/i.wav",

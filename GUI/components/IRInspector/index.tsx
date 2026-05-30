@@ -25,7 +25,7 @@ interface Props {
 
 const TAB_LABELS: Record<InspectorTab, string> = {
   content: 'Content', timing: 'Timing', speaker: 'Speaker',
-  tts: 'TTS', patch: 'Patch', history: 'History', config: 'Config',
+  tts: 'TTS', patch: 'Patch', history: 'History', config: 'Config', review: 'Review',
 }
 
 export default function IRInspector({ event }: Props) {

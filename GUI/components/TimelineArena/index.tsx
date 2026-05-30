@@ -8,6 +8,7 @@ import TimelineMinimap from './TimelineMinimap'
 import ZoomPresets from './ZoomPresets'
 import TimelineToolbar from './TimelineToolbar'
 import VideoPreview from './VideoPreview'
+import ReviewTable from './ReviewTable'
 import ImpactIndicator from '../ImpactIndicator'
 import RubberBandSelect from './RubberBandSelect'
 import EventContextMenu from './EventContextMenu'
@@ -26,7 +27,8 @@ interface Props {
 
 export default function TimelineArena({ events, totalDuration, waveform, ttsWaveforms, videoSrc, onDropVideo }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const [canvasW, setCanvasW] = useState(1200)
+  const canvasW = (() => { return 1200 })()
+  const [_canvasWState, setCanvasW] = useState(1200)
   const [dragOver, setDragOver] = useState(false)
   const [isPlaying, setIsPlaying] = useState(false)
   const [loopEnabled, setLoopEnabled] = useState(false)
@@ -39,6 +41,7 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
   const [diffPopoverAnchor, setDiffPopoverAnchor] = useState<HTMLElement | null>(null)
   const [diffPopoverEvent, setDiffPopoverEvent] = useState<EventViewModel | null>(null)
   const [dismissedSuggestionIds] = useState<Set<string>>(new Set())
+  const timelineViewMode = useAppStore(s => s.timelineViewMode)
 
   const selectedEventIds = useAppStore(s => s.selectedEventIds)
   const selectEvent = useAppStore(s => s.selectEvent)
@@ -353,7 +356,7 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
         onTimeUpdate={handleVideoTimeUpdate}
         onDurationChange={handleVideoDurationChange}
       />
-      {!isEmpty ? (
+      {!isEmpty && timelineViewMode === 'timeline' ? (
           <>
             <RubberBandSelect
               events={filteredEvents}
@@ -392,6 +395,16 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
                 )
               })}
           </>
+        ) : timelineViewMode === 'table' ? (
+          <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
+            <ReviewTable
+              events={filteredEvents}
+              onSeek={(time: number) => {
+                useAppStore.getState().setPlayhead(time)
+                setVideoCurrentTime(time)
+              }}
+            />
+          </Box>
         ) : (
           <Box sx={{
             flexGrow: 1, display: 'flex',

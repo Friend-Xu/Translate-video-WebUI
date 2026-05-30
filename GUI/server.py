@@ -93,6 +93,7 @@ class SSELogHandler(logging.Handler):
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
 MAIN_SCRIPT = PROJECT_ROOT / "main.py"
+TVW_SCRIPT = PROJECT_ROOT / "tvw.py"
 
 
 def _rel_path(abs_path: str, root: Path = PROJECT_ROOT) -> str:
@@ -5450,10 +5451,11 @@ def _persist_core_timeline(state, workspace_path: str) -> None:
 
 
 def _run_core_pipeline_sync(job: Job, req: CoreRunRequest) -> None:
-    """在线程池中同步执行 core/ Pipeline。(重构后: 调用 core.pipeline.run_pipeline)"""
-    from core.engine.event_bus import EventBus
-    from core.engine.runtime_event import RuntimeEvent, RuntimeEventType as RET
-    from core.pipeline import run_pipeline
+    """在线程池中同步执行 core/ Pipeline（通过 tvw.py subprocess 统一入口）。
+
+    计划书 §10 架构: WebUI → Runtime API → tvw.py (subprocess) → WorkflowOrchestrator
+    """
+    import subprocess as _sp
 
     sse_handler = SSELogHandler(job.append_log)
     root_logger = logging.getLogger()
@@ -5461,101 +5463,166 @@ def _run_core_pipeline_sync(job: Job, req: CoreRunRequest) -> None:
 
     _stage_index = {"load": 5, "extract": 20, "translate": 50, "validate": 65, "tts": 75, "export": 90}
 
-    # SSE subscriber — 将 EventBus 事件转发到 WebUI
-    class _SSESubscriber:
-        def on_event(self, event: RuntimeEvent) -> None:
-            ev = event.event_type
-            if ev == RET.STAGE_STARTED:
-                job.current_step = f"{event.stage_label}..."
-                job.progress = _stage_index.get(event.stage, 10)
-                job.append_log(f"[STAGE] {event.stage_label} 开始")
-            elif ev == RET.STAGE_PROGRESS:
-                job.current_step = f"{event.stage_label} ({event.current_item}/{event.total_items})"
-                job.append_log(f"  [{event.stage_label}] {event.current_item}/{event.total_items}")
-            elif ev == RET.STAGE_COMPLETED:
-                job.current_step = f"{event.stage_label} 完成"
-                job.progress = _stage_index.get(event.stage, 50) + 5
-                job.append_log(f"[STAGE] {event.stage_label} 完成 — {event.message}")
-            elif ev in (RET.WORKFLOW_FAILED, RET.ERROR):
-                job.append_log(f"[ERROR] {event.message}")
-            else:
-                job.append_log(f"[{ev.value}] {event.message}")
+    # 构建 tvw.py 参数
+    tvw_args = [
+        str(VENV_PYTHON), str(TVW_SCRIPT),
+        "run", str(req.video_path),
+        "--use-core", "--json-output",
+    ]
+    if req.target_lang:
+        tvw_args.extend(["--lang", req.target_lang])
+    if req.engine:
+        tvw_args.extend(["--engine", req.engine])
+    if getattr(req, "bootstrap", False):
+        tvw_args.append("--bootstrap")
+    if getattr(req, "export_stage", False):
+        tvw_args.append("--export-stage")
+    if getattr(req, "stages", None):
+        tvw_args.extend(["--stages", req.stages])
 
-            # SSE 推送
-            if job._loop is not None and job._queues:
-                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-                payload = {
-                    "event": ev.value,
-                    "stage": event.stage,
-                    "stage_label": event.stage_label,
-                    "current_item": event.current_item,
-                    "total_items": event.total_items,
-                    "percent": round(event.percent, 3) if event.percent else 0,
-                    "message": event.message,
-                    "ts": ts,
-                    "payload": event.payload,
-                }
-                for q in job._queues:
-                    job._loop.call_soon_threadsafe(q.put_nowait, payload)
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUNBUFFERED"] = "1"
+    env["PYTORCH_NO_CUDA_MEMORY_CACHING"] = "1"
 
     try:
         job.status = "running"
         job.runtime_state = "bootstrapping"
-        job.current_step = "启动 core/ Pipeline..."
-        job.append_log("[INFO] 启动 core/ Pipeline (via core.pipeline.run_pipeline)")
+        job.current_step = "启动 tvw.py core/ Pipeline..."
+        job.append_log("[INFO] 启动 tvw.py run --use-core --json-output")
+        job.append_log(f"[INFO] {' '.join(tvw_args)}")
 
         ws_dir = str(Path(req.video_path).parent / f"{Path(req.video_path).stem}_project")
         job.workspace_path = ws_dir
         job.open_log_file(ws_dir)
         _update_workspace_runtime_state(ws_dir, RuntimeState.BOOTSTRAPPING)
 
-        EventBus().subscribe(_SSESubscriber())
-
-        state = run_pipeline(
-            req.video_path,
-            target_lang=req.target_lang,
-            engine=req.engine,
-            stages=["load", "extract", "translate", "validate"],
+        job.process = _sp.Popen(
+            tvw_args,
+            stdout=_sp.PIPE,
+            stderr=_sp.STDOUT,
+            cwd=str(PROJECT_ROOT),
+            env=env,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
 
-        job.status = "completed"
-        job.runtime_state = "ready"
-        job.progress = 100
-        job.current_step = "core/ Pipeline 完成"
-        job._core_state = state
-        job.append_log(f"[INFO] core/ Pipeline 完成: {len(state.ir.events)} events")
+        # 逐行解析 JSON 事件（RS 前缀）和普通日志
+        _json_begin = "\x1e"
+        for line in job.process.stdout:
+            if job.status == "cancelled":
+                job.process.terminate()
+                job.process.wait(timeout=10)
+                break
+            line = line.rstrip()
+            if not line:
+                continue
+            if line.startswith(_json_begin):
+                try:
+                    evt = _json.loads(line[1:])
+                    _handle_tvw_event(job, evt, _stage_index)
+                except Exception:
+                    job.append_log(line)
+            else:
+                job.append_log(line)
 
-        _update_workspace_runtime_state(job.workspace_path, RuntimeState.READY)
-        _save_job(job)
+        job.process.wait()
+        rc = job.process.returncode
 
-        if job._loop is not None and job._queues:
-            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-            for q in job._queues:
-                job._loop.call_soon_threadsafe(
-                    q.put_nowait,
-                    {"event": "done", "status": "completed", "ts": ts},
-                )
+        if job.status == "cancelled":
+            return
+
+        if rc == 0:
+            job.status = "completed"
+            job.runtime_state = "ready"
+            job.progress = 100
+            job.current_step = "core/ Pipeline 完成"
+            _update_workspace_runtime_state(job.workspace_path, RuntimeState.READY)
+            if job._loop is not None and job._queues:
+                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                for q in job._queues:
+                    job._loop.call_soon_threadsafe(
+                        q.put_nowait,
+                        {"event": "done", "status": "completed", "ts": ts},
+                    )
+        else:
+            job.status = "failed"
+            job.runtime_state = "failed"
+            job.current_step = f"tvw.py exited with code {rc}"
+            job.append_log(f"[ERROR] tvw.py exited with code {rc}")
+            _update_workspace_runtime_state(job.workspace_path, RuntimeState.FAILED)
+            if job._loop is not None and job._queues:
+                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                for q in job._queues:
+                    job._loop.call_soon_threadsafe(
+                        q.put_nowait,
+                        {"event": "done", "status": "failed", "ts": ts},
+                    )
 
     except Exception as e:
         job.status = "failed"
         job.runtime_state = "failed"
         job.current_step = "core/ Pipeline 失败"
-        job.append_log(f"[ERROR] core/ Pipeline 失败: {e}")
-        logger.exception("core/ Pipeline 异常 (job=%s)", job.id)
+        job.append_log(f"[ERROR] tvw.py Pipeline 失败: {e}")
+        logger.exception("tvw.py Pipeline 异常 (job=%s)", job.id)
         _update_workspace_runtime_state(job.workspace_path, RuntimeState.FAILED)
-        _save_job(job)
-
         if job._loop is not None and job._queues:
             ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
             for q in job._queues:
                 job._loop.call_soon_threadsafe(
                     q.put_nowait,
-                    {"event": "done", "status": "failed", "ts": ts,
-                     "error": str(e)},
+                    {"event": "done", "status": "failed", "ts": ts},
                 )
     finally:
+        _save_job(job)
         root_logger.removeHandler(sse_handler)
         job.close_log_file()
+
+
+def _handle_tvw_event(job: Job, evt: dict, stage_index: dict) -> None:
+    """将 tvw.py JSON 事件转换为 WebUI SSE 消息。"""
+    ev_type = evt.get("type", "")
+    if ev_type == "stage_started":
+        stage = evt.get("stage", "")
+        label = evt.get("stage_label", stage)
+        job.current_step = f"{label}..."
+        job.progress = stage_index.get(stage, 10)
+        job.append_log(f"[STAGE] {label} 开始")
+    elif ev_type == "stage_progress":
+        job.append_log(f"  [{evt.get('stage_label', '')}] {evt.get('message', '')}")
+    elif ev_type == "stage_completed":
+        stage = evt.get("stage", "")
+        label = evt.get("stage_label", stage)
+        job.current_step = f"{label} 完成"
+        job.progress = stage_index.get(stage, 50) + 5
+        job.append_log(f"[STAGE] {label} 完成 — {evt.get('message', '')}")
+    elif ev_type == "workflow_completed":
+        job.append_log(f"[INFO] tvw.py workflow 完成: {evt.get('events', 0)} events")
+    elif ev_type in ("workflow_failed", "error"):
+        job.append_log(f"[ERROR] tvw.py: {evt.get('error', evt.get('message', ''))}")
+    elif ev_type == "log":
+        level = evt.get("level", "INFO")
+        msg = evt.get("message", "")
+        job.append_log(f"[{level}] tvw: {msg}")
+    else:
+        job.append_log(f"[INFO] tvw: {_json.dumps(evt, ensure_ascii=False)}")
+
+    if job._loop is not None and job._queues:
+        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        payload = {
+            "event": ev_type,
+            "stage": evt.get("stage", ""),
+            "stage_label": evt.get("stage_label", evt.get("stage", "")),
+            "current_item": evt.get("current_item", 0),
+            "total_items": evt.get("total_items", 0),
+            "percent": round(evt.get("percent", 0), 3),
+            "message": evt.get("message", evt.get("error", "")),
+            "ts": ts,
+            "payload": evt,
+        }
+        for q in job._queues:
+            job._loop.call_soon_threadsafe(q.put_nowait, payload)
 
 
 @app.post("/api/core/pipeline/run", response_model=CoreRunResponse)
