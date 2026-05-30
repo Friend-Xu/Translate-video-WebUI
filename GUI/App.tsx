@@ -7,6 +7,7 @@ import GlobalBar from './components/GlobalBar/index'
 import EvidenceDock from './components/EvidenceDock/index'
 import NavRail from './components/NavRail/index'
 import TimelineArena from './components/TimelineArena/index'
+import VideoPreview from './components/TimelineArena/VideoPreview'
 import ProjectHubPage from './components/ProjectHubPage'
 import IRInspector from './components/IRInspector/index'
 import OpsDashboard from './components/OpsDashboard'
@@ -121,6 +122,7 @@ export default function App() {
   const storeEvents = useAppStore(s => s.events)
   const storeWaveform = useAppStore(s => s.waveform)
   const manifest = useAppStore(s => s.manifest)
+  const playheadPosition = useAppStore(s => s.playheadPosition)
   const isWorkspace = dataSource === 'workspace' && storeEvents.length > 0
 
   const events = isWorkspace ? storeEvents : MOCK_EVENTS
@@ -133,6 +135,19 @@ export default function App() {
     : null
 
   const selectedEvent = events.find(e => e.id === selectedEventId) || null
+
+  // VideoPreview 放在 Inspector 面板上方
+  const inspectorWithVideo = (
+    <>
+      <VideoPreview
+        videoSrc={videoSrc || null}
+        currentTime={playheadPosition}
+        events={events}
+        isPlaying={false}
+      />
+      <IRInspector event={selectedEvent} />
+    </>
+  )
 
   const arenaContent = (
     <>
@@ -180,7 +195,6 @@ export default function App() {
           waveform={waveform}
           totalDuration={totalDuration}
           ttsWaveforms={MOCK_TTS_WAVEFORMS}
-          videoSrc={videoSrc}
           onDropVideo={handleFileDropped}
         />
       </Box>
@@ -208,7 +222,7 @@ export default function App() {
         }
         railContent={<NavRail />}
         arenaContent={arenaContent}
-        inspectorContent={<IRInspector event={selectedEvent} />}
+        inspectorContent={inspectorWithVideo}
         dockContent={
           <EvidenceDock
             logs={logs}

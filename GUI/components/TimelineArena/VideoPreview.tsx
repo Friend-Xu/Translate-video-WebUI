@@ -68,11 +68,7 @@ export default function VideoPreview({
 
   return (
     <Box sx={{
-      position: 'absolute', top: 56, right: 16, zIndex: 10,
-      width: collapsed ? 'auto' : 320,
-      borderRadius: 1, overflow: 'hidden',
-      bgcolor: '#000', border: '1px solid rgba(255,255,255,0.12)',
-      boxShadow: '0 4px 24px rgba(0,0,0,0.6)',
+      borderBottom: 1, borderColor: 'divider', bgcolor: '#000',
     }}>
       <Box sx={{
         display: 'flex', alignItems: 'center', px: 1, height: 24,
@@ -90,7 +86,7 @@ export default function VideoPreview({
       </Box>
 
       <Collapse in={!collapsed}>
-        <Box sx={{ position: 'relative', width: 320, bgcolor: '#000' }}>
+        <Box sx={{ position: 'relative', width: '100%', bgcolor: '#000' }}>
           {videoSrc ? (
             <video
               ref={videoRef}
@@ -101,7 +97,7 @@ export default function VideoPreview({
             />
           ) : (
             <Box sx={{
-              width: '100%', height: 140, display: 'flex',
+              width: '100%', height: 120, display: 'flex',
               alignItems: 'center', justifyContent: 'center',
             }}>
               <Typography variant="caption" color="grey.600">
