@@ -5473,7 +5473,7 @@ def _run_core_pipeline_sync(job: Job, req: CoreRunRequest) -> None:
         tvw_args.extend(["--lang", req.target_lang])
     if req.engine:
         tvw_args.extend(["--engine", req.engine])
-    if getattr(req, "bootstrap", False):
+    if is_bootstrap:
         tvw_args.append("--bootstrap")
     if getattr(req, "export_stage", False):
         tvw_args.append("--export-stage")
@@ -5635,7 +5635,12 @@ async def start_core_pipeline(req: CoreRunRequest) -> CoreRunResponse:
     job_id = uuid.uuid4().hex[:8]
     workspace_path = str(video.parent / f"{video.stem}_project")
 
-    policy, _, _ = _preset_to_policy(req.workflow_preset, req.target_lang)
+    policy, _, skip_tts = _preset_to_policy(req.workflow_preset, req.target_lang)
+
+    # Core Pipeline 分两段: Bootstrap (到 VALIDATE) + Export (TTS→EXPORT)
+    # Timeline Runtime 初始化时永远只跑 Bootstrap，TTS 在用户确认后显式触发
+    is_bootstrap = True
+
     policy_summary = {
         "stages": [s.value for s in policy.stage_order()],
         "gates": {},
