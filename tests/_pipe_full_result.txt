@@ -1,0 +1,14 @@
+imports ok
+wsr: D:/Workspace/Translate_video/source_file\test_project
+factory ok
+policy ok
+global_config ok
+starting orchestrator.run()...
+done: 10 events
+rendered 10 events, 0 speakers
+  evt_001: trans='各位观众，今天我们要来介绍Minecraft 1.19版本，当然也包括1.18版本的10个最佳模组包' type=str
+  evt_002: trans='现在每天都有大量的全新模组包不断推出' type=str
+  evt_003: trans='但可惜的是，并非所有模组包都已针对1.19版本进行优化' type=str
+written timeline.json to D:/Workspace/Translate_video/source_file\test_project\01_extract\timeline.json
+VERIFIED: 10 events, all translations ok
+ALL OK - SUCCESS

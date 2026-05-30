@@ -2,12 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [feature/workflow-mvp, feature/unified-timeline-ir, main]
+    branches: [feature/workflow-mvp, main]
   pull_request:
-    branches: [feature/workflow-mvp, feature/unified-timeline-ir, main]
+    branches: [feature/workflow-mvp, main]
 
 jobs:
-  unit:
+  core-tests:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -22,23 +22,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pytest pytest-cov pydantic jsonschema numpy PyYAML
-      - name: Run core/ unit tests (L1)
+      - name: Run core tests (excl TTS integration)
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          pytest tests/test_core_ir.py tests/test_core_runtime.py \
-            tests/test_timeline_ir.py tests/test_timeline_patch.py \
-            tests/test_timeline_rules.py tests/test_timeline_safety.py \
-            tests/test_abstract.py tests/test_old_adapter.py \
-            tests/test_new_adapter.py tests/test_migration.py \
-            tests/test_dual_write.py tests/test_migration_router.py \
-            tests/test_ch12_patch_system.py tests/test_ch14_translation_quality.py \
-            tests/test_srt_gate_consistency.py \
-            tests/test_config_resolver.py tests/test_passes.py \
-            --cov=core --cov=SRT --cov-report=term-missing -v
+          pytest tests/ \
+            --ignore=tests/test_tts \
+            -q --tb=short \
+            --strict-markers \
+            --cov=core --cov-report=term-missing
 
-  regression:
-    needs: unit
+  tts-tests:
+    needs: core-tests
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -52,15 +47,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-cov pydantic jsonschema numpy PyYAML
-      - name: Run migration + adapter regression tests
+          pip install pytest pydantic jsonschema numpy PyYAML
+      - name: Run TTS tests (allow xfail for infrastructure-dependent)
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          pytest tests/test_migration.py tests/test_dual_write.py \
-            tests/test_asr_adapters.py tests/test_tts_adapters.py \
-            tests/test_cosyvoice_adapters.py tests/test_edge_tts_adapters.py \
-            tests/test_indextts_adapters.py -v
+          pytest tests/test_tts/ \
+            -q --tb=short \
+            --strict-markers
 
   frontend:
     runs-on: ubuntu-latest

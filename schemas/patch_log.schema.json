@@ -26,7 +26,19 @@
             "ADJUST_ALIGNMENT", "BATCH_SET_CONFIG", "MERGE_SPEAKERS",
             "MOVE_EVENT", "OVERRIDE_CONFIG", "RENAME_SPEAKER",
             "RESET_CONFIG", "RETAG_SPEAKER", "RETRIGGER_TTS",
-            "SET_CONFIG", "SET_TRANSLATION", "SPLIT_EVENT"
+            "SET_CONFIG", "SET_TRANSLATION", "SPLIT_EVENT",
+            "SEGMENT_INSERT", "SEGMENT_SPLIT", "SEGMENT_MERGE",
+            "UPDATE_TRANSCRIPTION", "REFINE_ALIGNMENT",
+            "ASSIGN_SPEAKER", "SPLIT_SEGMENT_BY_SPEAKER",
+            "UPDATE_TTS_AUDIO", "UPDATE_TRANSLATION", "UPDATE_EMOTION",
+            "ANNOTATE", "MERGE", "SPLIT", "REPLACE", "PROPAGATE",
+            "merge", "split", "replace", "propagate",
+            "segment_insert", "segment_split", "segment_merge",
+            "update_transcription", "refine_alignment",
+            "assign_speaker", "merge_speakers", "split_segment_by_speaker",
+            "update_tts_audio", "update_translation", "update_emotion",
+            "set_config", "override_config", "reset_config", "batch_set_config",
+            "annotate"
           ]
         },
         "targets": { "type": "array", "items": { "type": "string" }, "minItems": 1 },

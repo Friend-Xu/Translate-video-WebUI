@@ -4,10 +4,19 @@ tvw.py — Translate-video-WebUI 统一 CLI 入口 (CLI Runtime 计划书 §6)
 
 命令族:
   tvw run <video> [--lang zh] ...      完整管线 (委托 main.py)
-  tvw inspect <workspace>               查看 project.json + stage 进度
+  tvw inspect <workspace>               查看 project.json + session + checkpoint
+  tvw resume <workspace>                从最近 checkpoint 恢复执行
+  tvw logs <workspace> [--stage]...     查看结构化日志
   tvw stage <stage> <workspace>         只跑单个阶段
   tvw validate <workspace>              只跑校验
   tvw export <workspace>                只跑导出
+  tvw timeline show <workspace>         显示 Timeline IR 摘要
+  tvw patch history <workspace>         显示补丁历史
+  tvw rollback --to <checkpoint> <ws>   回退到指定 checkpoint
+  tvw benchmark <capability>            适配器基准测试
+  tvw profile <workspace>               workspace 性能分析
+  tvw gc <workspace>                    清理 workspace
+  tvw archive <workspace>               归档 workspace 为 .zip
 
 用法:
   tvw run source_file/video.mp4 --lang zh
@@ -82,6 +91,8 @@ def cmd_run(args) -> None:
 
 def cmd_inspect(args) -> None:
     """查看 workspace 状态。"""
+    from core.runtime.session import SessionStore, SessionState
+
     ws_dir = _find_workspace(args.workspace)
 
     manifest_path = os.path.join(ws_dir, "project.json")
@@ -96,9 +107,24 @@ def cmd_inspect(args) -> None:
         with open(ck_path, "r", encoding="utf-8") as f:
             checkpoint = _json.load(f)
 
+    session = SessionStore.load(ws_dir)
+
     print(f"Workspace: {ws_dir}")
 
-    if manifest:
+    if session:
+        icon = {"draft":"[..]","bootstrapping":"[>>]","reviewable":"[R ]",
+                "validated":"[V ]","exporting":"[>>]","completed":"[OK]","failed":"[XX]"}.get(session.session_state, "[??]")
+        print(f"Session: {icon} {session.session_state.value}")
+        print(f"Video: {session.video_path or manifest.get('video_path', 'N/A') if manifest else 'N/A'}")
+        print(f"Current Stage: {session.current_stage or '-'}")
+        print(f"Updated: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(session.updated_at))}")
+        if session.patch_head:
+            print(f"Patch Head: {session.patch_head}")
+        if session.validation_status:
+            print(f"Validation: {session.validation_status}")
+        if session.export_status:
+            print(f"Export: {session.export_status}")
+    elif manifest:
         state = manifest.get("state", "draft")
         print(f"State: {state}")
         print(f"Video: {manifest.get('video_path', 'N/A')}")
@@ -278,6 +304,198 @@ def cmd_archive(args) -> None:
         sys.exit(1)
 
 
+# ═══════════════════════════════════════════════════════════
+# T1.2-1.6: 新增命令 (CLI 完备化)
+# ═══════════════════════════════════════════════════════════
+
+def cmd_resume(args) -> None:
+    """从最近 checkpoint 恢复执行。"""
+    ws_dir = _find_workspace(args.workspace)
+
+    from core.runtime.session import SessionStore, SessionState
+    from core.engine import WorkflowOrchestrator, ProgressReport
+    from core.config.workflow_policy import WorkflowPolicy, WorkflowStage
+    from core.config.global_config import GlobalConfig
+
+    session = SessionStore.load(ws_dir)
+    if session is None:
+        print("[ERROR] 此 workspace 无 session 记录，无法恢复。请使用 `tvw stage` 重新执行", file=sys.stderr)
+        sys.exit(1)
+
+    current_stage = session.current_stage
+    if not current_stage:
+        print("[ERROR] session 未记录当前阶段，无法恢复", file=sys.stderr)
+        sys.exit(1)
+
+    stage = WorkflowStage(current_stage)
+    print(f"从 stage '{current_stage}' 恢复 (on {ws_dir})")
+
+    policy = WorkflowPolicy.single_stage(stage)
+    orchestrator = WorkflowOrchestrator(policy=policy, global_config=GlobalConfig())
+
+    def _progress(report: ProgressReport) -> None:
+        print(f"  [{report.stage_label}] {report.message}")
+
+    orchestrator.set_progress_callback(_progress)
+    SessionStore.transition(ws_dir, SessionState.BOOTSTRAPPING)
+
+    try:
+        orchestrator.run(ws_dir)
+        SessionStore.transition(ws_dir, SessionState.REVIEWABLE)
+        print(f"  [OK] 恢复完成")
+    except RuntimeError as e:
+        SessionStore.transition(ws_dir, SessionState.FAILED)
+        print(f"  [X] 恢复失败: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_logs(args) -> None:
+    """查看结构化日志。"""
+    ws_dir = _find_workspace(args.workspace)
+    log_path = os.path.join(ws_dir, "pipeline.log")
+    if not os.path.isfile(log_path):
+        print("(无日志文件)", file=sys.stderr)
+        return
+
+    with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+        lines = [line.rstrip() for line in f]
+
+    # filter by stage
+    if args.stage:
+        stage_tag = f"[{args.stage.upper()}]" if not args.stage.startswith("[") else args.stage
+        lines = [l for l in lines if stage_tag in l]
+
+    # filter by level
+    if args.level:
+        level_v = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40}
+        min_v = level_v.get(args.level.upper(), 0)
+        filtered = []
+        for l in lines:
+            lv = 20
+            if "[DEBUG]" in l: lv = 10
+            elif "[WARN" in l: lv = 30
+            elif "[ERROR]" in l: lv = 40
+            if lv >= min_v:
+                filtered.append(l)
+        lines = filtered
+
+    # tail
+    if args.tail and args.tail > 0:
+        lines = lines[-args.tail:]
+
+    for line in lines:
+        print(line)
+
+
+def cmd_timeline_show(args) -> None:
+    """显示 Timeline IR 摘要。"""
+    ws_dir = _find_workspace(args.workspace)
+    tl_path = os.path.join(ws_dir, "01_extract", "timeline.json")
+    if not os.path.isfile(tl_path):
+        print("[ERROR] 未找到 timeline.json", file=sys.stderr)
+        sys.exit(1)
+
+    with open(tl_path, "r", encoding="utf-8") as f:
+        tl = _json.load(f)
+
+    meta = tl.get("metadata", {})
+    print(f"Timeline: {tl.get('schema_version', '?')}  "
+          f"{meta.get('event_count', '?')} events, "
+          f"{meta.get('speaker_count', '?')} speakers")
+
+    events = tl.get("events", [])
+    if args.event_id:
+        events = [e for e in events if e.get("id") == args.event_id]
+        if not events:
+            print(f"(no event matching '{args.event_id}')")
+            return
+
+    for evt in events:
+        sid = evt.get("id", "?")
+        spk = evt.get("speaker", "-")
+        text = evt.get("text", "")[:80]
+        tr = evt.get("translation", "")
+        if isinstance(tr, dict):
+            tr = tr.get("text", "") or ""
+        start = evt.get("start", 0)
+        end = evt.get("end", 0)
+        mark = ""
+        if evt.get("confidence", 1.0) < 0.7:
+            mark = " [LOW-CONF]"
+        if evt.get("review_status", "") == "flagged":
+            mark += " [FLAGGED]"
+        print(f"  {sid:10s}  {start:6.1f}-{end:6.1f}  [{spk:6s}]  {text[:60]:60s}{mark}")
+        if tr:
+            print(f"  {'':10s}  {'':14s}  [译]       {tr[:60]}")
+
+
+def cmd_patch_history(args) -> None:
+    """显示补丁历史。"""
+    ws_dir = _find_workspace(args.workspace)
+    patch_path = os.path.join(ws_dir, "01_extract", "timeline_patches.json")
+    if not os.path.isfile(patch_path):
+        print("(无 patch 日志)", file=sys.stderr)
+        return
+
+    with open(patch_path, "r", encoding="utf-8") as f:
+        patches = _json.load(f)
+
+    if not isinstance(patches, list):
+        patches = patches.get("patches", [])
+
+    limit = args.limit or 20
+    patches = patches[-limit:]
+
+    for i, p in enumerate(patches):
+        op = p.get("opcode") or p.get("op", "?")
+        tid = p.get("targets", [p.get("target_id", "?")])[0] if isinstance(p.get("targets"), list) else p.get("target_id", "?")
+        author = p.get("author", "?")
+        ts = p.get("timestamp", "?")
+        reason = p.get("reason", "")
+        if reason:
+            reason = f" ({', '.join(reason) if isinstance(reason, list) else reason})"
+        print(f"  {op:20s}  {tid:10s}  {author:8s}  {ts}{reason}")
+
+
+def cmd_rollback(args) -> None:
+    """回退到指定的 checkpoint。"""
+    ws_dir = _find_workspace(args.workspace)
+
+    from core.runtime.rollback import RollbackManager
+    from core.runtime.snapshot import SnapshotManager
+
+    snap_mgr = SnapshotManager(ws_dir)
+    snapshots = snap_mgr.list_snapshots()
+    if not snapshots:
+        print("[ERROR] 无可用的快照", file=sys.stderr)
+        sys.exit(1)
+
+    target_id = args.to
+    if target_id not in {s.id for s in snapshots}:
+        print(f"[ERROR] 未找到快照: {target_id}", file=sys.stderr)
+        names = [s.id for s in snapshots[:5]]
+        print(f"可用: {', '.join(names)}")
+        sys.exit(1)
+
+    # dry-run 预览
+    target = next(s for s in snapshots if s.id == target_id)
+    print(f"即将回退到: {target_id} (created {time.strftime('%Y-%m-%d %H:%M', time.localtime(target.created_at))})")
+    affected = target.affected_events or ["?"]
+    print(f"影响事件: {', '.join(affected[:10])}{'...' if len(affected) > 10 else ''}")
+
+    if not args.force:
+        print("\n[Dry-run] 使用 --force 实际执行回退。回退不可逆。")
+        return
+
+    mgr = RollbackManager(ws_dir)
+    result = mgr.restore(target_id)
+    if result:
+        print(f"  [OK] 已回退到 {target_id}")
+    else:
+        print(f"  [ERROR] 回退失败", file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="tvw — Translate-video-WebUI CLI Runtime",
@@ -341,6 +559,36 @@ def main():
     p_arch = sub.add_parser("archive", help="归档 workspace 为 .zip")
     p_arch.add_argument("workspace", help="workspace 目录")
 
+    # ── resume ──
+    p_resume = sub.add_parser("resume", help="从最近 checkpoint 恢复执行")
+    p_resume.add_argument("workspace", help="workspace 目录")
+
+    # ── logs ──
+    p_logs = sub.add_parser("logs", help="查看结构化日志")
+    p_logs.add_argument("workspace", help="workspace 目录")
+    p_logs.add_argument("--stage", default="", help="按阶段过滤")
+    p_logs.add_argument("--level", default="INFO", help="最低日志级别")
+    p_logs.add_argument("--tail", type=int, default=0, help="只显示最后 N 行")
+
+    # ── timeline show ──
+    p_tl = sub.add_parser("timeline", help="Timeline IR 操作")
+    p_tl = sub.add_parser("timeline", help="Timeline IR 操作 (show)")
+    p_tl.add_argument("action", nargs="?", default="show", choices=["show"], help="操作")
+    p_tl.add_argument("workspace", help="workspace 目录")
+    p_tl.add_argument("--event-id", default="", help="按事件 ID 过滤")
+
+    # ── patch history ──
+    p_patch = sub.add_parser("patch", help="Patch 操作 (history)")
+    p_patch.add_argument("action", nargs="?", default="history", choices=["history"], help="操作")
+    p_patch.add_argument("workspace", help="workspace 目录")
+    p_patch.add_argument("--limit", type=int, default=20, help="显示最近 N 个")
+
+    # ── rollback ──
+    p_rb = sub.add_parser("rollback", help="回退到指定 checkpoint")
+    p_rb.add_argument("--to", required=True, help="目标 checkpoint ID")
+    p_rb.add_argument("workspace", help="workspace 目录")
+    p_rb.add_argument("--force", action="store_true", help="实际执行回退 (默认 dry-run)")
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -350,9 +598,14 @@ def main():
     _dispatch = {
         "run": cmd_run,
         "inspect": cmd_inspect,
+        "resume": cmd_resume,
+        "logs": cmd_logs,
         "stage": cmd_stage,
         "validate": cmd_validate,
         "export": cmd_export,
+        "timeline": cmd_timeline_show,
+        "patch": cmd_patch_history,
+        "rollback": cmd_rollback,
         "benchmark": cmd_benchmark,
         "profile": cmd_profile,
         "gc": cmd_gc,

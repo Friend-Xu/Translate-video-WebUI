@@ -58,9 +58,10 @@ if os.name == "nt":
 LOG_DIR = Path(__file__).resolve().parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 
-from pipeline.logging_setup import setup_logging, get_logger
-setup_logging(log_dir=LOG_DIR)
-logger = get_logger("server")
+from core.compat import compat_setup_logging
+compat_setup_logging(log_dir=LOG_DIR)
+import logging
+logger = logging.getLogger("server")
 
 # Workflow Presets — Pipeline as Timeline Runtime bootstrap templates
 from GUI.workflow_presets import get_presets, get_preset, RuntimeState
@@ -995,7 +996,7 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
     On native crashes (STATUS_HEAP_CORRUPTION, STATUS_ACCESS_VIOLATION),
     automatically retries up to 3 times with CUDA cleanup between attempts.
     """
-    from pipeline.ntstatus import decode_exit_code, is_native_crash, is_retryable
+    from core.compat import compat_decode_exit_code, compat_is_native_crash, compat_is_retryable
 
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
@@ -1244,12 +1245,11 @@ async def get_status(job_id: str) -> StatusResponse:
 
     detail = ""
     try:
-        from pipeline.checkpoint import PipelineCheckpoint
+        from core.compat import compat_load_checkpoint
         stem = os.path.splitext(os.path.basename(job.video_path))[0]
         ws_dir = os.path.join(os.path.dirname(job.video_path), f"{stem}_project")
-        ck = PipelineCheckpoint.load(ws_dir)
-        prog = ck.progress()
-        detail = prog.get("detail", "")
+        ck_data = compat_load_checkpoint(ws_dir)
+        detail = ck_data.get("detail", "") if ck_data else ""
     except Exception:
         pass
 
@@ -1648,16 +1648,14 @@ class SubtitleOptimizeRequest(BaseModel):
 
 @app.post("/api/subtitle/optimize")
 async def subtitle_optimize(req: SubtitleOptimizeRequest) -> dict:
-    from pipeline.external_subtitle_optimizer import (
-        optimize_srt, optimize_bilingual, load_ext_subtitle_config,
-    )
+    from core.compat import compat_optimize_external_srt, compat_load_ext_subtitle_config
 
     target = Path(req.target_srt)
     if not target.is_file():
         raise HTTPException(status_code=400, detail=f"目标字幕文件不存在: {req.target_srt}")
 
     # Load defaults from config
-    cfg = load_ext_subtitle_config()
+    cfg = compat_load_ext_subtitle_config()
     mode = req.mode or cfg.get("mode", "target_only")
 
     if mode == "bilingual" and not req.source_srt:
@@ -1680,17 +1678,17 @@ async def subtitle_optimize(req: SubtitleOptimizeRequest) -> dict:
     }
 
     if mode == "bilingual" and req.source_srt:
-        stats = optimize_bilingual(req.target_srt, req.source_srt, output_path, **kwargs)
+        stats = compat_optimize_external_srt(req.target_srt, req.source_srt, output_path, **kwargs)
     else:
-        stats = optimize_srt(req.target_srt, output_path, **kwargs)
+        stats = compat_optimize_external_srt(req.target_srt, "", output_path, **kwargs)
 
     return {"ok": True, "output_path": output_path, "stats": stats}
 
 
 @app.get("/api/subtitle/optimize-defaults")
 async def subtitle_optimize_defaults() -> dict:
-    from pipeline.external_subtitle_optimizer import load_ext_subtitle_config
-    cfg = load_ext_subtitle_config()
+    from core.compat import compat_load_ext_subtitle_config
+    cfg = compat_load_ext_subtitle_config()
     return {
         "mode": cfg.get("mode", "target_only"),
         "min_duration_cjk": cfg.get("min_duration_cjk", 1.5),
@@ -2189,10 +2187,10 @@ class PreviewPromptRequest(BaseModel):
 @app.post("/api/translate/preview-prompt")
 async def preview_prompt(req: PreviewPromptRequest) -> dict:
     """解析 prompt 变量并返回预览。"""
-    from SRT.SRT_Translator import resolve_prompt_variables, _LANG_LABELS
+    from core.compat import compat_resolve_prompt_variables, compat_get_lang_labels
     variables = {
-        "source_lang": _LANG_LABELS.get(req.source_lang, req.source_lang),
-        "target_lang": _LANG_LABELS.get(req.target_lang, req.target_lang),
+        "source_lang": compat_get_lang_labels().get(req.source_lang, req.source_lang),
+        "target_lang": compat_get_lang_labels().get(req.target_lang, req.target_lang),
         "fmt": req.fmt,
         "retry": "false",
         "items": "<1> 示例字幕 1\n<2> 示例字幕 2\n<3> 示例字幕 3",
@@ -2214,8 +2212,10 @@ async def preview_prompt(req: PreviewPromptRequest) -> dict:
 @app.get("/api/models")
 async def list_models() -> dict:
     """列出所有已知模型及其下载状态，含环境适配评估。"""
-    from pipeline.model_manager import ModelManager
-    from pipeline.env_detect import detect_env, assess_model_fit
+    from core.compat import compat_model_manager
+    ModelManager = compat_model_manager()
+    from core.compat import compat_detect_env
+    detect_env, assess_model_fit = compat_detect_env()
 
     env = detect_env()
     models = []
@@ -2253,7 +2253,8 @@ async def list_models() -> dict:
 @app.get("/api/env")
 async def get_env_info() -> dict:
     """返回当前运行环境信息。"""
-    from pipeline.env_detect import detect_env
+    from core.compat import compat_detect_env
+    detect_env, _ = compat_detect_env()
     env = detect_env()
     return {
         "gpu_name": env.gpu_name,
@@ -2277,7 +2278,8 @@ _download_cancels: dict[str, "threading.Event"] = {}
 @app.get("/api/models/download/{model_id}")
 async def download_model_stream(model_id: str, req: Request):
     """SSE 流式下载模型，推送实时进度。"""
-    from pipeline.model_manager import ModelManager
+    from core.compat import compat_model_manager
+    ModelManager = compat_model_manager()
 
     status = ModelManager.check(model_id)
     if not status.downloadable:
@@ -2385,7 +2387,7 @@ async def preview_chattts_voice(req: ChatTTSPreviewRequest) -> dict:
     import base64
     import tempfile
     import shutil
-    from pipeline.tts_chattts import ChatTTSEngine
+    from core.compat import compat_chattts_factory
 
     config_key = (req.model_source, req.model_path or "", req.speaker_pt or "")
 
@@ -2621,7 +2623,7 @@ async def system_info() -> dict:
     # ChatTTS worker count based on VRAM (pass known VRAM to avoid import torch)
     chattts_workers = 1
     try:
-        from pipeline.tts_pipeline import calc_chattts_workers
+        from core.compat import compat_calc_chattts_workers
         chattts_workers = calc_chattts_workers(total_vram_mb=gpu_vram_mb if has_gpu else None)
     except Exception:
         pass
@@ -3476,7 +3478,7 @@ async def media_analyze(req: PreflightRequest):
     if not req.video_path or not Path(req.video_path).is_file():
         raise HTTPException(status_code=400, detail="视频文件不存在")
 
-    from pipeline.media_preflight import analyze as preflight_analyze
+    from core.compat import compat_preflight_analyze
     result = preflight_analyze(req.video_path, req.audio_path)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
@@ -3491,7 +3493,7 @@ async def media_mux(req: MuxRequest):
     if not req.audio_path or not Path(req.audio_path).is_file():
         raise HTTPException(status_code=400, detail="音频文件不存在")
 
-    from pipeline.media_preflight import mux_video_audio
+    from core.compat import compat_mux_video_audio
     try:
         output = mux_video_audio(req.video_path, req.audio_path)
         sz = os.path.getsize(output)
@@ -5399,7 +5401,7 @@ async def validate_workspace_artifacts(req: ValidateRequest):
     if not req.workspace or not Path(req.workspace).is_dir():
         raise HTTPException(status_code=400, detail="工作目录不存在")
     try:
-        from pipeline.schema_validator import validate_workspace
+        from core.compat import compat_validate_workspace
         results = validate_workspace(req.workspace)
         all_ok = all(results.values()) and len(results) > 0
         return {"ok": all_ok, "results": results,

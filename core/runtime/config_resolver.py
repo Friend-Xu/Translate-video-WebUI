@@ -96,10 +96,14 @@ class ConfigResolver:
             # 过滤 null 值（表示「恢复继承」）
             clean_config = {k: v for k, v in event_config.items() if v is not None}
             deep_merge(resolved, clean_config)
-            # 处理 null 语义：显式删除被 null 覆盖的键
+            # 处理 null 语义：恢复继承
             for k, v in event_config.items():
                 if v is None and k in resolved:
-                    del resolved[k]
+                    global_defaults = self._global.get_slot_defaults(slot)
+                    if k in global_defaults:
+                        resolved[k] = global_defaults[k]
+                    else:
+                        del resolved[k]
 
         return resolved
 
