@@ -1,4 +1,4 @@
-import { useRef, useCallback, useState, useEffect } from 'react'
+import { useCallback } from 'react'
 import {
   Box, Slider, IconButton, ToggleButton, Tooltip, Divider,
 } from '@mui/material'
@@ -37,7 +37,8 @@ const activeSx = (on: boolean) => ({
   '&:hover': { color: '#4f46e5', bgcolor: 'rgba(99,102,241,0.08)' },
 })
 
-const BASE_PPS = 80  // matches useTimelineCoordinates
+const MIN_ZOOM = 0.1
+const MAX_ZOOM = 50
 
 export default function TimelineToolbar({
   onZoomToFit, onScrollToPlayhead,
@@ -47,23 +48,16 @@ export default function TimelineToolbar({
   const timelineViewMode = useAppStore(s => s.timelineViewMode)
   const setTimelineViewMode = useAppStore(s => s.setTimelineViewMode)
 
-  const [zoomValue, setZoomValue] = useState(1)
-  const zoomRef = useRef(1)
+  const zoomLevel = coord.zoomLevel
+
+  // Zoom slider uses log scale for natural feel
+  const zoomToSlider = (zl: number) => (Math.log10(zl) - Math.log10(MIN_ZOOM)) / (Math.log10(MAX_ZOOM) - Math.log10(MIN_ZOOM)) * 100
+  const sliderToZoom = (sv: number) => Math.pow(10, Math.log10(MIN_ZOOM) + (sv / 100) * (Math.log10(MAX_ZOOM) - Math.log10(MIN_ZOOM)))
 
   const handleZoomChange = useCallback((_: any, value: number | number[]) => {
     const v = Array.isArray(value) ? value[0] : value
-    coord.zoomTo(BASE_PPS * v)
-    setZoomValue(v)
-    zoomRef.current = v
+    coord.zoomTo(sliderToZoom(v))
   }, [coord])
-
-  useEffect(() => {
-    const scale = coord.pixelsPerSec / BASE_PPS
-    if (Math.abs(scale - zoomRef.current) > 0.05) {
-      zoomRef.current = scale
-      setZoomValue(Math.max(0.1, Math.min(10, scale)))
-    }
-  }, [coord.pixelsPerSec])
 
   return (
     <Box>
@@ -90,14 +84,14 @@ export default function TimelineToolbar({
           </IconButton>
         </Tooltip>
 
-        {/* Zoom slider — controls track block scale */}
+        {/* Zoom slider — log scale for natural feel across 0.1x–50x */}
         <Box sx={{ width: 120, mx: 0.5 }}>
           <Slider
             size="small"
-            min={0.1}
-            max={10}
-            step={0.01}
-            value={zoomValue}
+            min={0}
+            max={100}
+            step={0.1}
+            value={zoomToSlider(zoomLevel)}
             onChange={handleZoomChange}
             sx={{
               color: '#6366f1',
