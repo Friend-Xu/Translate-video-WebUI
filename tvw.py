@@ -142,6 +142,7 @@ def _run_legacy_pipeline(args) -> None:
 def _run_core_pipeline(args) -> None:
     """Core 路径 — WorkflowOrchestrator 执行 (计划书 §10)。"""
     from core.engine import WorkflowOrchestrator, ProgressReport
+    from core.engine.pass_factory import create_pass_factory
     from core.config.workflow_policy import WorkflowPolicy, WorkflowStage
     from core.config.global_config import GlobalConfig
     from core.runtime.session import SessionStore, SessionState
@@ -149,6 +150,12 @@ def _run_core_pipeline(args) -> None:
     _json_out({"type": "log", "level": "INFO", "message": "tvw run --use-core → WorkflowOrchestrator", "ts": _now_iso()})
 
     video_path = os.path.abspath(args.video)
+    stem = os.path.splitext(os.path.basename(video_path))[0]
+    ws_dir = os.path.join(os.path.dirname(video_path) or ".", f"{stem}_project")
+    extract_dir = os.path.join(ws_dir, "01_extract")
+    os.makedirs(extract_dir, exist_ok=True)
+
+    lang = args.lang or "zh"
     if args.stages:
         stages = [s.strip() for s in args.stages.split(",")]
     else:
@@ -156,15 +163,14 @@ def _run_core_pipeline(args) -> None:
 
     if args.bootstrap:
         # Bootstrap 预设 — 仅到 VALIDATE
-        policy = WorkflowPolicy.bootstrap_preset(target_lang=args.lang or "zh")
+        policy = WorkflowPolicy.bootstrap_preset(target_lang=lang)
     elif args.export_stage:
         # Export 预设 — 仅 TTS + EXPORT
-        policy = WorkflowPolicy.export_preset(target_lang=args.lang or "zh")
+        policy = WorkflowPolicy.export_preset(target_lang=lang)
         stages = ["tts", "export"]
-        ws_dir = _find_workspace(args.video)
         SessionStore.transition(ws_dir, SessionState.EXPORTING)
     else:
-        policy = WorkflowPolicy.default_preset(target_lang=args.lang or "zh")
+        policy = WorkflowPolicy.default_preset(target_lang=lang)
 
     gcfg = GlobalConfig()
     if args.engine:
@@ -172,10 +178,92 @@ def _run_core_pipeline(args) -> None:
     if args.device:
         gcfg.device = args.device
 
+    # ── 构建 translate_fn ─────────────────────────────────────
+    # 新架构直接调用 LLM API，不通过 SRT 文件桥接。
+    # LLMTranslationPass 已将事件渲染为标签化文本、解析 LLM 回复、
+    # 通过 PatchEngine 写入 runtime state。
+    def _translate_fn(tagged_text: str) -> str:
+        """直接调 LLM API 翻译标签化文本。
+
+        输入: "[evt_001] 今天天气真好\n[evt_002] 一起去散步吧"
+        输出: "[evt_001] 今日は本当にいい天気ですね\n[evt_002] 一緒に散歩しましょう"
+        """
+        import yaml
+
+        config_path = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+        except Exception:
+            cfg = {}
+
+        api_key = cfg.get("api_key", "") or os.environ.get("DEEPSEEK_API_KEY", "")
+        if not api_key:
+            # 无 API key → mock translation
+            from core.passes.llm_translation_pass import LLMTranslationPass
+            return LLMTranslationPass._mock_translate(tagged_text)
+
+        base_url = cfg.get("api_base_url", "") or "https://api.deepseek.com"
+        model = cfg.get("model", "deepseek-chat")
+
+        import requests as _requests
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": (
+                    "You are a subtitle translator. "
+                    "Translate the following tagged text from the source language "
+                    f"to {lang}. Preserve ALL [evt_NNN] tags exactly as-is. "
+                    "Return ONLY the translated text with tags, no explanations."
+                )},
+                {"role": "user", "content": tagged_text},
+            ],
+            "temperature": 0.1,
+            "max_tokens": 4000,
+        }
+        try:
+            resp = _requests.post(
+                f"{base_url.rstrip('/')}/v1/chat/completions",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=120,
+            )
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"].strip()
+        except Exception:
+            from core.passes.llm_translation_pass import LLMTranslationPass
+            return LLMTranslationPass._mock_translate(tagged_text)
+
+    # ── 构建 Pass 工厂 ─────────────────────────────────────
+    audio_path = os.path.join(extract_dir, f"{stem}_extracted.wav")
+    vocals_path = os.path.join(extract_dir, f"{stem}_vocals.wav")
+
+    # 选择质量把控策略 (用户可在 config/quality.yaml 中选择)
+    # 导入策略模块以触发装饰器注册
+    import core.quality.logic_gate_strategy  # noqa: F401 — 注册 logic_gate
+    import core.quality.xcomet_strategy     # noqa: F401 — 注册 xcomet
+    quality_name = gcfg.project.translation.get("quality_strategy", "logic_gate")
+    from core.quality.protocol import create_strategy as create_quality_strategy
+    quality_strategy = create_quality_strategy(quality_name, gcfg)
+
+    pass_factory = create_pass_factory(
+        translate_fn=_translate_fn,
+        video_path=video_path,
+        audio_path=audio_path,
+        output_dir=ws_dir,
+        workspace_dir=ws_dir,
+        engine=args.engine or "edge",
+        quality_strategy=quality_strategy,
+    )
+
     orchestrator = WorkflowOrchestrator(
         policy=policy,
         global_config=gcfg,
     )
+    orchestrator.set_pass_factory(pass_factory)
 
     def _progress(report: ProgressReport) -> None:
         _json_out({
@@ -207,13 +295,29 @@ def _run_core_pipeline(args) -> None:
 
     EventBus().subscribe(_TvwSubscriber())
 
+    # 初始化 session
+    try:
+        SessionStore.transition(ws_dir, SessionState.BOOTSTRAPPING)
+        SessionStore.save(ws_dir, video_path=video_path, current_stage="load")
+    except Exception:
+        pass
+
     try:
         state = orchestrator.run(video_path)
-        events_count = len(state.ir.events) if state and hasattr(state, 'ir') and hasattr(state.ir, 'events') else 0
+        events_count = len(state.event_states) if state and hasattr(state, 'event_states') else 0
+
+        # 持久化 timeline.json 到 workspace
+        _persist_timeline(state, ws_dir, video_path, lang)
+
+        SessionStore.transition(ws_dir, SessionState.REVIEWABLE)
         _json_out({"type": "workflow_completed", "status": "completed", "events": events_count, "ts": _now_iso()})
         if not _JSON_OUTPUT:
             print(f"  [OK] Core Pipeline 完成 ({events_count} events)")
     except Exception as e:
+        try:
+            SessionStore.transition(ws_dir, SessionState.FAILED)
+        except Exception:
+            pass
         _json_error(f"Core pipeline failed: {e}")
         if not _JSON_OUTPUT:
             print(f"  [X] Core Pipeline 失败: {e}", file=sys.stderr)
@@ -657,6 +761,61 @@ def cmd_rollback(args) -> None:
     else:
         print(f"  [ERROR] 回退失败", file=sys.stderr)
         sys.exit(1)
+
+
+def _persist_timeline(state, ws_dir: str, video_path: str, lang: str) -> str:
+    """将 TimelineProjectState 持久化为 timeline.json，供 WebUI 读取。"""
+    import json as _json_mod
+    extract_dir = os.path.join(ws_dir, "01_extract")
+    os.makedirs(extract_dir, exist_ok=True)
+    tl_path = os.path.join(extract_dir, "timeline.json")
+
+    events = []
+    speakers = {}
+    for es in state.event_states.values():
+        evt = {
+            "id": es.id,
+            "start": es.start,
+            "end": es.end,
+            "text": es.ir.text_ref,
+            "source": es.ir.source,
+        }
+        # translation
+        trans = es.translation
+        if isinstance(trans, dict):
+            evt["translation"] = trans
+        elif isinstance(trans, str) and trans:
+            evt["translation"] = {"text": trans}
+        else:
+            evt["translation"] = {}
+        # speaker
+        spk = es.speaker
+        if isinstance(spk, dict) and spk.get("speaker_id"):
+            evt["speaker"] = spk["speaker_id"]
+            sid = spk["speaker_id"]
+            if sid not in speakers:
+                speakers[sid] = {"id": sid, "label": sid}
+        # confidence
+        evt["confidence"] = es.provenance.get("confidence", 1.0)
+        # review status
+        evt["review_status"] = es.review.get("review_status", "pending")
+        events.append(evt)
+
+    timeline = {
+        "schema_version": "2.0",
+        "metadata": {
+            "event_count": len(events),
+            "speaker_count": len(speakers),
+            "source_video": video_path,
+            "language": lang,
+            "generated_at": _now_iso(),
+        },
+        "events": events,
+        "speakers": speakers,
+    }
+    with open(tl_path, "w", encoding="utf-8") as f:
+        _json_mod.dump(timeline, f, ensure_ascii=False, indent=2)
+    return tl_path
 
 
 def main():
