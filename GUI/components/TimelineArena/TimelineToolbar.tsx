@@ -1,15 +1,16 @@
 import { useRef, useCallback, useState, useEffect } from 'react'
 import {
-  Box, Typography, Slider, IconButton, ToggleButton, Tooltip, Divider,
+  Box, Slider, IconButton, ToggleButton, Tooltip, Divider,
 } from '@mui/material'
 import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrongRounded'
 import FitScreenIcon from '@mui/icons-material/FitScreenRounded'
+import ZoomInIcon from '@mui/icons-material/ZoomInRounded'
+import ZoomOutIcon from '@mui/icons-material/ZoomOutRounded'
 import FilterListIcon from '@mui/icons-material/FilterListRounded'
 import VisibilityIcon from '@mui/icons-material/VisibilityRounded'
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHighRounded'
 import LayersClearIcon from '@mui/icons-material/LayersClearRounded'
 import PsychologyIcon from '@mui/icons-material/PsychologyRounded'
-import SpeakerIcon from '@mui/icons-material/RecordVoiceOverRounded'
 import TableViewIcon from '@mui/icons-material/TableViewRounded'
 import TimelineViewIcon from '@mui/icons-material/TimelineRounded'
 import PeopleIcon from '@mui/icons-material/PeopleRounded'
@@ -36,31 +37,26 @@ const activeSx = (on: boolean) => ({
   '&:hover': { color: '#4f46e5', bgcolor: 'rgba(99,102,241,0.08)' },
 })
 
-const BASE_PPS = 24 // 1x zoom = 24 pixels per second
+const BASE_PPS = 24
 
 export default function TimelineToolbar({
   onZoomToFit, onScrollToPlayhead,
   filterBarOpen, onToggleFilter, onRetrigger, onRequestAiAssist,
   coord,
 }: Props) {
-  const timelineFocus = useAppStore(s => s.timelineFocus)
-  const setTimelineFocus = useAppStore(s => s.setTimelineFocus)
   const timelineViewMode = useAppStore(s => s.timelineViewMode)
   const setTimelineViewMode = useAppStore(s => s.setTimelineViewMode)
 
-  // Zoom slider state
   const [zoomValue, setZoomValue] = useState(1)
   const zoomRef = useRef(1)
 
   const handleZoomChange = useCallback((_: any, value: number | number[]) => {
     const v = Array.isArray(value) ? value[0] : value
-    const scale = v
-    coord.zoomTo(BASE_PPS * scale)
-    setZoomValue(scale)
-    zoomRef.current = scale
+    coord.zoomTo(BASE_PPS * v)
+    setZoomValue(v)
+    zoomRef.current = v
   }, [coord])
 
-  // Sync slider from external zoom (wheel/scroll)
   useEffect(() => {
     const scale = coord.pixelsPerSec / BASE_PPS
     if (Math.abs(scale - zoomRef.current) > 0.05) {
@@ -77,7 +73,7 @@ export default function TimelineToolbar({
         height: 40, minHeight: 40, bgcolor: '#e8ecf4',
         borderBottom: '1px solid #d0d5e0',
       }}>
-        {/* Group A: Navigation controls */}
+        {/* Navigation + Zoom */}
         <Tooltip title="定位到播放头">
           <IconButton size="small" sx={btnSx} onClick={onScrollToPlayhead}>
             <CenterFocusStrongIcon fontSize="small" />
@@ -88,10 +84,40 @@ export default function TimelineToolbar({
             <FitScreenIcon fontSize="small" />
           </IconButton>
         </Tooltip>
+        <Tooltip title="缩小">
+          <IconButton size="small" sx={btnSx} onClick={() => coord.zoomOut()}>
+            <ZoomOutIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+
+        {/* Zoom slider — controls track block scale */}
+        <Box sx={{ width: 120, mx: 0.5 }}>
+          <Slider
+            size="small"
+            min={0.1}
+            max={10}
+            step={0.01}
+            value={zoomValue}
+            onChange={handleZoomChange}
+            sx={{
+              color: '#6366f1',
+              height: 3,
+              '& .MuiSlider-thumb': { width: 12, height: 12 },
+              '& .MuiSlider-track': { height: 3 },
+              '& .MuiSlider-rail': { height: 3, opacity: 0.2 },
+            }}
+          />
+        </Box>
+
+        <Tooltip title="放大">
+          <IconButton size="small" sx={btnSx} onClick={() => coord.zoomIn()}>
+            <ZoomInIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
 
         <Box sx={{ flexGrow: 1 }} />
 
-        {/* Group B: Snap & Filter & View toggle */}
+        {/* Snap & Filter */}
         <Tooltip title="吸附">
           <ToggleButton size="small" value="snap" sx={activeSx(false)}>
             <CenterFocusStrongIcon fontSize="small" sx={{ transform: 'rotate(45deg)' }} />
@@ -109,14 +135,7 @@ export default function TimelineToolbar({
 
         <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
 
-        {/* Group C: View mode toggle */}
-        <Tooltip title={timelineFocus === 'speaker' ? '关闭说话人聚焦' : '说话人聚焦'}>
-          <ToggleButton size="small" value="speaker" selected={timelineFocus === 'speaker'}
-            onChange={() => setTimelineFocus(timelineFocus === 'speaker' ? 'default' : 'speaker')}
-            sx={activeSx(timelineFocus === 'speaker')}>
-            <SpeakerIcon fontSize="small" />
-          </ToggleButton>
-        </Tooltip>
+        {/* View mode toggle */}
         <Tooltip title={timelineViewMode === 'table' ? '切换到时间轴视图' : '切换到字幕校验表格'}>
           <ToggleButton size="small" value="table" selected={timelineViewMode === 'table'}
             onChange={() => setTimelineViewMode(timelineViewMode === 'table' ? 'timeline' : 'table')}
@@ -134,7 +153,7 @@ export default function TimelineToolbar({
 
         <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
 
-        {/* Group D: AI tools */}
+        {/* AI tools */}
         <Tooltip title="局部重算选中事件">
           <IconButton size="small" sx={btnSx} onClick={onRetrigger}><AutoFixHighIcon fontSize="small" /></IconButton>
         </Tooltip>
@@ -144,38 +163,6 @@ export default function TimelineToolbar({
         <Tooltip title="AI 辅助建议">
           <IconButton size="small" sx={btnSx} onClick={onRequestAiAssist}><PsychologyIcon fontSize="small" /></IconButton>
         </Tooltip>
-      </Box>
-
-      {/* Zoom slider row — 剪映风格 */}
-      <Box sx={{
-        display: 'flex', alignItems: 'center', px: 2, height: 28,
-        bgcolor: '#dce2f0', borderBottom: '1px solid #c8cdd8',
-        gap: 1,
-      }}>
-        <Typography variant="caption" sx={{ color: 'text.disabled', fontSize: '0.6rem', minWidth: 18 }}>
-          −
-        </Typography>
-        <Slider
-          size="small"
-          min={0.1}
-          max={10}
-          step={0.01}
-          value={zoomValue}
-          onChange={handleZoomChange}
-          sx={{
-            color: '#90CAF9',
-            height: 3,
-            '& .MuiSlider-thumb': { width: 12, height: 12 },
-            '& .MuiSlider-track': { height: 3 },
-            '& .MuiSlider-rail': { height: 3, opacity: 0.3 },
-          }}
-        />
-        <Typography variant="caption" sx={{ color: 'text.disabled', fontSize: '0.6rem', minWidth: 18 }}>
-          +
-        </Typography>
-        <Typography variant="caption" sx={{ color: 'text.disabled', fontSize: '0.6rem', minWidth: 36, textAlign: 'center' }}>
-          {zoomValue.toFixed(1)}x
-        </Typography>
       </Box>
     </Box>
   )
