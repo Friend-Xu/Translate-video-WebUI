@@ -2663,7 +2663,15 @@ async def runtime_status() -> dict:
         stages.append({"stage": current_stage, "label": last.stage_label or current_stage,
                        "message": last.message or "", "percent": last.percent or 0})
 
-    return {"gpu": gpu, "models": models, "stages": stages, "current_stage": current_stage}
+    # T6: include Capability Registry snapshot in runtime status
+    try:
+        from core.runtime.capability import CapabilityRegistry
+        caps = CapabilityRegistry().to_dict()
+    except Exception:
+        caps = {}
+
+    return {"gpu": gpu, "models": models, "stages": stages, "current_stage": current_stage,
+            "capabilities": caps}
 
 
 @app.get("/api/system/info")

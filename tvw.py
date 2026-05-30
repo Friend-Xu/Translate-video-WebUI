@@ -257,6 +257,7 @@ def cmd_export(args) -> None:
 def cmd_benchmark(args) -> None:
     """适配器性能基准。"""
     from core.adapters.benchmark import run_benchmark, format_result
+    from core.runtime.capability import CapabilityRegistry
 
     if args.capability == "all":
         capabilities = ["asr.whisper", "tts.chattts"]
@@ -267,6 +268,13 @@ def cmd_benchmark(args) -> None:
         result = run_benchmark(cap, audio=args.audio, text=args.text,
                                device=args.device, iterations=args.iterations)
         print(format_result(result))
+
+    if args.show_caps:
+        reg = CapabilityRegistry()
+        print("\n[Capability Registry]")
+        for e in reg.list_all():
+            loaded = "LOADED" if e.loaded else "idle"
+            print(f"  {e.capability_id:25s}  stage={e.stage:10s}  vram={e.vram_mb:5d}MB  {loaded}")
 
 
 def cmd_profile(args) -> None:
@@ -544,6 +552,7 @@ def main():
     p_bench.add_argument("--text", default="你好世界", help="测试文本 (tts 需要)")
     p_bench.add_argument("--device", default="cuda", help="计算设备")
     p_bench.add_argument("--iterations", type=int, default=3, help="重复次数")
+    p_bench.add_argument("--show-caps", action="store_true", help="显示 Capability Registry 快照")
 
     # ── profile ──
     p_profile = sub.add_parser("profile", help="workspace 性能分析")
