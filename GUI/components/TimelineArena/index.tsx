@@ -9,6 +9,7 @@ import ZoomPresets from './ZoomPresets'
 import TimelineToolbar from './TimelineToolbar'
 import VideoPreview from './VideoPreview'
 import ReviewTable from './ReviewTable'
+import SpeakerReviewView from '../ModeViews/SpeakerReviewView'
 import ImpactIndicator from '../ImpactIndicator'
 import RubberBandSelect from './RubberBandSelect'
 import EventContextMenu from './EventContextMenu'
@@ -405,6 +406,14 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
               }}
             />
           </Box>
+        ) : timelineViewMode === 'speaker-timeline' ? (
+          <SpeakerReviewView
+            events={filteredEvents}
+            onSeek={(time: number) => {
+              useAppStore.getState().setPlayhead(time)
+              setVideoCurrentTime(time)
+            }}
+          />
         ) : (
           <Box sx={{
             flexGrow: 1, display: 'flex',
@@ -440,34 +449,36 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
         onClose={handleCloseDiffPopover}
       />
 
-      {/* Zoom controls + Minimap */}
-      <Box sx={{
-        display: 'flex', flexDirection: 'column',
-        borderTop: '1px solid rgba(255,255,255,0.1)',
-        bgcolor: '#1a1a1a',
-        flexShrink: 0,
-      }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5 }}>
-          <ZoomPresets coord={coord} />
-          <Box sx={{ flexGrow: 1 }} />
-          <Box sx={{ display: 'flex', gap: 0.5 }}>
-            <Box component="button" onClick={() => coord.zoomOut()} aria-label="缩小"
-              sx={{ width: 24, height: 24, border: '1px solid rgba(255,255,255,0.5)', borderRadius: 1, bgcolor: '#333', color: '#fff', cursor: 'pointer', fontSize: '0.9rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              −
-            </Box>
-            <Box component="button" onClick={() => coord.zoomIn()} aria-label="放大"
-              sx={{ width: 24, height: 24, border: '1px solid rgba(255,255,255,0.5)', borderRadius: 1, bgcolor: '#333', color: '#fff', cursor: 'pointer', fontSize: '0.9rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              +
+      {/* Zoom controls + Minimap — 表格模式下隐藏小地图 */}
+      {timelineViewMode !== 'table' && (
+        <Box sx={{
+          display: 'flex', flexDirection: 'column',
+          borderTop: '1px solid rgba(255,255,255,0.1)',
+          bgcolor: '#1a1a1a',
+          flexShrink: 0,
+        }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5 }}>
+            <ZoomPresets coord={coord} />
+            <Box sx={{ flexGrow: 1 }} />
+            <Box sx={{ display: 'flex', gap: 0.5 }}>
+              <Box component="button" onClick={() => coord.zoomOut()} aria-label="缩小"
+                sx={{ width: 24, height: 24, border: '1px solid rgba(255,255,255,0.5)', borderRadius: 1, bgcolor: '#333', color: '#fff', cursor: 'pointer', fontSize: '0.9rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                −
+              </Box>
+              <Box component="button" onClick={() => coord.zoomIn()} aria-label="放大"
+                sx={{ width: 24, height: 24, border: '1px solid rgba(255,255,255,0.5)', borderRadius: 1, bgcolor: '#333', color: '#fff', cursor: 'pointer', fontSize: '0.9rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                +
+              </Box>
             </Box>
           </Box>
+          <TimelineMinimap
+            events={events}
+            coord={coord}
+            totalDuration={totalDuration || 80}
+            canvasWidth={canvasW}
+          />
         </Box>
-        <TimelineMinimap
-          events={events}
-          coord={coord}
-          totalDuration={totalDuration || 80}
-          canvasWidth={canvasW}
-        />
-      </Box>
+      )}
     </Box>
   )
 }

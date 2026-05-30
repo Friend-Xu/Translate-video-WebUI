@@ -17,6 +17,7 @@ import PsychologyIcon from '@mui/icons-material/PsychologyRounded'
 import SpeakerIcon from '@mui/icons-material/RecordVoiceOverRounded'
 import TableViewIcon from '@mui/icons-material/TableViewRounded'
 import TimelineViewIcon from '@mui/icons-material/TimelineRounded'
+import PeopleIcon from '@mui/icons-material/PeopleRounded'
 import { useAppStore } from '../../store/useAppStore'
 
 interface Props {
@@ -165,6 +166,13 @@ export default function TimelineToolbar({
             onChange={() => setTimelineViewMode(timelineViewMode === 'table' ? 'timeline' : 'table')}
             sx={activeSx(timelineViewMode === 'table')}>
             {timelineViewMode === 'table' ? <TimelineViewIcon fontSize="small" /> : <TableViewIcon fontSize="small" />}
+          </ToggleButton>
+        </Tooltip>
+        <Tooltip title="说话人时间轴">
+          <ToggleButton size="small" value="speaker-timeline" selected={timelineViewMode === 'speaker-timeline'}
+            onChange={() => setTimelineViewMode(timelineViewMode === 'speaker-timeline' ? 'timeline' : 'speaker-timeline' as any)}
+            sx={activeSx(timelineViewMode === 'speaker-timeline')}>
+            <PeopleIcon fontSize="small" />
           </ToggleButton>
         </Tooltip>
         <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />

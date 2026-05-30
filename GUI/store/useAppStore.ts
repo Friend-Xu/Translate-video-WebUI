@@ -48,7 +48,7 @@ export interface AppState {
   exportPreviewText: { zh: string; en: string }
 
   // Review state (字幕校验)
-  timelineViewMode: 'timeline' | 'table'
+  timelineViewMode: 'timeline' | 'table' | 'speaker-timeline'
   reviewEntries: SubtitleEntry[]
   reviewSearchQuery: string
   reviewFilterMode: ReviewFilterMode
@@ -184,7 +184,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   exportPreviewText: { zh: 'Minecraft我的世界 村民交易', en: 'Minecraft Villager Trade x64' },
 
   // Review defaults (字幕校验)
-  timelineViewMode: 'timeline' as 'timeline' | 'table',
+  timelineViewMode: 'timeline' as 'timeline' | 'table' | 'speaker-timeline',
   reviewEntries: [] as SubtitleEntry[],
   reviewSearchQuery: '',
   reviewFilterMode: 'all' as ReviewFilterMode,
