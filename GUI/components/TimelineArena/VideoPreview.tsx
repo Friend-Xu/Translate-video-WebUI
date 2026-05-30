@@ -4,9 +4,6 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrowRounded'
 import PauseIcon from '@mui/icons-material/PauseRounded'
 import SkipPreviousIcon from '@mui/icons-material/SkipPreviousRounded'
 import SkipNextIcon from '@mui/icons-material/SkipNextRounded'
-import LoopIcon from '@mui/icons-material/LoopRounded'
-import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrongRounded'
-import FitScreenIcon from '@mui/icons-material/FitScreenRounded'
 import { useAppStore } from '../../store/useAppStore'
 import type { EventViewModel } from '../../types'
 
@@ -31,7 +28,6 @@ export default function VideoPreview({
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [isPlaying, setIsPlaying] = useState(false)
-  const [loopEnabled, setLoopEnabled] = useState(false)
   const [duration, setDuration] = useState(0)
 
   const currentTimeRef = useRef(currentTime)
@@ -79,13 +75,9 @@ export default function VideoPreview({
     const iv = setInterval(() => {
       const t = video.currentTime
       if (t > 0) setPlayhead(t)
-      if (loopEnabled && video.ended) {
-        video.currentTime = 0
-        video.play().catch(() => {})
-      }
     }, 100)
     return () => clearInterval(iv)
-  }, [isPlaying, loopEnabled, setPlayhead])
+  }, [isPlaying, setPlayhead])
 
   const handlePlayPause = useCallback(() => {
     setIsPlaying(p => {
@@ -113,10 +105,6 @@ export default function VideoPreview({
     }
   }, [events, playheadPosition, setPlayhead])
 
-  const handleScrollToPlayhead = useCallback(() => {
-    // Trigger scroll in TrackSystem via store
-    useAppStore.getState().setPlayhead(playheadPosition)
-  }, [playheadPosition])
 
   const activeEvent = events.find(e => playheadPosition >= e.start && playheadPosition <= e.end) || null
 
@@ -184,44 +172,27 @@ export default function VideoPreview({
         )}
       </Box>
 
-      {/* Player controls — always visible */}
+      {/* Player controls */}
       <Box sx={{
         display: 'flex', alignItems: 'center', px: 0.5, py: 0.25, gap: 0,
         bgcolor: '#1a1a1a', height: 28,
       }}>
-        <Tooltip title="上一个事件"><span>
-          <IconButton size="small" sx={btnSx} onClick={handleJumpPrev}>
-            <SkipPreviousIcon sx={{ fontSize: 16 }} />
-          </IconButton>
-        </span></Tooltip>
         <Tooltip title={isPlaying ? '暂停' : '播放'}>
           <IconButton size="small" sx={btnSx} onClick={handlePlayPause}>
             {isPlaying ? <PauseIcon sx={{ fontSize: 16 }} /> : <PlayArrowIcon sx={{ fontSize: 16 }} />}
           </IconButton>
         </Tooltip>
+        <Tooltip title="上一个事件"><span>
+          <IconButton size="small" sx={btnSx} onClick={handleJumpPrev}>
+            <SkipPreviousIcon sx={{ fontSize: 16 }} />
+          </IconButton>
+        </span></Tooltip>
         <Tooltip title="下一个事件"><span>
           <IconButton size="small" sx={btnSx} onClick={handleJumpNext}>
             <SkipNextIcon sx={{ fontSize: 16 }} />
           </IconButton>
         </span></Tooltip>
-        <Tooltip title={loopEnabled ? '关闭循环' : '循环播放'}>
-          <IconButton size="small"
-            sx={{ ...btnSx, color: loopEnabled ? '#90CAF9' : '#aaa' }}
-            onClick={() => setLoopEnabled(l => !l)}>
-            <LoopIcon sx={{ fontSize: 16 }} />
-          </IconButton>
-        </Tooltip>
         <Box sx={{ flexGrow: 1 }} />
-        <Tooltip title="定位到播放头">
-          <IconButton size="small" sx={btnSx} onClick={handleScrollToPlayhead}>
-            <CenterFocusStrongIcon sx={{ fontSize: 16 }} />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="适应窗口">
-          <IconButton size="small" sx={btnSx}>
-            <FitScreenIcon sx={{ fontSize: 16 }} />
-          </IconButton>
-        </Tooltip>
       </Box>
     </Box>
   )

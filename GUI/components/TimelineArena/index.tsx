@@ -31,8 +31,6 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
   const canvasW = (() => { return 1200 })()
   const [_canvasWState, setCanvasW] = useState(1200)
   const [dragOver, setDragOver] = useState(false)
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [loopEnabled, setLoopEnabled] = useState(false)
   const [videoCurrentTime, setVideoCurrentTime] = useState(0)
   const [contextMenuAnchor, setContextMenuAnchor] = useState<HTMLElement | null>(null)
   const [contextMenuEvent, setContextMenuEvent] = useState<EventViewModel | null>(null)
@@ -249,31 +247,6 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
     if (file && onDropVideo) onDropVideo(file)
   }, [onDropVideo])
 
-  // Playback handlers
-  const handlePlayPause = useCallback(() => {
-    setIsPlaying(p => {
-      if (!p) {
-        // Seek video to playhead before starting playback
-        setVideoCurrentTime(useAppStore.getState().playheadPosition)
-      }
-      return !p
-    })
-  }, [])
-
-  const handleJumpPrev = useCallback(() => {
-    const playhead = useAppStore.getState().playheadPosition
-    const prev = events.filter(e => e.end <= playhead).sort((a, b) => b.end - a.end)[0]
-    if (prev) useAppStore.getState().setPlayhead(prev.start)
-  }, [events])
-
-  const handleJumpNext = useCallback(() => {
-    const playhead = useAppStore.getState().playheadPosition
-    const next = events.filter(e => e.start >= playhead).sort((a, b) => a.start - b.start)[0]
-    if (next) useAppStore.getState().setPlayhead(next.start)
-  }, [events])
-
-  const handleToggleLoop = useCallback(() => setLoopEnabled(l => !l), [])
-
   const handleScrollToPlayhead = useCallback(() => {
     const playhead = useAppStore.getState().playheadPosition
     coord.scrollToTime(playhead)
@@ -296,7 +269,6 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
       // Don't intercept when focus is in an input
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
-      if (e.key === ' ') { e.preventDefault(); handlePlayPause() }
       if (e.key === '\\') { e.preventDefault(); coord.zoomToFit(0.05) }
       if (e.key === '+' || e.key === '=') { e.preventDefault(); coord.zoomIn() }
       if (e.key === '-') { e.preventDefault(); coord.zoomOut() }
@@ -327,12 +299,6 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
       }}
     >
       <TimelineToolbar
-        isPlaying={isPlaying}
-        onPlayPause={handlePlayPause}
-        onJumpPrev={handleJumpPrev}
-        onJumpNext={handleJumpNext}
-        loopEnabled={loopEnabled}
-        onToggleLoop={handleToggleLoop}
         onZoomToFit={() => coord.zoomToFit(0.05)}
         onScrollToPlayhead={handleScrollToPlayhead}
         filterBarOpen={filterBarOpen}

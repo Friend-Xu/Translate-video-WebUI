@@ -2,11 +2,6 @@ import { useRef, useCallback, useState, useEffect } from 'react'
 import {
   Box, Typography, Slider, IconButton, ToggleButton, Tooltip, Divider,
 } from '@mui/material'
-import SkipPreviousIcon from '@mui/icons-material/SkipPreviousRounded'
-import PlayArrowIcon from '@mui/icons-material/PlayArrowRounded'
-import PauseIcon from '@mui/icons-material/PauseRounded'
-import SkipNextIcon from '@mui/icons-material/SkipNextRounded'
-import LoopIcon from '@mui/icons-material/LoopRounded'
 import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrongRounded'
 import FitScreenIcon from '@mui/icons-material/FitScreenRounded'
 import FilterListIcon from '@mui/icons-material/FilterListRounded'
@@ -22,12 +17,6 @@ import { useAppStore } from '../../store/useAppStore'
 import type { TimelineCoordAPI } from '../../hooks/useTimelineCoordinates'
 
 interface Props {
-  isPlaying: boolean
-  onPlayPause: () => void
-  onJumpPrev: () => void
-  onJumpNext: () => void
-  loopEnabled: boolean
-  onToggleLoop: () => void
   onZoomToFit: () => void
   onScrollToPlayhead: () => void
   filterBarOpen: boolean
@@ -50,8 +39,7 @@ const activeSx = (on: boolean) => ({
 const BASE_PPS = 24 // 1x zoom = 24 pixels per second
 
 export default function TimelineToolbar({
-  isPlaying, onPlayPause, onJumpPrev, onJumpNext,
-  loopEnabled, onToggleLoop, onZoomToFit, onScrollToPlayhead,
+  onZoomToFit, onScrollToPlayhead,
   filterBarOpen, onToggleFilter, onRetrigger, onRequestAiAssist,
   coord,
 }: Props) {
@@ -89,25 +77,7 @@ export default function TimelineToolbar({
         height: 40, minHeight: 40, bgcolor: '#1a1a1a',
         borderBottom: '1px solid rgba(255,255,255,0.08)',
       }}>
-        {/* Group A: Transport */}
-        <Tooltip title="上一个事件 (Ctrl+←)"><span>
-          <IconButton size="small" sx={btnSx} onClick={onJumpPrev}><SkipPreviousIcon fontSize="small" /></IconButton>
-        </span></Tooltip>
-        <Tooltip title="播放/暂停 (Space)">
-          <IconButton size="small" sx={btnSx} onClick={onPlayPause}>
-            {isPlaying ? <PauseIcon fontSize="small" /> : <PlayArrowIcon fontSize="small" />}
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="下一个事件 (Ctrl+→)"><span>
-          <IconButton size="small" sx={btnSx} onClick={onJumpNext}><SkipNextIcon fontSize="small" /></IconButton>
-        </span></Tooltip>
-        <Tooltip title={loopEnabled ? '关闭循环 (L)' : '开启循环 (L)'}>
-          <ToggleButton size="small" value="loop" selected={loopEnabled}
-            onChange={onToggleLoop} sx={activeSx(loopEnabled)}>
-            <LoopIcon fontSize="small" />
-          </ToggleButton>
-        </Tooltip>
-
+        {/* Group A: Navigation controls */}
         <Tooltip title="定位到播放头">
           <IconButton size="small" sx={btnSx} onClick={onScrollToPlayhead}>
             <CenterFocusStrongIcon fontSize="small" />
