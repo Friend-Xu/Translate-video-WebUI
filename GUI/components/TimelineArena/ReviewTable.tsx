@@ -279,7 +279,7 @@ export default function ReviewTable({ events, onSeek }: Props) {
   }, [events.length])
 
   return (
-    <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
       {/* Toolbar */}
       <Card sx={{ p: 1, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', borderRadius: 0 }}>
         <Chip label={`${localEntries.length} 条`} size="small" />
