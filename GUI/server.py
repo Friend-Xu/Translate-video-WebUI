@@ -123,7 +123,7 @@ app.add_middleware(
 @app.on_event("startup")
 async def _reapply_logging():
     """uvicorn 启动时会重置日志配置，重新应用系统级日志。"""
-    setup_logging(log_dir=LOG_DIR)
+    compat_setup_logging(log_dir=LOG_DIR)
     logger.info("系统日志已就绪")
 
 
