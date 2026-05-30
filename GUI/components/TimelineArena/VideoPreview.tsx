@@ -118,7 +118,7 @@ export default function VideoPreview({
     <Box sx={{
       bgcolor: '#e8ecf4', borderBottom: '1px solid #d0d5e0',
     }}>
-      <Box sx={{ position: 'relative', bgcolor: '#000' }}>
+      <Box sx={{ position: 'relative', bgcolor: '#dce2f0' }}>
         {videoSrc ? (
           <video
             ref={videoRef}
@@ -131,7 +131,7 @@ export default function VideoPreview({
           <Box sx={{
             width: '100%', height: 120, display: 'flex',
             alignItems: 'center', justifyContent: 'center',
-            bgcolor: '#f1f5f9',
+            bgcolor: '#dce2f0',
           }}>
             <Typography variant="caption" color="text.secondary">
               {activeEvent
