@@ -27,13 +27,13 @@ interface Props {
 }
 
 const btnSx = {
-  color: '#aaa', fontSize: '0.85rem', '&:hover': { color: '#fff', bgcolor: 'rgba(255,255,255,0.08)' },
+  color: '#475569', fontSize: '0.85rem', '&:hover': { color: '#1e293b', bgcolor: 'rgba(99,102,241,0.08)' },
 }
 
 const activeSx = (on: boolean) => ({
-  color: on ? '#90CAF9' : '#aaa',
-  bgcolor: on ? 'rgba(144,202,249,0.12)' : 'transparent',
-  '&:hover': { color: '#fff', bgcolor: 'rgba(255,255,255,0.08)' },
+  color: on ? '#6366f1' : '#475569',
+  bgcolor: on ? 'rgba(99,102,241,0.1)' : 'transparent',
+  '&:hover': { color: '#4f46e5', bgcolor: 'rgba(99,102,241,0.08)' },
 })
 
 const BASE_PPS = 24 // 1x zoom = 24 pixels per second
@@ -74,8 +74,8 @@ export default function TimelineToolbar({
       {/* Main toolbar row */}
       <Box sx={{
         display: 'flex', alignItems: 'center', gap: 0.5, px: 1, py: 0.5,
-        height: 40, minHeight: 40, bgcolor: '#1a1a1a',
-        borderBottom: '1px solid rgba(255,255,255,0.08)',
+        height: 40, minHeight: 40, bgcolor: '#e8ecf4',
+        borderBottom: '1px solid #d0d5e0',
       }}>
         {/* Group A: Navigation controls */}
         <Tooltip title="定位到播放头">
@@ -149,7 +149,7 @@ export default function TimelineToolbar({
       {/* Zoom slider row — 剪映风格 */}
       <Box sx={{
         display: 'flex', alignItems: 'center', px: 2, height: 28,
-        bgcolor: '#121212', borderBottom: '1px solid rgba(255,255,255,0.06)',
+        bgcolor: '#dce2f0', borderBottom: '1px solid #c8cdd8',
         gap: 1,
       }}>
         <Typography variant="caption" sx={{ color: 'text.disabled', fontSize: '0.6rem', minWidth: 18 }}>

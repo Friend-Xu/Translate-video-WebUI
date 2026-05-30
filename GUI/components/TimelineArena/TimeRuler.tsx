@@ -45,7 +45,7 @@ export default function TimeRuler({ coord, totalDuration, canvasWidth, markers, 
         {major && (
           <span style={{
             position: 'absolute', top: 0, left: 4,
-            fontSize: 9, color: '#aaa',
+            fontSize: 9, color: '#64748b',
             whiteSpace: 'nowrap', lineHeight: '14px',
           }}>
             {showMs ? `${i.toFixed(1)}s` : `${i}s`}

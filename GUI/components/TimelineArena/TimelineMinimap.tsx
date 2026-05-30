@@ -130,8 +130,8 @@ export default function TimelineMinimap({ events, coord, totalDuration, canvasWi
       sx={{
         height: totalH, minHeight: totalH,
         width: '100%', position: 'relative',
-        bgcolor: '#1a1a1a',
-        borderTop: '1px solid rgba(255,255,255,0.08)',
+        bgcolor: '#e8ecf4',
+        borderTop: '1px solid #d0d5e0',
         cursor: 'pointer',
         flexShrink: 0,
       }}

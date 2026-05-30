@@ -16,7 +16,7 @@ interface Props {
 }
 
 const btnSx = {
-  color: '#aaa', p: 0.25, '&:hover': { color: '#fff', bgcolor: 'rgba(255,255,255,0.1)' },
+  color: '#475569', p: 0.25, '&:hover': { color: '#1e293b', bgcolor: 'rgba(99,102,241,0.08)' },
 }
 
 export default function VideoPreview({
@@ -116,9 +116,8 @@ export default function VideoPreview({
 
   return (
     <Box sx={{
-      bgcolor: '#121212', borderBottom: '1px solid rgba(255,255,255,0.08)',
+      bgcolor: '#e8ecf4', borderBottom: '1px solid #d0d5e0',
     }}>
-      {/* Video area — always visible */}
       <Box sx={{ position: 'relative', bgcolor: '#000' }}>
         {videoSrc ? (
           <video
@@ -132,9 +131,9 @@ export default function VideoPreview({
           <Box sx={{
             width: '100%', height: 120, display: 'flex',
             alignItems: 'center', justifyContent: 'center',
-            bgcolor: '#0d0d0d',
+            bgcolor: '#f1f5f9',
           }}>
-            <Typography variant="caption" color="grey.600">
+            <Typography variant="caption" color="text.secondary">
               {activeEvent
                 ? activeEvent.translation || activeEvent.text
                 : '选择一个事件以查看详情'}
@@ -175,7 +174,7 @@ export default function VideoPreview({
       {/* Player controls */}
       <Box sx={{
         display: 'flex', alignItems: 'center', px: 0.5, py: 0.25, gap: 0,
-        bgcolor: '#1a1a1a', height: 28,
+        bgcolor: '#e8ecf4', height: 28,
       }}>
         <Tooltip title={isPlaying ? '暂停' : '播放'}>
           <IconButton size="small" sx={btnSx} onClick={handlePlayPause}>

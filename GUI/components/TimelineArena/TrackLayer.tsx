@@ -234,7 +234,7 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
   return (
     <Box sx={{
       height: containerHeight, position: 'relative',
-      borderBottom: '1px solid rgba(255,255,255,0.06)',
+      borderBottom: '1px solid #d0d5e0',
       opacity: !track.visible ? 0 : isDimmed ? 0.2 : track.muted ? 0.5 : 1,
       pointerEvents: !track.visible ? 'none' : track.locked || track.muted ? 'none' : isDimmed ? 'none' : 'auto',
       overflow: 'hidden',

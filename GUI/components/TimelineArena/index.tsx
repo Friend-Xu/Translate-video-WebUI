@@ -397,7 +397,7 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
         <Box sx={{
           display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5,
           borderTop: '1px solid rgba(255,255,255,0.1)',
-          bgcolor: '#1a1a1a', flexShrink: 0,
+          bgcolor: '#dce2f0', flexShrink: 0,
         }}>
           <ZoomPresets coord={coord} />
           <Box sx={{ flexGrow: 1 }} />
