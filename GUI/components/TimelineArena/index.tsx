@@ -7,7 +7,6 @@ import TrackSystem from './TrackSystem'
 import TimelineMinimap from './TimelineMinimap'
 import ZoomPresets from './ZoomPresets'
 import TimelineToolbar from './TimelineToolbar'
-import VideoPreview from './VideoPreview'
 import ReviewTable from './ReviewTable'
 import SpeakerReviewView from '../ModeViews/SpeakerReviewView'
 import ImpactIndicator from '../ImpactIndicator'
@@ -22,16 +21,14 @@ interface Props {
   waveform: WaveformData | null
   totalDuration: number
   ttsWaveforms?: TrackWaveformData[]
-  videoSrc?: string | null
   onDropVideo?: (file: File) => void
 }
 
-export default function TimelineArena({ events, totalDuration, waveform, ttsWaveforms, videoSrc, onDropVideo }: Props) {
+export default function TimelineArena({ events, totalDuration, waveform, ttsWaveforms, onDropVideo }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const canvasW = (() => { return 1200 })()
   const [_canvasWState, setCanvasW] = useState(1200)
   const [dragOver, setDragOver] = useState(false)
-  const [videoCurrentTime, setVideoCurrentTime] = useState(0)
   const [contextMenuAnchor, setContextMenuAnchor] = useState<HTMLElement | null>(null)
   const [contextMenuEvent, setContextMenuEvent] = useState<EventViewModel | null>(null)
   const [lockedEventIds, setLockedEventIds] = useState<Set<string>>(new Set())
@@ -252,15 +249,6 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
     coord.scrollToTime(playhead)
   }, [coord])
 
-  const handleVideoTimeUpdate = useCallback((t: number) => {
-    setVideoCurrentTime(t)
-    useAppStore.getState().setPlayhead(t)
-  }, [])
-
-  const handleVideoDurationChange = useCallback((_d: number) => {
-    // duration tracked by VideoPreview internally
-  }, [])
-
   const isEmpty = events.length === 0
 
   // Keyboard shortcuts
@@ -314,13 +302,6 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
         onClose={() => setFilterBarOpen(false)}
         events={events}
       />
-      <VideoPreview
-        videoSrc={videoSrc || null}
-        currentTime={videoCurrentTime}
-        events={filteredEvents}
-        onTimeUpdate={handleVideoTimeUpdate}
-        onDurationChange={handleVideoDurationChange}
-      />
       {!isEmpty && timelineViewMode === 'timeline' ? (
           <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <RubberBandSelect
@@ -366,7 +347,6 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
               events={filteredEvents}
               onSeek={(time: number) => {
                 useAppStore.getState().setPlayhead(time)
-                setVideoCurrentTime(time)
               }}
             />
           </Box>
@@ -375,7 +355,6 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
             events={filteredEvents}
             onSeek={(time: number) => {
               useAppStore.getState().setPlayhead(time)
-              setVideoCurrentTime(time)
             }}
           />
         ) : (
