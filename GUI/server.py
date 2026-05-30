@@ -3845,22 +3845,26 @@ async def speaker_load(req: SpeakerLoadRequest):
     result["version"] = tl.get("schema_version", "2.0")
 
     # 构建 speaker_lanes (从 v2 events 按 speaker 分组)
-    SPEAKER_COLORS = ["#4CAF50","#2196F3","#FF9800","#E91E63","#9C27B0","#00BCD4"]
-    speakers_v2 = tl.get("speakers", {})
-    speaker_segments: dict[str, list] = {}
-    for evt in tl.get("events", []):
-        spk = evt.get("speaker") or "UNKNOWN"
-        if spk not in speaker_segments:
-            speaker_segments[spk] = []
-        speaker_segments[spk].append({
-            "id": evt.get("id", ""),
-            "start": evt.get("start", 0),
-            "end": evt.get("end", 0),
-            "text": evt.get("text", ""),
-            "translation": evt.get("translation", ""),
-            "overlap": (evt.get("overlap") or {}).get("overlap_duration", 0) > 0 if evt.get("overlap") else False,
-            "words": evt.get("words", []),
-        })
+49	    SPEAKER_COLORS = ["#4CAF50","#2196F3","#FF9800","#E91E63","#9C27B0","#00BCD4"]
+50	    speakers_v2 = tl.get("speakers", {})
+51	    speaker_segments: dict[str, list] = {}
+52	    for evt in tl.get("events", []):
+53	        spk = evt.get("speaker") or "UNKNOWN"
+54	        if spk not in speaker_segments:
+55	            speaker_segments[spk] = []
+56	        # 规范化 translation: v2 dict → 取 text 字段
+57	        trans = evt.get("translation", "")
+58	        if isinstance(trans, dict):
+59	            trans = trans.get("text", "")
+60	        speaker_segments[spk].append({
+61	            "id": evt.get("id", ""),
+62	            "start": evt.get("start", 0),
+63	            "end": evt.get("end", 0),
+64	            "text": evt.get("text", ""),
+65	            "translation": trans,
+66	            "overlap": (evt.get("overlap") or {}).get("overlap_duration", 0) > 0 if evt.get("overlap") else False,
+67	            "words": evt.get("words", []),
+68	        })
 
     lanes = []
     sorted_speakers = sorted(speaker_segments.items())
