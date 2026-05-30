@@ -42,7 +42,7 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
   const setPlayhead = useAppStore(s => s.setPlayhead)
   const resizeTrack = useAppStore(s => s.resizeTrack)
 
-  const MIN_SPEAKER_HEIGHT = 28 // per speaker: ~12px name + ~16px blocks
+  const MIN_SPEAKER_HEIGHT = 40
 
   // Auto-resize speaker track height based on speaker count
   const speakerCount = track.renderer === 'speaker-lane'

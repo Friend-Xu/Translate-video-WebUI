@@ -10,7 +10,7 @@ import type { TrackDefinition } from '../../types/timeline'
 import { SPEAKER_TRACK_PRESET, TRACK_VISIBILITY_MAP } from '../../types/timeline'
 
 const HEADER_W = 120
-const ICON_SIZE = 16
+const ICON_SIZE = 14
 const ROW_BG = '#252525'
 const ROW_BORDER = 'rgba(255,255,255,0.08)'
 

@@ -333,14 +333,13 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
         onJumpNext={handleJumpNext}
         loopEnabled={loopEnabled}
         onToggleLoop={handleToggleLoop}
-        onZoomIn={() => coord.zoomIn()}
-        onZoomOut={() => coord.zoomOut()}
         onZoomToFit={() => coord.zoomToFit(0.05)}
         onScrollToPlayhead={handleScrollToPlayhead}
         filterBarOpen={filterBarOpen}
         onToggleFilter={handleToggleFilter}
         onRetrigger={handleRetrigger}
         onRequestAiAssist={handleRequestAiAssist}
+        coord={coord}
       />
       <FilterBar
         open={filterBarOpen}
@@ -358,7 +357,7 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
         onDurationChange={handleVideoDurationChange}
       />
       {!isEmpty && timelineViewMode === 'timeline' ? (
-          <>
+          <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <RubberBandSelect
               events={filteredEvents}
               pixelToTime={coord.pixelToTime}
@@ -395,7 +394,7 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
                   />
                 )
               })}
-          </>
+          </Box>
         ) : timelineViewMode === 'table' ? (
           <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
             <ReviewTable
@@ -449,28 +448,15 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
         onClose={handleCloseDiffPopover}
       />
 
-      {/* Zoom controls + Minimap — 表格模式下隐藏小地图 */}
-      {timelineViewMode !== 'table' && (
+      {/* Minimap — 表格/说话人模式下隐藏 */}
+      {timelineViewMode === 'timeline' && (
         <Box sx={{
-          display: 'flex', flexDirection: 'column',
+          display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5,
           borderTop: '1px solid rgba(255,255,255,0.1)',
-          bgcolor: '#1a1a1a',
-          flexShrink: 0,
+          bgcolor: '#1a1a1a', flexShrink: 0,
         }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5 }}>
-            <ZoomPresets coord={coord} />
-            <Box sx={{ flexGrow: 1 }} />
-            <Box sx={{ display: 'flex', gap: 0.5 }}>
-              <Box component="button" onClick={() => coord.zoomOut()} aria-label="缩小"
-                sx={{ width: 24, height: 24, border: '1px solid rgba(255,255,255,0.5)', borderRadius: 1, bgcolor: '#333', color: '#fff', cursor: 'pointer', fontSize: '0.9rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                −
-              </Box>
-              <Box component="button" onClick={() => coord.zoomIn()} aria-label="放大"
-                sx={{ width: 24, height: 24, border: '1px solid rgba(255,255,255,0.5)', borderRadius: 1, bgcolor: '#333', color: '#fff', cursor: 'pointer', fontSize: '0.9rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                +
-              </Box>
-            </Box>
-          </Box>
+          <ZoomPresets coord={coord} />
+          <Box sx={{ flexGrow: 1 }} />
           <TimelineMinimap
             events={events}
             coord={coord}

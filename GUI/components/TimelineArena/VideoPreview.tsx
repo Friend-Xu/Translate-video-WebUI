@@ -22,15 +22,12 @@ export default function VideoPreview({
   onDurationChange,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(true)
   const [duration, setDuration] = useState(0)
 
-  // Keep a ref with the latest currentTime so play effect can read it
-  // without adding currentTime to its deps (which would re-fire on every timeupdate)
   const currentTimeRef = useRef(currentTime)
   currentTimeRef.current = currentTime
 
-  // Control video playback — seek to currentTime before playing
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
@@ -70,78 +67,75 @@ export default function VideoPreview({
   }
 
   return (
-    <Box sx={{ borderBottom: 1, borderColor: 'divider', bgcolor: '#000' }}>
+    <Box sx={{
+      position: 'absolute', top: 56, right: 16, zIndex: 10,
+      width: collapsed ? 'auto' : 320,
+      borderRadius: 1, overflow: 'hidden',
+      bgcolor: '#000', border: '1px solid rgba(255,255,255,0.12)',
+      boxShadow: '0 4px 24px rgba(0,0,0,0.6)',
+    }}>
       <Box sx={{
-        display: 'flex', alignItems: 'center', px: 1, height: 28,
-        bgcolor: 'grey.900', color: 'text.secondary',
-      }}>
-        <Typography variant="caption" sx={{ fontSize: '0.65rem' }}>
+        display: 'flex', alignItems: 'center', px: 1, height: 24,
+        bgcolor: 'grey.900', color: 'text.secondary', cursor: 'pointer',
+      }} onClick={() => setCollapsed(c => !c)}>
+        <Typography variant="caption" sx={{ fontSize: '0.6rem' }}>
           视频预览
         </Typography>
         <Box sx={{ flexGrow: 1 }} />
         <Tooltip title={collapsed ? '展开视频' : '折叠视频'}>
-          <IconButton size="small" onClick={() => setCollapsed(c => !c)}
-            sx={{ color: 'text.secondary', p: 0 }}>
-            {collapsed ? <ExpandMoreIcon fontSize="small" /> : <ExpandLessIcon fontSize="small" />}
+          <IconButton size="small" sx={{ color: 'text.secondary', p: 0 }}>
+            {collapsed ? <ExpandMoreIcon sx={{ fontSize: 14 }} /> : <ExpandLessIcon sx={{ fontSize: 14 }} />}
           </IconButton>
         </Tooltip>
       </Box>
 
       <Collapse in={!collapsed}>
-        <Box sx={{ position: 'relative', width: '100%', maxHeight: 280, bgcolor: '#000' }}>
+        <Box sx={{ position: 'relative', width: 320, bgcolor: '#000' }}>
           {videoSrc ? (
             <video
               ref={videoRef}
               src={videoSrc}
               onLoadedMetadata={onLoadedMetadata}
               onTimeUpdate={onVideoTimeUpdate}
-              style={{ width: '100%', maxHeight: 252, display: 'block', objectFit: 'contain' }}
+              style={{ width: '100%', height: 180, display: 'block', objectFit: 'contain' }}
             />
           ) : (
             <Box sx={{
-              width: '100%', height: 200, display: 'flex',
+              width: '100%', height: 140, display: 'flex',
               alignItems: 'center', justifyContent: 'center',
             }}>
-              <Typography variant="body2" color="grey.600">
-                未加载视频
+              <Typography variant="caption" color="grey.600">
+                {activeEvent
+                  ? activeEvent.translation || activeEvent.text
+                  : '选择一个事件以查看详情'}
               </Typography>
             </Box>
           )}
 
-          {/* Time overlay */}
-          <Box sx={{
-            position: 'absolute', bottom: 4, right: 8,
-            bgcolor: 'rgba(0,0,0,0.7)', px: 1, py: 0.25, borderRadius: 1,
-          }}>
-            <Typography variant="caption" color="white" sx={{ fontSize: '0.7rem', fontFamily: 'monospace' }}>
-              {formatTime(currentTime)} / {formatTime(duration)}
-            </Typography>
-          </Box>
-
-          {/* Subtitle overlay */}
-          {activeEvent && (
+          {videoSrc && (
             <Box sx={{
-              position: 'absolute', bottom: 36, left: 0, right: 0,
-              display: 'flex', flexDirection: 'column', alignItems: 'center', px: 2,
+              position: 'absolute', bottom: 2, right: 4,
+              bgcolor: 'rgba(0,0,0,0.7)', px: 0.75, py: 0.25, borderRadius: 0.5,
+            }}>
+              <Typography variant="caption" color="white" sx={{ fontSize: '0.6rem', fontFamily: 'monospace' }}>
+                {formatTime(currentTime)} / {formatTime(duration)}
+              </Typography>
+            </Box>
+          )}
+
+          {videoSrc && activeEvent && (
+            <Box sx={{
+              position: 'absolute', bottom: 28, left: 0, right: 0,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', px: 1,
             }}>
               <Box sx={{
-                bgcolor: 'rgba(0,0,0,0.75)', px: 1.5, py: 0.5, borderRadius: 1,
-                maxWidth: '90%', textAlign: 'center',
+                bgcolor: 'rgba(0,0,0,0.75)', px: 1, py: 0.25, borderRadius: 0.5,
+                maxWidth: '95%', textAlign: 'center',
               }}>
-                <Typography variant="caption" color="white" sx={{ fontSize: '0.8rem', fontWeight: 500 }}>
+                <Typography variant="caption" color="white" sx={{ fontSize: '0.7rem', fontWeight: 500 }}>
                   {activeEvent.translation || activeEvent.text}
                 </Typography>
               </Box>
-              {activeEvent.translation && (
-                <Typography variant="caption" color="rgba(255,255,255,0.5)" sx={{ fontSize: '0.6rem', mt: 0.25 }}>
-                  {activeEvent.text}
-                </Typography>
-              )}
-              {activeEvent.speaker && (
-                <Typography variant="caption" color="primary.light" sx={{ fontSize: '0.6rem', mt: 0.25 }}>
-                  {activeEvent.displayName || activeEvent.speaker}
-                </Typography>
-              )}
             </Box>
           )}
         </Box>
