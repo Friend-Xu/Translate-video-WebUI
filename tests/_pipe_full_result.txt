@@ -4,11 +4,4 @@ factory ok
 policy ok
 global_config ok
 starting orchestrator.run()...
-done: 10 events
-rendered 10 events, 0 speakers
-  evt_001: trans='今天，各位，我们要来看10个最好的Minecraft模组包，针对1.19版本，当然也包括1.18版本。' type=str
-  evt_002: trans='现在每天都有大量全新的模组包被添加进来。' type=str
-  evt_003: trans='但不幸的是，并非所有模组包都已经针对1.19版本进行了优化。' type=str
-written timeline.json to D:/Workspace/Translate_video/source_file\test_project\01_extract\timeline.json
-VERIFIED: 10 events, all translations ok
-ALL OK - SUCCESS
+FAILED: Workflow failed at stage 'WorkflowStage.TRANSLATE': Stage 'translate' failed: 未知 QualityStrategy: 'logic_gate'. 可用: 
