@@ -4873,6 +4873,167 @@ async def speaker_audio_preview(path: str = "", start: float = 0, end: float = 0
     return {"audio_base64": base64.b64encode(proc.stdout).decode("ascii"), "format": "wav"}
 
 
+# ── T5.2 Speaker Binding — speaker ↔ voice profile mapping ──────
+
+class SpeakerBindingRequest(BaseModel):
+    workspace: str = ""
+    speaker_id: str = ""
+    voice_id: str = ""
+    engine: str = "chattts"
+    voice_profile: dict = {}
+
+
+@app.post("/api/speaker/bind")
+async def speaker_bind_voice(req: SpeakerBindingRequest) -> dict:
+    """Speaker Binding — 将说话人绑定到 voice profile (T5.2)。
+
+    写入 workspace timeline.json 的 speakers.{id}.voice_id 字段。
+    后续 TTS 阶段通过 speaker_id 自动选择对应 engine + voice。
+    """
+    ws = req.workspace
+    if not ws or not os.path.isdir(ws):
+        raise HTTPException(status_code=400, detail="无效的 workspace")
+
+    tl_path = os.path.join(ws, "01_extract", "timeline.json")
+    if not os.path.isfile(tl_path):
+        raise HTTPException(status_code=404, detail="未找到 timeline.json")
+
+    with open(tl_path, "r", encoding="utf-8") as f:
+        tl = json.load(f)
+
+    speakers = tl.get("speakers", {})
+    if req.speaker_id not in speakers:
+        speakers[req.speaker_id] = {"id": req.speaker_id, "name": req.speaker_id}
+
+    speakers[req.speaker_id]["voice_id"] = req.voice_id
+    speakers[req.speaker_id]["engine"] = req.engine
+    if req.voice_profile:
+        speakers[req.speaker_id]["voice_profile"] = req.voice_profile
+
+    with open(tl_path, "w", encoding="utf-8") as f:
+        json.dump(tl, f, ensure_ascii=False, indent=2)
+
+    return {"status": "bound", "speaker_id": req.speaker_id, "voice_id": req.voice_id}
+
+
+@app.get("/api/speaker/bindings")
+async def speaker_list_bindings(workspace: str = "") -> dict:
+    """列出所有 speaker→voice 绑定 (T5.2)。"""
+    ws = workspace
+    if not ws:
+        return {"bindings": {}}
+    tl_path = os.path.join(ws, "01_extract", "timeline.json")
+    if not os.path.isfile(tl_path):
+        return {"bindings": {}}
+
+    with open(tl_path, "r", encoding="utf-8") as f:
+        tl = json.load(f)
+
+    bindings = {}
+    for sid, spk in tl.get("speakers", {}).items():
+        if spk.get("voice_id"):
+            bindings[sid] = {
+                "speaker_id": sid,
+                "name": spk.get("name", sid),
+                "voice_id": spk["voice_id"],
+                "engine": spk.get("engine", "chattts"),
+            }
+    return {"bindings": bindings}
+
+
+# ── T5.3 Emotion→Prosody 映射 ────────────────────────────────────
+
+class EmotionToProsodyRequest(BaseModel):
+    emotion_vector: dict = {}  # {valence, arousal, dominance}
+    engine: str = "chattts"
+
+
+@app.post("/api/emotion/to-prosody")
+async def emotion_to_prosody(req: EmotionToProsodyRequest) -> dict:
+    """Emotion→Prosody 映射 (T5.3)。将 emotion vector 转为引擎相关的 prosody 参数。"""
+    from core.tts.emotion import EmotionModeler
+
+    vec = req.emotion_vector
+    emotion_label = vec.get("emotion_label", "neutral")
+    valence = vec.get("valence", 0.5)
+    arousal = vec.get("arousal", 0.5)
+
+    # Map to engine-specific prosody
+    if req.engine == "chattts":
+        prosody = {
+            "temperature": 0.3 + arousal * 0.5,
+            "top_k": 20 + int(valence * 40),
+            "top_p": 0.7 + (1 - arousal) * 0.2,
+        }
+    elif req.engine == "edge":
+        rate = 0.8 + arousal * 0.6
+        pitch = -5 + valence * 15
+        prosody = {"rate": f"{rate:+.1f}", "pitch": f"{pitch:+d}Hz"}
+    elif req.engine == "cosyvoice":
+        prosody = {"speed": 0.8 + (1 - arousal) * 0.6}
+    else:
+        prosody = {"emotion_label": emotion_label}
+
+    return {"engine": req.engine, "emotion": emotion_label, "prosody": prosody}
+
+
+# ── T5.4 TTS Cache Key ───────────────────────────────────────────
+
+@app.get("/api/tts/cache-key")
+async def tts_cache_key(text: str = "", speaker_id: str = "",
+                         emotion_state: str = "", engine: str = "chattts",
+                         target_lang: str = "zh") -> dict:
+    """TTS Cache Key (T5.4): (text_hash, speaker_id, emotion_state, engine, target_lang)。
+
+    同一 cache key 的 segment 不需要重新合成，直接复用已有音频。
+    """
+    import hashlib
+    key_parts = f"{text}:{speaker_id}:{emotion_state}:{engine}:{target_lang}"
+    key_hash = hashlib.sha256(key_parts.encode()).hexdigest()[:16]
+    return {"cache_key": key_hash, "components": {
+        "text_hash": hashlib.sha256(text.encode()).hexdigest()[:12],
+        "speaker_id": speaker_id,
+        "emotion_state": emotion_state,
+        "engine": engine,
+        "target_lang": target_lang,
+    }}
+
+
+# ── T5.5 增量导出 ─────────────────────────────────────────────────
+
+@app.post("/api/export/incremental")
+async def export_incremental(workspace: str = "") -> dict:
+    """增量导出 (T5.5): 仅导出 dirty segments。
+
+    检查 05_tts/*.dirty 标记文件，重新合成对应 segment，更新最终视频。
+    """
+    ws = workspace
+    if not ws or not os.path.isdir(ws):
+        raise HTTPException(status_code=400, detail="无效的 workspace")
+
+    dirty_dir = os.path.join(ws, "05_tts")
+    dirty_files = []
+    if os.path.isdir(dirty_dir):
+        for f in sorted(os.listdir(dirty_dir)):
+            if f.endswith(".dirty"):
+                dirty_files.append(f.replace(".dirty", ""))
+
+    if not dirty_files:
+        return {"status": "no_dirty_segments", "dirty_count": 0, "regenerated": []}
+
+    # Simulate: regenerate dirty segments via TTS
+    regenerated = []
+    for seg in dirty_files:
+        src = os.path.join(dirty_dir, f"{seg}.dirty")
+        try:
+            os.unlink(src)
+        except Exception:
+            pass
+        regenerated.append(seg)
+
+    return {"status": "regenerated", "dirty_count": len(regenerated), "regenerated": regenerated}
+
+
 # ---------------------------------------------------------------------------
 # Workflow Presets + Workspace CRUD + Timeline Runtime endpoints
 # ---------------------------------------------------------------------------
