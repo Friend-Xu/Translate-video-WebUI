@@ -2495,6 +2495,77 @@ async def indextts_preset_audio(path: str) -> dict:
     return {"audio_base64": data, "path": path}
 
 
+# ── T4.4 TTS Preview + Local Re-synthesis ───────────────────────
+
+class TTSPreviewRequest(BaseModel):
+    text: str = ""
+    engine: str = "chattts"
+    voice_id: str = ""
+    speaker_seed: int = 2
+
+
+@app.post("/api/tts/preview")
+async def tts_preview(req: TTSPreviewRequest) -> dict:
+    """TTS 预览 — 调用对应引擎合成单个句子 (T4.4)。"""
+    import base64, tempfile, numpy as np
+
+    out_path = os.path.join(tempfile.gettempdir(), f"tvw_preview_{int(time.time())}.wav")
+    try:
+        if req.engine == "edge":
+            from core.compat import compat_chattts_factory
+            import edge_tts, asyncio
+            async def _t():
+                communicate = edge_tts.Communicate(req.text, req.voice_id or "zh-CN-XiaoxiaoNeural")
+                await communicate.save(out_path)
+            asyncio.run(_t())
+        else:
+            from core.compat import compat_chattts_factory
+            engine_cls = compat_chattts_factory()
+            engine = engine_cls()
+            engine.synthesize(req.text, out_path)
+
+        with open(out_path, "rb") as f:
+            audio_b64 = base64.b64encode(f.read()).decode()
+        duration = 0.0
+        try:
+            import soundfile as sf
+            info = sf.info(out_path)
+            duration = info.duration
+        except Exception:
+            pass
+        return {"audio_base64": audio_b64, "duration": duration, "path": out_path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TTS preview failed: {e}")
+    finally:
+        try:
+            os.unlink(out_path)
+        except Exception:
+            pass
+
+
+class TTSResynthesizeRequest(BaseModel):
+    workspace: str = ""
+    event_ids: list[str] = []
+
+
+@app.post("/api/tts/resynthesize")
+async def tts_resynthesize(req: TTSResynthesizeRequest) -> dict:
+    """标记 segment 为 dirty，触发局部 TTS 重算 (T4.4)。"""
+    ws = req.workspace
+    if not ws or not os.path.isdir(ws):
+        raise HTTPException(status_code=400, detail="无效的 workspace")
+
+    dirty_events = []
+    for eid in req.event_ids:
+        dirty_path = os.path.join(ws, "05_tts", f"TTS_{eid}.dirty")
+        os.makedirs(os.path.dirname(dirty_path), exist_ok=True)
+        with open(dirty_path, "w") as f:
+            f.write(str(time.time()))
+        dirty_events.append(eid)
+
+    return {"dirty_count": len(dirty_events), "dirty_events": dirty_events}
+
+
 # ---------------------------------------------------------------------------
 # Glossary CRUD
 # ---------------------------------------------------------------------------
@@ -2555,6 +2626,44 @@ async def delete_glossary_dict(name: str) -> dict:
 
 # Cached system info — GPU name/VRAM don't change at runtime
 _sys_info_cache: dict | None = None
+
+
+@app.get("/api/runtime/status")
+async def runtime_status() -> dict:
+    """Runtime Monitor: GPU VRAM, model residency, stage progress (T4.1)."""
+    gpu = {"vram_used_mb": 0, "vram_total_mb": 0, "gpu_name": ""}
+    models: list[dict] = []
+    stages: list[dict] = []
+
+    try:
+        import torch
+        if torch.cuda.is_available():
+            gpu["gpu_name"] = torch.cuda.get_device_name(0)
+            gpu["vram_total_mb"] = int(torch.cuda.get_device_properties(0).total_memory / (1024 * 1024))
+            free, total = torch.cuda.mem_get_info()
+            gpu["vram_used_mb"] = int((total - free) / (1024 * 1024))
+    except Exception:
+        pass
+
+    model_map = {
+        "faster-whisper": ("asr", "WhisperAdapter"),
+        "ChatTTS": ("tts", "ChatTTSAdapter"),
+        "CosyVoice": ("tts", "CosyVoiceAdapter"),
+        "pyannote": ("speaker", "PyannoteAdapter"),
+    }
+    for mod_name, (stage, adapter) in model_map.items():
+        loaded = mod_name in sys.modules
+        models.append({"name": mod_name, "stage": stage, "adapter": adapter, "loaded": loaded})
+
+    from core.engine.event_bus import EventBus
+    last = EventBus().last_event
+    current_stage = ""
+    if last:
+        current_stage = last.stage or ""
+        stages.append({"stage": current_stage, "label": last.stage_label or current_stage,
+                       "message": last.message or "", "percent": last.percent or 0})
+
+    return {"gpu": gpu, "models": models, "stages": stages, "current_stage": current_stage}
 
 
 @app.get("/api/system/info")
@@ -4369,6 +4478,111 @@ async def timeline_patch_log(workspace: str = ""):
         return {"patches": patches, "count": len(patches)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── T4.2 Patch Debug — Git-log style patch history ──────────────
+
+@app.get("/api/timeline/patch/history")
+async def timeline_patch_history(workspace: str = "", limit: int = 20):
+    """Patch Debug 面板 — Git-log 风格的补丁历史 (T4.2)。"""
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    log_path = os.path.join(extract_dir, "timeline_patches.json") if extract_dir else ""
+    items: list[dict] = []
+    if log_path and os.path.isfile(log_path):
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            patches = raw if isinstance(raw, list) else raw.get("patches", [])
+            patches = patches[-limit:]
+            for p in patches:
+                op = p.get("opcode") or p.get("op", "?")
+                tid = p.get("target_id", "")
+                targets = p.get("targets", [tid]) if isinstance(p.get("targets"), list) else [tid]
+                val = p.get("value", {})
+                items.append({
+                    "id": p.get("id", p.get("patch_id", "")),
+                    "op": str(op),
+                    "targets": targets,
+                    "author": p.get("author", "system"),
+                    "timestamp": p.get("timestamp", ""),
+                    "reason": p.get("reason", []),
+                    "diff": {"slot": val.get("slot", ""),
+                             "before": p.get("previous_state", {}),
+                             "after": val.get("partial_config") or val.get("config_block") or val},
+                })
+        except Exception:
+            pass
+    return {"items": items, "count": len(items)}
+
+
+# ── T4.3 Review Panel — auto-flag anomalies ─────────────────────
+
+@app.get("/api/timeline/review/flags")
+async def timeline_review_flags(workspace: str = ""):
+    """Review 面板 — 自动标记低置信度/冲突/异常 segment (T4.3)。"""
+    tl_path = os.path.join(workspace, "01_extract", "timeline.json") if workspace else ""
+    flags: list[dict] = []
+    if not tl_path or not os.path.isfile(tl_path):
+        return {"flags": [], "summary": {"low_confidence": 0, "speaker_conflict": 0, "emotion_jump": 0, "length_exceeded": 0}}
+
+    try:
+        with open(tl_path, "r", encoding="utf-8") as f:
+            tl = json.load(f)
+    except Exception:
+        return {"flags": [], "summary": {"low_confidence": 0, "speaker_conflict": 0, "emotion_jump": 0, "length_exceeded": 0}}
+
+    events = tl.get("events", [])
+    prev_emotion = None
+    prev_speaker = None
+    summary = {"low_confidence": 0, "speaker_conflict": 0, "emotion_jump": 0, "length_exceeded": 0}
+
+    for evt in events:
+        eid = evt.get("id", "")
+        flag_types = []
+        reason = ""
+
+        # low confidence
+        if evt.get("confidence", 1.0) < 0.7:
+            flag_types.append("low_confidence")
+            reason += "置信度低; "
+            summary["low_confidence"] += 1
+
+        # speaker conflict / change
+        speaker = evt.get("speaker")
+        if prev_speaker and speaker and speaker != prev_speaker:
+            sid = evt.get("start", 0)
+            if any(e.get("start", 0) < sid and e.get("end", 0) > sid and e.get("speaker") != speaker for e in events):
+                flag_types.append("speaker_conflict")
+                reason += "说话人冲突; "
+                summary["speaker_conflict"] += 1
+        prev_speaker = speaker
+
+        # emotion jump
+        emotion = evt.get("emotion")
+        if emotion and prev_emotion and emotion != prev_emotion:
+            flag_types.append("emotion_jump")
+            reason += "情绪跳变; "
+            summary["emotion_jump"] += 1
+        prev_emotion = emotion
+
+        # text length exceeds typical reading speed
+        text = evt.get("text", "")
+        translation = evt.get("translation", "")
+        if isinstance(translation, dict):
+            translation = translation.get("text", "") or ""
+        dur = evt.get("end", 0) - evt.get("start", 0)
+        chars = len(text + translation)
+        if dur > 0 and chars / dur > 20:
+            flag_types.append("length_exceeded")
+            reason += "字幕过长; "
+            summary["length_exceeded"] += 1
+
+        if flag_types:
+            flags.append({"event_id": eid, "flags": flag_types, "reason": reason.rstrip("; "),
+                          "start": evt.get("start", 0), "end": evt.get("end", 0),
+                          "text": text[:60], "translation": translation[:60] if isinstance(translation, str) else ""})
+
+    return {"flags": flags, "summary": summary}
 
 
 # ── AI Suggestion API ─────────────────────────────────────────────
