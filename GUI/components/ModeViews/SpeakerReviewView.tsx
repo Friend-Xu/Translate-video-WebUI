@@ -19,6 +19,7 @@ import type { SpeakerQuality } from '../../types/modes'
 const LANE_COLORS = ['#FF9800', '#2196F3', '#4CAF50', '#9C27B0', '#E91E63', '#00BCD4']
 const LANE_HEIGHT = 64
 const LABEL_WIDTH = 140
+const TIME_RULER_H = 20
 
 interface SpeakerSegment {
   id: string
@@ -63,10 +64,11 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
   const [mergeTarget, setMergeTarget] = useState<string | null>(null)
   const [editingName, setEditingName] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
+  const [sortBy, setSortBy] = useState<'duration' | 'confidence' | 'conflict'>('duration')
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
+  const containerRef = useRef<HTMLDivElement | null>(null)
 
-  // 从 events 按 speaker 分组构建 lanes
   const speakerLanes: SpeakerLane[] = useMemo(() => {
     if (externalSpeakers && externalSpeakers.length > 0) return externalSpeakers
     if (storeSpeakerLanes.length > 0) return storeSpeakerLanes as unknown as SpeakerLane[]
@@ -122,6 +124,18 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
     }
     return result
   }, [speakerLanes])
+
+  // Sort speakers by chosen criteria
+  const sortedSpeakers = useMemo(() => {
+    const arr = [...speakerLanes]
+    const qs = speakerQualities
+    switch (sortBy) {
+      case 'duration': arr.sort((a, b) => b.total_duration - a.total_duration); break
+      case 'confidence': arr.sort((a, b) => (qs[a.speaker]?.avgConfidence || 0) - (qs[b.speaker]?.avgConfidence || 0)); break
+      case 'conflict': arr.sort((a, b) => (qs[b.speaker]?.conflictRate || 0) - (qs[a.speaker]?.conflictRate || 0)); break
+    }
+    return arr
+  }, [speakerLanes, speakerQualities, sortBy])
 
   const totalDuration = useMemo(() => Math.max(...events.map(e => e.end), 80), [events])
   const coord = useTimelineCoordinates(totalDuration, typeof window !== 'undefined' ? window.innerWidth - 520 : 600)
@@ -205,9 +219,21 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
     onSeek?.(startTime)
   }, [setPlayhead, onSeek])
 
+  // Time ruler ticks
+  const timeRulerTicks = useMemo(() => {
+    const ticks: number[] = []
+    const step = coord.pixelsPerSec >= 200 ? 0.5 : coord.pixelsPerSec >= 60 ? 1 : coord.pixelsPerSec >= 20 ? 5 : 10
+    for (let t = 0; t <= totalDuration; t += step) ticks.push(t)
+    return ticks
+  }, [totalDuration, coord.pixelsPerSec])
+
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <Box sx={{ p: 1.5, borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper', display: 'flex', alignItems: 'center', gap: 2 }}>
+      {/* Header */}
+      <Box sx={{
+        p: 1.5, borderBottom: '1px solid #d0d5e0',
+        bgcolor: '#e8ecf4', display: 'flex', alignItems: 'center', gap: 2,
+      }}>
         <Box>
           <Typography variant="subtitle2">说话人审核</Typography>
           <Typography variant="caption" color="text.secondary">
@@ -215,6 +241,14 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
           </Typography>
         </Box>
         <Box sx={{ flexGrow: 1 }} />
+        <FormControl size="small" sx={{ minWidth: 100 }}>
+          <Select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)}
+            sx={{ fontSize: '0.7rem' }}>
+            <MenuItem value="duration" sx={{ fontSize: '0.7rem' }}>按时长</MenuItem>
+            <MenuItem value="confidence" sx={{ fontSize: '0.7rem' }}>按置信度</MenuItem>
+            <MenuItem value="conflict" sx={{ fontSize: '0.7rem' }}>按冲突率</MenuItem>
+          </Select>
+        </FormControl>
         {selectedSpeakerIds.length >= 2 && (
           <Button size="small" variant="outlined" color="warning" startIcon={<MergeIcon />}
             onClick={() => setMergeDialogOpen(true)} sx={{ fontSize: '0.7rem' }}>
@@ -232,19 +266,20 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
       <Box sx={{ flexGrow: 1, display: 'flex', overflow: 'hidden' }}>
         {/* Left: Speaker list */}
         <Box sx={{
-          width: 200, minWidth: 200, borderRight: 1, borderColor: 'divider',
-          overflow: 'hidden auto', bgcolor: 'rgba(0,0,0,0.2)',
+          width: 200, minWidth: 200, borderRight: '1px solid #d0d5e0',
+          overflow: 'hidden auto', bgcolor: '#e8ecf4',
         }}>
-          {speakerLanes.map((lane) => {
+          {sortedSpeakers.map((lane) => {
             const quality = speakerQualities[lane.speaker]
             const isSelected = selectedSpeakerId === lane.speaker
             const isMulti = selectedSpeakerIds.includes(lane.speaker)
             return (
               <Box key={lane.speaker} onClick={(e) => handleSelectSpeaker(lane.speaker, e)}
                 sx={{
-                  p: 1, cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)',
-                  bgcolor: isSelected ? 'action.selected' : isMulti ? 'action.hover' : 'transparent',
-                  '&:hover': { bgcolor: 'action.hover' },
+                  p: 1, cursor: 'pointer',
+                  borderBottom: '1px solid #d0d5e0',
+                  bgcolor: isSelected ? 'rgba(99,102,241,0.12)' : isMulti ? 'rgba(99,102,241,0.06)' : 'transparent',
+                  '&:hover': { bgcolor: 'rgba(99,102,241,0.08)' },
                 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
                   <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: lane.color, flexShrink: 0 }} />
@@ -253,14 +288,16 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
                   </Typography>
                 </Box>
                 <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', ml: 2.5 }}>
-                  <Chip label={`${lane.segment_count}段`} size="small" sx={{ fontSize: '0.55rem', height: 16 }} />
-                  <Chip label={`${lane.total_duration.toFixed(0)}s`} size="small" variant="outlined" sx={{ fontSize: '0.55rem', height: 16 }} />
+                  <Chip label={`${lane.segment_count}段`} size="small"
+                    sx={{ fontSize: '0.55rem', height: 16, bgcolor: 'rgba(99,102,241,0.08)' }} />
+                  <Chip label={`${lane.total_duration.toFixed(0)}s`} size="small" variant="outlined"
+                    sx={{ fontSize: '0.55rem', height: 16 }} />
                   {quality && quality.avgConfidence < 0.7 && (
                     <Chip icon={<WarningIcon sx={{ fontSize: 10 }} />} label="低置信度" size="small" color="warning"
                       sx={{ fontSize: '0.55rem', height: 16 }} />
                   )}
                   {lane.voice_id && (
-                    <Chip icon={<VoiceIcon sx={{ fontSize: 10 }} />} label="已绑定声线" size="small" color="success"
+                    <Chip icon={<VoiceIcon sx={{ fontSize: 10 }} />} label="已绑定" size="small" color="success"
                       variant="outlined" sx={{ fontSize: '0.55rem', height: 16 }} />
                   )}
                 </Box>
@@ -270,113 +307,159 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
         </Box>
 
         {/* Center: Speaker timeline */}
-        <Box ref={scrollRef} sx={{ flexGrow: 1, overflow: 'hidden auto', position: 'relative', bgcolor: 'background.default' }}>
+        <Box ref={containerRef} sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          {/* Time ruler */}
           <Box sx={{
-            position: 'absolute', left: LABEL_WIDTH + coord.timeToPixel(playheadPosition),
-            top: 0, bottom: 0, width: 2, bgcolor: '#FF5252', zIndex: 20, pointerEvents: 'none',
-          }} />
-          {speakerLanes.map((lane) => (
-            <Box key={lane.speaker} sx={{
-              display: 'flex', height: LANE_HEIGHT,
-              borderBottom: '1px solid rgba(255,255,255,0.05)',
-              bgcolor: selectedSpeakerId === lane.speaker ? 'rgba(255,255,255,0.03)' : 'transparent',
-            }}>
-              <Box sx={{
-                width: LABEL_WIDTH, minWidth: LABEL_WIDTH, display: 'flex', alignItems: 'center', gap: 0.5, px: 1,
-                bgcolor: 'rgba(0,0,0,0.3)', borderRight: '1px solid rgba(255,255,255,0.1)',
-              }}>
-                <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: lane.color, flexShrink: 0 }} />
-                <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                  {editingName === lane.speaker ? (
-                    <input value={editValue}
-                      onChange={e => setEditValue(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') handleRename(lane.speaker); if (e.key === 'Escape') setEditingName(null) }}
-                      onBlur={() => handleRename(lane.speaker)}
-                      autoFocus
-                      style={{ width: '100%', background: 'transparent', border: '1px solid #666', color: '#fff', fontSize: '0.7rem', padding: '1px 4px', borderRadius: 2 }} />
-                  ) : (
-                    <Typography variant="caption" noWrap sx={{ fontSize: '0.65rem', color: 'common.white', cursor: 'pointer' }}
-                      onDoubleClick={() => { setEditingName(lane.speaker); setEditValue(lane.display_name) }}>
-                      {lane.display_name}
+            position: 'relative', height: TIME_RULER_H, minHeight: TIME_RULER_H,
+            bgcolor: '#dce2f0', borderBottom: '1px solid #c8cdd8',
+            overflow: 'hidden',
+          }}>
+            <Box sx={{ position: 'relative', width: totalDuration * coord.pixelsPerSec, height: '100%' }}>
+              {timeRulerTicks.map(t => {
+                const x = coord.timeToPixel(t)
+                if (x < -50 || x > (containerRef.current?.clientWidth || 800) + 50) return null
+                return (
+                  <Box key={t} sx={{
+                    position: 'absolute', left: x, top: 0, width: 1, height: 8,
+                    bgcolor: '#94a3b8',
+                  }}>
+                    <Typography sx={{
+                      position: 'absolute', left: 3, top: 8,
+                      fontSize: 8, color: '#64748b', whiteSpace: 'nowrap', lineHeight: '12px',
+                    }}>
+                      {Number.isInteger(t) ? `${t}s` : t.toFixed(1) + 's'}
                     </Typography>
-                  )}
+                  </Box>
+                )
+              })}
+            </Box>
+          </Box>
+
+          {/* Lanes */}
+          <Box ref={scrollRef} sx={{ flexGrow: 1, overflow: 'hidden auto', position: 'relative', bgcolor: '#f1f5f9' }}>
+            <Box sx={{
+              position: 'absolute',
+              left: LABEL_WIDTH + coord.timeToPixel(playheadPosition),
+              top: 0, bottom: 0, width: 2, bgcolor: '#FF5252', zIndex: 20, pointerEvents: 'none',
+            }} />
+            {speakerLanes.map((lane) => (
+              <Box key={lane.speaker} sx={{
+                display: 'flex', height: LANE_HEIGHT,
+                borderBottom: '1px solid #d0d5e0',
+                bgcolor: selectedSpeakerId === lane.speaker ? 'rgba(99,102,241,0.06)' : 'transparent',
+              }}>
+                <Box sx={{
+                  width: LABEL_WIDTH, minWidth: LABEL_WIDTH, display: 'flex', alignItems: 'center', gap: 0.5, px: 1,
+                  bgcolor: '#e8ecf4', borderRight: '1px solid #d0d5e0',
+                }}>
+                  <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: lane.color, flexShrink: 0 }} />
+                  <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                    {editingName === lane.speaker ? (
+                      <input value={editValue}
+                        onChange={e => setEditValue(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleRename(lane.speaker); if (e.key === 'Escape') setEditingName(null) }}
+                        onBlur={() => handleRename(lane.speaker)}
+                        autoFocus
+                        style={{ width: '100%', background: 'transparent', border: '1px solid #94a3b8', color: '#1e293b', fontSize: '0.7rem', padding: '1px 4px', borderRadius: 2 }} />
+                    ) : (
+                      <Typography variant="caption" noWrap sx={{ fontSize: '0.65rem', color: '#1e293b', cursor: 'pointer' }}
+                        onDoubleClick={() => { setEditingName(lane.speaker); setEditValue(lane.display_name) }}>
+                        {lane.display_name}
+                      </Typography>
+                    )}
+                  </Box>
+                  <Tooltip title="编辑名称">
+                    <IconButton size="small" onClick={() => { setEditingName(lane.speaker); setEditValue(lane.display_name) }}
+                      sx={{ p: 0, color: 'text.disabled' }}>
+                      <EditIcon sx={{ fontSize: 12 }} />
+                    </IconButton>
+                  </Tooltip>
                 </Box>
-                <Tooltip title="编辑名称">
-                  <IconButton size="small" onClick={() => { setEditingName(lane.speaker); setEditValue(lane.display_name) }}
-                    sx={{ p: 0, color: 'text.disabled' }}>
-                    <EditIcon sx={{ fontSize: 12 }} />
-                  </IconButton>
-                </Tooltip>
+                <Box sx={{ flexGrow: 1, position: 'relative', overflow: 'hidden' }}>
+                  {lane.segments.map((seg, j) => {
+                    const left = coord.timeToPixel(seg.start)
+                    const width = Math.max(2, (seg.end - seg.start) * coord.pixelsPerSec)
+                    const conf = seg.confidence
+                    const bgColor = conf >= 0.9 ? `${lane.color}CC` : conf >= 0.7 ? `${lane.color}88` : `${lane.color}55`
+                    return (
+                      <Tooltip key={j} title={`${seg.text.slice(0, 80)}\n${seg.start.toFixed(1)}s-${seg.end.toFixed(1)}s | conf=${conf.toFixed(2)}`}>
+                        <Box sx={{
+                          position: 'absolute', left, top: 10, height: LANE_HEIGHT - 20, width,
+                          bgcolor: bgColor, borderRadius: 0.5,
+                          borderLeft: `2px solid ${lane.color}`, cursor: 'pointer',
+                          '&:hover': { filter: 'brightness(1.2)', zIndex: 3 },
+                        }} onClick={() => handleSegmentClick(seg.eventId || `${lane.speaker}_seg_${j}`, seg.start)} />
+                      </Tooltip>
+                    )
+                  })}
+                </Box>
               </Box>
-              <Box sx={{ flexGrow: 1, position: 'relative', overflow: 'hidden' }}>
-                {lane.segments.map((seg, j) => {
-                  const left = coord.timeToPixel(seg.start)
-                  const width = Math.max(2, (seg.end - seg.start) * coord.pixelsPerSec)
-                  const conf = seg.confidence
-                  const bgColor = conf >= 0.9 ? `${lane.color}99` : conf >= 0.7 ? `${lane.color}66` : `${lane.color}44`
-                  return (
-                    <Tooltip key={j} title={`${seg.text}\n${seg.start.toFixed(1)}s-${seg.end.toFixed(1)}s | conf=${conf.toFixed(2)}`}>
-                      <Box sx={{
-                        position: 'absolute', left, top: 10, height: LANE_HEIGHT - 20, width,
-                        bgcolor: bgColor, borderRadius: 0.5,
-                        borderLeft: `2px solid ${lane.color}`, cursor: 'pointer',
-                        '&:hover': { filter: 'brightness(1.3)', zIndex: 3 },
-                      }} onClick={() => handleSegmentClick(seg.eventId || `${lane.speaker}_seg_${j}`, seg.start)} />
-                    </Tooltip>
-                  )
-                })}
+            ))}
+            {speakerLanes.length === 0 && (
+              <Box sx={{ p: 4, textAlign: 'center' }}>
+                <Typography variant="body2" color="text.secondary">未加载说话人数据</Typography>
               </Box>
-            </Box>
-          ))}
-          {speakerLanes.length === 0 && (
-            <Box sx={{ p: 4, textAlign: 'center' }}>
-              <Typography variant="body2" color="text.secondary">未加载说话人数据</Typography>
-            </Box>
-          )}
+            )}
+          </Box>
         </Box>
 
         {/* Right: Speaker Inspector */}
         <Box sx={{
-          width: 280, minWidth: 280, borderLeft: 1, borderColor: 'divider',
-          overflow: 'hidden auto', bgcolor: 'background.paper', p: 1.5,
+          width: 280, minWidth: 280, borderLeft: '1px solid #d0d5e0',
+          overflow: 'hidden auto', bgcolor: '#e8ecf4', p: 1.5,
         }}>
           {selectedLane ? (
             <>
-              <Typography variant="subtitle2" sx={{ fontSize: '0.8rem', mb: 1 }}>{selectedLane.display_name}</Typography>
-              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1.5 }}>
-                <Chip label={selectedLane.speaker} size="small" variant="outlined" sx={{ fontSize: '0.6rem', height: 20 }} />
-                <Chip label={`${selectedLane.segment_count} 段`} size="small" sx={{ fontSize: '0.6rem', height: 20 }} />
-                <Chip label={`${selectedLane.total_duration.toFixed(1)}s`} size="small" variant="outlined" sx={{ fontSize: '0.6rem', height: 20 }} />
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                <Box sx={{ width: 12, height: 12, borderRadius: '50%', bgcolor: selectedLane.color, flexShrink: 0 }} />
+                <Typography variant="subtitle2" sx={{ fontSize: '0.8rem' }}>{selectedLane.display_name}</Typography>
               </Box>
-              {selectedQuality && (
-                <Box sx={{ mb: 1.5 }}>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>质量评分</Typography>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Typography variant="caption" sx={{ fontSize: '0.6rem', width: 60 }}>置信度</Typography>
-                      <Box sx={{ flexGrow: 1, height: 4, borderRadius: 1, bgcolor: 'grey.800' }}>
-                        <Box sx={{ height: '100%', borderRadius: 1, width: `${selectedQuality.avgConfidence * 100}%`,
-                          bgcolor: selectedQuality.avgConfidence >= 0.9 ? '#4CAF50' : selectedQuality.avgConfidence >= 0.7 ? '#FF9800' : '#F44336' }} />
-                      </Box>
-                      <Typography variant="caption" sx={{ fontSize: '0.6rem' }}>{(selectedQuality.avgConfidence * 100).toFixed(0)}%</Typography>
-                    </Box>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Typography variant="caption" sx={{ fontSize: '0.6rem', width: 60 }}>连续性</Typography>
-                      <Box sx={{ flexGrow: 1, height: 4, borderRadius: 1, bgcolor: 'grey.800' }}>
-                        <Box sx={{ height: '100%', borderRadius: 1, width: `${selectedQuality.continuityScore * 100}%`,
-                          bgcolor: selectedQuality.continuityScore >= 0.8 ? '#4CAF50' : '#FF9800' }} />
-                      </Box>
-                      <Typography variant="caption" sx={{ fontSize: '0.6rem' }}>{(selectedQuality.continuityScore * 100).toFixed(0)}%</Typography>
-                    </Box>
-                    {selectedQuality.conflictRate > 0 && (
-                      <Chip icon={<WarningIcon sx={{ fontSize: 10 }} />}
-                        label={`冲突率: ${(selectedQuality.conflictRate * 100).toFixed(0)}%`}
-                        size="small" color="warning" sx={{ fontSize: '0.6rem', height: 20 }} />
-                    )}
-                  </Box>
+
+              {/* Compact stats card */}
+              <Box sx={{
+                display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5, mb: 1.5,
+                bgcolor: '#f1f5f9', borderRadius: 1, p: 1,
+              }}>
+                <Box>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.55rem' }}>片段</Typography>
+                  <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 600 }}>{selectedLane.segment_count}</Typography>
                 </Box>
-              )}
-              <Divider sx={{ my: 1 }} />
+                <Box>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.55rem' }}>总时长</Typography>
+                  <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 600 }}>{selectedLane.total_duration.toFixed(1)}s</Typography>
+                </Box>
+                {selectedQuality && (
+                  <>
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.55rem' }}>置信度</Typography>
+                      <Typography variant="body2" sx={{
+                        fontSize: '0.75rem', fontWeight: 600,
+                        color: selectedQuality.avgConfidence >= 0.9 ? '#10b981' : selectedQuality.avgConfidence >= 0.7 ? '#f59e0b' : '#ef4444',
+                      }}>
+                        {(selectedQuality.avgConfidence * 100).toFixed(0)}%
+                      </Typography>
+                    </Box>
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.55rem' }}>连续性</Typography>
+                      <Typography variant="body2" sx={{
+                        fontSize: '0.75rem', fontWeight: 600,
+                        color: selectedQuality.continuityScore >= 0.8 ? '#10b981' : '#f59e0b',
+                      }}>
+                        {(selectedQuality.continuityScore * 100).toFixed(0)}%
+                      </Typography>
+                    </Box>
+                  </>
+                )}
+                {selectedQuality && selectedQuality.conflictRate > 0 && (
+                  <Box sx={{ gridColumn: '1 / -1' }}>
+                    <Chip icon={<WarningIcon sx={{ fontSize: 10 }} />}
+                      label={`冲突率: ${(selectedQuality.conflictRate * 100).toFixed(0)}%`}
+                      size="small" color="warning" sx={{ fontSize: '0.6rem', height: 20 }} />
+                  </Box>
+                )}
+              </Box>
+
+              {/* Voice binding */}
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>声线绑定</Typography>
               <FormControl size="small" fullWidth sx={{ mb: 1 }}>
                 <Select value={selectedLane.voice_id || ''}
@@ -395,7 +478,10 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
                   disabled={auditionLoading !== null}
                   fullWidth sx={{ fontSize: '0.7rem', mb: 1 }}>试听声线</Button>
               )}
+
               <Divider sx={{ my: 1 }} />
+
+              {/* Actions */}
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
                 <Button size="small" variant="outlined" startIcon={<EditIcon />}
                   onClick={() => { setEditingName(selectedLane.speaker); setEditValue(selectedLane.display_name) }}
@@ -404,6 +490,8 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
                   onClick={() => handleLockSpeaker(selectedLane.speaker)}
                   fullWidth sx={{ fontSize: '0.7rem', justifyContent: 'flex-start' }}>锁定说话人</Button>
               </Box>
+
+              {/* Low-confidence segments */}
               {selectedLane.segments.filter(s => s.confidence < 0.7).length > 0 && (
                 <>
                   <Divider sx={{ my: 1 }} />
@@ -412,8 +500,8 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
                   </Typography>
                   {selectedLane.segments.filter(s => s.confidence < 0.7).slice(0, 5).map((s, j) => (
                     <Box key={j} sx={{
-                      p: 0.5, mb: 0.5, borderRadius: 0.5, bgcolor: 'rgba(255,152,0,0.1)',
-                      cursor: 'pointer', '&:hover': { bgcolor: 'rgba(255,152,0,0.2)' },
+                      p: 0.5, mb: 0.5, borderRadius: 0.5, bgcolor: 'rgba(245,158,11,0.1)',
+                      cursor: 'pointer', '&:hover': { bgcolor: 'rgba(245,158,11,0.2)' },
                     }} onClick={() => handleSegmentClick(s.eventId || `${selectedLane.speaker}_low_${j}`, s.start)}>
                       <Typography variant="caption" sx={{ fontSize: '0.6rem', display: 'block' }} noWrap>
                         {s.text.slice(0, 40)}{s.text.length > 40 ? '…' : ''}
