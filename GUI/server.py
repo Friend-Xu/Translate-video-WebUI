@@ -5466,8 +5466,8 @@ def _run_core_pipeline_sync(job: Job, req: CoreRunRequest) -> None:
     # 构建 tvw.py 参数
     tvw_args = [
         str(VENV_PYTHON), str(TVW_SCRIPT),
-        "run", str(req.video_path),
-        "--use-core", "--json-output",
+        "--json-output", "run", str(req.video_path),
+        "--use-core",
     ]
     if req.target_lang:
         tvw_args.extend(["--lang", req.target_lang])

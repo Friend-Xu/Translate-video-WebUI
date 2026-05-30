@@ -175,7 +175,6 @@ def _run_core_pipeline(args) -> None:
     orchestrator = WorkflowOrchestrator(
         policy=policy,
         global_config=gcfg,
-        stages=stages if not args.export_stage else stages,
     )
 
     def _progress(report: ProgressReport) -> None:
