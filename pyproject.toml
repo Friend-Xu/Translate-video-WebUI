@@ -1,0 +1,9 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "slow: 需要 GPU 或外部 API 的慢速测试",
+    "schema: JSON Schema 契约验证测试",
+    "integration: 需要真实文件的端到端测试",
+    "unit: 纯逻辑单元测试 (无 I/O)",
+]
