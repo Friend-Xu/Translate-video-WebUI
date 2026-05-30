@@ -1,33 +1,46 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { Box, Typography, IconButton, Tooltip, Collapse } from '@mui/material'
-import ExpandLessIcon from '@mui/icons-material/ExpandLessRounded'
-import ExpandMoreIcon from '@mui/icons-material/ExpandMoreRounded'
+import { Box, Typography, IconButton, Tooltip } from '@mui/material'
+import PlayArrowIcon from '@mui/icons-material/PlayArrowRounded'
+import PauseIcon from '@mui/icons-material/PauseRounded'
+import SkipPreviousIcon from '@mui/icons-material/SkipPreviousRounded'
+import SkipNextIcon from '@mui/icons-material/SkipNextRounded'
+import LoopIcon from '@mui/icons-material/LoopRounded'
+import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrongRounded'
+import FitScreenIcon from '@mui/icons-material/FitScreenRounded'
+import { useAppStore } from '../../store/useAppStore'
 import type { EventViewModel } from '../../types'
 
 interface Props {
   videoSrc: string | null
   currentTime: number
   events: EventViewModel[]
-  isPlaying?: boolean
   onTimeUpdate?: (time: number) => void
   onDurationChange?: (duration: number) => void
+}
+
+const btnSx = {
+  color: '#aaa', p: 0.25, '&:hover': { color: '#fff', bgcolor: 'rgba(255,255,255,0.1)' },
 }
 
 export default function VideoPreview({
   videoSrc,
   currentTime,
   events,
-  isPlaying,
   onTimeUpdate,
   onDurationChange,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const [collapsed, setCollapsed] = useState(true)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [loopEnabled, setLoopEnabled] = useState(false)
   const [duration, setDuration] = useState(0)
 
   const currentTimeRef = useRef(currentTime)
   currentTimeRef.current = currentTime
 
+  const playheadPosition = useAppStore(s => s.playheadPosition)
+  const setPlayhead = useAppStore(s => s.setPlayhead)
+
+  // Video playback control
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
@@ -39,9 +52,10 @@ export default function VideoPreview({
     }
   }, [isPlaying])
 
+  // Seek video to store playhead when not playing
   useEffect(() => {
     const video = videoRef.current
-    if (!video || !isPlaying) return
+    if (!video || isPlaying) return
     if (Math.abs(video.currentTime - currentTime) > 0.3) {
       video.currentTime = currentTime
     }
@@ -58,7 +72,53 @@ export default function VideoPreview({
     onTimeUpdate?.(t)
   }, [onTimeUpdate])
 
-  const activeEvent = events.find(e => currentTime >= e.start && currentTime <= e.end) || null
+  // Store playhead sync
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !isPlaying) return
+    const iv = setInterval(() => {
+      const t = video.currentTime
+      if (t > 0) setPlayhead(t)
+      if (loopEnabled && video.ended) {
+        video.currentTime = 0
+        video.play().catch(() => {})
+      }
+    }, 100)
+    return () => clearInterval(iv)
+  }, [isPlaying, loopEnabled, setPlayhead])
+
+  const handlePlayPause = useCallback(() => {
+    setIsPlaying(p => {
+      if (!p) {
+        const video = videoRef.current
+        if (video) video.currentTime = playheadPosition
+      }
+      return !p
+    })
+  }, [playheadPosition])
+
+  const handleJumpPrev = useCallback(() => {
+    const prev = events.filter(e => e.end <= playheadPosition).sort((a, b) => b.end - a.end)[0]
+    if (prev) {
+      setPlayhead(prev.start)
+      if (videoRef.current) videoRef.current.currentTime = prev.start
+    }
+  }, [events, playheadPosition, setPlayhead])
+
+  const handleJumpNext = useCallback(() => {
+    const next = events.filter(e => e.start >= playheadPosition).sort((a, b) => a.start - b.start)[0]
+    if (next) {
+      setPlayhead(next.start)
+      if (videoRef.current) videoRef.current.currentTime = next.start
+    }
+  }, [events, playheadPosition, setPlayhead])
+
+  const handleScrollToPlayhead = useCallback(() => {
+    // Trigger scroll in TrackSystem via store
+    useAppStore.getState().setPlayhead(playheadPosition)
+  }, [playheadPosition])
+
+  const activeEvent = events.find(e => playheadPosition >= e.start && playheadPosition <= e.end) || null
 
   const formatTime = (t: number) => {
     const m = Math.floor(t / 60)
@@ -68,74 +128,101 @@ export default function VideoPreview({
 
   return (
     <Box sx={{
-      borderBottom: 1, borderColor: 'divider', bgcolor: '#000',
+      bgcolor: '#121212', borderBottom: '1px solid rgba(255,255,255,0.08)',
     }}>
+      {/* Video area — always visible */}
+      <Box sx={{ position: 'relative', bgcolor: '#000' }}>
+        {videoSrc ? (
+          <video
+            ref={videoRef}
+            src={videoSrc}
+            onLoadedMetadata={onLoadedMetadata}
+            onTimeUpdate={onVideoTimeUpdate}
+            style={{ width: '100%', height: 170, display: 'block', objectFit: 'contain' }}
+          />
+        ) : (
+          <Box sx={{
+            width: '100%', height: 120, display: 'flex',
+            alignItems: 'center', justifyContent: 'center',
+            bgcolor: '#0d0d0d',
+          }}>
+            <Typography variant="caption" color="grey.600">
+              {activeEvent
+                ? activeEvent.translation || activeEvent.text
+                : '选择一个事件以查看详情'}
+            </Typography>
+          </Box>
+        )}
+
+        {/* Time overlay */}
+        {videoSrc && (
+          <Box sx={{
+            position: 'absolute', bottom: 2, right: 4,
+            bgcolor: 'rgba(0,0,0,0.8)', px: 0.75, py: 0.25, borderRadius: 0.5,
+          }}>
+            <Typography variant="caption" color="white" sx={{ fontSize: '0.6rem', fontFamily: 'monospace' }}>
+              {formatTime(playheadPosition)} / {formatTime(duration)}
+            </Typography>
+          </Box>
+        )}
+
+        {/* Subtitle overlay */}
+        {videoSrc && activeEvent && (
+          <Box sx={{
+            position: 'absolute', bottom: 28, left: 0, right: 0,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', px: 1,
+          }}>
+            <Box sx={{
+              bgcolor: 'rgba(0,0,0,0.8)', px: 1, py: 0.25, borderRadius: 0.5,
+              maxWidth: '95%', textAlign: 'center',
+            }}>
+              <Typography variant="caption" color="white" sx={{ fontSize: '0.7rem', fontWeight: 500 }}>
+                {activeEvent.translation || activeEvent.text}
+              </Typography>
+            </Box>
+          </Box>
+        )}
+      </Box>
+
+      {/* Player controls — always visible */}
       <Box sx={{
-        display: 'flex', alignItems: 'center', px: 1, height: 24,
-        bgcolor: 'grey.900', color: 'text.secondary', cursor: 'pointer',
-      }} onClick={() => setCollapsed(c => !c)}>
-        <Typography variant="caption" sx={{ fontSize: '0.6rem' }}>
-          视频预览
-        </Typography>
+        display: 'flex', alignItems: 'center', px: 0.5, py: 0.25, gap: 0,
+        bgcolor: '#1a1a1a', height: 28,
+      }}>
+        <Tooltip title="上一个事件"><span>
+          <IconButton size="small" sx={btnSx} onClick={handleJumpPrev}>
+            <SkipPreviousIcon sx={{ fontSize: 16 }} />
+          </IconButton>
+        </span></Tooltip>
+        <Tooltip title={isPlaying ? '暂停' : '播放'}>
+          <IconButton size="small" sx={btnSx} onClick={handlePlayPause}>
+            {isPlaying ? <PauseIcon sx={{ fontSize: 16 }} /> : <PlayArrowIcon sx={{ fontSize: 16 }} />}
+          </IconButton>
+        </Tooltip>
+        <Tooltip title="下一个事件"><span>
+          <IconButton size="small" sx={btnSx} onClick={handleJumpNext}>
+            <SkipNextIcon sx={{ fontSize: 16 }} />
+          </IconButton>
+        </span></Tooltip>
+        <Tooltip title={loopEnabled ? '关闭循环' : '循环播放'}>
+          <IconButton size="small"
+            sx={{ ...btnSx, color: loopEnabled ? '#90CAF9' : '#aaa' }}
+            onClick={() => setLoopEnabled(l => !l)}>
+            <LoopIcon sx={{ fontSize: 16 }} />
+          </IconButton>
+        </Tooltip>
         <Box sx={{ flexGrow: 1 }} />
-        <Tooltip title={collapsed ? '展开视频' : '折叠视频'}>
-          <IconButton size="small" sx={{ color: 'text.secondary', p: 0 }}>
-            {collapsed ? <ExpandMoreIcon sx={{ fontSize: 14 }} /> : <ExpandLessIcon sx={{ fontSize: 14 }} />}
+        <Tooltip title="定位到播放头">
+          <IconButton size="small" sx={btnSx} onClick={handleScrollToPlayhead}>
+            <CenterFocusStrongIcon sx={{ fontSize: 16 }} />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title="适应窗口">
+          <IconButton size="small" sx={btnSx}>
+            <FitScreenIcon sx={{ fontSize: 16 }} />
           </IconButton>
         </Tooltip>
       </Box>
-
-      <Collapse in={!collapsed}>
-        <Box sx={{ position: 'relative', width: '100%', bgcolor: '#000' }}>
-          {videoSrc ? (
-            <video
-              ref={videoRef}
-              src={videoSrc}
-              onLoadedMetadata={onLoadedMetadata}
-              onTimeUpdate={onVideoTimeUpdate}
-              style={{ width: '100%', height: 180, display: 'block', objectFit: 'contain' }}
-            />
-          ) : (
-            <Box sx={{
-              width: '100%', height: 120, display: 'flex',
-              alignItems: 'center', justifyContent: 'center',
-            }}>
-              <Typography variant="caption" color="grey.600">
-                {activeEvent
-                  ? activeEvent.translation || activeEvent.text
-                  : '选择一个事件以查看详情'}
-              </Typography>
-            </Box>
-          )}
-
-          {videoSrc && (
-            <Box sx={{
-              position: 'absolute', bottom: 2, right: 4,
-              bgcolor: 'rgba(0,0,0,0.7)', px: 0.75, py: 0.25, borderRadius: 0.5,
-            }}>
-              <Typography variant="caption" color="white" sx={{ fontSize: '0.6rem', fontFamily: 'monospace' }}>
-                {formatTime(currentTime)} / {formatTime(duration)}
-              </Typography>
-            </Box>
-          )}
-
-          {videoSrc && activeEvent && (
-            <Box sx={{
-              position: 'absolute', bottom: 28, left: 0, right: 0,
-              display: 'flex', flexDirection: 'column', alignItems: 'center', px: 1,
-            }}>
-              <Box sx={{
-                bgcolor: 'rgba(0,0,0,0.75)', px: 1, py: 0.25, borderRadius: 0.5,
-                maxWidth: '95%', textAlign: 'center',
-              }}>
-                <Typography variant="caption" color="white" sx={{ fontSize: '0.7rem', fontWeight: 500 }}>
-                  {activeEvent.translation || activeEvent.text}
-                </Typography>
-              </Box>
-            </Box>
-          )}
-        </Box>
-      </Collapse>
     </Box>
   )
 }

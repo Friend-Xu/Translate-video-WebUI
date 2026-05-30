@@ -143,7 +143,7 @@ export default function App() {
         videoSrc={videoSrc || null}
         currentTime={playheadPosition}
         events={events}
-        isPlaying={false}
+        onTimeUpdate={(t) => useAppStore.getState().setPlayhead(t)}
       />
       <IRInspector event={selectedEvent} />
     </>

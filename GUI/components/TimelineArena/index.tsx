@@ -352,7 +352,6 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
         videoSrc={videoSrc || null}
         currentTime={videoCurrentTime}
         events={filteredEvents}
-        isPlaying={isPlaying}
         onTimeUpdate={handleVideoTimeUpdate}
         onDurationChange={handleVideoDurationChange}
       />
