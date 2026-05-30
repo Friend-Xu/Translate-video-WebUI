@@ -265,6 +265,19 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
         e.preventDefault()
         useAppStore.getState().selectAllVisible(events.map(ev => ev.id))
       }
+      // Space → toggle video playback via VideoPreview in inspector
+      if (e.key === ' ') {
+        e.preventDefault()
+        const videoEl = document.querySelector('video') as HTMLVideoElement | null
+        if (videoEl) {
+          if (videoEl.paused) {
+            videoEl.currentTime = useAppStore.getState().playheadPosition
+            videoEl.play().catch(() => {})
+          } else {
+            videoEl.pause()
+          }
+        }
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
