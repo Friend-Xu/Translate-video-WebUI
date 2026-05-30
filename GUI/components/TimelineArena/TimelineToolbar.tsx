@@ -37,7 +37,7 @@ const activeSx = (on: boolean) => ({
   '&:hover': { color: '#4f46e5', bgcolor: 'rgba(99,102,241,0.08)' },
 })
 
-const BASE_PPS = 24
+const BASE_PPS = 80  // matches useTimelineCoordinates
 
 export default function TimelineToolbar({
   onZoomToFit, onScrollToPlayhead,
