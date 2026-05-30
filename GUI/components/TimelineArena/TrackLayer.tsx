@@ -58,7 +58,7 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
   }, [track.renderer, speakerCount, timelineFocus, track.id, track.height, resizeTrack])
 
   const containerHeight = track.renderer === 'speaker-lane' && speakerCount > 1 && timelineFocus === 'speaker'
-    ? speakerCount * 80
+    ? speakerCount * 100
     : track.height
 
   // Compute virtual events at top level (hooks must not be conditional)
