@@ -397,7 +397,7 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
               })}
           </>
         ) : timelineViewMode === 'table' ? (
-          <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
+          <Box sx={{ flex: '1 1 0', overflow: 'auto', minHeight: 0 }}>
             <ReviewTable
               events={filteredEvents}
               onSeek={(time: number) => {
