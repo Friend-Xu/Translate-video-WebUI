@@ -111,12 +111,24 @@ export interface PipelineConfig {
   speakerOverlapStrategy: 'dominant_energy' | 'split_sequential' | 'mark_for_review'
 }
 
+export interface StageInfo {
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  label: string
+  percent: number
+  current_item?: number
+  total_items?: number
+  elapsed?: number
+  started_at?: number
+  message?: string
+}
+
 export interface PipelineStatus {
   state: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled'
   progress: number
   currentStep: string
   jobId: string | null
   detail: string
+  stages: Record<string, StageInfo>
 }
 
 export interface LogEntry {

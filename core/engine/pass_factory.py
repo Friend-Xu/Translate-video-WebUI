@@ -23,6 +23,7 @@ from core.passes.llm_translation_pass import LLMTranslationPass
 from core.passes.translation_quality_pass import TranslationQualityPass
 from core.passes.emotion_composite_pass import EmotionCompositePass
 from core.passes.srt_export_pass import SRTExportPass
+from core.passes.video_export_pass import VideoExportPass
 from core.passes.tts_composite_pass import TTSCompositePass
 from core.passes.cosyvoice_composite_pass import CosyVoiceCompositePass
 from core.passes.edge_tts_composite_pass import EdgeTTSCompositePass
@@ -54,6 +55,7 @@ _PASS_REGISTRY: dict[str, type] = {
     "emotion_composite": EmotionCompositePass,
     # EXPORT stage
     "srt_export": SRTExportPass,
+    "video_export": VideoExportPass,
     # Individual engine passes
     "cosyvoice_composite": CosyVoiceCompositePass,
     "edge_tts_composite": EdgeTTSCompositePass,
@@ -75,6 +77,8 @@ _RUNTIME_ARGS: dict[str, list[str]] = {
     "quality_check": ["quality_strategy"],
     "translation_quality": ["quality_strategy"],
     "srt_export": ["output_path"],
+    "video_export": ["video_path", "output_dir", "workspace_dir"],
+    "tts": ["output_dir"],
     "tts_composite": ["output_dir"],
     "emotion": ["workspace_dir"],
     "emotion_composite": ["workspace_dir"],
@@ -116,6 +120,17 @@ def create_pass_factory(
     }
 
     def _factory(name: str) -> TimelinePass | None:
+        # Engine-based routing for generic tts/tts_composite → specific engine pass
+        if name in ("tts", "tts_composite"):
+            engine_name = _runtime.get("engine", "chattts")
+            engine_map = {
+                "chattts": "tts_composite",
+                "edge": "edge_tts_composite",
+                "cosyvoice": "cosyvoice_composite",
+                "indextts": "indextts_composite",
+                "openvoice": "openvoice_composite",
+            }
+            name = engine_map.get(engine_name, "tts_composite")
         cls = _PASS_REGISTRY.get(name)
         if cls is None:
             available = ", ".join(AVAILABLE_PASS_NAMES)

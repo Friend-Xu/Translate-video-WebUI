@@ -2,7 +2,7 @@
  * modes.ts — 模式切换协议与布局预设类型
  */
 
-export type Mode = 'hub' | 'timeline' | 'patch' | 'batch' | 'export'
+export type Mode = 'hub' | 'timeline' | 'speaker' | 'review' | 'patch' | 'batch' | 'export' | 'settings'
 
 /** Timeline Runtime states — mirrors backend RuntimeState enum */
 export type RuntimeState = 'uninitialized' | 'bootstrapping' | 'ready' | 'computing' | 'failed' | 'complete'
@@ -15,7 +15,7 @@ export interface CrossModeContext {
   timestamp: number
 }
 
-export const ALL_MODES: Mode[] = ['hub', 'timeline', 'patch', 'batch', 'export']
+export const ALL_MODES: Mode[] = ['hub', 'timeline', 'speaker', 'review', 'patch', 'batch', 'export']
 
 export interface ModeMeta {
   label: string
@@ -28,42 +28,54 @@ export interface ModeMeta {
   defaultDockView: 'log' | 'aiTrace' | 'patchDiff' | 'taskOutput' | 'debug'
 }
 
-export const MODE_META: Record<Mode | 'speaker', ModeMeta> = {
+export const MODE_META: Record<Mode, ModeMeta> = {
   hub: {
-    label: 'Project Hub', labelEn: 'Project Hub',
+    label: '项目中心', labelEn: 'Project Hub',
     accentColor: 'var(--mode-hub)', hexColor: '#6366f1', icon: 'Home',
     defaultShortcuts: { 'Ctrl+N': '新建项目', 'Ctrl+O': '打开项目', 'Ctrl+K': '命令面板' },
     defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'log',
   },
   timeline: {
-    label: 'Timeline Studio', labelEn: 'Timeline Studio',
+    label: '时间轴', labelEn: 'Timeline Studio',
     accentColor: 'var(--mode-timeline)', hexColor: '#2196F3', icon: 'Timeline',
     defaultShortcuts: { 'Space': '播放 / 暂停', 'Ctrl+Z': '撤销', 'Ctrl+K': '命令面板' },
     defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'log',
   },
   speaker: {
-    label: 'Speaker Review', labelEn: 'Speaker Review',
+    label: '说话人', labelEn: 'Speaker Review',
     accentColor: 'var(--mode-speaker)', hexColor: '#FF9800', icon: 'RecordVoiceOver',
     defaultShortcuts: { 'Tab': '切换说话人焦点', 'N': '下一问题', 'R': '重命名说话人', 'Ctrl+K': '命令面板' },
     defaultIssueFilter: { types: ['low_confidence', 'misaligned', 'cps_high', 'term_conflict', 'speaker_drift'], severity: 'all' },
     defaultDockView: 'log',
   },
   patch: {
-    label: 'Patch Management', labelEn: 'Patch Management',
+    label: '补丁', labelEn: 'Patch Management',
     accentColor: 'var(--mode-patch)', hexColor: '#9C27B0', icon: 'Build',
     defaultShortcuts: { 'Enter': '应用当前草案', 'Escape': '放弃当前草案', 'Ctrl+Enter': '应用全部草案', 'Ctrl+Shift+Z': '回滚上一个补丁', 'Ctrl+K': '命令面板' },
     defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'patchDiff',
   },
   batch: {
-    label: 'Batch Queue', labelEn: 'Batch Queue',
+    label: '批处理', labelEn: 'Batch Queue',
     accentColor: 'var(--mode-ops)', hexColor: '#607D8B', icon: 'QueuePlayNext',
     defaultShortcuts: { 'Ctrl+R': '重试失败任务', 'Ctrl+C': '取消运行中任务', 'Ctrl+K': '命令面板' },
     defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'taskOutput',
   },
   export: {
-    label: 'Export', labelEn: 'Export',
+    label: '导出', labelEn: 'Export',
     accentColor: 'var(--mode-export)', hexColor: '#00BCD4', icon: 'IosShare',
     defaultShortcuts: { 'Ctrl+E': '导出视频', 'Ctrl+K': '命令面板' },
+    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'log',
+  },
+  settings: {
+    label: '项目设置', labelEn: 'Settings',
+    accentColor: 'var(--mode-settings)', hexColor: '#6366F1', icon: 'Settings',
+    defaultShortcuts: { 'Ctrl+,': '打开设置', 'Ctrl+K': '命令面板' },
+    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'log',
+  },
+  review: {
+    label: '字幕校验', labelEn: 'Review',
+    accentColor: 'var(--mode-review)', hexColor: '#10B981', icon: 'RateReview',
+    defaultShortcuts: { 'Tab': '下一段', 'Enter': '确认', 'Ctrl+K': '命令面板' },
     defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'log',
   },
 }
@@ -80,9 +92,12 @@ export interface LayoutPreset {
 export const LAYOUT_PRESETS: Record<Mode, LayoutPreset> = {
   hub: { railComponent: null, inspectorTabs: [], defaultDockView: 'log' },
   timeline: { railComponent: null, inspectorTabs: ALL_INSPECTOR_TABS, defaultDockView: 'log' },
+  speaker: { railComponent: null, inspectorTabs: ['speaker', 'content', 'timing'], defaultDockView: 'log' },
   patch: { railComponent: null, inspectorTabs: ['patch', 'content', 'timing', 'history'], defaultDockView: 'patchDiff' },
   batch: { railComponent: null, inspectorTabs: ['content', 'timing', 'history'], defaultDockView: 'taskOutput' },
   export: { railComponent: null, inspectorTabs: ['content', 'timing'], defaultDockView: 'log' },
+  settings: { railComponent: null, inspectorTabs: [], defaultDockView: 'log' },
+  review: { railComponent: null, inspectorTabs: ['content', 'review', 'timing'], defaultDockView: 'log' },
 }
 
 export type IssueType = 'low_confidence' | 'misaligned' | 'cps_high' | 'duration_short' | 'duration_long' | 'term_conflict' | 'speaker_drift'

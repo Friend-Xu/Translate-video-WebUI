@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import {
   Box, Typography, Button, Card, CardContent, CardActionArea,
-  Chip, Divider, LinearProgress, Grid, Stepper, Step, StepLabel,
+  Chip, Divider, LinearProgress, Grid, Stepper, Step, StepLabel, Collapse,
   Select, MenuItem, FormControl, InputLabel, Switch, FormControlLabel,
   Accordion, AccordionSummary, AccordionDetails,
 } from '@mui/material'
@@ -17,12 +17,13 @@ import CheckCircleRounded from '@mui/icons-material/CheckCircleRounded'
 import PlayArrowRounded from '@mui/icons-material/PlayArrowRounded'
 import StopRounded from '@mui/icons-material/StopRounded'
 import DeleteOutlineRounded from '@mui/icons-material/DeleteOutlineRounded'
-import OpenInNewRounded from '@mui/icons-material/OpenInNewRounded'
+import AutoAwesomeRounded from '@mui/icons-material/AutoAwesomeRounded'
 import VideoFileRounded from '@mui/icons-material/VideoFileRounded'
 import SettingsIcon from '@mui/icons-material/SettingsRounded'
 import { useAppStore } from '../store/useAppStore'
 import { usePipeline } from '../hooks/usePipeline'
 import { useSSE } from '../hooks/useSSE'
+import StagePipeline from './sections/StagePipeline'
 import { ApiConfigDialog } from './ApiConfigDialog'
 import type { WorkflowPreset, WorkspaceSummary, PipelineConfig } from '../types'
 import type { LogEntry } from '../types'
@@ -35,6 +36,7 @@ const PRESET_ICONS: Record<string, React.ReactNode> = {
   TheatersRounded: <TheatersRounded sx={{ fontSize: 32 }} />,
   TranslateRounded: <TranslateRounded sx={{ fontSize: 32 }} />,
   PodcastsRounded: <PodcastsRounded sx={{ fontSize: 32 }} />,
+  AutoAwesomeRounded: <AutoAwesomeRounded sx={{ fontSize: 32 }} />,
 }
 
 const STATE_LABELS: Record<string, { label: string; color: 'success' | 'info' | 'error' | 'warning' | 'default' }> = {
@@ -105,8 +107,32 @@ export default function ProjectHubPage() {
     if (phase === 'hub') fetchWorkspaceList()
   }, [phase, fetchWorkspaceList])
 
-  // SSE connection
-  useSSE(status.jobId, appendLog, () => {}, () => {}, '/api/core/pipeline')
+  // SSE connection with structured event handler for stage pipeline updates
+  const handleSSEEvent = useCallback((type: string, payload: Record<string, unknown>) => {
+    if (type === 'stage_started' || type === 'stage_progress' || type === 'stage_completed') {
+      setStatus(prev => {
+        const stage = payload.stage as string || ''
+        if (!stage) return prev
+        const stages = { ...prev.stages }
+        if (type === 'stage_started') {
+          stages[stage] = { status: 'running', label: (payload.stage_label as string) || stage, percent: 0, current_item: 0, total_items: (payload.total_items as number) || 0 }
+        } else if (type === 'stage_progress') {
+          const ci = (payload.current_item as number) || 0
+          const ti = (payload.total_items as number) || (stages[stage]?.total_items ?? 0)
+          stages[stage] = { ...(stages[stage] || { label: (payload.stage_label as string) || stage }), status: 'running', current_item: ci, total_items: ti, percent: (payload.percent as number) || (ti > 0 ? Math.round(ci / ti * 100) : 0) }
+        } else if (type === 'stage_completed') {
+          stages[stage] = { ...(stages[stage] || { label: (payload.stage_label as string) || stage }), status: 'completed', percent: 100 }
+        }
+        return { ...prev, stages }
+      })
+    } else if (type === 'workflow_completed') {
+      setStatus(prev => ({ ...prev, state: 'completed', progress: 100 }))
+    } else if (type === 'workflow_failed' || type === 'error') {
+      setStatus(prev => ({ ...prev, state: 'failed' }))
+    }
+  }, [setStatus])
+
+  useSSE(status.jobId, appendLog, () => {}, () => {}, '/api/core/pipeline', handleSSEEvent)
 
   // Load video info when manifest is available
   useEffect(() => {
@@ -227,21 +253,27 @@ export default function ProjectHubPage() {
     setPhase('review')
   }, [cancelPipeline])
 
-  const handleOpenTimeline = useCallback(() => {
-    if (workspace) loadWorkspace(workspace).then(() => setMode('timeline'))
-  }, [workspace, loadWorkspace, setMode])
-
   const handleOpenWorkspace = useCallback(async (ws: WorkspaceSummary) => {
     await loadWorkspace(ws.path)
     setMode('timeline')
   }, [loadWorkspace, setMode])
 
-  // Detect pipeline completion
+  // Detect pipeline completion → auto-enter timeline workbench
+  // (skip for full_pipeline presets — user should see the completion screen)
   useEffect(() => {
-    if (phase === 'running' && status.state === 'completed') {
-      setPhase('done')
+    if (phase === 'running' && status.state === 'completed' && workspace) {
+      const preset = workflowPresets.find(p => p.id === selectedPresetId)
+      if (preset?.configDefaults?.full_pipeline) {
+        setPhase('done')
+      } else {
+        loadWorkspace(workspace).then(() => {
+          setMode('timeline')
+        })
+      }
     }
-  }, [phase, status.state])
+  }, [phase, status.state, workspace, loadWorkspace, setMode, selectedPresetId, workflowPresets])
+
+  const [logExpanded, setLogExpanded] = useState(false)
 
   const selectedPreset = workflowPresets.find(p => p.id === selectedPresetId)
   const readyWorkspaces = workspaceList.filter(w => w.runtimeState === 'ready' || w.runtimeState === 'complete')
@@ -434,7 +466,7 @@ export default function ProjectHubPage() {
                           <Box sx={{ flexShrink: 0, cursor: 'pointer', color: 'error.main' }}
                             onClick={(e) => {
                               e.stopPropagation()
-                              fetch('/api/pipeline/cancel-by-workspace', {
+                              fetch('/api/core/pipeline/cancel-by-workspace', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({ workspace_path: ws.path }),
@@ -476,7 +508,7 @@ export default function ProjectHubPage() {
     <Box sx={{ height: '100%', overflow: 'auto', p: 3 }}>
       <Box sx={{ mb: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-          <Button size="small" variant="text" onClick={() => { setPhase('hub') }} sx={{ fontSize: '0.7rem' }}>
+          <Button size="medium" variant="outlined" color="primary" onClick={() => { setPhase('hub') }}>
             ← 返回项目中心
           </Button>
         </Box>
@@ -659,26 +691,82 @@ export default function ProjectHubPage() {
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
             <Box>
               <Typography variant="subtitle1" fontWeight={600}>
-                {phase === 'done' ? 'Bootstrap 完成' : status.state === 'failed' ? 'Bootstrap 失败' : '正在初始化 Timeline Runtime...'}
+                {phase === 'done' ? 'Bootstrap 完成'
+                  : status.state === 'failed' ? 'Bootstrap 失败'
+                  : status.currentStep || '正在初始化 Timeline Runtime...'}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                进度: {status.progress}%{status.currentStep ? ` · ${status.currentStep}` : ''}
+                {status.currentStep ? ` ${status.currentStep}` : ''}
               </Typography>
             </Box>
             {status.state === 'running' && (
               <Button size="small" color="error" variant="outlined" startIcon={<StopRounded />} onClick={handleCancel}>取消</Button>
             )}
           </Box>
-          {status.state === 'running' && <LinearProgress variant="determinate" value={status.progress} sx={{ mb: 2, borderRadius: 1 }} />}
-          <Box sx={{ bgcolor: 'background.default', borderRadius: 1, p: 1.5, maxHeight: 320, overflow: 'auto', fontFamily: 'monospace', fontSize: '0.7rem' }}>
-            {logs.length === 0 ? <Typography variant="caption" color="text.disabled">等待日志输出...</Typography> :
-              logs.map((entry: LogEntry, i: number) => (
-                <Box key={i} sx={{ color: entry.level === 'ERROR' ? 'error.main' : entry.level === 'WARN' ? 'warning.main' : entry.level === 'STAGE' ? 'primary.main' : 'text.secondary', py: 0.1 }}>{entry.message}</Box>
-              ))}
+
+          {/* Stage Pipeline — uses WorkflowStage keys matching backend events */}
+          {Object.keys(status.stages).length > 0 && (
+            <StagePipeline
+              passOrder={
+                selectedPreset?.configDefaults?.full_pipeline
+                  ? ['load', 'extract', 'translate', 'validate', 'tts', 'export']
+                  : ['load', 'extract', 'translate', 'validate']
+              }
+              stages={status.stages}
+              activeStage={status.currentStep?.replace(/[.…]/g, '').trim()}
+            />
+          )}
+
+          {/* Fallback progress bar when no stage data yet */}
+          {status.state === 'running' && Object.keys(status.stages).length === 0 && (
+            <LinearProgress variant="determinate" value={status.progress} sx={{ mb: 2, borderRadius: 1 }} />
+          )}
+
+          {/* Translation detail card — show when translate stage is running */}
+          {(() => {
+            const ts = status.stages['translate']
+            if (ts && ts.status === 'running' && (ts.total_items ?? 0) > 0) {
+              return (
+                <Box sx={{ mb: 2, p: 1.5, borderRadius: 1.5, bgcolor: '#2563EB08', border: '1px solid #2563EB20' }}>
+                  <Typography variant="caption" fontWeight={600} color="#2563EB" sx={{ display: 'block', mb: 0.5 }}>
+                    翻译进度: {ts.current_item ?? 0}/{ts.total_items ?? 0} 条 ({ts.percent ?? 0}%)
+                  </Typography>
+                  <LinearProgress variant="determinate" value={ts.percent ?? 0}
+                    sx={{ height: 4, borderRadius: 1, mb: 0.5, bgcolor: '#2563EB15', '& .MuiLinearProgress-bar': { bgcolor: '#2563EB', borderRadius: 1 } }} />
+                  {ts.message && (
+                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem', display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      当前: {ts.message}
+                    </Typography>
+                  )}
+                </Box>
+              )
+            }
+            return null
+          })()}
+
+          {/* Collapsible log panel */}
+          <Box sx={{ mt: 1 }}>
+            <Button
+              size="small"
+              variant="text"
+              onClick={() => setLogExpanded(!logExpanded)}
+              sx={{ fontSize: '0.65rem', color: 'text.secondary', mb: logExpanded ? 1 : 0 }}
+            >
+              {logExpanded ? '▾ 收起日志' : `▸ 查看日志 (${logs.length} 条)`}
+            </Button>
+            <Collapse in={logExpanded}>
+              <Box sx={{ bgcolor: 'background.default', borderRadius: 1, p: 1.5, maxHeight: 200, overflow: 'auto', fontFamily: 'monospace', fontSize: '0.65rem' }}>
+                {logs.length === 0 ? <Typography variant="caption" color="text.disabled">等待日志输出...</Typography> :
+                  logs.map((entry: LogEntry, i: number) => (
+                    <Box key={i} sx={{ color: entry.level === 'ERROR' ? 'error.main' : entry.level === 'WARN' ? 'warning.main' : entry.level === 'STAGE' ? 'primary.main' : 'text.secondary', py: 0.05 }}>{entry.message}</Box>
+                  ))}
+              </Box>
+            </Collapse>
           </Box>
+
           {phase === 'done' && (
-            <Button variant="contained" color="success" startIcon={<OpenInNewRounded />} onClick={handleOpenTimeline} sx={{ mt: 2 }}>
-              在 Timeline Workbench 中打开
+            <Button variant="contained" onClick={() => setPhase('hub')} sx={{ mt: 2 }}>
+              返回项目中心查看
             </Button>
           )}
           {status.state === 'failed' && phase === 'running' && (

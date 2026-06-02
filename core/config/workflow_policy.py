@@ -156,7 +156,7 @@ class WorkflowPolicy:
             ),
             WorkflowStage.EXPORT: StageConfig(
                 stage=WorkflowStage.EXPORT,
-                passes=["srt_export"],
+                passes=["srt_export", "video_export"],
                 auto_advance=True,
             ),
         }
@@ -203,6 +203,9 @@ class WorkflowPolicy:
         full = cls.default_preset(target_lang)
         full.stages.pop(WorkflowStage.TTS, None)
         full.stages.pop(WorkflowStage.EXPORT, None)
+        # Bootstrap validate should complete, not pause — no TTS/EXPORT to gate
+        if WorkflowStage.VALIDATE in full.stages:
+            full.stages[WorkflowStage.VALIDATE].gate_routing["A"] = "continue"
         return full
 
     @classmethod

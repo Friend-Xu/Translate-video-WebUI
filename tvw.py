@@ -158,8 +158,12 @@ def _run_core_pipeline(args) -> None:
     lang = args.lang or "zh"
     if args.stages:
         stages = [s.strip() for s in args.stages.split(",")]
+    elif args.export_stage:
+        # 仅 TTS + EXPORT
+        stages = ["tts", "export"]
     else:
-        stages = ["load", "extract", "translate", "validate"]
+        # 全管线模式（无 --bootstrap 也无 --export-stage）：跑全部 6 阶段
+        stages = ["load", "extract", "translate", "validate", "tts", "export"]
 
     if args.bootstrap:
         # Bootstrap 预设 — 仅到 VALIDATE
@@ -266,6 +270,17 @@ def _run_core_pipeline(args) -> None:
     orchestrator.set_pass_factory(pass_factory)
 
     def _progress(report: ProgressReport) -> None:
+        # Emit stage_started or stage_completed as discrete events
+        event_type = str(report.event_type.value) if hasattr(report.event_type, 'value') else str(report.event_type)
+        if event_type in ("stage_started", "stage_completed"):
+            stage_val = report.stage.value if hasattr(report.stage, 'value') else report.stage
+            _json_out({
+                "type": event_type,
+                "stage": stage_val,
+                "stage_label": report.stage_label,
+                "message": report.message,
+                "ts": _now_iso(),
+            })
         _json_out({
             "type": "stage_progress",
             "stage": report.stage.value if hasattr(report.stage, 'value') else report.stage,

@@ -77,11 +77,10 @@ export default function TrackSystem({ events, totalDuration, canvasWidth, coord,
     window.addEventListener('mouseup', onUp)
   }, [coord, totalDuration, setPlayhead])
 
-  // Time ruler click to seek
+  // Time ruler click to seek — just set playhead, minimap handles scroll
   const handleRulerClick = useCallback((time: number) => {
     setPlayhead(time)
-    coord.centerOnTime(time)
-  }, [setPlayhead, coord])
+  }, [setPlayhead])
 
   // Time ruler hover — show scrub line
   const handleRulerHover = useCallback((time: number | null) => {

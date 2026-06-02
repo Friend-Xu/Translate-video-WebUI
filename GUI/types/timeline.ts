@@ -40,17 +40,12 @@ export const DEFAULT_TRACKS: TrackDefinition[] = [
 export const TRACK_VISIBILITY_MAP: Record<Mode, Partial<Record<TrackType, { visible: boolean; locked: boolean; solo?: boolean; muted?: boolean }>>> = {
   hub: {},
   timeline: {},
-  patch: {
-    diff: { visible: true, locked: false, solo: true },
-    speaker: { visible: false, locked: true },
-  },
-  batch: {
-    source: { visible: false, locked: true },
-    translation: { visible: false, locked: true },
-    speaker: { visible: false, locked: true },
-    tts: { visible: false, locked: true },
-  },
+  speaker: {},
+  review: {},
+  patch: {},
+  batch: {},
   export: {},
+  settings: {},
 }
 
 // Speaker focus track preset — applied when timelineFocus='speaker'

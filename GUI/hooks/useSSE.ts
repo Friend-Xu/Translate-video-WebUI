@@ -11,7 +11,8 @@ export function useSSE(
   onLog: (entry: LogEntry) => void,
   onDone: (status: string) => void,
   onClear?: () => void,
-  apiBase: string = '/api/pipeline',
+  apiBase: string = '/api/core/pipeline',
+  onEvent?: (type: string, payload: Record<string, unknown>) => void,
 ) {
   const sourceRef = useRef<EventSource | null>(null)
   const [connectionState, setConnectionState] = useState<ConnectionState>('closed')
@@ -22,7 +23,8 @@ export function useSSE(
   const onClearRef = useRef(onClear)
   onLogRef.current = onLog
   onDoneRef.current = onDone
-  onClearRef.current = onClear
+  const onEventRef = useRef(onEvent)
+  onEventRef.current = onEvent
 
   const disconnect = useCallback(() => {
     sourceRef.current?.close()
@@ -46,6 +48,18 @@ export function useSSE(
     es.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
+        // Pass structured event fields to parent via onEvent callback
+        if (data.event && onEventRef.current) {
+          onEventRef.current(data.event as string, {
+            type: data.event as string,
+            stage: data.stage || '',
+            stage_label: data.stage_label || '',
+            current_item: data.current_item ?? 0,
+            total_items: data.total_items ?? 0,
+            percent: data.percent ?? 0,
+            message: data.message || '',
+          })
+        }
         const raw: string = data.message || ''
         const match = raw.match(/^\[(\w+)\s*\]\s*(.*)/)
         let level = (match?.[1] || 'INFO') as LogEntry['level']

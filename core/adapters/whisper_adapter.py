@@ -122,7 +122,7 @@ class WhisperAdapter(AdapterProtocol):
     # ── faster-whisper 转录 ───────────────────────────────────
 
     def _transcribe(self, vad_segments: list[tuple[float, float]]) -> tuple[list[dict], str, dict]:
-        """用 faster-whisper 转录 VAD 分段。"""
+        """用 faster-whisper 转录 VAD 分段。转录整段音频一次，按 VAD 边界过滤。"""
         from faster_whisper import WhisperModel
 
         download_root = self.ctx.model_root
@@ -141,43 +141,54 @@ class WhisperAdapter(AdapterProtocol):
             num_workers=self.ctx.num_workers,
         )
 
+        # Transcribe entire audio ONCE, not per-VAD-segment.
+        # Do NOT use vad_filter=True — faster-whisper's internal VAD is more aggressive
+        # than Silero and would discard speech that Silero detected.
+        chunk_segments, info = model.transcribe(
+            self.ctx.audio_path,
+            language=self.ctx.language,
+            word_timestamps=True,
+        )
+        language = info.language
+
         segments: list[dict] = []
-        language = self.ctx.language or ""
         total_words = 0
 
-        for start, end in vad_segments:
-            chunk_segments, info = model.transcribe(
-                self.ctx.audio_path,
-                language=self.ctx.language,
-                word_timestamps=True,
-                vad_filter=False,
-            )
-            language = info.language
+        for seg in chunk_segments:
+            seg_start = seg.start
+            seg_end = seg.end
+            if seg_start >= seg_end:
+                continue
 
-            for seg in chunk_segments:
-                seg_start = max(seg.start, start)
-                seg_end = min(seg.end, end)
-                if seg_start >= seg_end:
-                    continue
-                words = [
-                    {"word": w.word.strip(), "start": w.start, "end": w.end, "score": w.probability}
-                    for w in (seg.words or [])
-                ]
-                text = seg.text.strip()
-                if not text:
-                    continue
-                total_words += len(words)
-                segments.append({
-                    "start": seg_start,
-                    "end": seg_end,
-                    "text": text,
-                    "words": words,
-                })
+            # Filter: only keep segments that fall within a VAD interval
+            in_vad = any(start <= seg_start and seg_end <= end for start, end in vad_segments)
+            if not in_vad:
+                continue
+
+            words = [
+                {"word": w.word.strip(), "start": w.start, "end": w.end, "score": w.probability}
+                for w in (seg.words or [])
+            ]
+            text = seg.text.strip()
+            if not text:
+                continue
+            total_words += len(words)
+            segments.append({
+                "start": seg_start,
+                "end": seg_end,
+                "text": text,
+                "words": words,
+            })
 
         stats = {
             "segments_count": len(segments),
             "total_words": total_words,
         }
+
+        # 闭合 segment 间隙：VAD 语音连续但 faster-whisper 内部分段产生的间隙
+        segments.sort(key=lambda s: s["start"])
+        _close_segment_gaps(segments, vad_segments)
+
         return segments, language, stats
 
     # ── Patch 转换 ─────────────────────────────────────────────
@@ -253,3 +264,47 @@ class WhisperAdapter(AdapterProtocol):
             return 1.0
         scores = [w.get("score", 0.0) for w in words if w.get("score") is not None]
         return sum(scores) / len(scores) if scores else 1.0
+
+
+def _close_segment_gaps(segments: list[dict], vad_segments: list[tuple[float, float]],
+                        vad_adjacency_gap: float = 0.5) -> None:
+    """闭合 VAD 语音连续区间内因 faster-whisper 内部分段产生的间隙。
+
+    如果两个连续 segment 落在同一 VAD 区间或相邻 VAD 区间（区间间隙 ≤ vad_adjacency_gap），
+    则用前段 end 去碰后段 start 消除间隙。
+    """
+    for i in range(len(segments) - 1):
+        gap = segments[i + 1]["start"] - segments[i]["end"]
+        if gap <= 0:
+            continue
+
+        a_start = segments[i]["start"]
+        a_end = segments[i + 1]["end"]
+
+        # 找覆盖两段的 VAD 区间对（允许跨相邻区间）
+        first = None
+        for s, e in vad_segments:
+            if s - vad_adjacency_gap <= a_start <= e + vad_adjacency_gap:
+                first = (s, e)
+                break
+        last = None
+        for s, e in reversed(vad_segments):
+            if s - vad_adjacency_gap <= a_end <= e + vad_adjacency_gap:
+                last = (s, e)
+                break
+        if first is None or last is None:
+            continue
+
+        # 检查 first→last 之间的 VAD 区间间隙是否都 ≤ 阈值
+        try:
+            idx_first = vad_segments.index(first)
+            idx_last = vad_segments.index(last)
+        except ValueError:
+            continue
+        ok = True
+        for j in range(idx_first, idx_last):
+            if vad_segments[j + 1][0] - vad_segments[j][1] > vad_adjacency_gap:
+                ok = False
+                break
+        if ok:
+            segments[i]["end"] = segments[i + 1]["start"]

@@ -134,7 +134,7 @@ class ChatTTSAdapter(AdapterProtocol):
     def _make_output_path(self, segment_id: str) -> str:
         import os
         d = self._output_dir or "."
-        return os.path.join(d, "03_tts", f"{segment_id}_chattts.wav")
+        return os.path.join(d, "05_tts", f"{segment_id}_chattts.wav")
 
     @staticmethod
     def _build_refine_prompt(ctx: TTSSegmentContext) -> str:

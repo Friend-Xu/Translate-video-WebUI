@@ -134,6 +134,25 @@ PRESETS: list[WorkflowPreset] = [
         },
         policy_fn=_quick_preset,
     ),
+    WorkflowPreset(
+        id="one_click_studio",
+        name="一键成片",
+        name_en="One-Click Studio",
+        description="全自动完整管线：提取字幕 → 翻译 → TTS 合成 → 导出成品。无需手动审核，一键生成配音视频。",
+        icon="AutoAwesomeRounded",
+        passes=[
+            "media_validate", "demucs", "asr", "speaker",
+            "semantic_merge", "translate", "quality_check",
+            "tts", "emotion", "srt_export", "export",
+        ],
+        tags=["全自动", "一键输出", "TTS"],
+        config_defaults={
+            "full_pipeline": True,
+            "enable_speaker_diarization": True,
+            "compute_type": "float16",
+        },
+        policy_fn=_default_preset,
+    ),
 ]
 
 

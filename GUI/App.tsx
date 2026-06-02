@@ -13,6 +13,9 @@ import IRInspector from './components/IRInspector/index'
 import OpsDashboard from './components/OpsDashboard'
 import PatchManagementView from './components/ModeViews/PatchManagementView'
 import ExportView from './components/ModeViews/ExportView'
+import SettingsView from './components/ModeViews/SettingsView'
+import SpeakerReviewView from './components/ModeViews/SpeakerReviewView'
+import ReviewTable from './components/TimelineArena/ReviewTable'
 import CommandPalette from './components/CommandPalette'
 import { useConfig } from './hooks/useConfig'
 import { usePipeline } from './hooks/usePipeline'
@@ -121,6 +124,7 @@ export default function App() {
   const dataSource = useAppStore(s => s.dataSource)
   const storeEvents = useAppStore(s => s.events)
   const storeWaveform = useAppStore(s => s.waveform)
+  const storeWorkspace = useAppStore(s => s.workspace)
   const manifest = useAppStore(s => s.manifest)
   const playheadPosition = useAppStore(s => s.playheadPosition)
   const isWorkspace = dataSource === 'workspace' && storeEvents.length > 0
@@ -137,7 +141,7 @@ export default function App() {
   const selectedEvent = events.find(e => e.id === selectedEventId) || null
 
   // VideoPreview 放在 Inspector 面板上方
-  const inspectorWithVideo = (
+  const inspectorWithVideo = mode === 'timeline' || mode === 'speaker' || mode === 'review' ? (
     <>
       <VideoPreview
         videoSrc={videoSrc || null}
@@ -147,7 +151,7 @@ export default function App() {
       />
       <IRInspector event={selectedEvent} />
     </>
-  )
+  ) : null
 
   const arenaContent = (
     <>
@@ -171,6 +175,28 @@ export default function App() {
       </Box>
       <Box sx={{ display: mode === 'export' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
         <ExportView events={events} />
+      </Box>
+      <Box sx={{ display: mode === 'speaker' ? 'flex' : 'none', flex: 1, overflow: 'hidden', position: 'relative' }}>
+        {!isWorkspace && (
+          <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 50,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            bgcolor: 'rgba(0,0,0,0.75)', gap: 2, px: 3 }}>
+            <Typography variant="h6" color="text.secondary" textAlign="center">尚未加载项目数据</Typography>
+            <Button variant="contained" onClick={() => setMode('hub')}>返回项目中心</Button>
+          </Box>
+        )}
+        <SpeakerReviewView events={events} />
+      </Box>
+      <Box sx={{ display: mode === 'review' ? 'flex' : 'none', flex: 1, overflow: 'hidden', position: 'relative' }}>
+        {!isWorkspace && (
+          <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 50,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            bgcolor: 'rgba(0,0,0,0.75)', gap: 2, px: 3 }}>
+            <Typography variant="h6" color="text.secondary" textAlign="center">尚未加载项目数据</Typography>
+            <Button variant="contained" onClick={() => setMode('hub')}>返回项目中心</Button>
+          </Box>
+        )}
+        <ReviewTable events={events} workspace={storeWorkspace} onSeek={(t) => useAppStore.getState().setPlayhead(t)} />
       </Box>
       <Box sx={{ display: mode === 'timeline' ? 'flex' : 'none', flex: 1, overflow: 'hidden', position: 'relative' }}>
         {!isWorkspace && (
@@ -205,6 +231,11 @@ export default function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
 
+      {mode === 'settings' ? (
+        <SettingsView />
+      ) : (
+      <>
+
       {errorMsg && <ErrorBanner message={errorMsg} onDismiss={() => setErrorMsg(null)} />}
 
       <AppShell
@@ -223,7 +254,7 @@ export default function App() {
         railContent={<NavRail />}
         arenaContent={arenaContent}
         inspectorContent={inspectorWithVideo}
-        dockContent={
+        dockContent={mode === 'timeline' || mode === 'speaker' || mode === 'review' ? (
           <EvidenceDock
             logs={logs}
             connectionState={connectionState}
@@ -234,7 +265,7 @@ export default function App() {
             passTrace={events.length > 0 ? events[0].passTrace : undefined}
             batchStatus={batch}
           />
-        }
+        ) : null}
       />
 
       <CommandPalette />
@@ -279,6 +310,8 @@ export default function App() {
           {snackbar.msg}
         </Alert>
       </Snackbar>
+      </>
+      )}
     </ThemeProvider>
   )
 }

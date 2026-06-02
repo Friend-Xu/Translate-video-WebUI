@@ -41,7 +41,7 @@ def _find_tmp_files(workspace_dir: str) -> list[str]:
     for pattern in ("*.tmp", "*_worker_stderr.log", "*.log.old"):
         for p in _glob.glob(os.path.join(workspace_dir, pattern)):
             found.append(p)
-    for sub in ("01_extract", "02_translate", "03_tts", "04_output",
+    for sub in ("01_extract", "02_translate", "05_tts", "06_export",
                 "05_tts", "06_export"):
         for p in _glob.glob(os.path.join(workspace_dir, sub, "*.tmp")):
             found.append(p)
@@ -70,7 +70,7 @@ def collect_gc(workspace_dir: str, ttl_days: int = 7) -> list[GCOperation]:
                     size_bytes=_size(full), action="delete",
                 ))
 
-    tts_dir = os.path.join(workspace_dir, "03_tts")
+    tts_dir = os.path.join(workspace_dir, "05_tts")
     if os.path.isdir(tts_dir):
         manifest_path = os.path.join(workspace_dir, "project.json")
         is_frozen = False
@@ -127,7 +127,7 @@ def archive_workspace(workspace_dir: str, archives_root: str = "") -> str:
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     archive_path = os.path.join(archives_root, f"{ws_name}_{ts}.zip")
 
-    exclude_dirs = {".snapshots", "_embeddings", "03_tts", "05_tts"}
+    exclude_dirs = {".snapshots", "_embeddings", "05_tts", "05_tts"}
     try:
         with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for root, dirs, files in os.walk(workspace_dir):

@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react'
 import type { PipelineConfig, PipelineStatus, LogEntry } from '../types'
 
-const API_OLD = '/api/pipeline'
+const API_BASE = '/api/core/pipeline'
 const MAX_WINDOW = 500      // max loaded entries in memory
 const TAIL_LIMIT = 200       // initial fetch size
 const PAGE_LIMIT = 200       // scroll-up page size
@@ -22,9 +22,9 @@ function parseLine(raw: string): LogEntry {
   return { _id: nextId(), level, message, timestamp: new Date().toLocaleTimeString() }
 }
 
-export function usePipeline(apiBase: string = API_OLD) {
+export function usePipeline(apiBase: string = API_BASE) {
   const [status, setStatus] = useState<PipelineStatus>({
-    state: 'idle', progress: 0, currentStep: '就绪', jobId: null, detail: '',
+    state: 'idle', progress: 0, currentStep: '就绪', jobId: null, detail: '', stages: {},
   })
   const [logs, setLogs] = useState<LogEntry[]>([])
 
@@ -143,9 +143,11 @@ export function usePipeline(apiBase: string = API_OLD) {
         const data = await res.json()
         setStatus(prev => ({
           ...prev,
+          state: data.status || prev.state,
           progress: data.progress,
           currentStep: data.current_step,
           detail: data.detail || '',
+          stages: data.stages || prev.stages,
         }))
         if (data.status === 'running') {
           setTimeout(poll, 2000)
@@ -160,7 +162,7 @@ export function usePipeline(apiBase: string = API_OLD) {
     firstItemIndex.current = 0
     headGlobalIndex.current = 0
     totalLines.current = 0
-    setStatus({ state: 'running', progress: 5, currentStep: '启动中...', jobId: null, detail: '' })
+    setStatus({ state: 'running', progress: 5, currentStep: '启动中...', jobId: null, detail: '', stages: {} })
 
     try {
       const res = await fetch(`${apiBase}/run`, {
@@ -238,7 +240,7 @@ export function usePipeline(apiBase: string = API_OLD) {
       pollStatus(job_id)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      setStatus({ state: 'failed', progress: 0, currentStep: '启动失败', jobId: null, detail: '' })
+      setStatus({ state: 'failed', progress: 0, currentStep: '启动失败', jobId: null, detail: '', stages: {} })
       appendLog({ level: 'ERROR', message: msg, timestamp: new Date().toLocaleTimeString() })
     }
   }, [appendLog, pollStatus, loadLogTail])

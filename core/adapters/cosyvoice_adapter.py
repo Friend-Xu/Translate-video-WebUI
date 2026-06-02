@@ -183,7 +183,7 @@ class CosyVoiceAdapter:
     def _make_output_path(self, segment_id: str) -> str:
         import os
         d = self._output_dir or "."
-        return os.path.join(d, "03_tts", f"{segment_id}_cosyvoice.wav")
+        return os.path.join(d, "05_tts", f"{segment_id}_cosyvoice.wav")
 
     @staticmethod
     def _speed_to_rate_str(speed: float) -> str:

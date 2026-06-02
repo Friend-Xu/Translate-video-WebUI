@@ -102,6 +102,18 @@ class StageExecutor:
                     current=i + 1,
                     payload=diff,
                 )
+                # For translate/tts stages: emit item-level progress
+                if self._config.stage.value in ("translate", "tts"):
+                    total_items = diff.get("events_after", 0)
+                    if total_items > 0:
+                        for ei in range(total_items):
+                            self._emit(
+                                ProgressEventType.STAGE_PROGRESS,
+                                f"{diff['pass']}: event {ei + 1}/{total_items}",
+                                total=total_items,
+                                current=ei + 1,
+                                payload={"pass": diff["pass"], "item": ei + 1, "total": total_items},
+                            )
 
             self._progress.completed_at = time.time()
             elapsed = self._progress.elapsed

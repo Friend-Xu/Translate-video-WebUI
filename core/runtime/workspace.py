@@ -36,11 +36,11 @@ class WorkspaceResolver:
 
     @property
     def tts_dir(self) -> str:
-        return os.path.join(self.workspace_root, "03_tts")
+        return os.path.join(self.workspace_root, "05_tts")
 
     @property
     def output_dir(self) -> str:
-        return os.path.join(self.workspace_root, "04_output")
+        return os.path.join(self.workspace_root, "06_export")
 
     @property
     def snapshots_dir(self) -> str:

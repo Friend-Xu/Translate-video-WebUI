@@ -35,14 +35,24 @@ def safe_replace(src: str, dst: str) -> None:
     """原子替换文件，Windows PermissionError 兼容。
 
     os.replace 在 Windows 上可能因杀毒软件/文件锁导致 PermissionError。
-    此函数在 PermissionError 时回退为先删目标文件再重试。
+    此函数在 PermissionError 时回退为先删目标文件再重试，带延时重试。
     """
-    try:
-        os.replace(src, dst)
-    except PermissionError:
-        if os.path.isfile(dst):
-            os.remove(dst)
-        os.replace(src, dst)
+    import time
+    for attempt in range(5):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if os.path.isfile(dst):
+                try:
+                    os.remove(dst)
+                except PermissionError:
+                    if attempt < 4:
+                        time.sleep(0.2)
+                        continue
+                    raise
+            os.replace(src, dst)
+            return
 
 
 def fmt_timestamp(seconds: float) -> str:

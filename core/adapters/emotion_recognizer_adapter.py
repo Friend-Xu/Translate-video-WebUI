@@ -59,7 +59,7 @@ class EmotionRecognizerAdapter:
             if os.path.exists(ctx.audio_path):
                 from funasr import AutoModel
                 model = AutoModel(model="iic/emotion2vec_plus_large")
-                emo_dir = os.path.join(self._output_dir, "03_tts", "tmp_emo") if self._output_dir else "./tmp_emo"
+                emo_dir = os.path.join(self._output_dir, "05_tts", "tmp_emo") if self._output_dir else "./tmp_emo"
                 result = model.generate(ctx.audio_path, output_dir=emo_dir)
                 if result and len(result) > 0:
                     ev = EmotionVector.from_9class_scores(result[0].get("scores", {}))

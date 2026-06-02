@@ -12,8 +12,8 @@ import AutoFixHighIcon from '@mui/icons-material/AutoFixHighRounded'
 import LayersClearIcon from '@mui/icons-material/LayersClearRounded'
 import PsychologyIcon from '@mui/icons-material/PsychologyRounded'
 import TableViewIcon from '@mui/icons-material/TableViewRounded'
-import TimelineViewIcon from '@mui/icons-material/TimelineRounded'
 import PeopleIcon from '@mui/icons-material/PeopleRounded'
+import FileDownloadIcon from '@mui/icons-material/FileDownloadRounded'
 import { useAppStore } from '../../store/useAppStore'
 import type { TimelineCoordAPI } from '../../hooks/useTimelineCoordinates'
 
@@ -45,8 +45,8 @@ export default function TimelineToolbar({
   filterBarOpen, onToggleFilter, onRetrigger, onRequestAiAssist,
   coord,
 }: Props) {
-  const timelineViewMode = useAppStore(s => s.timelineViewMode)
-  const setTimelineViewMode = useAppStore(s => s.setTimelineViewMode)
+  const mode = useAppStore(s => s.mode)
+  const setMode = useAppStore(s => s.setMode)
 
   const zoomLevel = coord.zoomLevel
 
@@ -130,19 +130,13 @@ export default function TimelineToolbar({
         <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
 
         {/* View mode toggle */}
-        <Tooltip title={timelineViewMode === 'table' ? '切换到时间轴视图' : '切换到字幕校验表格'}>
-          <ToggleButton size="small" value="table" selected={timelineViewMode === 'table'}
-            onChange={() => setTimelineViewMode(timelineViewMode === 'table' ? 'timeline' : 'table')}
-            sx={activeSx(timelineViewMode === 'table')}>
-            {timelineViewMode === 'table' ? <TimelineViewIcon fontSize="small" /> : <TableViewIcon fontSize="small" />}
-          </ToggleButton>
+        <Tooltip title={mode === 'review' ? '切换到时间轴视图' : '字幕校验'}>
+          <IconButton size="small" sx={{ ...btnSx, color: mode === 'review' ? '#10B981' : undefined }}
+            onClick={() => setMode(mode === 'review' ? 'timeline' : 'review')}><TableViewIcon fontSize="small" /></IconButton>
         </Tooltip>
-        <Tooltip title="说话人时间轴">
-          <ToggleButton size="small" value="speaker-timeline" selected={timelineViewMode === 'speaker-timeline'}
-            onChange={() => setTimelineViewMode(timelineViewMode === 'speaker-timeline' ? 'timeline' : 'speaker-timeline' as any)}
-            sx={activeSx(timelineViewMode === 'speaker-timeline')}>
-            <PeopleIcon fontSize="small" />
-          </ToggleButton>
+        <Tooltip title="说话人审核">
+          <IconButton size="small" sx={{ ...btnSx, color: mode === 'speaker' ? '#FF9800' : undefined }}
+            onClick={() => setMode(mode === 'speaker' ? 'timeline' : 'speaker')}><PeopleIcon fontSize="small" /></IconButton>
         </Tooltip>
 
         <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
@@ -156,6 +150,11 @@ export default function TimelineToolbar({
         </Tooltip>
         <Tooltip title="AI 辅助建议">
           <IconButton size="small" sx={btnSx} onClick={onRequestAiAssist}><PsychologyIcon fontSize="small" /></IconButton>
+        </Tooltip>
+
+        <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+        <Tooltip title="导出配音">
+          <IconButton size="small" sx={{ ...btnSx, color: '#00BCD4' }} onClick={() => setMode('export')}><FileDownloadIcon fontSize="small" /></IconButton>
         </Tooltip>
       </Box>
     </Box>

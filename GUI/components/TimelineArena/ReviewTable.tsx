@@ -81,6 +81,7 @@ function useUndoableState(initial: SubtitleEntry[]) {
 
 interface Props {
   events: EventViewModel[]
+  workspace?: string
   onSeek?: (time: number) => void
 }
 
@@ -157,10 +158,13 @@ const SubtitleRowMemo = React.memo(function SubtitleRow({
 
 // ── Component ──
 
-export default function ReviewTable({ events, onSeek }: Props) {
+export default function ReviewTable({ events, workspace, onSeek }: Props) {
   const reviewEntries = useAppStore(s => s.reviewEntries)
   const searchQuery = useAppStore(s => s.reviewSearchQuery)
   const filterMode = useAppStore(s => s.reviewFilterMode)
+  const loadReviewEntries = useAppStore(s => s.loadReviewEntries)
+  const saveReviewEntries = useAppStore(s => s.saveReviewEntries)
+  const storeWorkspace = useAppStore(s => s.workspace)
 
   const { entries: localEntries, push, undo, redo, reset, canUndo, canRedo } = useUndoableState(reviewEntries)
 
@@ -170,10 +174,34 @@ export default function ReviewTable({ events, onSeek }: Props) {
   const [currentEntryIndex, setCurrentEntryIndex] = useState<number | null>(null)
   const [toastVisible, setToastVisible] = useState(false)
 
-  // Sync to store
-  const syncToStore = useCallback((entries: SubtitleEntry[]) => {
-    useAppStore.getState().setReviewEntries(entries)
-  }, [])
+  // Load from API on mount / workspace change
+  const effectiveWorkspace = workspace || storeWorkspace
+  useEffect(() => {
+    if (effectiveWorkspace) {
+      loadReviewEntries(effectiveWorkspace)
+    } else if (events.length > 0) {
+      // Fallback: no workspace loaded — derive entries from events prop
+      const entries: SubtitleEntry[] = events.map((evt, i) => ({
+        index: i + 1,
+        start: '', end: '',
+        startMs: Math.round(evt.start * 1000),
+        endMs: Math.round(evt.end * 1000),
+        sourceText: evt.text || '',
+        translatedText: evt.translation || '',
+        reviewStatus: 'pending' as const,
+        issues: [],
+        speakerId: evt.speaker || undefined,
+      }))
+      reset(entries)
+    }
+  }, [effectiveWorkspace, events, loadReviewEntries])
+
+  // Sync store entries → local undoable state when API returns data
+  useEffect(() => {
+    if (reviewEntries.length > 0) {
+      reset(reviewEntries)
+    }
+  }, [reviewEntries.length])
 
   // Filter
   const filtered = useMemo(() => {
@@ -232,10 +260,15 @@ export default function ReviewTable({ events, onSeek }: Props) {
   }, [])
 
   const handleSave = useCallback(async () => {
-    syncToStore(localEntries)
-    setToastVisible(true)
-    setTimeout(() => setToastVisible(false), 2000)
-  }, [localEntries, syncToStore])
+    useAppStore.getState().setReviewEntries(localEntries)
+    try {
+      await saveReviewEntries()
+      setToastVisible(true)
+      setTimeout(() => setToastVisible(false), 2000)
+    } catch {
+      // Error logged in store action
+    }
+  }, [localEntries, saveReviewEntries])
 
   // Keyboard shortcuts
   const kbp = { handleCommitEdit, handleCancelEdit, undo, redo, handleSave }
@@ -257,26 +290,6 @@ export default function ReviewTable({ events, onSeek }: Props) {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
-
-  // Init from events if empty
-  useEffect(() => {
-    if (localEntries.length === 0 && events.length > 0) {
-      const entries: SubtitleEntry[] = events.map((evt, i) => ({
-        index: i + 1,
-        start: formatMs(Math.round(evt.start * 1000)),
-        end: formatMs(Math.round(evt.end * 1000)),
-        startMs: Math.round(evt.start * 1000),
-        endMs: Math.round(evt.end * 1000),
-        sourceText: evt.text || '',
-        translatedText: evt.translation || '',
-        reviewStatus: 'pending' as const,
-        issues: [],
-        speakerId: evt.speaker || undefined,
-      }))
-      reset(entries)
-      syncToStore(entries)
-    }
-  }, [events.length])
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>

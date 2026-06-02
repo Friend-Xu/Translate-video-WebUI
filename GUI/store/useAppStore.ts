@@ -52,6 +52,7 @@ export interface AppState {
   reviewEntries: SubtitleEntry[]
   reviewSearchQuery: string
   reviewFilterMode: ReviewFilterMode
+  reviewTranslatedSrtPath: string
 
   // Workspace state (TRV-PLAN-2026-001 §8.2)
   dataSource: DataSource
@@ -145,6 +146,8 @@ export interface AppState {
   updateReviewEntry: (index: number, update: Partial<SubtitleEntry>) => void
   setReviewSearchQuery: (q: string) => void
   setReviewFilterMode: (mode: ReviewFilterMode) => void
+  loadReviewEntries: (workspaceOverride?: string) => Promise<void>
+  saveReviewEntries: () => Promise<void>
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -188,6 +191,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   reviewEntries: [] as SubtitleEntry[],
   reviewSearchQuery: '',
   reviewFilterMode: 'all' as ReviewFilterMode,
+  reviewTranslatedSrtPath: '',
 
   // Workspace defaults (TRV-PLAN-2026-001)
   dataSource: 'mock' as DataSource,
@@ -652,6 +656,69 @@ export const useAppStore = create<AppState>((set, get) => ({
   })),
   setReviewSearchQuery: (q) => set({ reviewSearchQuery: q }),
   setReviewFilterMode: (mode) => set({ reviewFilterMode: mode }),
+
+  loadReviewEntries: async (workspaceOverride) => {
+    const ws = workspaceOverride || get().workspace
+    if (!ws) return
+    try {
+      const res = await fetch('/api/subtitle/review/load', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace: ws }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      set({
+        reviewEntries: data.entries || [],
+        reviewTranslatedSrtPath: data.translatedSrtPath || '',
+      })
+    } catch {
+      // Fallback: convert store events to entries
+      const events = get().events
+      if (events.length > 0) {
+        const entries: SubtitleEntry[] = events.map((evt, i) => ({
+          index: i + 1,
+          start: '', end: '',
+          startMs: Math.round(evt.start * 1000),
+          endMs: Math.round(evt.end * 1000),
+          sourceText: evt.text || '',
+          translatedText: evt.translation || '',
+          reviewStatus: 'pending' as const,
+          issues: [],
+          speakerId: evt.speaker || undefined,
+        }))
+        set({ reviewEntries: entries, reviewTranslatedSrtPath: '' })
+      }
+    }
+  },
+
+  saveReviewEntries: async () => {
+    const { reviewEntries, reviewTranslatedSrtPath } = get()
+    const modified = reviewEntries.filter(e => e.reviewStatus === 'modified')
+    if (modified.length === 0) return
+    try {
+      const res = await fetch('/api/subtitle/review/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          translated_srt: reviewTranslatedSrtPath,
+          entries: modified,
+        }),
+      })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      // Mark saved entries as approved
+      set(state => ({
+        reviewEntries: state.reviewEntries.map(e =>
+          e.reviewStatus === 'modified' ? { ...e, reviewStatus: 'approved' as const } : e
+        ),
+      }))
+      console.log(`Review saved: ${data.updated} entries → ${data.output_path}`)
+    } catch (err) {
+      console.error('Review save failed:', err)
+      throw err
+    }
+  },
 
   // ── Hub Actions (Phase 1) ──
 
