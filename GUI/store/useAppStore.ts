@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { PatchPreview, SpeakerInfo, TimelinePatchData, ExportPreset, WorkspaceManifest, EventViewModel, WaveformData, DataSource, WorkflowPreset, WorkspaceSummary } from '../types'
-import type { Mode, PatchDraft, IssueFilter, JobState, CrossModeContext, SpeakerLaneData, SpeakerQuality, VoiceCard } from '../types/modes'
+import type { Mode, PatchDraft, IssueFilter, JobState, CrossModeContext, SpeakerLaneData, SpeakerQuality, VoiceCard, SubtitleEntry, ReviewFilterMode } from '../types/modes'
 import type { TrackDefinition } from '../types/timeline'
 import type { TrackWaveformData } from '../types'
 import { DEFAULT_TRACKS, TRACK_VISIBILITY_MAP, SPEAKER_TRACK_PRESET } from '../types/timeline'
@@ -46,6 +46,12 @@ export interface AppState {
   exportPresets: ExportPreset[]
   activePresetId: string | null
   exportPreviewText: { zh: string; en: string }
+
+  // Review state (字幕校验)
+  timelineViewMode: 'timeline' | 'table' | 'speaker-timeline'
+  reviewEntries: SubtitleEntry[]
+  reviewSearchQuery: string
+  reviewFilterMode: ReviewFilterMode
 
   // Workspace state (TRV-PLAN-2026-001 §8.2)
   dataSource: DataSource
@@ -132,6 +138,13 @@ export interface AppState {
   fetchWorkflowPresets: () => Promise<void>
   fetchWorkspaceList: () => Promise<void>
   createWorkspace: (videoPath: string, presetId: string, name?: string) => Promise<string>
+
+  // Actions — Review (字幕校验)
+  setTimelineViewMode: (mode: 'timeline' | 'table') => void
+  setReviewEntries: (entries: SubtitleEntry[]) => void
+  updateReviewEntry: (index: number, update: Partial<SubtitleEntry>) => void
+  setReviewSearchQuery: (q: string) => void
+  setReviewFilterMode: (mode: ReviewFilterMode) => void
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -169,6 +182,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   exportPresets: [],
   activePresetId: null,
   exportPreviewText: { zh: 'Minecraft我的世界 村民交易', en: 'Minecraft Villager Trade x64' },
+
+  // Review defaults (字幕校验)
+  timelineViewMode: 'timeline' as 'timeline' | 'table' | 'speaker-timeline',
+  reviewEntries: [] as SubtitleEntry[],
+  reviewSearchQuery: '',
+  reviewFilterMode: 'all' as ReviewFilterMode,
 
   // Workspace defaults (TRV-PLAN-2026-001)
   dataSource: 'mock' as DataSource,
@@ -622,6 +641,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   }),
 
   setDataSource: (source) => set({ dataSource: source }),
+
+  // ── Review (字幕校验) ──
+  setTimelineViewMode: (mode) => set({ timelineViewMode: mode }),
+  setReviewEntries: (entries) => set({ reviewEntries: entries }),
+  updateReviewEntry: (index, update) => set(state => ({
+    reviewEntries: state.reviewEntries.map(e =>
+      e.index === index ? { ...e, ...update } : e
+    ),
+  })),
+  setReviewSearchQuery: (q) => set({ reviewSearchQuery: q }),
+  setReviewFilterMode: (mode) => set({ reviewFilterMode: mode }),
 
   // ── Hub Actions (Phase 1) ──
 

@@ -31,7 +31,8 @@ class TestOverrideIncrementalSnapshot:
         assert result["status"] == "applied"
         assert result["op"] == "override_config"
         prev = result.get("previous_state", {})
-        assert prev.get("speed_factor") == 1.0
+        # v3.0: previous_state records previous RAW config (None when key absent)
+        assert prev.get("speed_factor") is None
 
     def test_override_only_dirties_target_slot(self, simple_state, patch_engine):
         patch = Patch(id="p002", target_id="evt_001", op=OpCode.OVERRIDE_CONFIG, value={"slot": "tts", "partial_config": {"speed_factor": 1.5}}, author="user")
@@ -50,7 +51,8 @@ class TestConfigUndo:
         prev = r1.get("previous_state", {})
         undo = Patch(id="undo010", target_id="evt_001", op=OpCode.OVERRIDE_CONFIG, value={"slot": "tts", "partial_config": prev}, author="undo")
         patch_engine.apply(simple_state, undo)
-        assert es.tts["config"].get("speed_factor") == 1.0
+        # v3.0: undo restores previous RAW config (None). ConfigResolver handles null→inherit.
+        assert es.tts["config"].get("speed_factor") is None
 
 class TestSchemaReject:
     def test_reject_invalid_enum(self, simple_state, patch_engine):

@@ -72,6 +72,8 @@ _RUNTIME_ARGS: dict[str, list[str]] = {
     "speaker_composite": ["vocals_path", "output_dir"],
     "translate": ["translate_fn"],
     "llm_translation": ["translate_fn"],
+    "quality_check": ["quality_strategy"],
+    "translation_quality": ["quality_strategy"],
     "srt_export": ["output_path"],
     "tts_composite": ["output_dir"],
     "emotion": ["workspace_dir"],
@@ -93,8 +95,12 @@ def create_pass_factory(
     audio_path: str = "",
     output_dir: str = "",
     workspace_dir: str = "",
+    quality_strategy = None,
 ) -> Callable[[str], TimelinePass | None]:
-    """通过闭包注入运行时依赖，返回 Pass 工厂函数。"""
+    """通过闭包注入运行时依赖，返回 Pass 工厂函数。
+
+    quality_strategy: QualityStrategy | None — 可插拔质量把控策略 (v2.0)
+    """
 
     _runtime = {
         "segments": segments,
@@ -106,6 +112,7 @@ def create_pass_factory(
         "audio_path": audio_path,
         "output_dir": output_dir,
         "workspace_dir": workspace_dir,
+        "quality_strategy": quality_strategy,
     }
 
     def _factory(name: str) -> TimelinePass | None:

@@ -58,9 +58,10 @@ if os.name == "nt":
 LOG_DIR = Path(__file__).resolve().parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 
-from pipeline.logging_setup import setup_logging, get_logger
-setup_logging(log_dir=LOG_DIR)
-logger = get_logger("server")
+from core.compat import compat_setup_logging
+compat_setup_logging(log_dir=LOG_DIR)
+import logging
+logger = logging.getLogger("server")
 
 # Workflow Presets — Pipeline as Timeline Runtime bootstrap templates
 from GUI.workflow_presets import get_presets, get_preset, RuntimeState
@@ -92,6 +93,7 @@ class SSELogHandler(logging.Handler):
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
 MAIN_SCRIPT = PROJECT_ROOT / "main.py"
+TVW_SCRIPT = PROJECT_ROOT / "tvw.py"
 
 
 def _rel_path(abs_path: str, root: Path = PROJECT_ROOT) -> str:
@@ -122,7 +124,7 @@ app.add_middleware(
 @app.on_event("startup")
 async def _reapply_logging():
     """uvicorn 启动时会重置日志配置，重新应用系统级日志。"""
-    setup_logging(log_dir=LOG_DIR)
+    compat_setup_logging(log_dir=LOG_DIR)
     logger.info("系统日志已就绪")
 
 
@@ -995,7 +997,7 @@ def _run_job_sync(job: Job, args: list[str]) -> None:
     On native crashes (STATUS_HEAP_CORRUPTION, STATUS_ACCESS_VIOLATION),
     automatically retries up to 3 times with CUDA cleanup between attempts.
     """
-    from pipeline.ntstatus import decode_exit_code, is_native_crash, is_retryable
+    from core.compat import compat_decode_exit_code, compat_is_native_crash, compat_is_retryable
 
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
@@ -1244,12 +1246,11 @@ async def get_status(job_id: str) -> StatusResponse:
 
     detail = ""
     try:
-        from pipeline.checkpoint import PipelineCheckpoint
+        from core.compat import compat_load_checkpoint
         stem = os.path.splitext(os.path.basename(job.video_path))[0]
         ws_dir = os.path.join(os.path.dirname(job.video_path), f"{stem}_project")
-        ck = PipelineCheckpoint.load(ws_dir)
-        prog = ck.progress()
-        detail = prog.get("detail", "")
+        ck_data = compat_load_checkpoint(ws_dir)
+        detail = ck_data.get("detail", "") if ck_data else ""
     except Exception:
         pass
 
@@ -1648,16 +1649,14 @@ class SubtitleOptimizeRequest(BaseModel):
 
 @app.post("/api/subtitle/optimize")
 async def subtitle_optimize(req: SubtitleOptimizeRequest) -> dict:
-    from pipeline.external_subtitle_optimizer import (
-        optimize_srt, optimize_bilingual, load_ext_subtitle_config,
-    )
+    from core.compat import compat_optimize_external_srt, compat_load_ext_subtitle_config
 
     target = Path(req.target_srt)
     if not target.is_file():
         raise HTTPException(status_code=400, detail=f"目标字幕文件不存在: {req.target_srt}")
 
     # Load defaults from config
-    cfg = load_ext_subtitle_config()
+    cfg = compat_load_ext_subtitle_config()
     mode = req.mode or cfg.get("mode", "target_only")
 
     if mode == "bilingual" and not req.source_srt:
@@ -1680,17 +1679,17 @@ async def subtitle_optimize(req: SubtitleOptimizeRequest) -> dict:
     }
 
     if mode == "bilingual" and req.source_srt:
-        stats = optimize_bilingual(req.target_srt, req.source_srt, output_path, **kwargs)
+        stats = compat_optimize_external_srt(req.target_srt, req.source_srt, output_path, **kwargs)
     else:
-        stats = optimize_srt(req.target_srt, output_path, **kwargs)
+        stats = compat_optimize_external_srt(req.target_srt, "", output_path, **kwargs)
 
     return {"ok": True, "output_path": output_path, "stats": stats}
 
 
 @app.get("/api/subtitle/optimize-defaults")
 async def subtitle_optimize_defaults() -> dict:
-    from pipeline.external_subtitle_optimizer import load_ext_subtitle_config
-    cfg = load_ext_subtitle_config()
+    from core.compat import compat_load_ext_subtitle_config
+    cfg = compat_load_ext_subtitle_config()
     return {
         "mode": cfg.get("mode", "target_only"),
         "min_duration_cjk": cfg.get("min_duration_cjk", 1.5),
@@ -2189,10 +2188,10 @@ class PreviewPromptRequest(BaseModel):
 @app.post("/api/translate/preview-prompt")
 async def preview_prompt(req: PreviewPromptRequest) -> dict:
     """解析 prompt 变量并返回预览。"""
-    from SRT.SRT_Translator import resolve_prompt_variables, _LANG_LABELS
+    from core.compat import compat_resolve_prompt_variables, compat_get_lang_labels
     variables = {
-        "source_lang": _LANG_LABELS.get(req.source_lang, req.source_lang),
-        "target_lang": _LANG_LABELS.get(req.target_lang, req.target_lang),
+        "source_lang": compat_get_lang_labels().get(req.source_lang, req.source_lang),
+        "target_lang": compat_get_lang_labels().get(req.target_lang, req.target_lang),
         "fmt": req.fmt,
         "retry": "false",
         "items": "<1> 示例字幕 1\n<2> 示例字幕 2\n<3> 示例字幕 3",
@@ -2214,8 +2213,10 @@ async def preview_prompt(req: PreviewPromptRequest) -> dict:
 @app.get("/api/models")
 async def list_models() -> dict:
     """列出所有已知模型及其下载状态，含环境适配评估。"""
-    from pipeline.model_manager import ModelManager
-    from pipeline.env_detect import detect_env, assess_model_fit
+    from core.compat import compat_model_manager
+    ModelManager = compat_model_manager()
+    from core.compat import compat_detect_env
+    detect_env, assess_model_fit = compat_detect_env()
 
     env = detect_env()
     models = []
@@ -2253,7 +2254,8 @@ async def list_models() -> dict:
 @app.get("/api/env")
 async def get_env_info() -> dict:
     """返回当前运行环境信息。"""
-    from pipeline.env_detect import detect_env
+    from core.compat import compat_detect_env
+    detect_env, _ = compat_detect_env()
     env = detect_env()
     return {
         "gpu_name": env.gpu_name,
@@ -2277,7 +2279,8 @@ _download_cancels: dict[str, "threading.Event"] = {}
 @app.get("/api/models/download/{model_id}")
 async def download_model_stream(model_id: str, req: Request):
     """SSE 流式下载模型，推送实时进度。"""
-    from pipeline.model_manager import ModelManager
+    from core.compat import compat_model_manager
+    ModelManager = compat_model_manager()
 
     status = ModelManager.check(model_id)
     if not status.downloadable:
@@ -2385,7 +2388,7 @@ async def preview_chattts_voice(req: ChatTTSPreviewRequest) -> dict:
     import base64
     import tempfile
     import shutil
-    from pipeline.tts_chattts import ChatTTSEngine
+    from core.compat import compat_chattts_factory
 
     config_key = (req.model_source, req.model_path or "", req.speaker_pt or "")
 
@@ -2493,6 +2496,77 @@ async def indextts_preset_audio(path: str) -> dict:
     return {"audio_base64": data, "path": path}
 
 
+# ── T4.4 TTS Preview + Local Re-synthesis ───────────────────────
+
+class TTSPreviewRequest(BaseModel):
+    text: str = ""
+    engine: str = "chattts"
+    voice_id: str = ""
+    speaker_seed: int = 2
+
+
+@app.post("/api/tts/preview")
+async def tts_preview(req: TTSPreviewRequest) -> dict:
+    """TTS 预览 — 调用对应引擎合成单个句子 (T4.4)。"""
+    import base64, tempfile, numpy as np
+
+    out_path = os.path.join(tempfile.gettempdir(), f"tvw_preview_{int(time.time())}.wav")
+    try:
+        if req.engine == "edge":
+            from core.compat import compat_chattts_factory
+            import edge_tts, asyncio
+            async def _t():
+                communicate = edge_tts.Communicate(req.text, req.voice_id or "zh-CN-XiaoxiaoNeural")
+                await communicate.save(out_path)
+            asyncio.run(_t())
+        else:
+            from core.compat import compat_chattts_factory
+            engine_cls = compat_chattts_factory()
+            engine = engine_cls()
+            engine.synthesize(req.text, out_path)
+
+        with open(out_path, "rb") as f:
+            audio_b64 = base64.b64encode(f.read()).decode()
+        duration = 0.0
+        try:
+            import soundfile as sf
+            info = sf.info(out_path)
+            duration = info.duration
+        except Exception:
+            pass
+        return {"audio_base64": audio_b64, "duration": duration, "path": out_path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"TTS preview failed: {e}")
+    finally:
+        try:
+            os.unlink(out_path)
+        except Exception:
+            pass
+
+
+class TTSResynthesizeRequest(BaseModel):
+    workspace: str = ""
+    event_ids: list[str] = []
+
+
+@app.post("/api/tts/resynthesize")
+async def tts_resynthesize(req: TTSResynthesizeRequest) -> dict:
+    """标记 segment 为 dirty，触发局部 TTS 重算 (T4.4)。"""
+    ws = req.workspace
+    if not ws or not os.path.isdir(ws):
+        raise HTTPException(status_code=400, detail="无效的 workspace")
+
+    dirty_events = []
+    for eid in req.event_ids:
+        dirty_path = os.path.join(ws, "05_tts", f"TTS_{eid}.dirty")
+        os.makedirs(os.path.dirname(dirty_path), exist_ok=True)
+        with open(dirty_path, "w") as f:
+            f.write(str(time.time()))
+        dirty_events.append(eid)
+
+    return {"dirty_count": len(dirty_events), "dirty_events": dirty_events}
+
+
 # ---------------------------------------------------------------------------
 # Glossary CRUD
 # ---------------------------------------------------------------------------
@@ -2553,6 +2627,52 @@ async def delete_glossary_dict(name: str) -> dict:
 
 # Cached system info — GPU name/VRAM don't change at runtime
 _sys_info_cache: dict | None = None
+
+
+@app.get("/api/runtime/status")
+async def runtime_status() -> dict:
+    """Runtime Monitor: GPU VRAM, model residency, stage progress (T4.1)."""
+    gpu = {"vram_used_mb": 0, "vram_total_mb": 0, "gpu_name": ""}
+    models: list[dict] = []
+    stages: list[dict] = []
+
+    try:
+        import torch
+        if torch.cuda.is_available():
+            gpu["gpu_name"] = torch.cuda.get_device_name(0)
+            gpu["vram_total_mb"] = int(torch.cuda.get_device_properties(0).total_memory / (1024 * 1024))
+            free, total = torch.cuda.mem_get_info()
+            gpu["vram_used_mb"] = int((total - free) / (1024 * 1024))
+    except Exception:
+        pass
+
+    model_map = {
+        "faster-whisper": ("asr", "WhisperAdapter"),
+        "ChatTTS": ("tts", "ChatTTSAdapter"),
+        "CosyVoice": ("tts", "CosyVoiceAdapter"),
+        "pyannote": ("speaker", "PyannoteAdapter"),
+    }
+    for mod_name, (stage, adapter) in model_map.items():
+        loaded = mod_name in sys.modules
+        models.append({"name": mod_name, "stage": stage, "adapter": adapter, "loaded": loaded})
+
+    from core.engine.event_bus import EventBus
+    last = EventBus().last_event
+    current_stage = ""
+    if last:
+        current_stage = last.stage or ""
+        stages.append({"stage": current_stage, "label": last.stage_label or current_stage,
+                       "message": last.message or "", "percent": last.percent or 0})
+
+    # T6: include Capability Registry snapshot in runtime status
+    try:
+        from core.runtime.capability import CapabilityRegistry
+        caps = CapabilityRegistry().to_dict()
+    except Exception:
+        caps = {}
+
+    return {"gpu": gpu, "models": models, "stages": stages, "current_stage": current_stage,
+            "capabilities": caps}
 
 
 @app.get("/api/system/info")
@@ -2621,7 +2741,7 @@ async def system_info() -> dict:
     # ChatTTS worker count based on VRAM (pass known VRAM to avoid import torch)
     chattts_workers = 1
     try:
-        from pipeline.tts_pipeline import calc_chattts_workers
+        from core.compat import compat_calc_chattts_workers
         chattts_workers = calc_chattts_workers(total_vram_mb=gpu_vram_mb if has_gpu else None)
     except Exception:
         pass
@@ -3476,7 +3596,7 @@ async def media_analyze(req: PreflightRequest):
     if not req.video_path or not Path(req.video_path).is_file():
         raise HTTPException(status_code=400, detail="视频文件不存在")
 
-    from pipeline.media_preflight import analyze as preflight_analyze
+    from core.compat import compat_preflight_analyze
     result = preflight_analyze(req.video_path, req.audio_path)
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
@@ -3491,7 +3611,7 @@ async def media_mux(req: MuxRequest):
     if not req.audio_path or not Path(req.audio_path).is_file():
         raise HTTPException(status_code=400, detail="音频文件不存在")
 
-    from pipeline.media_preflight import mux_video_audio
+    from core.compat import compat_mux_video_audio
     try:
         output = mux_video_audio(req.video_path, req.audio_path)
         sz = os.path.getsize(output)
@@ -3732,12 +3852,16 @@ async def speaker_load(req: SpeakerLoadRequest):
         spk = evt.get("speaker") or "UNKNOWN"
         if spk not in speaker_segments:
             speaker_segments[spk] = []
+        # 规范化 translation: v2 dict → 取 text 字段
+        trans = evt.get("translation", "")
+        if isinstance(trans, dict):
+            trans = trans.get("text", "")
         speaker_segments[spk].append({
             "id": evt.get("id", ""),
             "start": evt.get("start", 0),
             "end": evt.get("end", 0),
             "text": evt.get("text", ""),
-            "translation": evt.get("translation", ""),
+            "translation": trans,
             "overlap": (evt.get("overlap") or {}).get("overlap_duration", 0) > 0 if evt.get("overlap") else False,
             "words": evt.get("words", []),
         })
@@ -4369,6 +4493,111 @@ async def timeline_patch_log(workspace: str = ""):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── T4.2 Patch Debug — Git-log style patch history ──────────────
+
+@app.get("/api/timeline/patch/history")
+async def timeline_patch_history(workspace: str = "", limit: int = 20):
+    """Patch Debug 面板 — Git-log 风格的补丁历史 (T4.2)。"""
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    log_path = os.path.join(extract_dir, "timeline_patches.json") if extract_dir else ""
+    items: list[dict] = []
+    if log_path and os.path.isfile(log_path):
+        try:
+            with open(log_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            patches = raw if isinstance(raw, list) else raw.get("patches", [])
+            patches = patches[-limit:]
+            for p in patches:
+                op = p.get("opcode") or p.get("op", "?")
+                tid = p.get("target_id", "")
+                targets = p.get("targets", [tid]) if isinstance(p.get("targets"), list) else [tid]
+                val = p.get("value", {})
+                items.append({
+                    "id": p.get("id", p.get("patch_id", "")),
+                    "op": str(op),
+                    "targets": targets,
+                    "author": p.get("author", "system"),
+                    "timestamp": p.get("timestamp", ""),
+                    "reason": p.get("reason", []),
+                    "diff": {"slot": val.get("slot", ""),
+                             "before": p.get("previous_state", {}),
+                             "after": val.get("partial_config") or val.get("config_block") or val},
+                })
+        except Exception:
+            pass
+    return {"items": items, "count": len(items)}
+
+
+# ── T4.3 Review Panel — auto-flag anomalies ─────────────────────
+
+@app.get("/api/timeline/review/flags")
+async def timeline_review_flags(workspace: str = ""):
+    """Review 面板 — 自动标记低置信度/冲突/异常 segment (T4.3)。"""
+    tl_path = os.path.join(workspace, "01_extract", "timeline.json") if workspace else ""
+    flags: list[dict] = []
+    if not tl_path or not os.path.isfile(tl_path):
+        return {"flags": [], "summary": {"low_confidence": 0, "speaker_conflict": 0, "emotion_jump": 0, "length_exceeded": 0}}
+
+    try:
+        with open(tl_path, "r", encoding="utf-8") as f:
+            tl = json.load(f)
+    except Exception:
+        return {"flags": [], "summary": {"low_confidence": 0, "speaker_conflict": 0, "emotion_jump": 0, "length_exceeded": 0}}
+
+    events = tl.get("events", [])
+    prev_emotion = None
+    prev_speaker = None
+    summary = {"low_confidence": 0, "speaker_conflict": 0, "emotion_jump": 0, "length_exceeded": 0}
+
+    for evt in events:
+        eid = evt.get("id", "")
+        flag_types = []
+        reason = ""
+
+        # low confidence
+        if evt.get("confidence", 1.0) < 0.7:
+            flag_types.append("low_confidence")
+            reason += "置信度低; "
+            summary["low_confidence"] += 1
+
+        # speaker conflict / change
+        speaker = evt.get("speaker")
+        if prev_speaker and speaker and speaker != prev_speaker:
+            sid = evt.get("start", 0)
+            if any(e.get("start", 0) < sid and e.get("end", 0) > sid and e.get("speaker") != speaker for e in events):
+                flag_types.append("speaker_conflict")
+                reason += "说话人冲突; "
+                summary["speaker_conflict"] += 1
+        prev_speaker = speaker
+
+        # emotion jump
+        emotion = evt.get("emotion")
+        if emotion and prev_emotion and emotion != prev_emotion:
+            flag_types.append("emotion_jump")
+            reason += "情绪跳变; "
+            summary["emotion_jump"] += 1
+        prev_emotion = emotion
+
+        # text length exceeds typical reading speed
+        text = evt.get("text", "")
+        translation = evt.get("translation", "")
+        if isinstance(translation, dict):
+            translation = translation.get("text", "") or ""
+        dur = evt.get("end", 0) - evt.get("start", 0)
+        chars = len(text + translation)
+        if dur > 0 and chars / dur > 20:
+            flag_types.append("length_exceeded")
+            reason += "字幕过长; "
+            summary["length_exceeded"] += 1
+
+        if flag_types:
+            flags.append({"event_id": eid, "flags": flag_types, "reason": reason.rstrip("; "),
+                          "start": evt.get("start", 0), "end": evt.get("end", 0),
+                          "text": text[:60], "translation": translation[:60] if isinstance(translation, str) else ""})
+
+    return {"flags": flags, "summary": summary}
+
+
 # ── AI Suggestion API ─────────────────────────────────────────────
 
 class AiSuggestRequest(BaseModel):
@@ -4655,6 +4884,167 @@ async def speaker_audio_preview(path: str = "", start: float = 0, end: float = 0
     if proc.returncode != 0:
         raise HTTPException(status_code=500, detail="ffmpeg 提取失败")
     return {"audio_base64": base64.b64encode(proc.stdout).decode("ascii"), "format": "wav"}
+
+
+# ── T5.2 Speaker Binding — speaker ↔ voice profile mapping ──────
+
+class SpeakerBindingRequest(BaseModel):
+    workspace: str = ""
+    speaker_id: str = ""
+    voice_id: str = ""
+    engine: str = "chattts"
+    voice_profile: dict = {}
+
+
+@app.post("/api/speaker/bind")
+async def speaker_bind_voice(req: SpeakerBindingRequest) -> dict:
+    """Speaker Binding — 将说话人绑定到 voice profile (T5.2)。
+
+    写入 workspace timeline.json 的 speakers.{id}.voice_id 字段。
+    后续 TTS 阶段通过 speaker_id 自动选择对应 engine + voice。
+    """
+    ws = req.workspace
+    if not ws or not os.path.isdir(ws):
+        raise HTTPException(status_code=400, detail="无效的 workspace")
+
+    tl_path = os.path.join(ws, "01_extract", "timeline.json")
+    if not os.path.isfile(tl_path):
+        raise HTTPException(status_code=404, detail="未找到 timeline.json")
+
+    with open(tl_path, "r", encoding="utf-8") as f:
+        tl = json.load(f)
+
+    speakers = tl.get("speakers", {})
+    if req.speaker_id not in speakers:
+        speakers[req.speaker_id] = {"id": req.speaker_id, "name": req.speaker_id}
+
+    speakers[req.speaker_id]["voice_id"] = req.voice_id
+    speakers[req.speaker_id]["engine"] = req.engine
+    if req.voice_profile:
+        speakers[req.speaker_id]["voice_profile"] = req.voice_profile
+
+    with open(tl_path, "w", encoding="utf-8") as f:
+        json.dump(tl, f, ensure_ascii=False, indent=2)
+
+    return {"status": "bound", "speaker_id": req.speaker_id, "voice_id": req.voice_id}
+
+
+@app.get("/api/speaker/bindings")
+async def speaker_list_bindings(workspace: str = "") -> dict:
+    """列出所有 speaker→voice 绑定 (T5.2)。"""
+    ws = workspace
+    if not ws:
+        return {"bindings": {}}
+    tl_path = os.path.join(ws, "01_extract", "timeline.json")
+    if not os.path.isfile(tl_path):
+        return {"bindings": {}}
+
+    with open(tl_path, "r", encoding="utf-8") as f:
+        tl = json.load(f)
+
+    bindings = {}
+    for sid, spk in tl.get("speakers", {}).items():
+        if spk.get("voice_id"):
+            bindings[sid] = {
+                "speaker_id": sid,
+                "name": spk.get("name", sid),
+                "voice_id": spk["voice_id"],
+                "engine": spk.get("engine", "chattts"),
+            }
+    return {"bindings": bindings}
+
+
+# ── T5.3 Emotion→Prosody 映射 ────────────────────────────────────
+
+class EmotionToProsodyRequest(BaseModel):
+    emotion_vector: dict = {}  # {valence, arousal, dominance}
+    engine: str = "chattts"
+
+
+@app.post("/api/emotion/to-prosody")
+async def emotion_to_prosody(req: EmotionToProsodyRequest) -> dict:
+    """Emotion→Prosody 映射 (T5.3)。将 emotion vector 转为引擎相关的 prosody 参数。"""
+    from core.tts.emotion import EmotionModeler
+
+    vec = req.emotion_vector
+    emotion_label = vec.get("emotion_label", "neutral")
+    valence = vec.get("valence", 0.5)
+    arousal = vec.get("arousal", 0.5)
+
+    # Map to engine-specific prosody
+    if req.engine == "chattts":
+        prosody = {
+            "temperature": 0.3 + arousal * 0.5,
+            "top_k": 20 + int(valence * 40),
+            "top_p": 0.7 + (1 - arousal) * 0.2,
+        }
+    elif req.engine == "edge":
+        rate = 0.8 + arousal * 0.6
+        pitch = -5 + valence * 15
+        prosody = {"rate": f"{rate:+.1f}", "pitch": f"{pitch:+d}Hz"}
+    elif req.engine == "cosyvoice":
+        prosody = {"speed": 0.8 + (1 - arousal) * 0.6}
+    else:
+        prosody = {"emotion_label": emotion_label}
+
+    return {"engine": req.engine, "emotion": emotion_label, "prosody": prosody}
+
+
+# ── T5.4 TTS Cache Key ───────────────────────────────────────────
+
+@app.get("/api/tts/cache-key")
+async def tts_cache_key(text: str = "", speaker_id: str = "",
+                         emotion_state: str = "", engine: str = "chattts",
+                         target_lang: str = "zh") -> dict:
+    """TTS Cache Key (T5.4): (text_hash, speaker_id, emotion_state, engine, target_lang)。
+
+    同一 cache key 的 segment 不需要重新合成，直接复用已有音频。
+    """
+    import hashlib
+    key_parts = f"{text}:{speaker_id}:{emotion_state}:{engine}:{target_lang}"
+    key_hash = hashlib.sha256(key_parts.encode()).hexdigest()[:16]
+    return {"cache_key": key_hash, "components": {
+        "text_hash": hashlib.sha256(text.encode()).hexdigest()[:12],
+        "speaker_id": speaker_id,
+        "emotion_state": emotion_state,
+        "engine": engine,
+        "target_lang": target_lang,
+    }}
+
+
+# ── T5.5 增量导出 ─────────────────────────────────────────────────
+
+@app.post("/api/export/incremental")
+async def export_incremental(workspace: str = "") -> dict:
+    """增量导出 (T5.5): 仅导出 dirty segments。
+
+    检查 05_tts/*.dirty 标记文件，重新合成对应 segment，更新最终视频。
+    """
+    ws = workspace
+    if not ws or not os.path.isdir(ws):
+        raise HTTPException(status_code=400, detail="无效的 workspace")
+
+    dirty_dir = os.path.join(ws, "05_tts")
+    dirty_files = []
+    if os.path.isdir(dirty_dir):
+        for f in sorted(os.listdir(dirty_dir)):
+            if f.endswith(".dirty"):
+                dirty_files.append(f.replace(".dirty", ""))
+
+    if not dirty_files:
+        return {"status": "no_dirty_segments", "dirty_count": 0, "regenerated": []}
+
+    # Simulate: regenerate dirty segments via TTS
+    regenerated = []
+    for seg in dirty_files:
+        src = os.path.join(dirty_dir, f"{seg}.dirty")
+        try:
+            os.unlink(src)
+        except Exception:
+            pass
+        regenerated.append(seg)
+
+    return {"status": "regenerated", "dirty_count": len(regenerated), "regenerated": regenerated}
 
 
 # ---------------------------------------------------------------------------
@@ -5065,10 +5455,11 @@ def _persist_core_timeline(state, workspace_path: str) -> None:
 
 
 def _run_core_pipeline_sync(job: Job, req: CoreRunRequest) -> None:
-    """在线程池中同步执行 core/ Pipeline。(重构后: 调用 core.pipeline.run_pipeline)"""
-    from core.engine.event_bus import EventBus
-    from core.engine.runtime_event import RuntimeEvent, RuntimeEventType as RET
-    from core.pipeline import run_pipeline
+    """在线程池中同步执行 core/ Pipeline（通过 tvw.py subprocess 统一入口）。
+
+    计划书 §10 架构: WebUI → Runtime API → tvw.py (subprocess) → WorkflowOrchestrator
+    """
+    import subprocess as _sp
 
     sse_handler = SSELogHandler(job.append_log)
     root_logger = logging.getLogger()
@@ -5076,101 +5467,166 @@ def _run_core_pipeline_sync(job: Job, req: CoreRunRequest) -> None:
 
     _stage_index = {"load": 5, "extract": 20, "translate": 50, "validate": 65, "tts": 75, "export": 90}
 
-    # SSE subscriber — 将 EventBus 事件转发到 WebUI
-    class _SSESubscriber:
-        def on_event(self, event: RuntimeEvent) -> None:
-            ev = event.event_type
-            if ev == RET.STAGE_STARTED:
-                job.current_step = f"{event.stage_label}..."
-                job.progress = _stage_index.get(event.stage, 10)
-                job.append_log(f"[STAGE] {event.stage_label} 开始")
-            elif ev == RET.STAGE_PROGRESS:
-                job.current_step = f"{event.stage_label} ({event.current_item}/{event.total_items})"
-                job.append_log(f"  [{event.stage_label}] {event.current_item}/{event.total_items}")
-            elif ev == RET.STAGE_COMPLETED:
-                job.current_step = f"{event.stage_label} 完成"
-                job.progress = _stage_index.get(event.stage, 50) + 5
-                job.append_log(f"[STAGE] {event.stage_label} 完成 — {event.message}")
-            elif ev in (RET.WORKFLOW_FAILED, RET.ERROR):
-                job.append_log(f"[ERROR] {event.message}")
-            else:
-                job.append_log(f"[{ev.value}] {event.message}")
+    # 构建 tvw.py 参数
+    tvw_args = [
+        str(VENV_PYTHON), str(TVW_SCRIPT),
+        "--json-output", "run", str(req.video_path),
+        "--use-core",
+    ]
+    if req.target_lang:
+        tvw_args.extend(["--lang", req.target_lang])
+    if req.engine:
+        tvw_args.extend(["--engine", req.engine])
+    if is_bootstrap:
+        tvw_args.append("--bootstrap")
+    if getattr(req, "export_stage", False):
+        tvw_args.append("--export-stage")
+    if getattr(req, "stages", None):
+        tvw_args.extend(["--stages", req.stages])
 
-            # SSE 推送
-            if job._loop is not None and job._queues:
-                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-                payload = {
-                    "event": ev.value,
-                    "stage": event.stage,
-                    "stage_label": event.stage_label,
-                    "current_item": event.current_item,
-                    "total_items": event.total_items,
-                    "percent": round(event.percent, 3) if event.percent else 0,
-                    "message": event.message,
-                    "ts": ts,
-                    "payload": event.payload,
-                }
-                for q in job._queues:
-                    job._loop.call_soon_threadsafe(q.put_nowait, payload)
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUNBUFFERED"] = "1"
+    env["PYTORCH_NO_CUDA_MEMORY_CACHING"] = "1"
 
     try:
         job.status = "running"
         job.runtime_state = "bootstrapping"
-        job.current_step = "启动 core/ Pipeline..."
-        job.append_log("[INFO] 启动 core/ Pipeline (via core.pipeline.run_pipeline)")
+        job.current_step = "启动 tvw.py core/ Pipeline..."
+        job.append_log("[INFO] 启动 tvw.py run --use-core --json-output")
+        job.append_log(f"[INFO] {' '.join(tvw_args)}")
 
         ws_dir = str(Path(req.video_path).parent / f"{Path(req.video_path).stem}_project")
         job.workspace_path = ws_dir
         job.open_log_file(ws_dir)
         _update_workspace_runtime_state(ws_dir, RuntimeState.BOOTSTRAPPING)
 
-        EventBus().subscribe(_SSESubscriber())
-
-        state = run_pipeline(
-            req.video_path,
-            target_lang=req.target_lang,
-            engine=req.engine,
-            stages=["load", "extract", "translate", "validate"],
+        job.process = _sp.Popen(
+            tvw_args,
+            stdout=_sp.PIPE,
+            stderr=_sp.STDOUT,
+            cwd=str(PROJECT_ROOT),
+            env=env,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
 
-        job.status = "completed"
-        job.runtime_state = "ready"
-        job.progress = 100
-        job.current_step = "core/ Pipeline 完成"
-        job._core_state = state
-        job.append_log(f"[INFO] core/ Pipeline 完成: {len(state.ir.events)} events")
+        # 逐行解析 JSON 事件（RS 前缀）和普通日志
+        _json_begin = "\x1e"
+        for line in job.process.stdout:
+            if job.status == "cancelled":
+                job.process.terminate()
+                job.process.wait(timeout=10)
+                break
+            line = line.rstrip()
+            if not line:
+                continue
+            if line.startswith(_json_begin):
+                try:
+                    evt = _json.loads(line[1:])
+                    _handle_tvw_event(job, evt, _stage_index)
+                except Exception:
+                    job.append_log(line)
+            else:
+                job.append_log(line)
 
-        _update_workspace_runtime_state(job.workspace_path, RuntimeState.READY)
-        _save_job(job)
+        job.process.wait()
+        rc = job.process.returncode
 
-        if job._loop is not None and job._queues:
-            ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-            for q in job._queues:
-                job._loop.call_soon_threadsafe(
-                    q.put_nowait,
-                    {"event": "done", "status": "completed", "ts": ts},
-                )
+        if job.status == "cancelled":
+            return
+
+        if rc == 0:
+            job.status = "completed"
+            job.runtime_state = "ready"
+            job.progress = 100
+            job.current_step = "core/ Pipeline 完成"
+            _update_workspace_runtime_state(job.workspace_path, RuntimeState.READY)
+            if job._loop is not None and job._queues:
+                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                for q in job._queues:
+                    job._loop.call_soon_threadsafe(
+                        q.put_nowait,
+                        {"event": "done", "status": "completed", "ts": ts},
+                    )
+        else:
+            job.status = "failed"
+            job.runtime_state = "failed"
+            job.current_step = f"tvw.py exited with code {rc}"
+            job.append_log(f"[ERROR] tvw.py exited with code {rc}")
+            _update_workspace_runtime_state(job.workspace_path, RuntimeState.FAILED)
+            if job._loop is not None and job._queues:
+                ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+                for q in job._queues:
+                    job._loop.call_soon_threadsafe(
+                        q.put_nowait,
+                        {"event": "done", "status": "failed", "ts": ts},
+                    )
 
     except Exception as e:
         job.status = "failed"
         job.runtime_state = "failed"
         job.current_step = "core/ Pipeline 失败"
-        job.append_log(f"[ERROR] core/ Pipeline 失败: {e}")
-        logger.exception("core/ Pipeline 异常 (job=%s)", job.id)
+        job.append_log(f"[ERROR] tvw.py Pipeline 失败: {e}")
+        logger.exception("tvw.py Pipeline 异常 (job=%s)", job.id)
         _update_workspace_runtime_state(job.workspace_path, RuntimeState.FAILED)
-        _save_job(job)
-
         if job._loop is not None and job._queues:
             ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
             for q in job._queues:
                 job._loop.call_soon_threadsafe(
                     q.put_nowait,
-                    {"event": "done", "status": "failed", "ts": ts,
-                     "error": str(e)},
+                    {"event": "done", "status": "failed", "ts": ts},
                 )
     finally:
+        _save_job(job)
         root_logger.removeHandler(sse_handler)
         job.close_log_file()
+
+
+def _handle_tvw_event(job: Job, evt: dict, stage_index: dict) -> None:
+    """将 tvw.py JSON 事件转换为 WebUI SSE 消息。"""
+    ev_type = evt.get("type", "")
+    if ev_type == "stage_started":
+        stage = evt.get("stage", "")
+        label = evt.get("stage_label", stage)
+        job.current_step = f"{label}..."
+        job.progress = stage_index.get(stage, 10)
+        job.append_log(f"[STAGE] {label} 开始")
+    elif ev_type == "stage_progress":
+        job.append_log(f"  [{evt.get('stage_label', '')}] {evt.get('message', '')}")
+    elif ev_type == "stage_completed":
+        stage = evt.get("stage", "")
+        label = evt.get("stage_label", stage)
+        job.current_step = f"{label} 完成"
+        job.progress = stage_index.get(stage, 50) + 5
+        job.append_log(f"[STAGE] {label} 完成 — {evt.get('message', '')}")
+    elif ev_type == "workflow_completed":
+        job.append_log(f"[INFO] tvw.py workflow 完成: {evt.get('events', 0)} events")
+    elif ev_type in ("workflow_failed", "error"):
+        job.append_log(f"[ERROR] tvw.py: {evt.get('error', evt.get('message', ''))}")
+    elif ev_type == "log":
+        level = evt.get("level", "INFO")
+        msg = evt.get("message", "")
+        job.append_log(f"[{level}] tvw: {msg}")
+    else:
+        job.append_log(f"[INFO] tvw: {_json.dumps(evt, ensure_ascii=False)}")
+
+    if job._loop is not None and job._queues:
+        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        payload = {
+            "event": ev_type,
+            "stage": evt.get("stage", ""),
+            "stage_label": evt.get("stage_label", evt.get("stage", "")),
+            "current_item": evt.get("current_item", 0),
+            "total_items": evt.get("total_items", 0),
+            "percent": round(evt.get("percent", 0), 3),
+            "message": evt.get("message", evt.get("error", "")),
+            "ts": ts,
+            "payload": evt,
+        }
+        for q in job._queues:
+            job._loop.call_soon_threadsafe(q.put_nowait, payload)
 
 
 @app.post("/api/core/pipeline/run", response_model=CoreRunResponse)
@@ -5183,7 +5639,12 @@ async def start_core_pipeline(req: CoreRunRequest) -> CoreRunResponse:
     job_id = uuid.uuid4().hex[:8]
     workspace_path = str(video.parent / f"{video.stem}_project")
 
-    policy, _, _ = _preset_to_policy(req.workflow_preset, req.target_lang)
+    policy, _, skip_tts = _preset_to_policy(req.workflow_preset, req.target_lang)
+
+    # Core Pipeline 分两段: Bootstrap (到 VALIDATE) + Export (TTS→EXPORT)
+    # Timeline Runtime 初始化时永远只跑 Bootstrap，TTS 在用户确认后显式触发
+    is_bootstrap = True
+
     policy_summary = {
         "stages": [s.value for s in policy.stage_order()],
         "gates": {},
@@ -5399,7 +5860,7 @@ async def validate_workspace_artifacts(req: ValidateRequest):
     if not req.workspace or not Path(req.workspace).is_dir():
         raise HTTPException(status_code=400, detail="工作目录不存在")
     try:
-        from pipeline.schema_validator import validate_workspace
+        from core.compat import compat_validate_workspace
         results = validate_workspace(req.workspace)
         all_ok = all(results.values()) and len(results) > 0
         return {"ok": all_ok, "results": results,

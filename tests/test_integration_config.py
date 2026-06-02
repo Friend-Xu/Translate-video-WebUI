@@ -33,7 +33,8 @@ class TestConfigE2E:
                       value={"slot": "tts", "partial_config": {"speed_factor": 1.8}}, author="user", confidence=1.0)
         result = engine.apply(state, patch)
         assert result["status"] == "applied"
-        assert result.get("previous_state", {}).get("speed_factor") == 1.0
+        # v3.0: previous_state records the RAW config before override (None when key absent)
+        assert result.get("previous_state", {}).get("speed_factor") is None
 
         # Step 3: Resolve again — event override should win
         resolved2 = resolver.resolve_event_config("evt_001", "tts", state)
@@ -66,7 +67,7 @@ class TestConfigE2E:
         from core.ir.timeline_event import TimelineEventIR
         from core.ir.project import TimelineProjectIR
 
-        events = {"evt_001": TimelineEventIR(id="evt_001", start=0.0, end=1.0, text_ref="X")}
+        events = {"evt_001": TimelineEventIR(id="evt_001", start=0.0, end=1.0, text_ref="X", speaker_ref=None)}
         state = TimelineProjectState(TimelineProjectIR(events=events))
 
         sdg = SlotLevelDependencyGraph()

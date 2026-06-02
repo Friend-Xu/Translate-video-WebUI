@@ -110,15 +110,12 @@ class WorkflowPolicy:
 
     @classmethod
     def default_preset(cls, target_lang: str = "zh") -> "WorkflowPolicy":
-        """创建默认六阶段管线预设。
+        """创建默认六阶段管线预设 (T5.1: 拆分 Bootstrap + Export)。
 
         Bootstrap: LOAD → EXTRACT → TRANSLATE → VALIDATE (处理阶段)
-        Export:    TTS → EXPORT (用户确认后触发)
+        Export:    TTS → EXPORT (用户确认后显式触发)
         """
-        policy = cls(
-            name=f"preset_{target_lang}",
-            version="1.0",
-        )
+        policy = cls(name=f"preset_{target_lang}", version="1.0")
         policy.stages = {
             WorkflowStage.LOAD: StageConfig(
                 stage=WorkflowStage.LOAD,
@@ -135,11 +132,7 @@ class WorkflowPolicy:
                 passes=["translate", "quality_check"],
                 auto_advance=False,
                 gate="text_gate",
-                gate_routing={
-                    "A": "validate",
-                    "B": "pause",
-                    "C": "retry",
-                },
+                gate_routing={"A": "validate", "B": "pause", "C": "retry"},
                 allow_pause=True,
                 max_retries=1,
             ),
@@ -148,23 +141,17 @@ class WorkflowPolicy:
                 passes=[],
                 auto_advance=False,
                 gate="validate_gate",
-                gate_routing={
-                    "A": "tts",
-                    "B": "pause",
-                    "C": "retry",
-                },
+                gate_routing={"A": "pause", "B": "pause", "C": "retry"},
                 allow_pause=True,
             ),
+            # T5.1: VALIDATE now pauses (routing A → pause) instead of auto-advancing to TTS.
+            # Export stages require explicit tvw export / API trigger with export_preset.
             WorkflowStage.TTS: StageConfig(
                 stage=WorkflowStage.TTS,
                 passes=["tts", "emotion"],
                 auto_advance=True,
                 gate="emotion_gate",
-                gate_routing={
-                    "E1": "export",
-                    "E2": "export",
-                    "E3": "pause",
-                },
+                gate_routing={"E1": "export", "E2": "export", "E3": "pause"},
                 allow_pause=True,
             ),
             WorkflowStage.EXPORT: StageConfig(

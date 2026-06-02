@@ -68,8 +68,8 @@ export const MODE_META: Record<Mode | 'speaker', ModeMeta> = {
   },
 }
 
-export type InspectorTab = 'content' | 'timing' | 'speaker' | 'tts' | 'patch' | 'history' | 'config'
-export const ALL_INSPECTOR_TABS: InspectorTab[] = ['content', 'timing', 'speaker', 'tts', 'patch', 'history', 'config']
+export type InspectorTab = 'content' | 'timing' | 'speaker' | 'tts' | 'patch' | 'history' | 'config' | 'review'
+export const ALL_INSPECTOR_TABS: InspectorTab[] = ['content', 'timing', 'speaker', 'tts', 'patch', 'history', 'config', 'review']
 
 export interface LayoutPreset {
   railComponent: string | null
@@ -149,4 +149,24 @@ export interface PatchViewItem {
   affectedEventCount: number
   conflicts: string[]
   isLocked: boolean
+}
+
+// ── Review (字幕校验) 类型 ──
+
+export type ReviewFilterMode = 'all' | 'pending' | 'flagged' | 'semantic' | 'naturalness' | 'review_critical'
+
+export interface SubtitleEntry {
+  index: number
+  start: string
+  end: string
+  startMs: number
+  endMs: number
+  sourceText: string
+  translatedText: string
+  reviewStatus: 'pending' | 'approved' | 'modified' | 'flagged'
+  issues: { type: string; message: string; severity: string }[]
+  similarity?: number
+  speakerId?: string
+  semanticFlagged?: any
+  quality?: any
 }

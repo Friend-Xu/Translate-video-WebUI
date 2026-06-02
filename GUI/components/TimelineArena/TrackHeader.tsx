@@ -10,9 +10,9 @@ import type { TrackDefinition } from '../../types/timeline'
 import { SPEAKER_TRACK_PRESET, TRACK_VISIBILITY_MAP } from '../../types/timeline'
 
 const HEADER_W = 120
-const ICON_SIZE = 16
-const ROW_BG = '#252525'
-const ROW_BORDER = 'rgba(255,255,255,0.08)'
+const ICON_SIZE = 14
+const ROW_BG = '#e8ecf4'
+const ROW_BORDER = '#d0d5e0'
 
 function TrackHeaderRow({ track }: { track: TrackDefinition }) {
   const toggleVisibility = useAppStore(s => s.toggleTrackVisibility)
@@ -71,7 +71,7 @@ function TrackHeaderRow({ track }: { track: TrackDefinition }) {
 
       {/* Track label */}
       <Typography noWrap sx={{
-        fontSize: '0.7rem', color: '#fff', fontWeight: 500,
+        fontSize: '0.7rem', color: '#1e293b', fontWeight: 500,
         flex: 1, minWidth: 0, mr: 0.5,
         userSelect: 'none',
       }}>

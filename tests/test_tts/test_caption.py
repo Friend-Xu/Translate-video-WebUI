@@ -29,9 +29,16 @@ FONT_PATH = os.path.join(PROJECT_ROOT, "models", "font", "Minecraft_font",
 
 @pytest.fixture
 def renderer():
+    if not os.path.isfile(FONT_PATH):
+        pytest.skip("Font file not available in CI")
     return CaptionRenderer(font_path=FONT_PATH, caption_width_ratio=0.85)
 
 
+_font_available = os.path.isfile(FONT_PATH)
+_skip_no_font = pytest.mark.skipif(not _font_available, reason="Font file not available in CI")
+
+
+@pytest.mark.skipif(not _font_available, reason="Font file not available in CI")
 class TestCaptionRenderer:
     """字幕渲染行为测试"""
 
@@ -156,6 +163,7 @@ class TestScriptDetection:
         assert result == "latin"
 
 
+@pytest.mark.skipif(not _font_available, reason="Font file not available in CI")
 class TestLineCounting:
     """行数测量测试"""
 
@@ -183,6 +191,7 @@ class TestLineCounting:
         assert lines >= 2, f"CJK long text should wrap, got {lines}"
 
 
+@pytest.mark.skipif(not _font_available, reason="Font file not available in CI")
 class TestAdaptiveFontSize:
     """自适应字号测试"""
 
@@ -231,6 +240,7 @@ class TestAdaptiveFontSize:
         assert size <= 30, f"Should cap at max_font_size=30, got {size}"
 
 
+@pytest.mark.skipif(not _font_available, reason="Font file not available in CI")
 class TestTextWrapping:
     """文本换行策略测试"""
 

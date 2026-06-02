@@ -42,7 +42,7 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
   const setPlayhead = useAppStore(s => s.setPlayhead)
   const resizeTrack = useAppStore(s => s.resizeTrack)
 
-  const MIN_SPEAKER_HEIGHT = 28 // per speaker: ~12px name + ~16px blocks
+  const MIN_SPEAKER_HEIGHT = 40
 
   // Auto-resize speaker track height based on speaker count
   const speakerCount = track.renderer === 'speaker-lane'
@@ -58,7 +58,7 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
   }, [track.renderer, speakerCount, timelineFocus, track.id, track.height, resizeTrack])
 
   const containerHeight = track.renderer === 'speaker-lane' && speakerCount > 1 && timelineFocus === 'speaker'
-    ? speakerCount * 80
+    ? speakerCount * 100
     : track.height
 
   // Compute virtual events at top level (hooks must not be conditional)
@@ -234,7 +234,7 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
   return (
     <Box sx={{
       height: containerHeight, position: 'relative',
-      borderBottom: '1px solid rgba(255,255,255,0.06)',
+      borderBottom: '1px solid #d0d5e0',
       opacity: !track.visible ? 0 : isDimmed ? 0.2 : track.muted ? 0.5 : 1,
       pointerEvents: !track.visible ? 'none' : track.locked || track.muted ? 'none' : isDimmed ? 'none' : 'auto',
       overflow: 'hidden',

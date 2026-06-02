@@ -18,6 +18,7 @@ from core.runtime.patch_engine import PatchEngine
 from core.adapters.indextts_adapter import IndexTTSAdapter, IndexTTSSegmentContext
 from core.speaker.voice_memory import VoiceMemoryIndex
 from core.tts.index_emotion import EmotionVectorMapper
+from core.tts.duration_control import SpeedDecision
 from core.scoring.indextts_scorer import IndexTTSScorer
 
 
@@ -89,6 +90,28 @@ class IndexTTSCompositePass(TimelinePass):
                 fp16=self.fp16,
             )
             patch = adapter.synthesize(ctx)
+
+            # ── 调速决策 ──
+            target = ctx.duration_target
+            actual = patch.value.get("duration", target)
+            if target > 0:
+                deviation = abs(actual - target) / target
+            else:
+                deviation = 0.0
+            if deviation <= 0.15:
+                sd = SpeedDecision(strategy="accept", original_duration=actual,
+                                   final_duration=actual, deviation=deviation)
+            else:
+                sd = SpeedDecision(
+                    strategy="video_slowdown",
+                    original_duration=actual,
+                    final_duration=actual,
+                    video_speed_factor=max(0.60, target / max(actual, 0.001)),
+                    deviation=deviation,
+                    deviation_before=deviation,
+                    search_reached_limit=True,
+                )
+            es.tts["speed_decision"] = sd.as_dict()
 
             # Step 4: SCORE
             score = scorer.score(ctx, patch, prompt_history)

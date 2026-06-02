@@ -1,192 +1,163 @@
-import { Box, IconButton, ToggleButton, Tooltip, Divider, Menu, MenuItem, Checkbox, ListItemText } from '@mui/material'
-import { useState } from 'react'
-import PlayArrowIcon from '@mui/icons-material/PlayArrowRounded'
-import PauseIcon from '@mui/icons-material/PauseRounded'
-import SkipPreviousIcon from '@mui/icons-material/SkipPreviousRounded'
-import SkipNextIcon from '@mui/icons-material/SkipNextRounded'
-import LoopIcon from '@mui/icons-material/LoopRounded'
+import { useCallback } from 'react'
+import {
+  Box, Slider, IconButton, ToggleButton, Tooltip, Divider,
+} from '@mui/material'
+import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrongRounded'
+import FitScreenIcon from '@mui/icons-material/FitScreenRounded'
 import ZoomInIcon from '@mui/icons-material/ZoomInRounded'
 import ZoomOutIcon from '@mui/icons-material/ZoomOutRounded'
-import FitScreenIcon from '@mui/icons-material/FitScreenRounded'
-import CenterFocusStrongIcon from '@mui/icons-material/CenterFocusStrongRounded'
 import FilterListIcon from '@mui/icons-material/FilterListRounded'
 import VisibilityIcon from '@mui/icons-material/VisibilityRounded'
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHighRounded'
 import LayersClearIcon from '@mui/icons-material/LayersClearRounded'
 import PsychologyIcon from '@mui/icons-material/PsychologyRounded'
-import SpeakerIcon from '@mui/icons-material/RecordVoiceOverRounded'
+import TableViewIcon from '@mui/icons-material/TableViewRounded'
+import TimelineViewIcon from '@mui/icons-material/TimelineRounded'
+import PeopleIcon from '@mui/icons-material/PeopleRounded'
 import { useAppStore } from '../../store/useAppStore'
+import type { TimelineCoordAPI } from '../../hooks/useTimelineCoordinates'
 
 interface Props {
-  isPlaying: boolean
-  onPlayPause: () => void
-  onJumpPrev: () => void
-  onJumpNext: () => void
-  loopEnabled: boolean
-  onToggleLoop: () => void
-  onZoomIn: () => void
-  onZoomOut: () => void
   onZoomToFit: () => void
   onScrollToPlayhead: () => void
   filterBarOpen: boolean
   onToggleFilter: () => void
   onRetrigger: () => void
   onRequestAiAssist: () => void
+  coord: TimelineCoordAPI
 }
 
-export default function TimelineToolbar({
-  isPlaying,
-  onPlayPause,
-  onJumpPrev,
-  onJumpNext,
-  loopEnabled,
-  onToggleLoop,
-  onZoomIn,
-  onZoomOut,
-  onZoomToFit,
-  onScrollToPlayhead,
-  filterBarOpen,
-  onToggleFilter,
-  onRetrigger,
-  onRequestAiAssist,
-}: Props) {
-  const snapEnabled = useAppStore(s => s.snapEnabled)
-  const setSnapEnabled = useAppStore(s => s.setSnapEnabled)
-  const tracks = useAppStore(s => s.tracks)
-  const toggleTrackVisibility = useAppStore(s => s.toggleTrackVisibility)
-  const applyAllDrafts = useAppStore(s => s.applyAllDrafts)
-  const timelineFocus = useAppStore(s => s.timelineFocus)
-  const setTimelineFocus = useAppStore(s => s.setTimelineFocus)
-  const [visAnchorEl, setVisAnchorEl] = useState<HTMLElement | null>(null)
+const btnSx = {
+  color: '#475569', fontSize: '0.85rem', '&:hover': { color: '#1e293b', bgcolor: 'rgba(99,102,241,0.08)' },
+}
 
-  const btnSx = { p: 0.5, color: 'text.secondary', '&:hover': { color: 'text.primary' } }
-  const activeSx = (active: boolean) => ({
-    p: 0.5,
-    color: active ? 'primary.main' : 'text.secondary',
-    bgcolor: active ? 'action.selected' : 'transparent',
-    '&:hover': { color: 'text.primary', bgcolor: 'action.hover' },
-  })
+const activeSx = (on: boolean) => ({
+  color: on ? '#6366f1' : '#475569',
+  bgcolor: on ? 'rgba(99,102,241,0.1)' : 'transparent',
+  '&:hover': { color: '#4f46e5', bgcolor: 'rgba(99,102,241,0.08)' },
+})
+
+const MIN_ZOOM = 0.1
+const MAX_ZOOM = 50
+
+export default function TimelineToolbar({
+  onZoomToFit, onScrollToPlayhead,
+  filterBarOpen, onToggleFilter, onRetrigger, onRequestAiAssist,
+  coord,
+}: Props) {
+  const timelineViewMode = useAppStore(s => s.timelineViewMode)
+  const setTimelineViewMode = useAppStore(s => s.setTimelineViewMode)
+
+  const zoomLevel = coord.zoomLevel
+
+  // Zoom slider uses log scale for natural feel
+  const zoomToSlider = (zl: number) => (Math.log10(zl) - Math.log10(MIN_ZOOM)) / (Math.log10(MAX_ZOOM) - Math.log10(MIN_ZOOM)) * 100
+  const sliderToZoom = (sv: number) => Math.pow(10, Math.log10(MIN_ZOOM) + (sv / 100) * (Math.log10(MAX_ZOOM) - Math.log10(MIN_ZOOM)))
+
+  const handleZoomChange = useCallback((_: any, value: number | number[]) => {
+    const v = Array.isArray(value) ? value[0] : value
+    coord.zoomTo(sliderToZoom(v))
+  }, [coord])
 
   return (
-    <Box sx={{
-      height: 48, minHeight: 48,
-      display: 'flex', alignItems: 'center', gap: 0.5, px: 1,
-      borderBottom: 1, borderColor: 'divider',
-      bgcolor: 'background.paper',
-    }}>
-      {/* Left: Transport */}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-        <Tooltip title="上一个事件 (Ctrl+←)">
-          <IconButton size="small" onClick={onJumpPrev} sx={btnSx}>
-            <SkipPreviousIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title={isPlaying ? '暂停 (Space)' : '播放 (Space)'}>
-          <IconButton size="small" onClick={onPlayPause} sx={{ ...btnSx, color: 'primary.main' }}>
-            {isPlaying ? <PauseIcon fontSize="small" /> : <PlayArrowIcon fontSize="small" />}
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="下一个事件 (Ctrl+→)">
-          <IconButton size="small" onClick={onJumpNext} sx={btnSx}>
-            <SkipNextIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title={loopEnabled ? '关闭循环 (L)' : '循环播放 (L)'}>
-          <ToggleButton size="small" value="loop" selected={loopEnabled}
-            onChange={onToggleLoop} sx={activeSx(loopEnabled)}>
-            <LoopIcon fontSize="small" />
-          </ToggleButton>
-        </Tooltip>
-      </Box>
-
-      <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
-
-      {/* Center: Zoom & View */}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-        <Tooltip title="缩小 (Ctrl+滚轮)">
-          <IconButton size="small" onClick={onZoomOut} sx={btnSx}>
-            <ZoomOutIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="放大 (Ctrl+滚轮)">
-          <IconButton size="small" onClick={onZoomIn} sx={btnSx}>
-            <ZoomInIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="适应窗口 (\)">
-          <IconButton size="small" onClick={onZoomToFit} sx={btnSx}>
-            <FitScreenIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
+    <Box>
+      {/* Main toolbar row */}
+      <Box sx={{
+        display: 'flex', alignItems: 'center', gap: 0.5, px: 1, py: 0.5,
+        height: 40, minHeight: 40, bgcolor: '#e8ecf4',
+        borderBottom: '1px solid #d0d5e0',
+      }}>
+        {/* Navigation + Zoom */}
         <Tooltip title="定位到播放头">
-          <IconButton size="small" onClick={onScrollToPlayhead} sx={btnSx}>
+          <IconButton size="small" sx={btnSx} onClick={onScrollToPlayhead}>
             <CenterFocusStrongIcon fontSize="small" />
           </IconButton>
         </Tooltip>
-      </Box>
+        <Tooltip title="适应窗口 (\)">
+          <IconButton size="small" sx={btnSx} onClick={onZoomToFit}>
+            <FitScreenIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title="缩小">
+          <IconButton size="small" sx={btnSx} onClick={() => coord.zoomOut()}>
+            <ZoomOutIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
 
-      <Box sx={{ flexGrow: 1 }} />
+        {/* Zoom slider — log scale for natural feel across 0.1x–50x */}
+        <Box sx={{ width: 120, mx: 0.5 }}>
+          <Slider
+            size="small"
+            min={0}
+            max={100}
+            step={0.1}
+            value={zoomToSlider(zoomLevel)}
+            onChange={handleZoomChange}
+            sx={{
+              color: '#6366f1',
+              height: 3,
+              '& .MuiSlider-thumb': { width: 12, height: 12 },
+              '& .MuiSlider-track': { height: 3 },
+              '& .MuiSlider-rail': { height: 3, opacity: 0.2 },
+            }}
+          />
+        </Box>
 
-      <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+        <Tooltip title="放大">
+          <IconButton size="small" sx={btnSx} onClick={() => coord.zoomIn()}>
+            <ZoomInIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
 
-      {/* Right: Tools */}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-        <Tooltip title={snapEnabled ? '关闭吸附 (Shift+S)' : '开启吸附 (Shift+S)'}>
-          <ToggleButton size="small" value="snap" selected={snapEnabled}
-            onChange={() => setSnapEnabled(!snapEnabled)} sx={activeSx(snapEnabled)}>
+        <Box sx={{ flexGrow: 1 }} />
+
+        {/* Snap & Filter */}
+        <Tooltip title="吸附">
+          <ToggleButton size="small" value="snap" sx={activeSx(false)}>
             <CenterFocusStrongIcon fontSize="small" sx={{ transform: 'rotate(45deg)' }} />
           </ToggleButton>
         </Tooltip>
-        <Tooltip title="筛选事件 (Ctrl+F)">
+        <Tooltip title={filterBarOpen ? '关闭筛选' : '筛选事件 (Ctrl+F)'}>
           <ToggleButton size="small" value="filter" selected={filterBarOpen}
             onChange={onToggleFilter} sx={activeSx(filterBarOpen)}>
             <FilterListIcon fontSize="small" />
           </ToggleButton>
         </Tooltip>
         <Tooltip title="轨道可见性">
-          <IconButton size="small" sx={btnSx} onClick={(e) => setVisAnchorEl(e.currentTarget)}>
-            <VisibilityIcon fontSize="small" />
-          </IconButton>
+          <IconButton size="small" sx={btnSx}><VisibilityIcon fontSize="small" /></IconButton>
         </Tooltip>
+
         <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
-        <Tooltip title={timelineFocus === 'speaker' ? '退出说话人聚焦' : '说话人聚焦模式'}>
-          <ToggleButton size="small" value="speaker" selected={timelineFocus === 'speaker'}
-            onChange={() => setTimelineFocus(timelineFocus === 'speaker' ? 'default' : 'speaker')}
-            sx={activeSx(timelineFocus === 'speaker')}>
-            <SpeakerIcon fontSize="small" />
+
+        {/* View mode toggle */}
+        <Tooltip title={timelineViewMode === 'table' ? '切换到时间轴视图' : '切换到字幕校验表格'}>
+          <ToggleButton size="small" value="table" selected={timelineViewMode === 'table'}
+            onChange={() => setTimelineViewMode(timelineViewMode === 'table' ? 'timeline' : 'table')}
+            sx={activeSx(timelineViewMode === 'table')}>
+            {timelineViewMode === 'table' ? <TimelineViewIcon fontSize="small" /> : <TableViewIcon fontSize="small" />}
           </ToggleButton>
         </Tooltip>
+        <Tooltip title="说话人时间轴">
+          <ToggleButton size="small" value="speaker-timeline" selected={timelineViewMode === 'speaker-timeline'}
+            onChange={() => setTimelineViewMode(timelineViewMode === 'speaker-timeline' ? 'timeline' : 'speaker-timeline' as any)}
+            sx={activeSx(timelineViewMode === 'speaker-timeline')}>
+            <PeopleIcon fontSize="small" />
+          </ToggleButton>
+        </Tooltip>
+
         <Divider orientation="vertical" flexItem sx={{ mx: 0.5 }} />
+
+        {/* AI tools */}
         <Tooltip title="局部重算选中事件">
-          <IconButton size="small" sx={btnSx} onClick={onRetrigger}>
-            <AutoFixHighIcon fontSize="small" />
-          </IconButton>
+          <IconButton size="small" sx={btnSx} onClick={onRetrigger}><AutoFixHighIcon fontSize="small" /></IconButton>
         </Tooltip>
         <Tooltip title="应用全部草案">
-          <IconButton size="small" sx={btnSx} onClick={() => applyAllDrafts()}>
-            <LayersClearIcon fontSize="small" />
-          </IconButton>
+          <IconButton size="small" sx={btnSx}><LayersClearIcon fontSize="small" /></IconButton>
         </Tooltip>
         <Tooltip title="AI 辅助建议">
-          <IconButton size="small" sx={btnSx} onClick={onRequestAiAssist}>
-            <PsychologyIcon fontSize="small" />
-          </IconButton>
+          <IconButton size="small" sx={btnSx} onClick={onRequestAiAssist}><PsychologyIcon fontSize="small" /></IconButton>
         </Tooltip>
       </Box>
-
-      {/* Visibility menu */}
-      <Menu
-        anchorEl={visAnchorEl}
-        open={Boolean(visAnchorEl)}
-        onClose={() => setVisAnchorEl(null)}
-      >
-        {tracks.map(track => (
-          <MenuItem key={track.id} dense onClick={() => toggleTrackVisibility(track.id)}>
-            <Checkbox size="small" checked={track.visible} />
-            <ListItemText primary={track.label} primaryTypographyProps={{ variant: 'body2', fontSize: '0.75rem' }} />
-          </MenuItem>
-        ))}
-      </Menu>
     </Box>
   )
 }

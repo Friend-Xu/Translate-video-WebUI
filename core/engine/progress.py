@@ -21,8 +21,10 @@ class ProgressEventType(Enum):
     STAGE_COMPLETED = "stage_completed"
     STAGE_FAILED = "stage_failed"
     STAGE_PAUSED = "stage_paused"
+    WORKFLOW_STARTED = "workflow_started"
     WORKFLOW_COMPLETED = "workflow_completed"
     WORKFLOW_FAILED = "workflow_failed"
+    WORKFLOW_CANCELLED = "workflow_cancelled"
 
 
 @dataclass

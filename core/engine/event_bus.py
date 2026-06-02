@@ -84,6 +84,14 @@ class EventBus:
     def subscriber_count(self) -> int:
         return len(self._subscribers)
 
+    @property
+    def last_event(self) -> RuntimeEvent | None:
+        """最近一次发布的事件（供 WebUI 轮询使用）。"""
+        with self._lock:
+            if self._event_log:
+                return self._event_log[-1]
+            return None
+
     def clear_log(self) -> None:
         """清空事件日志。"""
         with self._lock:
