@@ -32,7 +32,7 @@ class TestGpuDetect:
         assert result == "libx264"
 
     @patch("subprocess.run")
-    def test_detect_nvenc_available_returns_libx264(self):
+    def test_detect_nvenc_available_returns_libx264(self, mock_run):
         """有 nvenc 且 NVIDIA GPU 存在 → 返回 libx264 (优先级最高，NVENC 并发限制)"""
         from pipeline.gpu_detect import detect_best_encoder
 
