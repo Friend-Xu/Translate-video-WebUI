@@ -30,6 +30,10 @@ class ASRToIRPass(TimelinePass):
         events: dict[str, TimelineEventIR] = {}
 
         for i, seg in enumerate(self.segments):
+            s_start = seg.get("start", 0.0)
+            s_end = seg.get("end", 0.0)
+            if s_start >= s_end:
+                continue  # 跳过零时长 segment（pyannote ghost / VAD 边界异常）
             eid = f"evt_{i + 1:03d}"
             spk = speaker_assignments.get(i) or seg.get("speaker")
             if spk and spk not in speakers:
@@ -37,8 +41,8 @@ class ASRToIRPass(TimelinePass):
 
             events[eid] = TimelineEventIR(
                 id=eid,
-                start=seg.get("start", 0.0),
-                end=seg.get("end", 0.0),
+                start=s_start,
+                end=s_end,
                 speaker_ref=spk,
                 text_ref=seg.get("text", "").strip(),
                 source="asr",

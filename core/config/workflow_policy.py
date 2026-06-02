@@ -141,7 +141,7 @@ class WorkflowPolicy:
                 passes=[],
                 auto_advance=False,
                 gate="validate_gate",
-                gate_routing={"A": "pause", "B": "pause", "C": "retry"},
+                gate_routing={"A": "continue", "B": "pause", "C": "retry"},
                 allow_pause=True,
             ),
             # T5.1: VALIDATE now pauses (routing A → pause) instead of auto-advancing to TTS.

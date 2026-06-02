@@ -145,6 +145,11 @@ class SpeakerDiarizer:
             np.NaN = np.nan
             np.NAN = np.nan
 
+        # 抑制 pyannote/speechbrain 的 torchaudio 弃用警告（不影响功能，仅噪声）
+        import warnings
+        warnings.filterwarnings("ignore", message=".*torchaudio._backend.*deprecated.*")
+        warnings.filterwarnings("ignore", message=".*torchaudio.backend.common.AudioMetaData.*moved.*")
+
         from pyannote.audio import Pipeline
 
         # 走 ModelManager 取配置路径，fallback 到默认本地路径
@@ -233,6 +238,9 @@ class SpeakerDiarizer:
 
             timeline = []
             for turn, _, speaker in output.itertracks(yield_label=True):
+                dur = turn.end - turn.start
+                if dur < 0.10:
+                    continue  # 跳过零时长或极短的 pyannote ghost segment
                 timeline.append((speaker, turn.start, turn.end, 1.0))
             timeline.sort(key=lambda x: x[1])
 
