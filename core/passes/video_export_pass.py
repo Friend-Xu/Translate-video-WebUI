@@ -19,11 +19,13 @@ class VideoExportPass(TimelinePass):
     depends_on: list[str] = []
 
     def __init__(self, video_path: str = "", output_dir: str = "",
-                 workspace_dir: str = "", caption: bool = False):
+                 workspace_dir: str = "", caption: bool = False,
+                 caption_config: dict | None = None):
         self.video_path = video_path
         self.output_dir = output_dir or ""
         self.workspace_dir = workspace_dir or ""
         self.caption = caption
+        self.caption_config = caption_config or {}
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         events = state.sorted_events()
@@ -58,7 +60,8 @@ class VideoExportPass(TimelinePass):
         from pipeline.tts_video import VideoSegmenter
         from moviepy import VideoFileClip, AudioFileClip
 
-        seg = VideoSegmenter(video_output_dir=video_dir, caption=self.caption)
+        seg = VideoSegmenter(video_output_dir=video_dir,
+                             caption=self.caption or bool(self.caption_config))
 
         # 读取 Demucs 分离的背景乐
         bgm_ref = state.get_global_bgm_ref()
