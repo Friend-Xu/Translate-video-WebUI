@@ -66,9 +66,17 @@ class TimelineProjectState:
         for p in self.global_patches:
             if p.op.name == "ANNOTATE":
                 v = p.value
-                # vocals_ref 优先级高于 audio_ref
                 if v.get("vocals_ref", ""):
                     result = v["vocals_ref"]
                 elif v.get("audio_ref", "") and result is None:
                     result = v["audio_ref"]
         return result
+
+    def get_global_bgm_ref(self) -> str | None:
+        """从 global_patches 中提取 bgm_ref（Demucs 分离的背景乐）。"""
+        for p in self.global_patches:
+            if p.op.name == "ANNOTATE":
+                bgm = p.value.get("bgm_ref", "")
+                if bgm:
+                    return bgm
+        return None

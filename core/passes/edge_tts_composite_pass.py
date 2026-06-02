@@ -39,7 +39,6 @@ class EdgeTTSCompositePass(TimelinePass):
         engine = PatchEngine()
         scorer = EdgeTTSScorer()
 
-        # 收集仍无有效 TTS 输出的 segment
         unvoiced = [
             es for es in state.sorted_events()
             if not es.tts.get("audio_ref")
@@ -49,8 +48,9 @@ class EdgeTTSCompositePass(TimelinePass):
         if not unvoiced:
             return state
 
+        adjuster = self._get_timing_adjuster()
+
         for es in unvoiced:
-            # 确定 fallback_reason
             tts_status = es.runtime.get("tts_status", "")
             if tts_status == "fallback_rejected":
                 reason = "openvoice_fallback_failed"
@@ -59,49 +59,25 @@ class EdgeTTSCompositePass(TimelinePass):
             else:
                 reason = "no_tts_output"
 
-            # 构建最简 context
             trans_raw = es.translation
             trans_lang = trans_raw.get("lang", "") if isinstance(trans_raw, dict) else ""
             lang = trans_lang or self.default_lang
             translation_text = (trans_raw.get("text", "") if isinstance(trans_raw, dict) else str(trans_raw or "")) or es.ir.text_ref
+            target_dur = es.end - es.start
             ctx = EdgeTTSSegmentContext(
                 segment_id=es.id,
                 translation_text=translation_text,
                 lang=lang,
-                duration_target=es.end - es.start,
+                duration_target=target_dur,
                 fallback_reason=reason,
             )
 
             if not ctx.translation_text:
                 continue
 
-            # SYNTHESIZE
-            adapter = EdgeTTSAdapter(output_dir=self.output_dir)
-            patch = adapter.synthesize(ctx)
-
-            # ── 调速决策 ──
-            target = ctx.duration_target
-            actual = patch.value.get("duration", target)
-            if target > 0:
-                deviation = abs(actual - target) / target
-            else:
-                deviation = 0.0
-            if deviation <= 0.15:
-                sd = SpeedDecision(strategy="accept", original_duration=actual,
-                                   final_duration=actual, deviation=deviation)
-            else:
-                sd = SpeedDecision(
-                    strategy="video_slowdown",
-                    original_duration=actual,
-                    final_duration=actual,
-                    video_speed_factor=max(0.60, target / max(actual, 0.001)),
-                    deviation=deviation,
-                    deviation_before=deviation,
-                    search_reached_limit=True,
-                )
+            patch, sd = self._synthesize_with_search(ctx, adjuster, target_dur)
             es.tts["speed_decision"] = sd.as_dict()
 
-            # SCORE
             score = scorer.score(ctx, patch)
             patch.confidence = score.composite
 
@@ -121,3 +97,101 @@ class EdgeTTSCompositePass(TimelinePass):
                 es.runtime["edge_tts_reject_reason"] = f"composite={score.composite:.2f}"
 
         return state
+
+    @staticmethod
+    def _get_timing_adjuster():
+        from pipeline.tts_timing import TimingAdjuster
+        return TimingAdjuster(speed_max=70, base_speed=30, search_method="binary")
+
+    def _synthesize_with_search(self, ctx, adjuster, target_dur):
+        """合成 Edge TTS 音频，若时长超标则二分搜索最优 rate。"""
+        adapter = EdgeTTSAdapter(output_dir=self.output_dir)
+        ctx.rate = "+0%"
+        patch = adapter.synthesize(ctx)
+        actual = patch.value.get("duration", target_dur)
+
+        if target_dur <= 0:
+            return patch, SpeedDecision(original_duration=actual, final_duration=actual)
+
+        deviation = abs(actual - target_dur) / target_dur
+        if actual <= target_dur or deviation <= 0.15:
+            return patch, SpeedDecision(
+                strategy="accept", original_duration=actual,
+                final_duration=actual, deviation=deviation,
+            )
+
+        init_speed = adjuster._calc_initial_speed(actual, target_dur)
+        search_iterations = 0
+
+        def _synth_at_rate(rate_str):
+            nonlocal search_iterations
+            search_iterations += 1
+            a = EdgeTTSAdapter(output_dir=self.output_dir)
+            c = EdgeTTSSegmentContext(
+                segment_id=ctx.segment_id,
+                translation_text=ctx.translation_text,
+                lang=ctx.lang,
+                duration_target=target_dur,
+                rate=rate_str,
+            )
+            return a.synthesize(c)
+
+        # 试下限: 如果能 fit，直接返回
+        rate_lo = f"+{init_speed}%"
+        patch_lo = _synth_at_rate(rate_lo)
+        dur_lo = patch_lo.value.get("duration", target_dur)
+        if dur_lo <= target_dur:
+            return patch_lo, SpeedDecision(
+                strategy="accept", original_duration=actual,
+                final_duration=dur_lo, tts_rate=rate_lo,
+                search_method="binary", search_iterations=search_iterations,
+                deviation=abs(dur_lo - target_dur) / target_dur,
+                deviation_before=deviation,
+            )
+
+        # 试上限
+        rate_hi = f"+{adjuster.speed_max}%"
+        patch_hi = _synth_at_rate(rate_hi)
+        dur_hi = patch_hi.value.get("duration", target_dur)
+        if dur_hi > target_dur:
+            return patch_hi, SpeedDecision(
+                strategy="video_slowdown", original_duration=actual,
+                final_duration=dur_hi, tts_rate=rate_hi,
+                search_method="binary", search_iterations=search_iterations,
+                search_reached_limit=True,
+                video_speed_factor=max(0.60, target_dur / max(dur_hi, 0.001)),
+                deviation=abs(dur_hi - target_dur) / target_dur,
+                deviation_before=deviation,
+            )
+
+        # 二分搜索
+        lo, hi = init_speed, adjuster.speed_max
+        best_patch = patch_hi
+        while lo < hi:
+            mid = (lo + hi) // 2
+            p_mid = _synth_at_rate(f"+{mid}%")
+            if p_mid.value.get("duration", target_dur) <= target_dur:
+                hi = mid
+                best_patch = p_mid
+            else:
+                lo = mid + 1
+
+        rate_final = f"+{lo}%"
+        # 收敛后微调: 尝试降 1-2%
+        for lower in range(lo - 1, max(lo - 3, adjuster.base_speed - 1), -1):
+            if lower < adjuster.base_speed:
+                break
+            p_lower = _synth_at_rate(f"+{lower}%")
+            if p_lower.value.get("duration", target_dur) <= target_dur:
+                best_patch = p_lower
+                rate_final = f"+{lower}%"
+                break
+
+        dur_final = best_patch.value.get("duration", target_dur)
+        return best_patch, SpeedDecision(
+            strategy="accept", original_duration=actual,
+            final_duration=dur_final, tts_rate=rate_final,
+            search_method="binary", search_iterations=search_iterations,
+            deviation=abs(dur_final - target_dur) / target_dur,
+            deviation_before=deviation,
+        )
