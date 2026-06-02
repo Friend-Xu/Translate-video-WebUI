@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react'
 import type { PipelineConfig, PipelineStatus, LogEntry } from '../types'
 
-const API = '/api/pipeline'
+const API_BASE = '/api/core/pipeline'
 const MAX_WINDOW = 500      // max loaded entries in memory
 const TAIL_LIMIT = 200       // initial fetch size
 const PAGE_LIMIT = 200       // scroll-up page size
@@ -22,11 +22,22 @@ function parseLine(raw: string): LogEntry {
   return { _id: nextId(), level, message, timestamp: new Date().toLocaleTimeString() }
 }
 
-export function usePipeline() {
+export function usePipeline(apiBase: string = API_BASE) {
   const [status, setStatus] = useState<PipelineStatus>({
-    state: 'idle', progress: 0, currentStep: '就绪', jobId: null, detail: '',
+    state: 'idle', progress: 0, currentStep: '就绪', jobId: null, detail: '', stages: {},
   })
   const [logs, setLogs] = useState<LogEntry[]>([])
+
+  // Ref to avoid closure stale-value issues with jobId in cancelPipeline
+  const jobIdRef = useRef<string | null>(null)
+
+  const _setStatusAndRef = useCallback((updater: PipelineStatus | ((prev: PipelineStatus) => PipelineStatus)) => {
+    setStatus(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater
+      jobIdRef.current = next.jobId
+      return next
+    })
+  }, [])
 
   // Virtual window: logs array is a sliding window into the full log file.
   // firstItemIndex is 0 during auto-follow; only set when prepending history.
@@ -69,7 +80,7 @@ export function usePipeline() {
   // Load initial tail from workspace log file
   const loadLogTail = useCallback(async (jobId: string) => {
     try {
-      const res = await fetch(`${API}/${jobId}/logs/tail?limit=${TAIL_LIMIT}`)
+      const res = await fetch(`${apiBase}/${jobId}/logs/tail?limit=${TAIL_LIMIT}`)
       if (!res.ok) return
       const data = await res.json()
       const entries: LogEntry[] = (data.lines || []).map(parseLine)
@@ -91,7 +102,7 @@ export function usePipeline() {
 
     loadingOlder.current = true
     try {
-      const res = await fetch(`${API}/${jobId}/logs/range?before=${before}&limit=${PAGE_LIMIT}`)
+      const res = await fetch(`${apiBase}/${jobId}/logs/range?before=${before}&limit=${PAGE_LIMIT}`)
       if (!res.ok) return
       const data = await res.json()
       const olderEntries: LogEntry[] = (data.lines || []).map(parseLine)
@@ -115,26 +126,28 @@ export function usePipeline() {
 
   const handleDone = useCallback((finalStatus: string) => {
     flushBatch()
-    setStatus(prev => ({
+    _setStatusAndRef(prev => ({
       ...prev,
       state: finalStatus as PipelineStatus['state'],
       progress: finalStatus === 'completed' ? 100 : prev.progress,
       currentStep: finalStatus === 'completed' ? '处理完成' : '处理结束',
     }))
-  }, [flushBatch])
+  }, [flushBatch, _setStatusAndRef])
 
   // Poll status while running
   const pollStatus = useCallback(async (jobId: string) => {
     const poll = async () => {
       try {
-        const res = await fetch(`${API}/${jobId}/status`)
+        const res = await fetch(`${apiBase}/${jobId}/status`)
         if (!res.ok) return
         const data = await res.json()
         setStatus(prev => ({
           ...prev,
+          state: data.status || prev.state,
           progress: data.progress,
           currentStep: data.current_step,
           detail: data.detail || '',
+          stages: data.stages || prev.stages,
         }))
         if (data.status === 'running') {
           setTimeout(poll, 2000)
@@ -149,10 +162,10 @@ export function usePipeline() {
     firstItemIndex.current = 0
     headGlobalIndex.current = 0
     totalLines.current = 0
-    setStatus({ state: 'running', progress: 5, currentStep: '启动中...', jobId: null, detail: '' })
+    setStatus({ state: 'running', progress: 5, currentStep: '启动中...', jobId: null, detail: '', stages: {} })
 
     try {
-      const res = await fetch(`${API}/run`, {
+      const res = await fetch(`${apiBase}/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -220,34 +233,38 @@ export function usePipeline() {
       }
 
       const { job_id } = await res.json()
-      setStatus(prev => ({ ...prev, jobId: job_id, currentStep: '流水线运行中...' }))
+      _setStatusAndRef(prev => ({ ...prev, jobId: job_id, currentStep: '流水线运行中...' }))
 
       // Load initial log tail from file, then start polling + SSE
       await loadLogTail(job_id)
       pollStatus(job_id)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      setStatus({ state: 'failed', progress: 0, currentStep: '启动失败', jobId: null, detail: '' })
+      setStatus({ state: 'failed', progress: 0, currentStep: '启动失败', jobId: null, detail: '', stages: {} })
       appendLog({ level: 'ERROR', message: msg, timestamp: new Date().toLocaleTimeString() })
     }
   }, [appendLog, pollStatus, loadLogTail])
 
   const cancelPipeline = useCallback(async () => {
-    if (!status.jobId) return
+    const jid = jobIdRef.current
+    if (!jid) return
     try {
-      await fetch(`${API}/${status.jobId}/cancel`, { method: 'POST' })
-      setStatus(prev => ({ ...prev, state: 'cancelled', currentStep: '已取消' }))
+      await fetch(`${apiBase}/${jid}/cancel`, { method: 'POST' })
+      _setStatusAndRef(prev => ({ ...prev, state: 'cancelled', currentStep: '已取消' }))
       appendLog({ level: 'WARN', message: '任务已取消', timestamp: new Date().toLocaleTimeString() })
     } catch { /* ignore */ }
-  }, [status.jobId, appendLog])
+  }, [appendLog, _setStatusAndRef])
 
   return {
     status,
+    setStatus: _setStatusAndRef,
     logs,
     appendLog,
     handleDone,
     startPipeline,
     cancelPipeline,
+    pollStatus,
+    loadLogTail,
     logFirstIndex: firstItemIndex,
     logTotal: totalLines,
     loadOlderLogs,

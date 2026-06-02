@@ -1,8 +1,6 @@
 import { Box, Typography, IconButton, TextField, Breadcrumbs, Tooltip } from '@mui/material'
-import SettingsIcon from '@mui/icons-material/SettingsRounded'
 import SearchIcon from '@mui/icons-material/SearchRounded'
 import MemoryIcon from '@mui/icons-material/MemoryRounded'
-import TaskIcon from '@mui/icons-material/AssignmentRounded'
 import { useAppStore } from '../../store/useAppStore'
 import { MODE_META } from '../../types/modes'
 
@@ -18,7 +16,6 @@ export default function GlobalBar({ projectName, workspace, cpuUsage, memUsage, 
   const mode = useAppStore(s => s.mode)
   const selectedEventId = useAppStore(s => s.selectedEventId)
   const crossModeContext = useAppStore(s => s.crossModeContext)
-  const setMode = useAppStore(s => s.setMode)
 
   const openCommandPalette = () => {
     window.dispatchEvent(new KeyboardEvent('keydown', { ctrlKey: true, key: 'k', bubbles: true }))
@@ -79,12 +76,6 @@ export default function GlobalBar({ projectName, workspace, cpuUsage, memUsage, 
         } arrow>
           <IconButton size="small" title="GPU Status"><MemoryIcon sx={{ fontSize: 18 }} /></IconButton>
         </Tooltip>
-        <IconButton size="small" title="Task Queue" onClick={() => setMode('batch')}>
-          <TaskIcon sx={{ fontSize: 18 }} />
-        </IconButton>
-        <IconButton size="small" title="Settings" onClick={openCommandPalette}>
-          <SettingsIcon sx={{ fontSize: 18 }} />
-        </IconButton>
       </Box>
     </Box>
   )

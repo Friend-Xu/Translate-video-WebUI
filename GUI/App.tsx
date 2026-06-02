@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { ThemeProvider, CssBaseline, Box, Alert, Snackbar, Typography } from '@mui/material'
+import { ThemeProvider, CssBaseline, Box, Alert, Snackbar, Typography, Button } from '@mui/material'
 import CloudUploadOutlined from '@mui/icons-material/CloudUploadOutlined'
 import theme from './theme'
 import AppShell from './components/AppShell'
@@ -7,11 +7,15 @@ import GlobalBar from './components/GlobalBar/index'
 import EvidenceDock from './components/EvidenceDock/index'
 import NavRail from './components/NavRail/index'
 import TimelineArena from './components/TimelineArena/index'
+import VideoPreview from './components/TimelineArena/VideoPreview'
+import ProjectHubPage from './components/ProjectHubPage'
 import IRInspector from './components/IRInspector/index'
 import OpsDashboard from './components/OpsDashboard'
-import SpeakerReviewView from './components/ModeViews/SpeakerReviewView'
 import PatchManagementView from './components/ModeViews/PatchManagementView'
 import ExportView from './components/ModeViews/ExportView'
+import SettingsView from './components/ModeViews/SettingsView'
+import SpeakerReviewView from './components/ModeViews/SpeakerReviewView'
+import ReviewTable from './components/TimelineArena/ReviewTable'
 import CommandPalette from './components/CommandPalette'
 import { useConfig } from './hooks/useConfig'
 import { usePipeline } from './hooks/usePipeline'
@@ -21,6 +25,7 @@ import { useAppStore } from './store/useAppStore'
 import { ErrorBanner } from './components/LoadingSkeleton'
 import { MOCK_EVENTS, MOCK_WAVEFORM, MOCK_TTS_WAVEFORMS } from './mocks/mockData'
 import { mockSystemStatus } from './mocks/mockHandlers'
+import WorkspaceSelector from './components/WorkspaceSelector'
 
 export default function App() {
   const { config, updateConfig } = useConfig()
@@ -38,6 +43,7 @@ export default function App() {
   } | null>(null)
 
   const mode = useAppStore(s => s.mode)
+  const setMode = useAppStore(s => s.setMode)
   const selectedEventId = useAppStore(s => s.selectedEventId)
 
   // SSE
@@ -114,74 +120,152 @@ export default function App() {
     }
   }, [updateConfig, showMsg])
 
-  const selectedEvent = MOCK_EVENTS.find(e => e.id === selectedEventId) || null
+  // Workspace data (TRV-PLAN-2026-001)
+  const dataSource = useAppStore(s => s.dataSource)
+  const storeEvents = useAppStore(s => s.events)
+  const storeWaveform = useAppStore(s => s.waveform)
+  const storeWorkspace = useAppStore(s => s.workspace)
+  const manifest = useAppStore(s => s.manifest)
+  const playheadPosition = useAppStore(s => s.playheadPosition)
+  const isWorkspace = dataSource === 'workspace' && storeEvents.length > 0
 
-  const arenaContent = (() => {
-    switch (mode) {
-      case 'batch':
-        return (
-          <OpsDashboard
-            batch={batch}
-            cpuUsage={sysStatus?.cpuUsage}
-            memUsage={sysStatus?.memUsage}
-            gpuUsage={sysStatus?.gpuUsage}
-            modelsOnline={sysStatus?.modelsOnline || []}
-            onStartBatch={() => showMsg('请先将视频文件拖拽到窗口以开始批处理', 'info')}
-            onCancelBatch={cancelBatch}
-            onSkipCurrent={skipCurrent}
-          />
-        )
-      case 'speaker':
-        return <SpeakerReviewView events={MOCK_EVENTS} totalDuration={80} />
-      case 'patch':
-        return <PatchManagementView events={MOCK_EVENTS} />
-      case 'export':
-        return <ExportView events={MOCK_EVENTS} />
-      case 'timeline':
-      default:
-        return (
-          <TimelineArena
-            events={MOCK_EVENTS}
-            waveform={MOCK_WAVEFORM}
-            totalDuration={80}
-            ttsWaveforms={MOCK_TTS_WAVEFORMS}
-            onDropVideo={handleFileDropped}
-          />
-        )
-    }
-  })()
+  const events = isWorkspace ? storeEvents : MOCK_EVENTS
+  const waveform = isWorkspace && storeWaveform ? storeWaveform : MOCK_WAVEFORM
+  const totalDuration = isWorkspace
+    ? manifest?.video_duration || Math.max(...storeEvents.map(e => e.end), 5)
+    : Math.max(...MOCK_EVENTS.map(e => e.end), 80)
+  const videoSrc = isWorkspace && manifest?.video_path
+    ? `/api/files/video?path=${encodeURIComponent(manifest.video_path)}`
+    : null
+
+  const selectedEvent = events.find(e => e.id === selectedEventId) || null
+
+  // VideoPreview 放在 Inspector 面板上方
+  const inspectorWithVideo = mode === 'timeline' || mode === 'speaker' || mode === 'review' ? (
+    <>
+      <VideoPreview
+        videoSrc={videoSrc || null}
+        currentTime={playheadPosition}
+        events={events}
+        onTimeUpdate={(t) => useAppStore.getState().setPlayhead(t)}
+      />
+      <IRInspector event={selectedEvent} />
+    </>
+  ) : null
+
+  const arenaContent = (
+    <>
+      <Box sx={{ display: mode === 'hub' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
+        <ProjectHubPage />
+      </Box>
+      <Box sx={{ display: mode === 'batch' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
+        <OpsDashboard
+          batch={batch}
+          cpuUsage={sysStatus?.cpuUsage}
+          memUsage={sysStatus?.memUsage}
+          gpuUsage={sysStatus?.gpuUsage}
+          modelsOnline={sysStatus?.modelsOnline || []}
+          onStartBatch={() => showMsg('请先将视频文件拖拽到窗口以开始批处理', 'info')}
+          onCancelBatch={cancelBatch}
+          onSkipCurrent={skipCurrent}
+        />
+      </Box>
+      <Box sx={{ display: mode === 'patch' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
+        <PatchManagementView events={events} />
+      </Box>
+      <Box sx={{ display: mode === 'export' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
+        <ExportView events={events} />
+      </Box>
+      <Box sx={{ display: mode === 'speaker' ? 'flex' : 'none', flex: 1, overflow: 'hidden', position: 'relative' }}>
+        {!isWorkspace && (
+          <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 50,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            bgcolor: 'rgba(0,0,0,0.75)', gap: 2, px: 3 }}>
+            <Typography variant="h6" color="text.secondary" textAlign="center">尚未加载项目数据</Typography>
+            <Button variant="contained" onClick={() => setMode('hub')}>返回项目中心</Button>
+          </Box>
+        )}
+        <SpeakerReviewView events={events} />
+      </Box>
+      <Box sx={{ display: mode === 'review' ? 'flex' : 'none', flex: 1, overflow: 'hidden', position: 'relative' }}>
+        {!isWorkspace && (
+          <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 50,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            bgcolor: 'rgba(0,0,0,0.75)', gap: 2, px: 3 }}>
+            <Typography variant="h6" color="text.secondary" textAlign="center">尚未加载项目数据</Typography>
+            <Button variant="contained" onClick={() => setMode('hub')}>返回项目中心</Button>
+          </Box>
+        )}
+        <ReviewTable events={events} workspace={storeWorkspace} onSeek={(t) => useAppStore.getState().setPlayhead(t)} />
+      </Box>
+      <Box sx={{ display: mode === 'timeline' ? 'flex' : 'none', flex: 1, overflow: 'hidden', position: 'relative' }}>
+        {!isWorkspace && (
+          <Box sx={{
+            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 50,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            bgcolor: 'rgba(0,0,0,0.75)', gap: 2, px: 3,
+          }}>
+            <Typography variant="h6" color="text.secondary" textAlign="center">
+              尚未加载项目数据
+            </Typography>
+            <Typography variant="body2" color="text.disabled" textAlign="center" sx={{ maxWidth: 420 }}>
+              当前显示的是示例数据。请在项目中心选择已有项目，或创建新的 Timeline Runtime 以加载真实数据。
+            </Typography>
+            <Button variant="contained" onClick={() => setMode('hub')}>
+              返回项目中心
+            </Button>
+          </Box>
+        )}
+        <TimelineArena
+          events={events}
+          waveform={waveform}
+          totalDuration={totalDuration}
+          ttsWaveforms={MOCK_TTS_WAVEFORMS}
+          onDropVideo={handleFileDropped}
+        />
+      </Box>
+    </>
+  )
 
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
 
+      {mode === 'settings' ? (
+        <SettingsView />
+      ) : (
+      <>
+
       {errorMsg && <ErrorBanner message={errorMsg} onDismiss={() => setErrorMsg(null)} />}
 
       <AppShell
         pulseBar={
-          <GlobalBar
-            projectName={config.videoPath ? config.videoPath.split(/[/\\]/).pop() : undefined}
-            workspace={config.videoPath ? config.videoPath.split(/[/\\]/).slice(0, -1).join('/') : undefined}
-            cpuUsage={sysStatus?.cpuUsage}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0 }}>
+            <GlobalBar
+              projectName={config.videoPath ? config.videoPath.split(/[/\\]/).pop() : undefined}
+              workspace={config.videoPath ? config.videoPath.split(/[/\\]/).slice(0, -1).join('/') : undefined}
+              cpuUsage={sysStatus?.cpuUsage}
             memUsage={sysStatus?.memUsage}
             gpuUsage={sysStatus?.gpuUsage}
           />
+          <WorkspaceSelector />
+          </Box>
         }
         railContent={<NavRail />}
         arenaContent={arenaContent}
-        inspectorContent={<IRInspector event={selectedEvent} />}
-        dockContent={
+        inspectorContent={inspectorWithVideo}
+        dockContent={mode === 'timeline' || mode === 'speaker' || mode === 'review' ? (
           <EvidenceDock
             logs={logs}
             connectionState={connectionState}
             logFirstIndex={logFirstIndex.current}
             logTotal={logTotal.current}
             onLoadOlder={() => loadOlderLogs(status.jobId)}
-            events={MOCK_EVENTS}
-            passTrace={MOCK_EVENTS.length > 0 ? MOCK_EVENTS[0].passTrace : undefined}
+            events={events}
+            passTrace={events.length > 0 ? events[0].passTrace : undefined}
             batchStatus={batch}
           />
-        }
+        ) : null}
       />
 
       <CommandPalette />
@@ -226,6 +310,8 @@ export default function App() {
           {snackbar.msg}
         </Alert>
       </Snackbar>
+      </>
+      )}
     </ThemeProvider>
   )
 }

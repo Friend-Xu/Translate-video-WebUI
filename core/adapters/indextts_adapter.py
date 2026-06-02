@@ -53,6 +53,11 @@ class IndexTTSAdapter:
         self._fp16 = fp16
         self._engine = None
 
+    def configure(self, event_config = None):
+        if not event_config: return
+        if "fp16" in event_config: self._fp16 = event_config["fp16"]
+        if "speed_factor" in event_config: self._speed = event_config["speed_factor"]
+
     def synthesize(self, ctx: IndexTTSSegmentContext) -> Patch:
         """对单个 segment 合成语音，返回 UPDATE_TTS_AUDIO patch。
 
@@ -138,7 +143,7 @@ class IndexTTSAdapter:
     def _make_output_path(self, segment_id: str) -> str:
         import os
         d = self._output_dir or "."
-        return os.path.join(d, "tts", f"{segment_id}_indextts.wav")
+        return os.path.join(d, "05_tts", f"{segment_id}_indextts.wav")
 
     @staticmethod
     def _calc_duration_fit(actual: float, target: float) -> float:

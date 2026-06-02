@@ -1,30 +1,34 @@
 import { Box, Typography, Divider } from '@mui/material'
 import TimelineIcon from '@mui/icons-material/TimelineRounded'
-import SpeakerIcon from '@mui/icons-material/RecordVoiceOverRounded'
+import HomeIcon from '@mui/icons-material/HomeRounded'
 import BuildIcon from '@mui/icons-material/BuildRounded'
 import QueueIcon from '@mui/icons-material/QueuePlayNextRounded'
 import ExportIcon from '@mui/icons-material/IosShareRounded'
 import SettingsIcon from '@mui/icons-material/SettingsRounded'
+import SearchIcon from '@mui/icons-material/SearchRounded'
 import LogIcon from '@mui/icons-material/ArticleRounded'
 import BugReportIcon from '@mui/icons-material/BugReportRounded'
 import ModelIcon from '@mui/icons-material/AccountTreeRounded'
 import GlossaryIcon from '@mui/icons-material/BookRounded'
+import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOverRounded'
+import RateReviewIcon from '@mui/icons-material/RateReviewRounded'
 import { useAppStore } from '../../store/useAppStore'
 import { ALL_MODES, MODE_META } from '../../types/modes'
 
 const CORE_ICONS: Record<string, React.ReactNode> = {
+  hub: <HomeIcon />,
   timeline: <TimelineIcon />,
-  speaker: <SpeakerIcon />,
   patch: <BuildIcon />,
   batch: <QueueIcon />,
   export: <ExportIcon />,
+  speaker: <RecordVoiceOverIcon />,
+  review: <RateReviewIcon />,
 }
 
 export default function NavRail() {
   const mode = useAppStore(s => s.mode)
   const setMode = useAppStore(s => s.setMode)
   const selectedEventIds = useAppStore(s => s.selectedEventIds)
-  const speakerFocus = useAppStore(s => s.speakerFocus)
   const pendingDrafts = useAppStore(s => s.pendingDrafts)
   const localJobStatus = useAppStore(s => s.localJobStatus)
   const toggleDockCollapsed = useAppStore(s => s.toggleDockCollapsed)
@@ -33,11 +37,14 @@ export default function NavRail() {
 
   const hasContext = (m: typeof ALL_MODES[number]) => {
     switch (m) {
+      case 'hub': return false
       case 'timeline': return selectedEventIds.length > 0
-      case 'speaker': return speakerFocus !== null
       case 'patch': return pendingDrafts.size > 0
       case 'batch': return Object.keys(localJobStatus).length > 0
       case 'export': return false
+      case 'speaker': return false
+      case 'review': return false
+      case 'settings': return false
     }
   }
 
@@ -65,8 +72,8 @@ export default function NavRail() {
           '&:hover': { bgcolor: 'action.hover' },
         }}>
           <Box sx={{ fontSize: 20, lineHeight: 1 }}>{CORE_ICONS[m]}</Box>
-          <Typography sx={{ fontSize: '0.5rem', lineHeight: 1, textAlign: 'center' }}>
-            {MODE_META[m].label.split(' ')[0]}
+          <Typography sx={{ fontSize: '0.7rem', lineHeight: 1, textAlign: 'center' }}>
+            {MODE_META[m].label}
           </Typography>
           {hasContext(m) && (
             <Box sx={{
@@ -93,7 +100,7 @@ export default function NavRail() {
           '&:hover': { color: 'text.secondary', bgcolor: 'action.hover' },
         }}>
           {item.icon}
-          <Typography sx={{ fontSize: '0.45rem' }}>{item.label}</Typography>
+          <Typography sx={{ fontSize: '0.6rem' }}>{item.label}</Typography>
         </Box>
       ))}
 
@@ -103,15 +110,19 @@ export default function NavRail() {
       <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5, pb: 1 }}>
         {[
           {
-            icon: <SettingsIcon sx={{ fontSize: 18 }} />, label: 'Settings',
+            icon: <SearchIcon sx={{ fontSize: 18 }} />, label: '搜索',
             action: openCommandPalette, active: false,
           },
           {
-            icon: <LogIcon sx={{ fontSize: 18 }} />, label: 'Logs',
+            icon: <SettingsIcon sx={{ fontSize: 18 }} />, label: '设置',
+            action: () => setMode('settings'), active: mode === 'settings',
+          },
+          {
+            icon: <LogIcon sx={{ fontSize: 18 }} />, label: '日志',
             action: toggleDockCollapsed, active: false,
           },
           {
-            icon: <BugReportIcon sx={{ fontSize: 18 }} />, label: 'Debug',
+            icon: <BugReportIcon sx={{ fontSize: 18 }} />, label: '调试',
             action: toggleDebugMode, active: debugMode,
           },
         ].map(item => (
@@ -123,7 +134,7 @@ export default function NavRail() {
             '&:hover': { color: item.active ? 'warning.main' : 'text.secondary', bgcolor: 'action.hover' },
           }}>
             {item.icon}
-            <Typography sx={{ fontSize: '0.45rem' }}>{item.label}</Typography>
+            <Typography sx={{ fontSize: '0.6rem' }}>{item.label}</Typography>
           </Box>
         ))}
       </Box>

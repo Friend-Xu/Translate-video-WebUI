@@ -65,7 +65,12 @@ class CosyVoiceAdapter:
     def configure(self, event_config = None):
         if not event_config: return
         if "lang" in event_config: self._lang = event_config["lang"]
+        if "cosy_lang" in event_config: self._lang = event_config["cosy_lang"]
         if "speed" in event_config: self._speed = event_config["speed"]
+        if "speed_factor" in event_config: self._speed = event_config["speed_factor"]
+        if "cosy_version" in event_config: self._version = event_config["cosy_version"]
+        if "cosy_num_norm" in event_config: self._num_norm = event_config["cosy_num_norm"]
+        if "cosy_fp16" in event_config: self._fp16 = event_config["cosy_fp16"]
 
     def synthesize(self, ctx: CosyVoiceSegmentContext) -> Patch:
         """对单个 segment 合成语音，返回 UPDATE_TTS_AUDIO patch。
@@ -178,7 +183,7 @@ class CosyVoiceAdapter:
     def _make_output_path(self, segment_id: str) -> str:
         import os
         d = self._output_dir or "."
-        return os.path.join(d, "tts", f"{segment_id}_cosyvoice.wav")
+        return os.path.join(d, "05_tts", f"{segment_id}_cosyvoice.wav")
 
     @staticmethod
     def _speed_to_rate_str(speed: float) -> str:

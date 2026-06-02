@@ -1,4 +1,3 @@
-import { Box, Typography } from '@mui/material'
 import type { TimelineCoordAPI } from '../../hooks/useTimelineCoordinates'
 
 interface Props {
@@ -7,56 +6,90 @@ interface Props {
   canvasWidth: number
   markers?: { time: number; label: string; color: string }[]
   onMarkerClick?: (time: number) => void
+  onClick?: (time: number) => void
+  onHover?: (time: number | null) => void
+  scrubX?: number | null
 }
 
-export default function TimeRuler({ coord, totalDuration, canvasWidth, markers, onMarkerClick }: Props) {
+export default function TimeRuler({ coord, totalDuration, canvasWidth, markers, onMarkerClick, onClick, onHover, scrubX }: Props) {
   const { timeToPixel, pixelsPerSec } = coord
   const showMs = pixelsPerSec >= 200
   const interval = showMs ? 0.5 : 1
+  const w = canvasWidth || 1200
+
+  const handleClick = (e: React.MouseEvent) => {
+    if (!onClick) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    // Use visual position only — ruler doesn't have translateX, so exclude externalScrollLeft
+    const t = (x - coord.timeToPixel(0)) / coord.pixelsPerSec
+    onClick(t)
+  }
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!onHover) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    onHover(coord.pixelToTime(x))
+  }
+
+  const ticks: React.ReactNode[] = []
+  for (let i = 0; i < totalDuration; i += interval) {
+    const x = timeToPixel(i)
+    if (x < -40 || x > w + 40) continue
+    const major = i % 1 === 0
+    ticks.push(
+      <div key={i} style={{
+        position: 'absolute', left: x, bottom: 0,
+        width: 1, height: major ? 14 : 8,
+        backgroundColor: major ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.2)',
+      }}>
+        {major && (
+          <span style={{
+            position: 'absolute', top: 0, left: 4,
+            fontSize: 9, color: '#64748b',
+            whiteSpace: 'nowrap', lineHeight: '14px',
+          }}>
+            {showMs ? `${i.toFixed(1)}s` : `${i}s`}
+          </span>
+        )}
+      </div>
+    )
+  }
 
   return (
-    <Box sx={{
-      position: 'sticky', top: 0, zIndex: 10,
-      height: 22, width: canvasWidth || '100%',
-      bgcolor: 'rgba(0,0,0,0.5)',
-      borderBottom: '1px solid rgba(255,255,255,0.12)',
-    }}>
-      {Array.from({ length: Math.ceil(totalDuration / interval) }).map((_, i) => {
-        const t = i * interval
-        const x = timeToPixel(t)
-        if (x < -20 || x > canvasWidth + 20) return null
-        const major = t % 1 === 0
-        return (
-          <Box key={i} sx={{
-            position: 'absolute', left: x, bottom: 0,
-            height: major ? 14 : 8,
-            borderLeft: '1px solid',
-            borderColor: major ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.1)',
-          }}>
-            {major && (
-              <Typography sx={{
-                position: 'absolute', top: 1, left: 3,
-                fontSize: '0.55rem', color: 'rgba(255,255,255,0.5)',
-                whiteSpace: 'nowrap',
-              }}>
-                {showMs ? `${t.toFixed(1)}s` : `${t}s`}
-              </Typography>
-            )}
-          </Box>
-        )
-      })}
+    <div
+      onClick={handleClick}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={() => onHover?.(null)}
+      style={{
+        height: 22, width: w, position: 'relative',
+        backgroundColor: '#1a1a1a',
+        borderBottom: '1px solid #333',
+        cursor: onClick ? 'pointer' : 'default',
+        overflow: 'hidden',
+      }}
+    >
+      {ticks}
       {markers?.map((m, idx) => {
         const x = timeToPixel(m.time)
-        if (x < -5 || x > canvasWidth + 5) return null
+        if (x < -5 || x > w + 5) return null
         return (
-          <Box key={idx} onClick={() => onMarkerClick?.(m.time)} sx={{
-            position: 'absolute', left: x, top: 2,
-            width: 10, height: 10, borderRadius: '50%',
-            bgcolor: m.color, cursor: 'pointer',
+          <div key={`m${idx}`} onClick={(e) => { e.stopPropagation(); onMarkerClick?.(m.time) }} style={{
+            position: 'absolute', left: x - 4, top: 3,
+            width: 8, height: 8, borderRadius: '50%',
+            backgroundColor: m.color, cursor: 'pointer',
             border: '1px solid rgba(255,255,255,0.6)', zIndex: 2,
           }} />
         )
       })}
-    </Box>
+      {scrubX != null && scrubX >= 0 && scrubX <= w && (
+        <div style={{
+          position: 'absolute', left: scrubX, top: 0, bottom: 0,
+          width: 1, backgroundColor: 'rgba(255,255,255,0.3)',
+          pointerEvents: 'none', zIndex: 5,
+        }} />
+      )}
+    </div>
   )
 }

@@ -128,7 +128,7 @@ export default function AppShell({
           }}
         />
         <Box role="complementary" sx={{ height: '100%', overflow: 'hidden auto', pl: 0.5 }}>
-          {inspectorContent || <RegionPlaceholder name="Inspector" role="complementary" />}
+          {inspectorContent !== undefined ? inspectorContent : <RegionPlaceholder name="Inspector" role="complementary" />}
         </Box>
       </Box>
 

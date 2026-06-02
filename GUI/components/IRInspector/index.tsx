@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import {
-  Box, Typography, Tabs, Tab, TextField, Button, Chip,
+  Box, Typography, TextField, Button, Chip,
   Divider, Breadcrumbs, List, ListItem,
 } from '@mui/material'
 import EditIcon from '@mui/icons-material/EditRounded'
@@ -73,19 +73,18 @@ export default function IRInspector({ event }: Props) {
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      {/* Tab bar */}
-      <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-        <Tabs
-          value={activeTab}
-          onChange={(_, v) => setActiveTab(v)}
-          variant="scrollable"
-          scrollButtons="auto"
-          sx={{ minHeight: 36, '& .MuiTab-root': { minHeight: 36, py: 0, fontSize: '0.72rem' } }}
-        >
+      {/* Tab bar — 2 columns × N rows */}
+      <Box sx={{ px: 1, pt: 1 }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5 }}>
           {visibleTabs.map(tab => (
-            <Tab key={tab} label={TAB_LABELS[tab]} value={tab} />
+            <Button key={tab} size="small"
+              variant={activeTab === tab ? 'contained' : 'outlined'}
+              onClick={() => setActiveTab(tab)}
+              sx={{ fontSize: '0.68rem', py: 0.4, px: 0.5, minWidth: 0, textTransform: 'none', lineHeight: 1.2 }}>
+              {TAB_LABELS[tab]}
+            </Button>
           ))}
-        </Tabs>
+        </Box>
       </Box>
 
       <Box sx={{ flexGrow: 1, overflow: 'hidden auto', p: 1.5 }}>
