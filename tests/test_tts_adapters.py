@@ -97,11 +97,15 @@ class TestDurationController:
 
     def test_compute_stretch_ratio(self):
         ctrl = DurationController()
-        assert ctrl.compute_stretch_ratio(5.0, 3.0) == pytest.approx(0.6)
+        # TTS=5s longer than target=3s → rate > 1 to speed up
+        assert ctrl.compute_stretch_ratio(5.0, 3.0) == pytest.approx(1.667, abs=0.001)
 
     def test_stretch_ratio_clamped(self):
         ctrl = DurationController()
-        assert ctrl.compute_stretch_ratio(1.0, 5.0) == 2.0
+        # TTS too short (rate → 0.2), clamped to MIN_STRETCH=0.5
+        assert ctrl.compute_stretch_ratio(1.0, 5.0) == 0.5
+        # TTS way too long (rate → 6.0), clamped to MAX_STRETCH=2.0
+        assert ctrl.compute_stretch_ratio(6.0, 1.0) == 2.0
 
     def test_suggest_split(self):
         ctrl = DurationController()
