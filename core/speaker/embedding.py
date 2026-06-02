@@ -7,6 +7,36 @@ embedding 是 clustering、drift detection、TTS voice binding 的基础。
 from __future__ import annotations
 import os
 import numpy as np
+from pathlib import Path
+
+# 模块级 embedding 模型缓存（避免重复加载 200MB 权重）
+_embedding_model: object | None = None
+_embedding_model_lock = __import__("threading").Lock()
+_MODELS_ROOT = Path(__file__).resolve().parent.parent.parent / "models"
+_DIAR_MODEL_DIR = _MODELS_ROOT / "pyannote" / "speaker-diarization-3.1"
+
+
+def _get_embedding_model():
+    """懒加载 WeSpeaker ResNet34-LM embedding 模型（模块级单例）。"""
+    global _embedding_model
+    if _embedding_model is not None:
+        return _embedding_model
+
+    with _embedding_model_lock:
+        if _embedding_model is not None:
+            return _embedding_model
+        import torch
+        from pyannote.audio import Inference
+        from pipeline.speaker_diarize import _pyannote_compat_context
+
+        with _pyannote_compat_context(_DIAR_MODEL_DIR):
+            model = Inference(
+                "pyannote/wespeaker-voxceleb-resnet34-LM",
+                device=torch.device("cuda"),
+                use_auth_token=False,
+            )
+        _embedding_model = model
+        return model
 
 
 class SpeakerEmbeddingExtractor:
@@ -97,19 +127,17 @@ class SpeakerEmbeddingExtractor:
     def _extract_segment_embedding(self, vocals_path: str,
                                    start: float, end: float
                                    ) -> list[float] | None:
-        """对单个音频片段提取 speaker embedding。
-
-        当前为 placeholder — 实际提取需加载 pyannote embedding model。
-        返回 192-dim 随机向量用于测试。
-        """
+        """对单个音频片段提取 speaker embedding (WeSpeaker ResNet34-LM, 256-dim)。"""
         try:
-            import soundfile as sf
-            audio, sr = sf.read(vocals_path, start=int(start * sr),
-                                frames=int((end - start) * sr))
-            if len(audio) == 0:
-                return None
-            rng = np.random.RandomState(int(start * 1000))
-            return rng.randn(192).tolist()
+            from pyannote.core import Segment
+            dur = end - start
+            if dur < 1.2:
+                return None  # WeSpeaker 需要至少 1.2s 的音频才能可靠提取
+            model = _get_embedding_model()
+            emb = model.crop(vocals_path, Segment(start, end))
+            # SlidingWindowFeature → mean over windows → 256-dim vector
+            vec = np.mean(emb.data, axis=0).astype(np.float32)
+            return vec.tolist()
         except Exception:
             return None
 

@@ -4302,6 +4302,13 @@ class SpeakerRenameRequest(BaseModel):
     display_name: str = ""  # 新名称 ("主播")
 
 
+class SpeakerReassignRequest(BaseModel):
+    workspace: str = ""
+    segment_id: str = ""    # 要移动的 turn/segment ID
+    source_speaker: str = ""  # 原说话人 ID
+    target_speaker: str = ""  # 目标说话人 ID
+
+
 class SpeakerRegenerateRequest(BaseModel):
     workspace: str = ""
 
@@ -4533,6 +4540,155 @@ def _split_propagate(workspace: str, old_spk: str, new_spk: str,
         _update_segments(tl.get("events", tl.get("timeline", [])))
         with open(tl_path, "w", encoding="utf-8") as f:
             _json.dump(tl, f, ensure_ascii=False, indent=2)
+
+
+@app.post("/api/speaker/diarization/reassign")
+async def speaker_reassign(req: SpeakerReassignRequest):
+    """将单个 segment 从一个 speaker 重新分配到另一个 speaker。"""
+    workspace = req.workspace
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    if not extract_dir or not os.path.isdir(extract_dir):
+        raise HTTPException(status_code=400, detail="无效的工作目录")
+    if not req.source_speaker or not req.target_speaker:
+        raise HTTPException(status_code=400, detail="source_speaker 和 target_speaker 不能为空")
+    if req.source_speaker == req.target_speaker:
+        raise HTTPException(status_code=400, detail="source 和 target 不能相同")
+    import json as _json
+
+    # 1. 更新 speaker_timeline.json
+    tl_path = os.path.join(extract_dir, "speaker_timeline.json")
+    if not os.path.isfile(tl_path):
+        raise HTTPException(status_code=404, detail="speaker_timeline.json 不存在")
+    with open(tl_path, "r", encoding="utf-8") as f:
+        tl = _json.load(f)
+    turns = tl.get("turns", [])
+    found = False
+    for t in turns:
+        if t.get("id") == req.segment_id or t.get("segment_id") == req.segment_id:
+            if t.get("speaker") == req.source_speaker:
+                t["speaker"] = req.target_speaker
+                found = True
+            break
+    if not found:
+        raise HTTPException(status_code=404, detail="segment 未找到或 speaker 不匹配")
+
+    speakers = sorted(set(t.get("speaker", "?") for t in turns))
+    tl["speakers"] = speakers
+    tl["turns"] = turns
+    with open(tl_path, "w", encoding="utf-8") as f:
+        _json.dump(tl, f, ensure_ascii=False, indent=2)
+
+    # 2. 传播到 transcript.json + timeline.json
+    from pipeline.diarization_verify import _load_speaker_timeline
+    _load_speaker_timeline.cache_clear() if hasattr(_load_speaker_timeline, 'cache_clear') else None
+
+    transcript_path = os.path.join(extract_dir, "transcript.json")
+    if os.path.isfile(transcript_path):
+        with open(transcript_path, "r", encoding="utf-8") as f:
+            transcript = _json.load(f)
+        for seg in transcript.get("segments", []):
+            if seg.get("id") == req.segment_id:
+                seg["speaker"] = req.target_speaker
+                break
+        with open(transcript_path, "w", encoding="utf-8") as f:
+            _json.dump(transcript, f, ensure_ascii=False, indent=2)
+
+    # 3. 更新 timeline.json
+    timeline_path = os.path.join(extract_dir, "timeline.json")
+    if os.path.isfile(timeline_path):
+        with open(timeline_path, "r", encoding="utf-8") as f:
+            timeline = _json.load(f)
+        events = timeline.get("events", timeline.get("timeline", []))
+        for ev in events:
+            if ev.get("id") == req.segment_id or ev.get("segment_id") == req.segment_id:
+                ev["speaker"] = req.target_speaker
+                ev["speaker_id"] = req.target_speaker
+                break
+            if isinstance(ev, dict):
+                for sub in ev.get("sub_events", ev.get("caption_groups", [])):
+                    if isinstance(sub, dict) and (sub.get("id") == req.segment_id):
+                        sub["speaker"] = req.target_speaker
+                        break
+        with open(timeline_path, "w", encoding="utf-8") as f:
+            _json.dump(timeline, f, ensure_ascii=False, indent=2)
+
+    # 4. 生成 RETAG_SPEAKER patch
+    try:
+        from timeline.adapters.speaker import merge_speaker_patch
+        from timeline.api.timeline import apply_user_patch
+        timeline_path = os.path.join(extract_dir, "timeline.json")
+        patch_log_path = os.path.join(extract_dir, "timeline_patches.json")
+        if os.path.isfile(timeline_path):
+            patch = merge_speaker_patch([req.segment_id], req.target_speaker, author="user")
+            apply_user_patch(timeline_path, patch.to_dict(), patch_log_path)
+    except Exception:
+        pass
+
+    return {"status": "ok", "segment_id": req.segment_id, "target_speaker": req.target_speaker}
+
+
+class ScreeningRequest(BaseModel):
+    workspace: str = ""
+    include_cross_model: bool = True  # 是否启用交叉嵌入验证（需加载 WeSpeaker）
+
+
+@app.post("/api/speaker/screening/run")
+async def speaker_screening_run(req: ScreeningRequest):
+    """运行说话人筛查 — 纯信号规则 + 交叉嵌入验证。
+
+    返回: { screening: {...}, cross_model: {...} | null }
+    """
+    workspace = req.workspace
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    if not extract_dir or not os.path.isdir(extract_dir):
+        raise HTTPException(status_code=400, detail="无效的工作目录")
+
+    import json as _json
+
+    # 加载 speaker_timeline.json
+    tl_path = os.path.join(extract_dir, "speaker_timeline.json")
+    timeline: list[dict] = []
+    if os.path.isfile(tl_path):
+        with open(tl_path, "r", encoding="utf-8") as f:
+            tl = _json.load(f)
+        for t in tl.get("turns", []):
+            seg_id = t.get("id", f"{t.get('speaker','?')}_{t.get('start',0)}")
+            timeline.append({
+                "id": seg_id,
+                "speaker": t.get("speaker", "?"),
+                "start": t.get("start", 0),
+                "end": t.get("end", 0),
+            })
+
+    if not timeline:
+        return {"screening": {"total_issues": 0, "critical_count": 0, "warning_count": 0, "issues": []},
+                "cross_model": None}
+
+    # 查找 vocals.wav
+    vocals_path = os.path.join(extract_dir, "vocals.wav")
+    if not os.path.isfile(vocals_path):
+        vocals_path = os.path.join(extract_dir, "audio.wav")  # fallback
+    if not os.path.isfile(vocals_path):
+        vocals_path = ""
+
+    # 方案 B: 纯信号规则
+    from core.speaker.screening import ScreeningLayer, screening_report
+    screener = ScreeningLayer()
+    issues = screener.screen(timeline, vocals_path if os.path.isfile(vocals_path) else None)
+    screening = screening_report(issues)
+
+    # 方案 A: 交叉嵌入验证
+    cross_model = None
+    if req.include_cross_model and os.path.isfile(vocals_path):
+        try:
+            from core.speaker.cross_model import CrossModelVerifier, cross_model_report
+            verifier = CrossModelVerifier()
+            divergences = verifier.verify(timeline, vocals_path)
+            cross_model = cross_model_report(divergences)
+        except Exception:
+            cross_model = None
+
+    return {"screening": screening, "cross_model": cross_model}
 
 
 @app.post("/api/speaker/diarization/rename")

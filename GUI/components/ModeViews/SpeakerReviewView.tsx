@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
+import { useState, useCallback, useRef, useMemo, useEffect, Fragment } from 'react'
 import {
   Box, Typography, Chip, IconButton, Tooltip, Button, Divider,
   MenuItem, Select, FormControl,
@@ -83,6 +83,13 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
   const [overlaps, setOverlaps] = useState<Array<{start: number, end: number, speakers: string[], duration: number}>>([])
   const [clusterSuggestions, setClusterSuggestions] = useState<Array<{speaker_a: string, speaker_b: string, similarity: number, reason: string}>>([])
   const [driftSuggestions, setDriftSuggestions] = useState<Array<{speaker_id: string, score: number, signals: Record<string, number>, suggestion: string}>>([])
+  const [dragSegmentId, setDragSegmentId] = useState<string | null>(null)
+  const [screeningResults, setScreeningResults] = useState<{
+    issues: Array<{segment_id: string, rule: string, severity: string, start: number, end: number, message: string, detail: any}>
+  } | null>(null)
+  const [crossModelResults, setCrossModelResults] = useState<{
+    divergences: Array<{segment_id: string, pyannote_label: string, wespeaker_label: string, start: number, end: number, confidence: number, message: string}>
+  } | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const rulerRef = useRef<HTMLDivElement | null>(null)
@@ -214,6 +221,15 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
       .then(r => r.json()).then(data => {
         if (data.suggestions) setDriftSuggestions(data.suggestions)
       }).catch(() => {})
+    // Load screening + cross-model verification
+    fetch('/api/speaker/screening/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace, include_cross_model: true }),
+    }).then(r => r.json()).then(data => {
+      if (data.screening) setScreeningResults(data.screening)
+      if (data.cross_model) setCrossModelResults(data.cross_model)
+    }).catch(() => {})
   }, [workspace])
 
   const selectedLane = speakerLanes.find(l => l.speaker === selectedSpeakerId) || null
@@ -334,6 +350,28 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
     setSelectedSegmentId(segId)
     setContextMenu({ x: e.clientX, y: e.clientY, segmentId: segId })
   }, [])
+
+  // Reassign a single segment to a different speaker
+  const handleReassignSegment = useCallback(async (segId: string, targetSpeaker: string) => {
+    const sourceLane = speakerLanes.find(l => l.segments.some(s => (s.eventId || '') === segId))
+    if (!sourceLane || sourceLane.speaker === targetSpeaker) return
+    setContextMenu(null)
+    try {
+      await fetch('/api/speaker/diarization/reassign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspace,
+          segment_id: segId,
+          source_speaker: sourceLane.speaker,
+          target_speaker: targetSpeaker,
+        }),
+      })
+      // Reload lanes after reassign
+      const ws = useAppStore.getState().workspace || ''
+      await useAppStore.getState().fetchSpeakerLanes(ws)
+    } catch {}
+  }, [speakerLanes, workspace])
 
   // Load vocal audio for playback
   useEffect(() => {
@@ -719,9 +757,18 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
                 <Box key={lane.speaker} sx={{
                   height: LANE_HEIGHT,
                   borderBottom: '1px solid #d0d5e0',
-                  bgcolor: selectedSpeakerId === lane.speaker ? 'rgba(99,102,241,0.06)' : 'transparent',
+                  bgcolor: selectedSpeakerId === lane.speaker ? 'rgba(99,102,241,0.06)'
+                    : dragSegmentId ? 'rgba(255,152,0,0.04)' : 'transparent',
                   position: 'relative',
-                }}>
+                  transition: 'background-color 0.15s',
+                }}
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    const segId = e.dataTransfer.getData('text/plain') || dragSegmentId
+                    if (segId) handleReassignSegment(segId, lane.speaker)
+                    setDragSegmentId(null)
+                  }}>
                   {lane.segments.map((seg, j) => {
                     const left = coord.timeToPixel(seg.start)
                     const width = Math.max(2, (seg.end - seg.start) * coord.pixelsPerSec)
@@ -732,8 +779,17 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
                     const bgColor = isSegSelected ? `${lane.color}FF`
                       : isPlaying ? `${lane.color}DD`
                       : conf >= 0.9 ? `${lane.color}CC` : conf >= 0.7 ? `${lane.color}88` : `${lane.color}55`
-                    return (
-                      <Tooltip key={j} title={`${seg.text.slice(0, 80)}\n${seg.start.toFixed(1)}s-${seg.end.toFixed(1)}s | conf=${conf.toFixed(2)}`}>
+                    // Screening / cross-model flags
+                    const screeningFlags = (screeningResults?.issues || []).filter(
+                      (iss: any) => iss.segment_id === segId || iss.segment_id === seg.id)
+                    const crossFlags = (crossModelResults?.divergences || []).filter(
+                      (d: any) => d.segment_id === segId || d.segment_id === seg.id)
+                    const hasCritical = screeningFlags.some((f: any) => f.severity === 'critical')
+                    const hasWarning = screeningFlags.some((f: any) => f.severity === 'warning')
+                    const hasDivergence = crossFlags.length > 0
+                    const markerColor = hasCritical ? '#EF4444' : hasWarning ? '#F59E0B' : hasDivergence ? '#8B5CF6' : null
+                    return (<Fragment key={j}>
+                      <Tooltip title={`${seg.text.slice(0, 80)}\n${seg.start.toFixed(1)}s-${seg.end.toFixed(1)}s | conf=${conf.toFixed(2)}`}>
                         <Box sx={{
                           position: 'absolute', left, top: 10, height: LANE_HEIGHT - 20, width,
                           bgcolor: bgColor, borderRadius: 0.5,
@@ -743,14 +799,30 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
                             : isPlaying ? `0 0 4px 2px rgba(255,82,82,0.4)` : 'none',
                           cursor: 'pointer', zIndex: isSegSelected ? 4 : isPlaying ? 2 : 1,
                           '&:hover': { filter: 'brightness(1.2)', zIndex: 3 },
+                          opacity: dragSegmentId === segId ? 0.4 : 1,
                         }}
                           onClick={(e) => {
                             handleSegmentSelect(segId, e)
                             handleSegmentClick(segId, seg.start)
                           }}
-                          onContextMenu={(e) => handleSegmentRightClick(segId, e)} />
+                          onContextMenu={(e) => handleSegmentRightClick(segId, e)}
+                          draggable
+                          onDragStart={(e) => {
+                            setDragSegmentId(segId)
+                            e.dataTransfer.effectAllowed = 'move'
+                            e.dataTransfer.setData('text/plain', segId)
+                          }}
+                          onDragEnd={() => setDragSegmentId(null)}
+                        />
                       </Tooltip>
-                    )
+                      {markerColor && (
+                        <Box sx={{
+                          position: 'absolute', left: left + width - 6, top: 3,
+                          width: 8, height: 8, borderRadius: '50%',
+                          bgcolor: markerColor, border: '1px solid #fff', zIndex: 10,
+                        }} />
+                      )}
+                    </Fragment>)
                   })}
                 </Box>
               ))}
@@ -964,6 +1036,43 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
                 </Box>
               )}
 
+              {/* Screening + Cross-Model issues */}
+              {(() => {
+                const scrIssues = (screeningResults?.issues || []).filter((iss: any) =>
+                  iss.speaker_id === selectedSpeakerId || iss.segment_id === selectedSegmentId)
+                const crossIssues = (crossModelResults?.divergences || []).filter((d: any) =>
+                  d.pyannote_label === selectedSpeakerId || d.segment_id === selectedSegmentId)
+                const total = scrIssues.length + crossIssues.length
+                if (total === 0) return null
+                return (
+                  <Box sx={{ mt: 1.5, textAlign: 'left', borderTop: '1px solid #d0d5e0', pt: 1 }}>
+                    <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5, fontSize: '0.65rem' }}>
+                      质量筛查 ({total})
+                    </Typography>
+                    {scrIssues.map((iss: any, idx: number) => (
+                      <Box key={idx} sx={{ mb: 0.5, p: 0.5, borderRadius: 0.5, bgcolor: iss.severity === 'critical' ? '#fef2f2' : '#fffbeb' }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: iss.severity === 'critical' ? '#EF4444' : '#F59E0B', flexShrink: 0 }} />
+                          <Typography variant="caption" sx={{ fontSize: '0.6rem', fontWeight: 500 }}>{iss.rule}</Typography>
+                        </Box>
+                        <Typography variant="caption" sx={{ fontSize: '0.55rem', color: 'text.secondary' }}>{iss.message}</Typography>
+                      </Box>
+                    ))}
+                    {crossIssues.map((d: any, idx: number) => (
+                      <Box key={`cm_${idx}`} sx={{ mb: 0.5, p: 0.5, borderRadius: 0.5, bgcolor: '#f5f3ff' }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: '#8B5CF6', flexShrink: 0 }} />
+                          <Typography variant="caption" sx={{ fontSize: '0.6rem', fontWeight: 500 }}>cross-model</Typography>
+                        </Box>
+                        <Typography variant="caption" sx={{ fontSize: '0.55rem', color: 'text.secondary' }}>
+                          pyannote→{d.pyannote_label}, WeSpeaker→{d.wespeaker_label} (cos={d.confidence?.toFixed(2)})
+                        </Typography>
+                      </Box>
+                    ))}
+                  </Box>
+                )
+              })()}
+
               {/* Clustering suggestions */}
               {clusterSuggestions.length > 0 && (
                 <Box sx={{ mt: 1.5, textAlign: 'left', borderTop: '1px solid #d0d5e0', pt: 1 }}>
@@ -1169,6 +1278,21 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
         }} sx={{ fontSize: '0.75rem' }}>
           在播放头处拆分
         </MenuItem>
+        <Divider />
+        <MenuItem dense disabled sx={{ fontSize: '0.7rem', opacity: 0.6 }}>
+          分配给说话人...
+        </MenuItem>
+        {speakerLanes.filter(l => {
+          const segLane = speakerLanes.find(ll => ll.segments.some(s => (s.eventId || '') === contextMenu?.segmentId))
+          return l.speaker !== segLane?.speaker
+        }).map(l => (
+          <MenuItem key={l.speaker} dense sx={{ fontSize: '0.7rem', pl: 3 }}
+            onClick={() => handleReassignSegment(contextMenu?.segmentId || '', l.speaker)}>
+            <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: l.color, mr: 1, flexShrink: 0 }} />
+            {l.display_name}
+          </MenuItem>
+        ))}
+        <Divider />
         <MenuItem dense onClick={() => {
           if (contextMenu?.segmentId) {
             // Find adjacent segment in same lane and merge
