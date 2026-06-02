@@ -36,12 +36,14 @@ class SpeakerCompositePass(TimelinePass):
     def __init__(self, vocals_path: str = "", output_dir: str = "",
                  enable_clustering: bool = True,
                  enable_drift_detection: bool = True,
-                 max_refinement_iterations: int = 2):
+                 max_refinement_iterations: int = 2,
+                 num_speakers: int = 0):
         self.vocals_path = vocals_path
         self.output_dir = output_dir
         self.enable_clustering = enable_clustering
         self.enable_drift_detection = enable_drift_detection
         self.max_refinement_iterations = max_refinement_iterations
+        self.num_speakers = num_speakers
         self._resolved_config: dict | None = None
 
     def configure(self, resolved_config: dict | None = None) -> None:
@@ -61,7 +63,12 @@ class SpeakerCompositePass(TimelinePass):
 
         # Step 1: Diarization
         pyannote = PyannoteAdapter()
-        speaker_timeline = pyannote.run_diarization(vocals)
+        ns = self.num_speakers or 0
+        speaker_timeline = pyannote.run_diarization(
+            vocals,
+            min_speakers=ns or 1,
+            max_speakers=ns or 10,
+        )
 
         # Step 2-3: Assignment + boundary detection
         segments = self._collect_segments(state)
@@ -78,7 +85,7 @@ class SpeakerCompositePass(TimelinePass):
 
         # Step 5: Embedding extraction
         extractor = SpeakerEmbeddingExtractor(output_dir=self.output_dir)
-        embeddings = extractor.extract(self.vocals_path, speaker_timeline)
+        embeddings = extractor.extract(vocals, speaker_timeline)
         centroids = extractor.compute_centroid(embeddings)
         stability = extractor.compute_centroid_stability(embeddings)
         extractor.write_to_registry(centroids, stability, state.ir.speakers)

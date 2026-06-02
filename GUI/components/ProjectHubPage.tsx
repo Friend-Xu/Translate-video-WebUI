@@ -69,6 +69,7 @@ export default function ProjectHubPage() {
   const [selectedPresetId, setSelectedPresetId] = useState('quick_sub_single')
   const [lang, setLang] = useState('en')
   const [targetLang, setTargetLang] = useState('zh')
+  const [numSpeakers, setNumSpeakers] = useState(0)  // 0=自动检测
   const [videoInfo, setVideoInfo] = useState<{ duration: number; resolution: string } | null>(null)
 
   const { status, logs, appendLog, cancelPipeline, setStatus, pollStatus, loadLogTail } = usePipeline('/api/core/pipeline')
@@ -200,6 +201,7 @@ export default function ProjectHubPage() {
           workflow_preset: selectedPresetId,
           lang,
           target_lang: targetLang,
+          num_speakers: numSpeakers,
         }),
       })
       if (!res.ok) {
@@ -227,13 +229,17 @@ export default function ProjectHubPage() {
     setMode('timeline')
   }, [loadWorkspace, setMode])
 
-  // Detect pipeline completion → auto-enter timeline workbench
-  // (skip for full_pipeline presets — user should see the completion screen)
+  // Detect pipeline completion → auto-enter review / timeline
   useEffect(() => {
     if (phase === 'running' && status.state === 'completed' && workspace) {
       const preset = workflowPresets.find(p => p.id === selectedPresetId)
       if (preset?.configDefaults?.full_pipeline) {
         setPhase('done')
+      } else if (preset?.configDefaults?.bootstrap) {
+        // extract-only bootstrap → auto-enter speaker review
+        loadWorkspace(workspace).then(() => {
+          setMode('speaker')
+        })
       } else {
         loadWorkspace(workspace).then(() => {
           setMode('timeline')
@@ -533,6 +539,18 @@ export default function ProjectHubPage() {
                       <MenuItem value="ja">日本語</MenuItem><MenuItem value="ko">한국어</MenuItem>
                     </Select>
                   </FormControl>
+                  {(selectedPresetId === 'dub_multi' || selectedPresetId === 'quick_sub_multi') && (
+                    <FormControl size="small" sx={{ minWidth: 130 }}>
+                      <InputLabel>说话人数</InputLabel>
+                      <Select value={numSpeakers} label="说话人数"
+                        onChange={e => setNumSpeakers(Number(e.target.value))}>
+                        <MenuItem value={0}>自动检测</MenuItem>
+                        {[1,2,3,4,5,6,7,8,9,10].map(n =>
+                          <MenuItem key={n} value={n}>{n} 人</MenuItem>
+                        )}
+                      </Select>
+                    </FormControl>
+                  )}
                 </Box>
               </Card>
 

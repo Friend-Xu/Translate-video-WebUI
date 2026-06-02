@@ -165,9 +165,15 @@ def _run_core_pipeline(args) -> None:
         # 全管线模式（无 --bootstrap 也无 --export-stage）：跑全部 6 阶段
         stages = ["load", "extract", "translate", "validate", "tts", "export"]
 
-    if args.bootstrap:
-        # Bootstrap 预设 — 仅到 VALIDATE
-        policy = WorkflowPolicy.bootstrap_preset(target_lang=lang)
+    if args.bootstrap or args.extract_only:
+        # Bootstrap / Extract-Only — 仅到 EXTRACT (翻译前暂停，供说话人校验)
+        if args.extract_only:
+            policy = WorkflowPolicy.extract_only_preset(target_lang=lang)
+        else:
+            policy = WorkflowPolicy.bootstrap_preset(target_lang=lang)
+    elif args.dub_after_review:
+        policy = WorkflowPolicy.dub_after_review_preset(target_lang=lang)
+        stages = ["translate", "tts", "export"]
     elif args.export_stage:
         # Export 预设 — 仅 TTS + EXPORT
         policy = WorkflowPolicy.export_preset(target_lang=lang)
@@ -273,6 +279,7 @@ def _run_core_pipeline(args) -> None:
         quality_strategy=quality_strategy,
         num_workers=getattr(args, "num_workers", 1),
         enable_speaker_diarization=getattr(args, "enable_speaker_diarization", False),
+        num_speakers=getattr(args, "num_speakers", 0),
         enable_emotion=getattr(args, "enable_emotion", False),
         verification_mode=getattr(args, "verification_mode", None),
         caption_config=caption_config if caption_config else None,
@@ -832,9 +839,36 @@ def _persist_timeline(state, ws_dir: str, video_path: str, lang: str) -> str:
             evt["speaker"] = spk["speaker_id"]
             sid = spk["speaker_id"]
             if sid not in speakers:
-                speakers[sid] = {"id": sid, "label": sid}
+                speakers[sid] = {"id": sid, "label": sid, "confidence": None, "embedding_ref": None}
         # confidence
         evt["confidence"] = es.provenance.get("confidence", 1.0)
+
+    # 从 _embeddings/ 目录直接读取 embedding 数据（不依赖 state.ir.speakers）
+    import glob as _glob
+    emb_dir = os.path.join(ws_dir, "_embeddings")
+    if os.path.isdir(emb_dir):
+        for npy_path in _glob.glob(os.path.join(emb_dir, "speaker_*.npy")):
+            fname = os.path.basename(npy_path)
+            sid = fname.replace("speaker_", "").replace(".npy", "")
+            if sid in speakers:
+                speakers[sid]["embedding_ref"] = npy_path
+                import numpy as _np
+                try:
+                    centroid = _np.load(npy_path)
+                    speakers[sid]["centroid_norm"] = float(_np.linalg.norm(centroid))
+                except Exception:
+                    pass
+    # 也尝试从 state.ir.speakers 补充（如果有的话）
+    for sid, spk_node in state.ir.speakers.items():
+        conf = getattr(spk_node, "confidence", None)
+        emb_ref = getattr(spk_node, "embedding_ref", None)
+        if sid not in speakers:
+            speakers[sid] = {"id": sid, "label": sid, "confidence": conf, "embedding_ref": emb_ref}
+        else:
+            if conf is not None:
+                speakers[sid]["confidence"] = conf
+            if emb_ref is not None:
+                speakers[sid]["embedding_ref"] = emb_ref
         # review status
         evt["review_status"] = es.review.get("review_status", "pending")
         events.append(evt)
@@ -876,6 +910,10 @@ def main():
     p_run.add_argument("--use-core", action="store_true", help="使用 core/ WorkflowOrchestrator 执行")
     p_run.add_argument("--bootstrap", action="store_true",
                        help="仅执行 Bootstrap (LOAD→EXTRACT→TRANSLATE→VALIDATE), TTS/Export 推迟")
+    p_run.add_argument("--extract-only", action="store_true",
+                       help="仅执行 EXTRACT (ASR+Speaker), 在翻译前暂停供说话人校验")
+    p_run.add_argument("--dub-after-review", action="store_true",
+                       help="说话人校验后继续配音 (TRANSLATE→TTS→EXPORT)")
     p_run.add_argument("--export-stage", action="store_true",
                        help="仅执行 Export (TTS→EXPORT), 依赖 Bootstrap 已完成")
     p_run.add_argument("--stages", default=None,
@@ -893,6 +931,8 @@ def main():
     p_run.add_argument("--num-workers", type=int, default=1, help="ASR worker 数")
     p_run.add_argument("--enable-speaker-diarization", action="store_true",
                        help="启用 pyannote 说话人分离")
+    p_run.add_argument("--num-speakers", type=int, default=0,
+                       help="指定说话人数 (0=自动, >0 精确聚类为该人数)")
     p_run.add_argument("--enable-emotion", action="store_true", help="启用情绪识别")
     p_run.add_argument("--verification-mode", default=None, help="翻译验证模式")
     p_run.add_argument("--no-optimize-subtitles", action="store_true", help="跳过字幕拆分优化")

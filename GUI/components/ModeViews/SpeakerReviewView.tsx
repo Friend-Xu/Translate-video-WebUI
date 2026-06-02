@@ -59,6 +59,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
   const voicePresets = useAppStore(s => s.voicePresets)
   const bindVoice = useAppStore(s => s.bindVoice)
   const addDraft = useAppStore(s => s.addDraft)
+  const setMode = useAppStore(s => s.setMode)
   const workspace = useAppStore(s => s.workspace)
   const playheadPosition = useAppStore(s => s.playheadPosition)
   const setPlayhead = useAppStore(s => s.setPlayhead)
@@ -84,6 +85,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
   const [clusterSuggestions, setClusterSuggestions] = useState<Array<{speaker_a: string, speaker_b: string, similarity: number, reason: string}>>([])
   const [driftSuggestions, setDriftSuggestions] = useState<Array<{speaker_id: string, score: number, signals: Record<string, number>, suggestion: string}>>([])
   const [dragSegmentId, setDragSegmentId] = useState<string | null>(null)
+  const [dubLoading, setDubLoading] = useState(false)
   const [screeningResults, setScreeningResults] = useState<{
     issues: Array<{segment_id: string, rule: string, severity: string, start: number, end: number, message: string, detail: any}>
   } | null>(null)
@@ -598,6 +600,31 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
             锁定选中
           </Button>
         )}
+
+        <Box sx={{ flexGrow: 1 }} />
+
+        {/* 继续配音按钮 — 说话人校验完成后触发 TRANSLATE → TTS → EXPORT */}
+        <Button size="small" variant="contained" color="primary"
+          startIcon={dubLoading ? <CircularProgress size={14} /> : <VoiceIcon />}
+          disabled={dubLoading}
+          onClick={async () => {
+            setDubLoading(true)
+            try {
+              const res = await fetch('/api/speaker/diarization/continue-dub', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ workspace }),
+              })
+              const data = await res.json()
+              if (data.job_id) {
+                setMode('hub')
+              }
+            } catch (e) { console.error('continue dub failed:', e) }
+            finally { setDubLoading(false) }
+          }}
+          sx={{ fontSize: '0.7rem', mr: 1 }}>
+          开始配音
+        </Button>
       </Box>
 
       <Box sx={{ flexGrow: 1, display: 'flex', overflow: 'hidden' }}>

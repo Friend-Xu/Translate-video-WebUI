@@ -4730,6 +4730,58 @@ async def speaker_rename(req: SpeakerRenameRequest):
     return {"status": "ok", "speaker_names": names}
 
 
+@app.post("/api/speaker/diarization/continue-dub")
+async def speaker_continue_dub(req: SpeakerRegenerateRequest):
+    """说话人校验完成后继续配音 — 启动 TRANSLATE → TTS → EXPORT 管线。"""
+    workspace = req.workspace
+    if not workspace:
+        raise HTTPException(status_code=400, detail="workspace 不能为空")
+
+    # 从 project.json 读取 video_path
+    manifest_path = os.path.join(workspace, "project.json")
+    if not os.path.isfile(manifest_path):
+        raise HTTPException(status_code=404, detail="project.json 不存在")
+    import json as _json
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = _json.load(f)
+    video_path = manifest.get("video_path", "")
+    if not video_path or not os.path.isfile(video_path):
+        raise HTTPException(status_code=400, detail="video_path 无效")
+
+    job_id = uuid.uuid4().hex[:8]
+    job = Job(
+        id=job_id,
+        status="running",
+        runtime_state="dubbing",
+        current_step="说话人校验完成，开始配音...",
+        video_path=video_path,
+        workspace_path=workspace,
+        created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+    _jobs[job_id] = job
+    job._loop = asyncio.get_running_loop()
+    _save_job(job)
+
+    # 构建 CoreRunRequest 的等价物用于 _run_core_pipeline_sync
+    class DubRequest:
+        video_path = video_path
+        workflow_preset = "dub_multi"
+        lang = manifest.get("lang", "auto")
+        target_lang = manifest.get("target_lang", "zh")
+        engine = "chattts"
+        export_stage = False
+
+    req_wrapper = DubRequest()
+    asyncio.create_task(_run_core_job_with_flags(job, req_wrapper, dub_after_review=True))
+
+    return {"job_id": job_id, "status": "started"}
+
+
+async def _run_core_job_with_flags(job: Job, req, **flags) -> None:
+    """在线程池中运行 core/ Pipeline（支持额外 tvw 参数）。"""
+    await asyncio.to_thread(_run_core_pipeline_sync, job, req, flags)
+
+
 @app.post("/api/speaker/diarization/regenerate-srt")
 async def speaker_regenerate_srt(req: SpeakerRegenerateRequest):
     """从 timeline.json (v2.0) 重生成 SRT。"""
@@ -5701,6 +5753,7 @@ class CoreRunRequest(BaseModel):
     asr_model: str = "turbo"
     device: str = "cuda"
     compute_type: str = "float16"
+    num_speakers: int = 0  # 0=自动, >0=指定说话人数
 
 
 class CoreRunResponse(BaseModel):
@@ -5980,7 +6033,7 @@ def _to_srt_time(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
-def _run_core_pipeline_sync(job: Job, req: CoreRunRequest) -> None:
+def _run_core_pipeline_sync(job: Job, req: CoreRunRequest, flags: dict | None = None) -> None:
     """在线程池中同步执行 core/ Pipeline（通过 tvw.py subprocess 统一入口）。
 
     计划书 §10 架构: WebUI → Runtime API → tvw.py (subprocess) → WorkflowOrchestrator
@@ -6012,15 +6065,22 @@ def _run_core_pipeline_sync(job: Job, req: CoreRunRequest) -> None:
     # Bootstrap if not explicit export and not full_pipeline
     preset = get_preset(req.workflow_preset) if req.workflow_preset else None
     full_pipeline = preset.config_defaults.get("full_pipeline", False) if preset else False
+    extract_only = preset.config_defaults.get("bootstrap", False) if preset else False
     export_stage = getattr(req, "export_stage", False)
     if full_pipeline:
         pass  # 不加 --bootstrap 或 --export-stage → tvw.py 用 default_preset 跑全 6 阶段
+    elif extract_only:
+        tvw_args.append("--extract-only")
     elif not export_stage:
         tvw_args.append("--bootstrap")
+    if flags and flags.get("dub_after_review"):
+        tvw_args.append("--dub-after-review")
     if export_stage:
         tvw_args.append("--export-stage")
     if getattr(req, "stages", None):
         tvw_args.extend(["--stages", req.stages])
+    if getattr(req, "num_speakers", 0) > 0:
+        tvw_args.extend(["--num-speakers", str(req.num_speakers)])
 
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"

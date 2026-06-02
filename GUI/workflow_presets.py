@@ -66,6 +66,11 @@ def _default_preset(lang: str):
     return WorkflowPolicy.default_preset(lang)
 
 
+def _extract_only_preset(lang: str):
+    from core.config.workflow_policy import WorkflowPolicy
+    return WorkflowPolicy.extract_only_preset(lang)
+
+
 PRESETS: list[WorkflowPreset] = [
     WorkflowPreset(
         id="quick_sub_single",
@@ -121,11 +126,11 @@ PRESETS: list[WorkflowPreset] = [
         passes=["media_validate", "demucs", "asr", "speaker", "semantic_merge", "translate", "quality_check", "tts", "emotion", "srt_export", "export"],
         tags=["多人", "审查", "TTS"],
         config_defaults={
-            "full_pipeline": True,
+            "bootstrap": True,
             "skip_demucs": False,
             "enable_speaker_diarization": True,
         },
-        policy_fn=_default_preset,
+        policy_fn=_extract_only_preset,
     ),
 ]
 

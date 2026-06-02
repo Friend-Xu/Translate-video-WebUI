@@ -209,12 +209,35 @@ class WorkflowPolicy:
         return full
 
     @classmethod
+    def extract_only_preset(cls, target_lang: str = "zh") -> "WorkflowPolicy":
+        """仅提取预设 — 只到 EXTRACT 阶段（ASR + Speaker），不含翻译/TTS/导出。
+
+        用于多说话人配音场景：说话人分离完成后暂停，用户校验说话人后再继续。
+        """
+        full = cls.default_preset(target_lang)
+        for s in (WorkflowStage.TRANSLATE, WorkflowStage.VALIDATE, WorkflowStage.TTS, WorkflowStage.EXPORT):
+            full.stages.pop(s, None)
+        return full
+
+    @classmethod
     def export_preset(cls, target_lang: str = "zh") -> "WorkflowPolicy":
         """导出预设 — 仅 TTS + EXPORT，依赖 Bootstrap 已完成的 timeline。"""
         full = cls.default_preset(target_lang)
         for s in list(full.stages.keys()):
             if s.is_bootstrap:
                 del full.stages[s]
+        return full
+
+    @classmethod
+    def dub_after_review_preset(cls, target_lang: str = "zh") -> "WorkflowPolicy":
+        """配音预设 — TRANSLATE + TTS + EXPORT，跳过 LOAD/EXTRACT。
+
+        用于多说话人配音场景：extract_only bootstrap 完成后用户校验说话人，
+        然后以此预设继续翻译和配音。
+        """
+        full = cls.default_preset(target_lang)
+        for s in (WorkflowStage.LOAD, WorkflowStage.EXTRACT, WorkflowStage.VALIDATE):
+            full.stages.pop(s, None)
         return full
 
     def get_stage(self, stage: WorkflowStage) -> StageConfig | None:
