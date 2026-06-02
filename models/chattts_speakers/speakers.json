@@ -56,13 +56,35 @@
   },
   {
     "id": "seed_2166",
-    "name": "女声-清亮青年",
-    "gender": "女",
+    "name": "男声-清亮青年",
+    "gender": "男",
     "age": "青年",
     "features": "清亮, 高稳定性",
     "rank_long": 93.6,
     "rank_multi": 88.0,
     "rank_single": 89.1,
     "pt_file": "seed_2166.pt"
+  },
+  {
+    "id": "seed_2222",
+    "name": "女声-标准女声",
+    "gender": "女",
+    "age": "青年",
+    "features": "清晰, 平稳, 专业",
+    "rank_long": 90.0,
+    "rank_multi": 87.0,
+    "rank_single": 88.0,
+    "pt_file": "seed_2222.pt"
+  },
+  {
+    "id": "seed_3798",
+    "name": "女声-知性温润",
+    "gender": "女",
+    "age": "青年/中年",
+    "features": "温润, 知性, 自然",
+    "rank_long": 91.0,
+    "rank_multi": 87.5,
+    "rank_single": 89.0,
+    "pt_file": "seed_3798.pt"
   }
 ]

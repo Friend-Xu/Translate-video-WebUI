@@ -15,7 +15,7 @@ AUDIO_DEFAULTS: dict = {
     "vad_threshold": 0.5,
     "silence_handling": "keep",
     "loudness_compensation": True,
-    "target_loudness": -23.0,
+    "target_loudness": -16.0,
     "high_pass_filter": False,
     "demucs_model": "htdemucs",
 }

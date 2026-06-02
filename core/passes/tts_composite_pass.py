@@ -60,6 +60,15 @@ class TTSCompositePass(TimelinePass):
 
             patch = adapter.synthesize(ctx)
 
+            # ── LUFS 归一化 ──
+            from pipeline.loudness import normalize_segment_loudness
+            audio_path = patch.value.get("audio_ref", "")
+            if audio_path:
+                if not _os.path.isabs(audio_path):
+                    audio_path = _os.path.join(self.output_dir, audio_path)
+                if _os.path.isfile(audio_path):
+                    normalize_segment_loudness(audio_path, target_lufs=-16.0)
+
             action = duration_ctrl.check(
                 patch.value["duration"], ctx.duration_target,
             )

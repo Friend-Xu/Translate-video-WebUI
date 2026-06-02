@@ -78,6 +78,16 @@ class EdgeTTSCompositePass(TimelinePass):
             patch, sd = self._synthesize_with_search(ctx, adjuster, target_dur)
             es.tts["speed_decision"] = sd.as_dict()
 
+            # ── LUFS 归一化 ──
+            import os as _os
+            from pipeline.loudness import normalize_segment_loudness
+            audio_path = patch.value.get("audio_ref", "")
+            if audio_path:
+                if not _os.path.isabs(audio_path):
+                    audio_path = _os.path.join(self.output_dir, audio_path)
+                if _os.path.isfile(audio_path):
+                    normalize_segment_loudness(audio_path, target_lufs=-16.0)
+
             score = scorer.score(ctx, patch)
             patch.confidence = score.composite
 
