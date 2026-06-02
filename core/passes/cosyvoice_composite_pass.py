@@ -18,6 +18,7 @@ from core.runtime.project_state import TimelineProjectState
 from core.runtime.patch_engine import PatchEngine
 from core.adapters.cosyvoice_adapter import CosyVoiceAdapter, CosyVoiceSegmentContext
 from core.tts.cosyvoice_duration import CosyVoiceDurationController
+from core.tts.duration_control import SpeedDecision
 from core.tts.cross_lingual import CrossLingualProcessor
 from core.scoring.cosyvoice_scorer import CosyVoiceScorer
 
@@ -39,7 +40,7 @@ class CosyVoiceCompositePass(TimelinePass):
     """
 
     name = "cosyvoice_composite"
-    depends_on = ["speaker_composite"]
+    depends_on: list[str] = []
 
     def __init__(self, output_dir: str = "",
                  model_version: str = "v2",
@@ -107,8 +108,40 @@ class CosyVoiceCompositePass(TimelinePass):
                 ctx.speed = round(ctx.speed * retry_speed, 3)
                 if 0.5 <= ctx.speed <= 2.0:
                     patch = adapter.synthesize(ctx)
+                    # 重试后重新判定
+                    action = duration_ctrl.check(
+                        patch.value["duration"], ctx.duration_target,
+                    )
+                if action == "split":
+                    es.runtime["tts_status"] = "needs_split"
             elif action == "split":
                 es.runtime["tts_status"] = "needs_split"
+
+            # ── 调速决策 ──
+            if action == "split" or es.runtime.get("tts_status") == "needs_split":
+                sd = SpeedDecision(
+                    strategy="video_slowdown",
+                    original_duration=patch.value["duration"],
+                    final_duration=patch.value["duration"],
+                    search_method="oneshot",
+                    search_iterations=1,
+                    search_reached_limit=True,
+                    video_speed_factor=max(0.60, ctx.duration_target / max(patch.value["duration"], 0.001)),
+                    deviation=abs(patch.value["duration"] - ctx.duration_target) / max(ctx.duration_target, 0.001),
+                    deviation_before=abs(patch.value["duration"] - ctx.duration_target) / max(ctx.duration_target, 0.001),
+                )
+            else:
+                dur = patch.value["duration"]
+                target = ctx.duration_target
+                sd = SpeedDecision(
+                    strategy="accept",
+                    original_duration=dur,
+                    final_duration=dur,
+                    deviation=abs(dur - target) / max(target, 0.001),
+                )
+            es.tts["speed_decision"] = sd.as_dict()
+
+            if es.runtime.get("tts_status") == "needs_split":
                 continue
 
             # 评分
@@ -171,7 +204,9 @@ class CosyVoiceCompositePass(TimelinePass):
 
     def _build_context(self, es,
                        prompt_map: dict[str, str]) -> CosyVoiceSegmentContext:
-        translation = es.translation.get("text", "") or es.ir.text_ref
+        trans_raw = es.translation
+        translation = (trans_raw.get("text", "") if isinstance(trans_raw, dict) else str(trans_raw or "")) or es.ir.text_ref
+        trans_lang = trans_raw.get("lang", "") if isinstance(trans_raw, dict) else ""
         speaker_id = es.speaker.get("speaker_id")
         return CosyVoiceSegmentContext(
             segment_id=es.id,
@@ -181,7 +216,7 @@ class CosyVoiceCompositePass(TimelinePass):
             speaker_embedding_ref=prompt_map.get(speaker_id or "", ""),
             duration_target=es.end - es.start,
             semantic_embedding_ref=es.semantic.get("embedding_ref", ""),
-            lang=es.translation.get("lang", "") or self.default_lang,
+            lang=trans_lang or self.default_lang,
             model_version=self.model_version,
             speed=self.default_speed,
             mode="cross_lingual",

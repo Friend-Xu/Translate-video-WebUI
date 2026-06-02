@@ -1,0 +1,102 @@
+{
+  "whisper-turbo": {
+    "status": "installed",
+    "version": "1.0.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\whisper\\turbo"
+  },
+  "whisper-medium": {
+    "status": "installed",
+    "version": "1.0.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\whisper\\medium"
+  },
+  "demucs": {
+    "status": "installed",
+    "version": "4.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\Demucs\\hub\\checkpoints"
+  },
+  "silero-vad": {
+    "status": "installed",
+    "version": "4.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\vad"
+  },
+  "wav2vec2-en": {
+    "status": "installed",
+    "version": "1.0.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\wav2vec2\\en"
+  },
+  "wav2vec2-ja": {
+    "status": "installed",
+    "version": "1.0.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\wav2vec2\\ja"
+  },
+  "wav2vec2-zh": {
+    "status": "not_installed",
+    "version": "1.0.0",
+    "path": ""
+  },
+  "minilm": {
+    "status": "installed",
+    "version": "1.0.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\sentence-transformers\\paraphrase-multilingual-MiniLM-L12-v2"
+  },
+  "qwen2-05b": {
+    "status": "installed",
+    "version": "1.0.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\Qwen\\Qwen2-0.5B"
+  },
+  "punctuate-all": {
+    "status": "installed",
+    "version": "1.0.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\punctuate-all"
+  },
+  "chattts": {
+    "status": "installed",
+    "version": "1.0.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\ChatTTS"
+  },
+  "cosyvoice": {
+    "status": "installed",
+    "version": "2.0.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\CosyVoice2-0.5B"
+  },
+  "cosyvoice3": {
+    "status": "installed",
+    "version": "3.0.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\CosyVoice3-0.5B"
+  },
+  "openvoice-v2": {
+    "status": "installed",
+    "version": "2.0.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\openvoice_v2"
+  },
+  "edgetts": {
+    "status": "cloud",
+    "version": "1.0.0",
+    "path": "cloud"
+  },
+  "indextts": {
+    "status": "installed",
+    "version": "2.0.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\IndexTTS\\index-tts-batch\\checkpoints"
+  },
+  "emotion2vec": {
+    "status": "installed",
+    "version": "1.0.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\emotion2vec"
+  },
+  "pyannote-diarization": {
+    "status": "installed",
+    "version": "3.1.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\pyannote\\speaker-diarization-3.1"
+  },
+  "pyannote-segmentation": {
+    "status": "installed",
+    "version": "3.0.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\pyannote\\segmentation-3.0"
+  },
+  "pyannote-embedding": {
+    "status": "installed",
+    "version": "1.0.0",
+    "path": "D:\\Workspace\\Translate_video\\models\\pyannote\\wespeaker-voxceleb-resnet34-LM"
+  }
+}

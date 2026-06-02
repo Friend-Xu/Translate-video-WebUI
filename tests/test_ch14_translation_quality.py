@@ -129,6 +129,113 @@ class TestTextGate:
         assert r.accepted
 
 
+class TestTextGateLengthGuards:
+    """批次12 §3.2: Gate C 膨胀/收缩守卫 + Gate B 收缩守卫"""
+
+    @pytest.fixture
+    def gate(self):
+        return TextGate(semantic_threshold=0.70, sim_drop_limit=0.05,
+                        max_len_ratio=2.0, min_len_ratio=0.4, min_shrink_ratio=0.5)
+
+    # ── Gate C: 膨胀守卫 ────────────────────────────────
+
+    def test_C_inflated_rejected(self, gate):
+        """译文膨胀 > 200% 应被拒绝"""
+        r = gate.decide(0.85, 0.82, 3.0, 2.0,
+                        source_len=10, old_len=10, new_len=25)
+        assert not r.accepted
+        assert r.reason == "content_inflated"
+
+    def test_C_inflated_boundary_pass(self, gate):
+        """膨胀在 200% 以内应通过"""
+        r = gate.decide(0.85, 0.82, 3.0, 2.0,
+                        source_len=10, old_len=10, new_len=19)
+        assert r.accepted
+
+    def test_C_inflated_exact_double(self, gate):
+        """膨胀正好 200% 应通过"""
+        r = gate.decide(0.85, 0.82, 3.0, 2.0,
+                        source_len=10, old_len=10, new_len=20)
+        assert r.accepted
+
+    def test_C_inflated_no_source_len_skips(self, gate):
+        """无 source_len 时跳过长度守卫"""
+        r = gate.decide(0.85, 0.82, 3.0, 2.0,
+                        source_len=0, old_len=10, new_len=25)
+        assert r.accepted
+
+    # ── Gate C: 收缩守卫 ────────────────────────────────
+
+    def test_C_deflated_rejected(self, gate):
+        """译文收缩 < 40% 应被拒绝"""
+        r = gate.decide(0.85, 0.82, 3.0, 2.0,
+                        source_len=10, old_len=10, new_len=3)
+        assert not r.accepted
+        assert r.reason == "content_deflated"
+
+    def test_C_deflated_boundary_pass(self, gate):
+        """收缩在 40% 以上应通过"""
+        r = gate.decide(0.85, 0.82, 3.0, 2.0,
+                        source_len=10, old_len=10, new_len=5)
+        assert r.accepted
+
+    def test_C_deflated_no_source_len_skips(self, gate):
+        """无 source_len 时跳过收缩守卫"""
+        r = gate.decide(0.85, 0.82, 3.0, 2.0,
+                        source_len=0, old_len=10, new_len=1)
+        assert r.accepted
+
+    # ── Gate B: 收缩守卫 ────────────────────────────────
+
+    def test_B_shrunk_rejected(self, gate):
+        """PPL 改善但长度收缩 >50% 应被拒绝"""
+        r = gate.decide(0.85, 0.82, 3.0, 2.0,
+                        source_len=10, old_len=10, new_len=4)
+        assert not r.accepted
+        assert r.reason == "content_shrunk"
+
+    def test_B_shrunk_boundary_pass(self, gate):
+        """PPL 改善，收缩在 50% 以内应通过"""
+        r = gate.decide(0.85, 0.82, 3.0, 2.0,
+                        source_len=10, old_len=10, new_len=6)
+        assert r.accepted
+
+    def test_B_shrunk_no_source_len_skips(self, gate):
+        """无 source_len 时跳过 B 收缩守卫"""
+        r = gate.decide(0.85, 0.82, 3.0, 2.0,
+                        source_len=0, old_len=10, new_len=2)
+        assert r.accepted
+
+    def test_B_shrunk_no_gain_still_works(self, gate):
+        """PPL 无改善 + source_len=0 仍被 B 拒绝"""
+        r = gate.decide(0.85, 0.82, 2.0, 2.5)
+        assert not r.accepted
+        assert r.reason == "no_naturalness_gain"
+
+    # ── 组合场景 ────────────────────────────────────────
+
+    def test_C_inflated_before_B_shrink(self, gate):
+        """Gate C 膨胀先于 Gate B 收缩被检查"""
+        r = gate.decide(0.85, 0.82, 3.0, 2.0,
+                        source_len=10, old_len=10, new_len=30)
+        assert not r.accepted
+        assert r.reason == "content_inflated"
+
+    def test_gate_A_rejects_before_length_checks(self, gate):
+        """Gate A 语义漂移先被拦截，跳过长度守卫"""
+        r = gate.decide(0.85, 0.60, 3.0, 1.0,
+                        source_len=10, old_len=10, new_len=30)
+        assert not r.accepted
+        assert r.reason == "semantic_drift"
+
+    def test_sim_drop_rejects_before_length_checks(self, gate):
+        """Gate C sim drop 先被拦截，跳过长度守卫"""
+        r = gate.decide(0.90, 0.82, 3.0, 1.0,
+                        source_len=10, old_len=10, new_len=30)
+        assert not r.accepted
+        assert r.reason == "content_degraded"
+
+
 class TestTextGateJointFormula:
 
     @pytest.fixture

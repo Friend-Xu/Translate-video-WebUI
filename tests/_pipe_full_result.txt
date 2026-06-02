@@ -1,0 +1,7 @@
+imports ok
+wsr: D:/Workspace/Translate_video/source_file\test_project
+factory ok
+policy ok
+global_config ok
+starting orchestrator.run()...
+FAILED: Workflow failed at stage 'WorkflowStage.TRANSLATE': Stage 'translate' failed: 未知 QualityStrategy: 'logic_gate'. 可用: 

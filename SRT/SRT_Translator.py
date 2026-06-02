@@ -973,38 +973,43 @@ class SRTTranslator:
     def _translate_from_timeline(
         self, timeline_path: str, srt_path: str
     ) -> Tuple[str, str]:
-        """从 Timeline IR 读取 segments，翻译后回写 translation 字段。"""
-        from timeline import load_json, save_json as save_timeline
-        import pysrt, copy
+        """从 timeline.json (兼容 v1/v2) 读取 segments，翻译后回写 translation。"""
+        import json as _json, pysrt, copy
 
         logger.info(f"开始 Timeline 翻译: {timeline_path}")
-        tl = load_json(timeline_path)
-        self.log.video = tl.audio_id
+        with open(timeline_path, "r", encoding="utf-8") as f:
+            tl = _json.load(f)
 
-        # 构建 pysrt SubRipItem 列表（适配现有翻译管线）
+        is_v2 = tl.get("schema_version") == "2.0"
+        source_segments = tl.get("events", []) if is_v2 else tl.get("timeline", [])
+        self.log.video = (tl.get("project", {}).get("id", "")
+                          if is_v2 else tl.get("audio_id", ""))
+
+        # 构建 pysrt SubRipItem 列表
         subs = pysrt.SubRipFile()
-        for seg in tl.timeline:
-            if not seg.text.strip():
+        for seg in source_segments:
+            text = (seg.get("text") if isinstance(seg, dict) else seg.text).strip()
+            if not text:
                 continue
+            seg_id = seg.get("id") if isinstance(seg, dict) else seg.id
+            seg_start = seg.get("start") if isinstance(seg, dict) else seg.start
+            seg_end = seg.get("end") if isinstance(seg, dict) else seg.end
             item = pysrt.SubRipItem(
-                index=int(seg.id.split("_")[1]) if "_" in seg.id else 0,
-                start=pysrt.SubRipTime(seconds=seg.start),
-                end=pysrt.SubRipTime(seconds=seg.end),
-                text=seg.text,
+                index=int(seg_id.split("_")[1]) if "_" in seg_id else 0,
+                start=pysrt.SubRipTime(seconds=seg_start),
+                end=pysrt.SubRipTime(seconds=seg_end),
+                text=text,
             )
             subs.append(item)
-        # 重新编号
         for i, sub in enumerate(subs, 1):
             sub.index = i
 
         self._all_subs = subs
 
-        # 语言检测
         if self.source_lang == "auto":
             self.source_lang = detect_source_language(subs)
             logger.info(f"检测到源语言: {self.source_lang}")
 
-        # 语义分组（同 speaker 不强制切分，交给现有逻辑）
         groups = group_semantically(
             subs,
             max_size=self.config.get("max_group_size", 8),
@@ -1013,7 +1018,6 @@ class SRTTranslator:
         )
         self.log.total_groups = len(groups)
 
-        # 翻译每组
         translate_fn = self._translate_group_with_fallback
         if self.multi_agent_enabled:
             translate_fn = self._translate_group_multi_agent
@@ -1023,24 +1027,26 @@ class SRTTranslator:
         for gi, group in enumerate(groups, 1):
             translate_fn(gi, group)
 
-        # 回写 translation 到 Timeline
+        # 回写 translation
         for sub in subs:
-            for seg in tl.timeline:
-                if seg.text.strip() == "":
-                    continue
-                # 通过 index 映射翻译结果
-                idx = int(seg.id.split("_")[1]) if "_" in seg.id else 0
+            for seg in source_segments:
+                if isinstance(seg, dict):
+                    idx = int(seg.get("id", "").split("_")[1]) if "_" in seg.get("id", "") else 0
+                else:
+                    idx = int(seg.id.split("_")[1]) if "_" in seg.id else 0
                 if idx == sub.index:
-                    seg.translation = sub.text
+                    if isinstance(seg, dict):
+                        seg["translation"] = sub.text
+                    else:
+                        seg.translation = sub.text
                     break
 
-        # 保存翻译后的 timeline 到 02_translate/
         out_dir = os.path.dirname(srt_path)
         out_timeline = os.path.join(out_dir, "timeline.json")
-        save_timeline(tl, out_timeline)
+        with open(out_timeline, "w", encoding="utf-8") as f:
+            _json.dump(tl, f, ensure_ascii=False, indent=2)
         logger.info(f"Timeline 翻译已保存: {out_timeline}")
 
-        # 同时输出 SRT（兼容下游 TTS）
         base = os.path.splitext(srt_path)[0]
         auto_path = f"{base}-auto.srt"
         subs.save(auto_path, encoding="utf-8")
@@ -1762,15 +1768,12 @@ class SRTTranslator:
     def _verify_naturalness_result(self, source: str, old_text: str,
                                    refined: str, old_sim: float,
                                    old_ratio: float, baseline: float) -> dict:
-        """闭环验证：判断自然度重翻是否可接受。
-
-        verification_mode 控制验证策略：
-        - "joint_formula": Gate A (sim>=0.70) + Gate B (联合得分 β*(1-ratio)+γ*sim 提升)
-        - "logic_gate":    Gate A (sim>=0.70) + Gate C (sim_drop + 长度比, NEW)
-                           + Gate B (PPL 下降 + 长度守卫, NEW)
+        """闭环验证：委托到 core/ TextGate.decide()。(批次05 §五)
 
         Returns: {accepted: bool, kept: str, reason: str, new_sim, new_ratio, ...}
         """
+        from core.gates.text_gate import TextGate
+
         verifier = self._get_verifier()
         if not verifier:
             return {"accepted": True, "kept": "second", "reason": "verifier_unavailable",
@@ -1778,43 +1781,6 @@ class SRTTranslator:
 
         new_sim = verifier.verify(source, refined)["similarity"]
 
-        # Gate A: 语义安全底线（两种模式共用）
-        if new_sim < self.semantic_threshold:
-            return {"accepted": False, "kept": "first", "reason": "semantic_drift",
-                    "new_sim": new_sim, "new_ratio": 0}
-
-        # Gate C: 内容保真度（仅 logic_gate 模式）
-        # 防止 LLM 通过"注水"或"偷工减料"人为压低 PPL
-        # sim_drop_limit=0 时禁用 Gate C
-        mode = getattr(self, "verification_mode", "joint_formula")
-        if mode == "logic_gate" and self.sim_drop_limit > 0:
-            sim_drop = old_sim - new_sim
-            if sim_drop > self.sim_drop_limit:
-                return {"accepted": False, "kept": "first", "reason": "content_degraded",
-                        "new_sim": new_sim, "new_ratio": 0,
-                        "sim_drop": round(sim_drop, 4)}
-            # 长度比检测：借鉴 COMET-poly (2025) 用已知正确翻译作参照
-            # 比较重翻结果 vs 原始译文的相对源文长度比
-            src_len = len(source)
-            if src_len > 0 and len(old_text) > 0:
-                orig_len_ratio = len(old_text) / src_len
-                new_len_ratio = len(refined) / src_len
-                if new_len_ratio > orig_len_ratio * 2.0:
-                    return {"accepted": False, "kept": "first", "reason": "content_degraded",
-                            "new_sim": new_sim, "new_ratio": 0,
-                            "sim_drop": round(sim_drop, 4)}
-                if new_len_ratio < orig_len_ratio * 0.4:
-                    return {"accepted": False, "kept": "first", "reason": "content_degraded",
-                            "new_sim": new_sim, "new_ratio": 0,
-                            "sim_drop": round(sim_drop, 4)}
-                _orig_len_ratio = orig_len_ratio
-                _new_len_ratio = new_len_ratio
-            else:
-                _orig_len_ratio = _new_len_ratio = 1.0
-        else:
-            _orig_len_ratio = _new_len_ratio = 1.0
-
-        # 计算新译文 PPL
         ppl_eval = self._get_ppl_evaluator()
         if ppl_eval:
             try:
@@ -1825,38 +1791,34 @@ class SRTTranslator:
             new_ppl = old_ratio * baseline if baseline > 0 else old_ratio
         new_ratio = new_ppl / baseline if baseline > 0 else 1.0
 
-        if mode == "logic_gate":
-            # Gate B: 自然度改善（PPL 必须下降）
-            if new_ratio < old_ratio:
-                # 长度守卫：防止删内容降 PPL 的取巧行为
-                if _new_len_ratio < _orig_len_ratio * 0.5:
-                    return {"accepted": False, "kept": "first", "reason": "content_shrunk",
-                            "new_sim": new_sim, "new_ratio": new_ratio,
-                            "improvement": 0}
-                improvement = round(old_ratio - new_ratio, 4)
-                return {"accepted": True, "kept": "second", "reason": "naturalness_improved",
-                        "new_sim": new_sim, "new_ratio": new_ratio,
-                        "improvement": improvement}
-            else:
-                return {"accepted": False, "kept": "first", "reason": "no_naturalness_gain",
-                        "new_sim": new_sim, "new_ratio": new_ratio,
-                        "improvement": 0}
-        else:
-            # Gate B: 联合得分比较（默认）
-            def _score(r, s, b=1.0, g=1.0):
-                return b * (1.0 - r) + g * s
+        mode = getattr(self, "verification_mode", "joint_formula")
+        sim_drop = getattr(self, "sim_drop_limit", 0.05)
+        sem_threshold = getattr(self, "semantic_threshold", 0.70)
 
-            old_score = _score(old_ratio, old_sim)
-            new_score = _score(new_ratio, new_sim)
+        gate = TextGate(
+            mode=mode,
+            semantic_threshold=sem_threshold,
+            sim_drop_limit=sim_drop,
+        )
+        result = gate.decide(
+            old_sim, new_sim, old_ratio, new_ratio,
+            source_len=len(source), old_len=len(old_text), new_len=len(refined),
+        )
 
-            if new_score > old_score:
-                return {"accepted": True, "kept": "second", "reason": "joint_improvement",
-                        "new_sim": new_sim, "new_ratio": new_ratio,
-                        "old_score": round(old_score, 4), "new_score": round(new_score, 4)}
-            else:
-                return {"accepted": False, "kept": "first", "reason": "no_improvement",
-                        "new_sim": new_sim, "new_ratio": new_ratio,
-                        "old_score": round(old_score, 4), "new_score": round(new_score, 4)}
+        kept = "first"
+        if result.accepted:
+            kept = "second"
+        elif result.kept_version == "retry":
+            kept = "second" if result.accepted else "first"
+
+        return {
+            "accepted": result.accepted,
+            "kept": kept,
+            "reason": result.reason,
+            "new_sim": new_sim,
+            "new_ratio": new_ratio,
+            "improvement": round(old_ratio - new_ratio, 4) if new_ratio < old_ratio else 0,
+        }
 
     def _get_context_subs(self, sub_index: int, group: List) -> Tuple[List, List]:
         """获取某条字幕的上下文（前后各最多 2 条）"""

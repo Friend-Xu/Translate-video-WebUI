@@ -28,7 +28,7 @@ class RollbackManager:
 
     def rollback_segment(self, state: TimelineProjectState, segment_id: str,
                          target_version: int) -> TimelineProjectState:
-        """回退单个 segment 到指定版本 (0-indexed)。"""
+        """回退单个 segment 到指定版本 (0-indexed)。(批次04 §三)"""
         es = state.get_event(segment_id)
         if es is None or target_version < 0 or target_version >= len(es.patches):
             return state
@@ -36,7 +36,8 @@ class RollbackManager:
         es.patches = kept
         es.derivatives.clear()
         for p in kept:
-            es.derivatives.update(p.value)
+            from core.runtime.config_resolver import deep_merge as _dm
+            _dm(es.derivatives, p.value)
         self.dep_graph.invalidate(segment_id)
         return state
 
@@ -70,7 +71,8 @@ class RollbackManager:
             es.patches = kept
             es.derivatives.clear()
             for p in kept:
-                es.derivatives.update(p.value)
+                from core.runtime.config_resolver import deep_merge as _dm
+                _dm(es.derivatives, p.value)
         return state
 
     def rollback_global(self, state: TimelineProjectState,
@@ -90,8 +92,9 @@ class RollbackManager:
             if p.id == patch.id:
                 idx = i
                 break
-        if idx is None or idx == 0:
+        if idx is None:
             return None
+        # idx=0 允许：生成空 value 的逆向 patch，支持回退到初始状态 (批次04 §三)
         prev = {}
         for p in target.patches[:idx]:
             prev.update(p.value)

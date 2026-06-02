@@ -33,6 +33,8 @@ class PyannoteAdapter:
         if "clustering_threshold" in event_config: self._threshold = event_config["clustering_threshold"]
         if "min_speakers" in event_config: self._min_speakers = event_config["min_speakers"]
         if "max_speakers" in event_config: self._max_speakers = event_config["max_speakers"]
+        if "clustering_method" in event_config: self._method = event_config["clustering_method"]
+        if "embedding_model" in event_config: self._embedding_model = event_config["embedding_model"]
     def run_diarization(self, vocals_path: str, force: bool = False,
                         min_speakers: int = 1, max_speakers: int = 10
                         ) -> list[tuple]:

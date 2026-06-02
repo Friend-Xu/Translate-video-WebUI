@@ -77,7 +77,7 @@ def _map_targets_to_new_ids(targets: list[str], old_segments: list[dict]) -> lis
 def _map_opcode(op: str) -> str:
     """映射旧 OpCode 到新引擎 op 字符串"""
     mapping = {
-        "MERGE": "merge", "SPLIT": "split",
+        "MERGE": "merge", "SPLIT": "segment_split",
         "RETAG_SPEAKER": "replace", "SET_TRANSLATION": "replace",
         "RELINK_WORDS": "propagate", "ANNOTATE": "replace",
     }
@@ -98,6 +98,12 @@ def _map_payload(op: str, payload: dict) -> dict:
         return {"translation": payload.get("translation", "")}
     elif op == "ANNOTATE":
         return {"annotation": {payload.get("key", ""): payload.get("value")}}
+    elif op in ("SPLIT", "MERGE"):
+        # 旧 payload 的 split_point → 新引擎的 at
+        result = dict(payload)
+        if "split_point" in result:
+            result["at"] = result.pop("split_point")
+        return result
     else:
         return dict(payload)
 

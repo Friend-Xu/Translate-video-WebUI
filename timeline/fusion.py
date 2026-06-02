@@ -138,8 +138,8 @@ def from_project_ir(project_ir, derivatives_map: dict[str, dict] | None = None) 
     speaker_ids = set()
 
     for evt in project_ir.event_list:
-        spk = evt.speaker_ref
         deriv = (derivatives_map or {}).get(evt.id, {})
+        spk = deriv.get("speaker") or evt.speaker_ref
 
         translation = deriv.get("translation", "")
         words_data = deriv.get("words", [])

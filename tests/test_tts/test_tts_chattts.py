@@ -5,7 +5,6 @@ ChatTTSEngine 单元测试
 import os
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
 
 
@@ -17,44 +16,38 @@ class TestChatTTSEngine:
         assert callable(ChatTTSEngine)
 
     def test_synthesize_creates_file(self, temp_dir):
-        """合成成功后生成文件"""
+        """合成成功后生成文件 — 模拟 worker 子进程交互"""
         from pipeline.tts_chattts import ChatTTSEngine
 
-        # Mock soundfile write
-        with patch("soundfile.write") as mock_sf_write:
-            with patch.object(ChatTTSEngine, "_load_model"):
-                engine = ChatTTSEngine()
+        engine = ChatTTSEngine()
+        # Mock 子进程 — 不真正启动 worker，只 mock _send_command 返回成功
+        engine._proc = MagicMock()
+        engine._proc.poll.return_value = None
+        engine._loaded = True
 
-                # Mock _chat
-                engine._chat = MagicMock()
-                engine._loaded = True
-
-                # Mock infer to return numpy array
-                mock_wav = np.zeros(24000, dtype=np.float32)  # 1 sec at 24kHz
-                engine._chat.infer.return_value = [mock_wav]
-
-                out_path = os.path.join(temp_dir, "test.wav")
-                duration = engine.synthesize("你好世界", out_path)
-
-                assert duration == 1.0
-                mock_sf_write.assert_called_once()
-                call_args = mock_sf_write.call_args[0]
-                assert call_args[0] == out_path
+        with patch.object(engine, "_send_command") as mock_send:
+            mock_send.return_value = {"status": "ok", "duration_s": 1.0}
+            out_path = os.path.join(temp_dir, "test.wav")
+            duration = engine.synthesize("你好世界", out_path)
+            assert duration == 1.0
+            mock_send.assert_called_once()
+            req = mock_send.call_args[0][0]
+            assert req["action"] == "synthesize"
+            assert req["text"] == "你好世界"
 
     def test_synthesize_returns_correct_duration(self, temp_dir):
         """不同长度的音频返回正确的时长"""
         from pipeline.tts_chattts import ChatTTSEngine
 
-        with patch("soundfile.write"):
-            with patch.object(ChatTTSEngine, "_load_model"):
-                engine = ChatTTSEngine()
-                engine._chat = MagicMock()
-                engine._loaded = True
+        engine = ChatTTSEngine()
+        engine._proc = MagicMock()
+        engine._proc.poll.return_value = None
+        engine._loaded = True
 
-                # 3 seconds at 24kHz
-                engine._chat.infer.return_value = [np.zeros(72000, dtype=np.float32)]
-                duration = engine.synthesize("你好", os.path.join(temp_dir, "t.wav"))
-                assert duration == pytest.approx(3.0)
+        with patch.object(engine, "_send_command") as mock_send:
+            mock_send.return_value = {"status": "ok", "duration_s": 3.0}
+            duration = engine.synthesize("你好", os.path.join(temp_dir, "t.wav"))
+            assert duration == pytest.approx(3.0)
 
     def test_initial_model_not_loaded(self):
         """初始化时模型未加载"""
@@ -64,18 +57,25 @@ class TestChatTTSEngine:
         assert engine.model_loaded is False
 
     def test_load_model_called_on_first_synthesize(self, temp_dir):
-        """首次 synthesize 调用 _load_model"""
+        """首次 synthesize 会自动 warmup worker"""
         from pipeline.tts_chattts import ChatTTSEngine
 
-        with patch("soundfile.write"):
-            with patch.object(ChatTTSEngine, "_load_model") as mock_load:
-                engine = ChatTTSEngine()
-                engine._chat = MagicMock()
-                engine._loaded = True
-                engine._chat.infer.return_value = [np.zeros(24000, dtype=np.float32)]
+        engine = ChatTTSEngine()
+        # Mock warmup 行为：第一次 synthesize 时 _proc 为 None，应触发 warmup
+        engine._loaded = False
 
+        with patch.object(engine, "warmup") as mock_warmup:
+            # warmup 应该设置 _loaded = True 使其继续到 synthesize
+            def _fake_warmup():
+                engine._loaded = True
+                engine._proc = MagicMock()
+                engine._proc.poll.return_value = None
+            mock_warmup.side_effect = _fake_warmup
+
+            with patch.object(engine, "_send_command") as mock_send:
+                mock_send.return_value = {"status": "ok", "duration_s": 1.0}
                 engine.synthesize("你好", os.path.join(temp_dir, "t.wav"))
-                mock_load.assert_called_once()
+                mock_warmup.assert_called_once()
 
     def test_supports_emotion_false(self):
         """ChatTTS 不支持情感克隆"""

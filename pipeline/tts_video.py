@@ -156,6 +156,7 @@ class VideoSegmenter:
     def _ffmpeg_fade_wav(wav_path: str, fade_duration: float = 0.015) -> None:
         """Apply short fade-in/out to a WAV file to prevent clicks at boundaries."""
         import subprocess
+        import time
         from pipeline.utils import get_ffmpeg_exe
         # 获取音频时长，因为 FFmpeg 6.0 的 afade=t=out 不指定 st 时错误地默认 st=0，
         # 导致整段音频在 15ms 后完全静音
@@ -180,15 +181,30 @@ class VideoSegmenter:
             fade_filter = f"afade=t=in:d={sec},afade=t=out:st={fade_out_st}:d={sec}"
         else:
             fade_filter = f"afade=t=in:d={sec}"
-        result = subprocess.run(
-            [get_ffmpeg_exe(), "-y", "-i", wav_path,
-             "-af", fade_filter,
-             "-acodec", "pcm_s16le", tmp],
-            capture_output=True, text=True, timeout=30, encoding="utf-8", errors="replace",
-        )
-        if result.returncode != 0:
-            err = result.stderr.strip()[-200:] if result.stderr else "unknown error"
-            raise RuntimeError(f"ffmpeg afade 失败: {err}")
+
+        # Windows: write_audiofile 可能未释放文件句柄，重试
+        last_err = None
+        for attempt in range(5):
+            try:
+                result = subprocess.run(
+                    [get_ffmpeg_exe(), "-y", "-i", wav_path,
+                     "-af", fade_filter,
+                     "-acodec", "pcm_s16le", tmp],
+                    capture_output=True, text=True, timeout=30, encoding="utf-8", errors="replace",
+                )
+                if result.returncode == 0:
+                    break
+                last_err = RuntimeError(f"ffmpeg afade 失败: {result.stderr.strip()[-200:]}")
+                if attempt < 4:
+                    time.sleep(0.2)
+                    continue
+                raise last_err
+            except (OSError, RuntimeError) as e:
+                last_err = e
+                if attempt < 4:
+                    time.sleep(0.2)
+                    continue
+                raise
         safe_replace(tmp, wav_path)
 
     def _export_audio_to_wav(self, audio_clip, temp_dir: str = None) -> str:
@@ -220,6 +236,7 @@ class VideoSegmenter:
         text_eng: str,
         end: int,
         caption_groups: list = None,
+        speed_factor_override: float | None = None,
     ):
         """视频变速处理。
 
@@ -234,12 +251,16 @@ class VideoSegmenter:
             CompositeAudioClip,
         )
         import tempfile
+        import subprocess
+        from pipeline.utils import get_ffmpeg_exe
 
         # ── 视频调速策略 ──────────────────────────────────
         # 不变量: 视频时长 >= TTS 音频时长
         # 情况一/二: TTS 已适配 → 视频不变速 (speed_factor = 1.0)
         # 情况三: TTS 达最大语速仍超视频 → 减速视频 (speed_factor < 1)
-        if tts_audio.duration <= current_video.duration:
+        if speed_factor_override is not None:
+            speed_factor = max(self.video_speed_min, min(1.0, speed_factor_override))
+        elif tts_audio.duration <= current_video.duration:
             speed_factor = 1.0
         else:
             speed_factor = current_video.duration / tts_audio.duration
@@ -262,19 +283,26 @@ class VideoSegmenter:
             tempfile.gettempdir(), f"_tv_mixed_{start}_{end}.wav"
         )
         bgm_gain_db = 20.0 * math.log10(self.bgm_volume) if self.bgm_volume > 0.001 else -70.0
+        _skip_fade = False
 
         if audio_instrumental is None:
-            # 无背景乐：导出 TTS 音频为 WAV → 淡入淡出 → 加载
+            # 无背景乐：ffmpeg 一步裁剪+淡入淡出（避免 write_audiofile 的 Windows 文件锁）
             temp_tts = os.path.join(
-                tempfile.gettempdir(), f"_tv_tts_{start}_{end}.wav"
+                tempfile.gettempdir(), f"_tv_tts_{start}_{end}_{os.getpid()}.wav"
             )
-            tts_audio.subclipped(0, tts_dur).write_audiofile(
-                temp_tts, codec="pcm_s16le", logger=None
+            fade_dur = 0.015
+            if tts_dur > fade_dur * 2:
+                fade_f = f"afade=t=in:d={fade_dur:.4f},afade=t=out:st={tts_dur - fade_dur:.4f}:d={fade_dur:.4f}"
+            else:
+                fade_f = f"afade=t=in:d={fade_dur:.4f}"
+            subprocess.run(
+                [get_ffmpeg_exe(), "-y", "-i", tts_audio_path,
+                 "-t", str(tts_dur), "-af", fade_f,
+                 "-acodec", "pcm_s16le", temp_tts],
+                capture_output=True, timeout=30, encoding="utf-8", errors="replace",
             )
-            self._ffmpeg_fade_wav(temp_tts)
-            mixed_audio = AudioFileClip(temp_tts)
-            slow_down_clip = slow_down_clip.with_audio(mixed_audio)
-            mixed_wav = temp_tts  # 后续统一清理
+            mixed_wav = temp_tts
+            _skip_fade = True  # fade 已在 ffmpeg 中完成
         elif self.clone_color and self.voice_cloner_callback:
             try:
                 openvoice_output_dir = os.path.join(
@@ -317,8 +345,8 @@ class VideoSegmenter:
                 bgm_gain_db=bgm_gain_db,
             )
 
-        # 淡入淡出: 消除段间拼接爆破音
-        if os.path.isfile(mixed_wav) and os.path.getsize(mixed_wav) > 0:
+        # 淡入淡出: 消除段间拼接爆破音（BGM=None 时已在上方 ffmpeg 中完成）
+        if not _skip_fade and os.path.isfile(mixed_wav) and os.path.getsize(mixed_wav) > 0:
             self._ffmpeg_fade_wav(mixed_wav)
 
         # 加载混合音频

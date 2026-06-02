@@ -25,7 +25,7 @@ class SynthesisEngine:
 
     _PATCH_OPS = (
         OpCode.REPLACE, OpCode.UPDATE_TRANSCRIPTION, OpCode.UPDATE_TTS_AUDIO,
-        OpCode.UPDATE_TRANSLATION, OpCode.ANNOTATE,
+        OpCode.UPDATE_TRANSLATION,
     )
 
     # ── public API ──────────────────────────────────────

@@ -1,15 +1,15 @@
 caption:
   font: ''
-  font_size_mode: fixed
-  font_size: 36
-  font_color: '#ffffff'
+  font_size_mode: adaptive
+  font_size: 0
+  font_color: white
   stroke_width: 0.0
-  stroke_color: '#ff0000'
+  stroke_color: black
   bg_color: rgba(0,0,0,128)
   alignment: center
   position: bottom
   max_lines: 2
   max_font_size: 0
-  font_size_factor: 0.075
+  font_size_factor: 0.03
   width_ratio: 0.85
   enable_subtitle_optimization: true

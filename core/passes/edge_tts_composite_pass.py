@@ -16,6 +16,7 @@ from core.runtime.project_state import TimelineProjectState
 from core.runtime.patch_engine import PatchEngine
 from core.adapters.edge_tts_adapter import EdgeTTSAdapter, EdgeTTSSegmentContext
 from core.scoring.edge_tts_scorer import EdgeTTSScorer
+from core.tts.duration_control import SpeedDecision
 
 
 class EdgeTTSCompositePass(TimelinePass):
@@ -59,10 +60,13 @@ class EdgeTTSCompositePass(TimelinePass):
                 reason = "no_tts_output"
 
             # 构建最简 context
-            lang = es.translation.get("lang", "") or self.default_lang
+            trans_raw = es.translation
+            trans_lang = trans_raw.get("lang", "") if isinstance(trans_raw, dict) else ""
+            lang = trans_lang or self.default_lang
+            translation_text = (trans_raw.get("text", "") if isinstance(trans_raw, dict) else str(trans_raw or "")) or es.ir.text_ref
             ctx = EdgeTTSSegmentContext(
                 segment_id=es.id,
-                translation_text=es.translation.get("text", "") or es.ir.text_ref,
+                translation_text=translation_text,
                 lang=lang,
                 duration_target=es.end - es.start,
                 fallback_reason=reason,
@@ -74,6 +78,28 @@ class EdgeTTSCompositePass(TimelinePass):
             # SYNTHESIZE
             adapter = EdgeTTSAdapter(output_dir=self.output_dir)
             patch = adapter.synthesize(ctx)
+
+            # ── 调速决策 ──
+            target = ctx.duration_target
+            actual = patch.value.get("duration", target)
+            if target > 0:
+                deviation = abs(actual - target) / target
+            else:
+                deviation = 0.0
+            if deviation <= 0.15:
+                sd = SpeedDecision(strategy="accept", original_duration=actual,
+                                   final_duration=actual, deviation=deviation)
+            else:
+                sd = SpeedDecision(
+                    strategy="video_slowdown",
+                    original_duration=actual,
+                    final_duration=actual,
+                    video_speed_factor=max(0.60, target / max(actual, 0.001)),
+                    deviation=deviation,
+                    deviation_before=deviation,
+                    search_reached_limit=True,
+                )
+            es.tts["speed_decision"] = sd.as_dict()
 
             # SCORE
             score = scorer.score(ctx, patch)

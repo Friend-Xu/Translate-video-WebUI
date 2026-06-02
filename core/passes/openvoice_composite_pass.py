@@ -43,7 +43,7 @@ class OpenVoiceCompositePass(TimelinePass):
     """
 
     name = "openvoice_composite"
-    depends_on = ["speaker_composite"]
+    depends_on: list[str] = []
 
     def __init__(self, output_dir: str = ""):
         self.output_dir = output_dir

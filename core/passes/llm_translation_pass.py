@@ -18,11 +18,18 @@ class LLMTranslationPass(TimelinePass):
     """
 
     name = "llm_translation"
-    depends_on = ["asr_to_ir"]
+    depends_on: list[str] = []
 
     def __init__(self, translate_fn=None, quality_gate_enabled: bool = False):
         self._translate_fn = translate_fn or self._mock_translate
         self.quality_gate_enabled = quality_gate_enabled
+        self._resolved_config: dict | None = None
+
+    def configure(self, resolved_config: dict | None = None) -> None:
+        cfg = resolved_config or {}
+        self._resolved_config = cfg
+        if cfg.get("gate_mode", "OFF") != "OFF":
+            self.quality_gate_enabled = True
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         synth = SynthesisEngine()
@@ -40,7 +47,9 @@ class LLMTranslationPass(TimelinePass):
 
         try:
             result = self._translate_fn(tagged_text)
-        except Exception:
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f'LLM translation failed: {e}')
             return state
 
         if isinstance(result, dict):

@@ -33,7 +33,7 @@ class SpeakerCompositePass(TimelinePass):
     name = "speaker_composite"
     depends_on = ["asr_composite"]
 
-    def __init__(self, vocals_path: str, output_dir: str = "",
+    def __init__(self, vocals_path: str = "", output_dir: str = "",
                  enable_clustering: bool = True,
                  enable_drift_detection: bool = True,
                  max_refinement_iterations: int = 2):
@@ -42,13 +42,26 @@ class SpeakerCompositePass(TimelinePass):
         self.enable_clustering = enable_clustering
         self.enable_drift_detection = enable_drift_detection
         self.max_refinement_iterations = max_refinement_iterations
+        self._resolved_config: dict | None = None
+
+    def configure(self, resolved_config: dict | None = None) -> None:
+        """接收 ConfigResolver 解析后的 speaker 槽位配置。"""
+        cfg = resolved_config or {}
+        self._resolved_config = cfg
+        if "clustering_threshold" in cfg:
+            self.enable_clustering = cfg["clustering_threshold"] > 0
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         engine = PatchEngine()
 
+        # vocals_path may be provided via constructor or derived from state
+        vocals = self.vocals_path
+        if not vocals:
+            vocals = state.get_global_audio_ref() or ""
+
         # Step 1: Diarization
         pyannote = PyannoteAdapter()
-        speaker_timeline = pyannote.run_diarization(self.vocals_path)
+        speaker_timeline = pyannote.run_diarization(vocals)
 
         # Step 2-3: Assignment + boundary detection
         segments = self._collect_segments(state)

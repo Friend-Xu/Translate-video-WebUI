@@ -1,0 +1,16 @@
+# 翻译质量把控 — 策略阈值配置
+# 与 WorkflowPolicy 同层，用户自行选择策略。
+# 在 GlobalConfig.project.translation.quality_strategy 中设置。
+#
+# 可用策略: logic_gate | xcomet
+
+logic_gate:
+  accept: 0.65             # composite >= 0.65 → Gate A (通过)
+  review: 0.50             # composite >= 0.50 → Gate B (暂停审核)
+  semantic_threshold: 0.70
+
+xcomet:
+  accept: 0.70             # xcomet >= 0.70 → Gate A
+  review: 0.40             # xcomet >= 0.40 → Gate B
+  model: "Unbabel/xCOMET-lite"
+  batch_size: 8

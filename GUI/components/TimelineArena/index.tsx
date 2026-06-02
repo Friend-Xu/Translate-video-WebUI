@@ -4,10 +4,11 @@ import CloudUploadOutlined from '@mui/icons-material/CloudUploadOutlined'
 import { useTimelineCoordinates } from '../../hooks/useTimelineCoordinates'
 import { useAppStore } from '../../store/useAppStore'
 import TrackSystem from './TrackSystem'
-import ZoomScrollbar from './ZoomScrollbar'
+import TimelineMinimap from './TimelineMinimap'
 import ZoomPresets from './ZoomPresets'
 import TimelineToolbar from './TimelineToolbar'
-import VideoPreview from './VideoPreview'
+import ReviewTable from './ReviewTable'
+import SpeakerReviewView from '../ModeViews/SpeakerReviewView'
 import ImpactIndicator from '../ImpactIndicator'
 import RubberBandSelect from './RubberBandSelect'
 import EventContextMenu from './EventContextMenu'
@@ -25,17 +26,18 @@ interface Props {
 
 export default function TimelineArena({ events, totalDuration, waveform, ttsWaveforms, onDropVideo }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const [canvasW, setCanvasW] = useState(1200)
+  const canvasW = (() => { return 1200 })()
+  const [_canvasWState, setCanvasW] = useState(1200)
   const [dragOver, setDragOver] = useState(false)
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [loopEnabled, setLoopEnabled] = useState(false)
-  const [videoCurrentTime, setVideoCurrentTime] = useState(0)
   const [contextMenuAnchor, setContextMenuAnchor] = useState<HTMLElement | null>(null)
   const [contextMenuEvent, setContextMenuEvent] = useState<EventViewModel | null>(null)
   const [lockedEventIds, setLockedEventIds] = useState<Set<string>>(new Set())
   const [filterState, setFilterState] = useState<FilterState>(DEFAULT_FILTER)
   const [filterBarOpen, setFilterBarOpen] = useState(false)
+  const [diffPopoverAnchor, setDiffPopoverAnchor] = useState<HTMLElement | null>(null)
   const [diffPopoverEvent, setDiffPopoverEvent] = useState<EventViewModel | null>(null)
+  const [dismissedSuggestionIds] = useState<Set<string>>(new Set())
+  const timelineViewMode = useAppStore(s => s.timelineViewMode)
 
   const selectedEventIds = useAppStore(s => s.selectedEventIds)
   const selectEvent = useAppStore(s => s.selectEvent)
@@ -99,7 +101,16 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
       selectEvent(eventId)
     }
     const ev = events.find(x => x.id === eventId)
-    if (ev) coord.scrollToTime(ev.start)
+    if (ev) {
+      coord.scrollToTime(ev.start)
+      if (ev.visualState.hasAiSuggestion && !dismissedSuggestionIds.has(eventId)) {
+        setDiffPopoverAnchor(e.currentTarget as HTMLElement)
+        setDiffPopoverEvent(ev)
+      } else {
+        setDiffPopoverAnchor(null)
+        setDiffPopoverEvent(null)
+      }
+    }
   }, [selectedEventIds, selectEvent, events, coord])
 
   // Double click
@@ -121,6 +132,12 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
     setContextMenuAnchor(null)
     setContextMenuEvent(null)
   }, [])
+
+  const handleCloseDiffPopover = useCallback(() => {
+    if (diffPopoverEvent) dismissedSuggestionIds.add(diffPopoverEvent.id)
+    setDiffPopoverAnchor(null)
+    setDiffPopoverEvent(null)
+  }, [diffPopoverEvent])
 
   const handleToggleEventLock = useCallback((eventId: string) => {
     setLockedEventIds(prev => {
@@ -149,37 +166,74 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
     }
   }, [events])
 
-  const handleRequestAiAssist = useCallback(() => {
-    const selected = useAppStore.getState().selectedEventIds
+  const handleRequestAiAssist = useCallback(async () => {
+    const store = useAppStore.getState()
+    const selected = store.selectedEventIds
     const targets = selected.length > 0
       ? events.filter(e => selected.includes(e.id))
       : events.filter(e => e.confidence < 0.7)
-    const store = useAppStore.getState()
+
+    const ws = store.workspace || ''
+    const targetLang = store.manifest?.target_lang || 'zh'
+
     for (const evt of targets) {
-      store.addDraft({
-        eventId: evt.id,
-        opcode: 'AI_SUGGEST',
-        payload: { suggestion: `[AI] 建议优化 "${evt.text.slice(0, 20)}..." 的翻译` },
-        before: { translation: evt.translation },
-        after: {},
-        timestamp: Date.now(),
-      })
+      const sourceText = evt.text || ''
+      const currentTrans = evt.translation || ''
+      if (!sourceText.trim() || !currentTrans.trim()) continue
+
+      try {
+        const res = await fetch('/api/timeline/ai/suggest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            event_id: evt.id,
+            workspace: ws,
+            source_text: sourceText,
+            current_translation: currentTrans,
+            target_lang: targetLang,
+          }),
+        })
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}))
+          const detail = (errData as any).detail || `HTTP ${res.status}`
+          store.addDraft({
+            eventId: evt.id,
+            opcode: 'AI_SUGGEST',
+            payload: { suggestion: `[AI 请求失败] ${detail}`, error: true },
+            before: { translation: currentTrans },
+            after: {},
+            timestamp: Date.now(),
+          })
+          continue
+        }
+        const data = await res.json()
+        store.addDraft({
+          eventId: evt.id,
+          opcode: 'AI_SUGGEST',
+          payload: {
+            suggestion: data.suggestion,
+            reasoning: data.reasoning,
+            diff: data.diff,
+          },
+          before: { translation: currentTrans },
+          after: { translation: data.suggestion },
+          timestamp: Date.now(),
+        })
+      } catch (e) {
+        store.addDraft({
+          eventId: evt.id,
+          opcode: 'AI_SUGGEST',
+          payload: { suggestion: `[网络错误] ${e}`, error: true },
+          before: { translation: currentTrans },
+          after: {},
+          timestamp: Date.now(),
+        })
+      }
     }
   }, [events])
 
   // Apply filters
   const { visible: filteredEvents, dimmed: dimmedEventIds } = applyFilter(events, filterState)
-
-  // Show diff popover when AI-suggested event is selected
-  useEffect(() => {
-    const selectedId = useAppStore.getState().selectedEventId
-    if (selectedId) {
-      const evt = events.find(e => e.id === selectedId && e.visualState.hasAiSuggestion)
-      setDiffPopoverEvent(evt || null)
-    } else {
-      setDiffPopoverEvent(null)
-    }
-  }, [useAppStore(s => s.selectedEventId), events])
 
   // Drag & drop video
   const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setDragOver(true) }, [])
@@ -190,42 +244,14 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
     if (file && onDropVideo) onDropVideo(file)
   }, [onDropVideo])
 
-  // Playback handlers
-  const handlePlayPause = useCallback(() => {
-    setIsPlaying(p => !p)
-  }, [])
-
-  const handleJumpPrev = useCallback(() => {
-    const playhead = useAppStore.getState().playheadPosition
-    const prev = events.filter(e => e.end <= playhead).sort((a, b) => b.end - a.end)[0]
-    if (prev) useAppStore.getState().setPlayhead(prev.start)
-  }, [events])
-
-  const handleJumpNext = useCallback(() => {
-    const playhead = useAppStore.getState().playheadPosition
-    const next = events.filter(e => e.start >= playhead).sort((a, b) => a.start - b.start)[0]
-    if (next) useAppStore.getState().setPlayhead(next.start)
-  }, [events])
-
-  const handleToggleLoop = useCallback(() => setLoopEnabled(l => !l), [])
-
   const handleScrollToPlayhead = useCallback(() => {
     const playhead = useAppStore.getState().playheadPosition
     coord.scrollToTime(playhead)
   }, [coord])
 
-  const handleVideoTimeUpdate = useCallback((t: number) => {
-    setVideoCurrentTime(t)
-    useAppStore.getState().setPlayhead(t)
-  }, [])
-
-  const handleVideoDurationChange = useCallback((_d: number) => {
-    // duration tracked by VideoPreview internally
-  }, [])
-
   const isEmpty = events.length === 0
 
-  // Keyboard shortcuts for zoom
+  // Keyboard shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Don't intercept when focus is in an input
@@ -238,6 +264,19 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
       if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault()
         useAppStore.getState().selectAllVisible(events.map(ev => ev.id))
+      }
+      // Space → toggle video playback via VideoPreview in inspector
+      if (e.key === ' ') {
+        e.preventDefault()
+        const videoEl = document.querySelector('video') as HTMLVideoElement | null
+        if (videoEl) {
+          if (videoEl.paused) {
+            videoEl.currentTime = useAppStore.getState().playheadPosition
+            videoEl.play().catch(() => {})
+          } else {
+            videoEl.pause()
+          }
+        }
       }
     }
     window.addEventListener('keydown', onKey)
@@ -261,20 +300,13 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
       }}
     >
       <TimelineToolbar
-        isPlaying={isPlaying}
-        onPlayPause={handlePlayPause}
-        onJumpPrev={handleJumpPrev}
-        onJumpNext={handleJumpNext}
-        loopEnabled={loopEnabled}
-        onToggleLoop={handleToggleLoop}
-        onZoomIn={() => coord.zoomIn()}
-        onZoomOut={() => coord.zoomOut()}
         onZoomToFit={() => coord.zoomToFit(0.05)}
         onScrollToPlayhead={handleScrollToPlayhead}
         filterBarOpen={filterBarOpen}
         onToggleFilter={handleToggleFilter}
         onRetrigger={handleRetrigger}
         onRequestAiAssist={handleRequestAiAssist}
+        coord={coord}
       />
       <FilterBar
         open={filterBarOpen}
@@ -283,15 +315,8 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
         onClose={() => setFilterBarOpen(false)}
         events={events}
       />
-      <VideoPreview
-        videoSrc={null}
-        currentTime={videoCurrentTime}
-        events={filteredEvents}
-        onTimeUpdate={handleVideoTimeUpdate}
-        onDurationChange={handleVideoDurationChange}
-      />
-      {!isEmpty ? (
-          <>
+      {!isEmpty && timelineViewMode === 'timeline' ? (
+          <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <RubberBandSelect
               events={filteredEvents}
               pixelToTime={coord.pixelToTime}
@@ -328,7 +353,23 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
                   />
                 )
               })}
-          </>
+          </Box>
+        ) : timelineViewMode === 'table' ? (
+          <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
+            <ReviewTable
+              events={filteredEvents}
+              onSeek={(time: number) => {
+                useAppStore.getState().setPlayhead(time)
+              }}
+            />
+          </Box>
+        ) : timelineViewMode === 'speaker-timeline' ? (
+          <SpeakerReviewView
+            events={filteredEvents}
+            onSeek={(time: number) => {
+              useAppStore.getState().setPlayhead(time)
+            }}
+          />
         ) : (
           <Box sx={{
             flexGrow: 1, display: 'flex',
@@ -360,30 +401,27 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
       {/* AI suggestion diff popover */}
       <PatchDiffPopover
         event={diffPopoverEvent}
-        anchorEl={containerRef.current}
-        onClose={() => setDiffPopoverEvent(null)}
+        anchorEl={diffPopoverAnchor}
+        onClose={handleCloseDiffPopover}
       />
 
-      {/* Zoom controls */}
-      <Box sx={{
-        position: 'absolute', bottom: 20, left: 0, right: 0, zIndex: 25,
-        display: 'flex', alignItems: 'center', gap: 1, px: 1,
-      }}>
-        <ZoomPresets coord={coord} />
-        <Box sx={{ flexGrow: 1 }}>
-          <ZoomScrollbar coord={coord} totalDuration={totalDuration || 80} canvasWidth={canvasW} />
+      {/* Minimap — 表格/说话人模式下隐藏 */}
+      {timelineViewMode === 'timeline' && (
+        <Box sx={{
+          display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5,
+          borderTop: '1px solid rgba(255,255,255,0.1)',
+          bgcolor: '#dce2f0', flexShrink: 0,
+        }}>
+          <ZoomPresets coord={coord} />
+          <Box sx={{ flexGrow: 1 }} />
+          <TimelineMinimap
+            events={events}
+            coord={coord}
+            totalDuration={totalDuration || 80}
+            canvasWidth={canvasW}
+          />
         </Box>
-        <Box sx={{ display: 'flex', gap: 0.5 }}>
-          <Box component="button" onClick={() => coord.zoomOut()} aria-label="缩小"
-            sx={{ width: 28, height: 28, border: '1px solid rgba(255,255,255,0.3)', borderRadius: 1, bgcolor: 'rgba(0,0,0,0.6)', color: '#fff', cursor: 'pointer', fontSize: '1rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            −
-          </Box>
-          <Box component="button" onClick={() => coord.zoomIn()} aria-label="放大"
-            sx={{ width: 28, height: 28, border: '1px solid rgba(255,255,255,0.3)', borderRadius: 1, bgcolor: 'rgba(0,0,0,0.6)', color: '#fff', cursor: 'pointer', fontSize: '1rem', p: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            +
-          </Box>
-        </Box>
-      </Box>
+      )}
     </Box>
   )
 }

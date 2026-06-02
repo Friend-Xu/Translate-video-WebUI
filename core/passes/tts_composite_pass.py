@@ -12,7 +12,7 @@ from core.runtime.project_state import TimelineProjectState
 from core.runtime.patch_engine import PatchEngine
 from core.adapters.chattts_adapter import ChatTTSAdapter, TTSSegmentContext
 from core.tts.emotion import EmotionModeler
-from core.tts.duration_control import DurationController
+from core.tts.duration_control import DurationController, SpeedDecision
 from core.scoring.tts_scorer import TTSScorer
 
 
@@ -20,17 +20,25 @@ class TTSCompositePass(TimelinePass):
     """TTS 域完整编排。"""
 
     name = "tts_composite"
-    depends_on = ["speaker_composite"]
+    depends_on: list[str] = []
 
     def __init__(self, output_dir: str = "", speaker_seed: int | None = None):
         self.output_dir = output_dir
         self.speaker_seed = speaker_seed
+        self._resolved_config: dict | None = None
+
+    def configure(self, resolved_config: dict | None = None) -> None:
+        """接收 ConfigResolver 解析后的 tts 槽位配置。"""
+        self._resolved_config = resolved_config or {}
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         engine = PatchEngine()
         adapter = ChatTTSAdapter(
             speaker_seed=self.speaker_seed, output_dir=self.output_dir,
         )
+        # 配置注入 (批次 B): ConfigResolver → Pass → Adapter
+        if self._resolved_config:
+            adapter.configure(self._resolved_config)
         emotion_modeler = EmotionModeler()
         duration_ctrl = DurationController()
         scorer = TTSScorer()
@@ -48,6 +56,8 @@ class TTSCompositePass(TimelinePass):
             ctx.emotion_hint = emotion["emotion_hint"]
             ctx.prosody_hint = emotion["prosody"]
 
+            import os as _os
+
             patch = adapter.synthesize(ctx)
 
             action = duration_ctrl.check(
@@ -56,6 +66,26 @@ class TTSCompositePass(TimelinePass):
             if action == "split":
                 es.runtime["tts_status"] = "needs_split"
                 continue
+
+            # ── 调速决策 + RubberBand 拉伸 ──
+            sd = duration_ctrl.decide_speed(
+                patch.value["duration"], ctx.duration_target,
+                engine_has_native_rate=False,
+            )
+            if sd.strategy == "rubberband_stretch":
+                audio_path = patch.value["audio_ref"]
+                if not _os.path.isabs(audio_path):
+                    audio_path = _os.path.join(self.output_dir, audio_path)
+                if _os.path.isfile(audio_path):
+                    duration_ctrl.apply_rubberband(audio_path, sd.stretch_ratio)
+                    patch.value["duration"] = sd.final_duration
+                    # 拉伸后重新判定 — 跳过 RubberBand 级防止无限拉伸
+                    sd = duration_ctrl.decide_speed(
+                        sd.final_duration, ctx.duration_target,
+                        engine_has_native_rate=True,
+                    )
+
+            es.tts["speed_decision"] = sd.as_dict()
 
             score = scorer.score(ctx, patch, speaker_history)
             patch.confidence = score.composite
@@ -76,7 +106,13 @@ class TTSCompositePass(TimelinePass):
         return state
 
     def _build_context(self, es) -> TTSSegmentContext:
-        translation = es.translation.get("text", "") or es.ir.text_ref
+        raw = es.translation
+        if isinstance(raw, dict):
+            translation = raw.get("text", "") or es.ir.text_ref
+        elif isinstance(raw, str) and raw.strip():
+            translation = raw
+        else:
+            translation = es.ir.text_ref
         return TTSSegmentContext(
             segment_id=es.id,
             translation_text=translation,

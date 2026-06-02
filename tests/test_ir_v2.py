@@ -22,13 +22,15 @@ class TestNineSlots:
         es = TimelineEventState(TimelineEventIR(
             id="e1", start=0, end=1, text_ref="hello", speaker_ref=None,
         ))
-        assert es.audio == {}
-        assert es.asr == {}
-        assert es.speaker == {}
-        assert es.semantic == {}
-        assert es.translation == {}
-        assert es.tts == {}
-        assert es.review == {}
+        # v3.0: all slots lazy-init with {"config": {}}
+        assert es.audio == {"config": {}}
+        assert es.asr == {"config": {}}
+        assert es.speaker == {"config": {}}
+        assert es.semantic == {"config": {}}
+        assert es.translation == {"config": {}}
+        assert es.tts == {"config": {}}
+        assert es.review == {"config": {}}
+        # runtime and provenance slots don't have config sub-dict
         assert es.runtime == {}
         assert es.provenance == {}
 
@@ -124,18 +126,18 @@ class TestVersionSystem:
     """版本系统验证"""
 
     def test_constants_defined(self):
-        assert SCHEMA_VERSION == "2.1"
-        assert IR_VERSION == "2.1"
+        assert SCHEMA_VERSION == "3.0"
+        assert IR_VERSION == "3.0"
         assert PATCH_VERSION == "2.0"
 
     def test_check_compatible_same_major(self):
-        assert check_schema_compatible("2.0") is True
-        assert check_schema_compatible("2.1") is True
-        assert check_schema_compatible("2.99") is True
+        assert check_schema_compatible("3.0") is True
+        assert check_schema_compatible("3.1") is True
+        assert check_schema_compatible("3.99") is True
 
     def test_check_incompatible_different_major(self):
         assert check_schema_compatible("1.0") is False
-        assert check_schema_compatible("3.0") is False
+        assert check_schema_compatible("2.0") is False
 
     def test_check_empty(self):
         assert check_schema_compatible("") is False

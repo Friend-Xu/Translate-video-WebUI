@@ -20,7 +20,9 @@ __pycache__/
 # Model cache (very large, download separately)
 models/
 !models/chattts_speakers/  # 预设音色元数据 + PT 嵌入（~4KB/个）
+!models/registry/          # TRM 模型注册表 (manifest + installed + sources, ~10KB)
 Model/
+!core/model/               # TRM 核心模块 (纯代码, 无模型权重)
 
 # Test/sample videos and outputs
 source_file/
@@ -35,6 +37,7 @@ file/
 
 # Temporary and diagnostic files
 _*.py
+!__init__.py
 *.wav
 
 # Build artifacts

@@ -1,4 +1,4 @@
-import { Box, Typography, Slider, ToggleButton, ToggleButtonGroup, Chip, IconButton, Tooltip, Collapse } from '@mui/material'
+import { Box, Typography, Slider, ToggleButton, ToggleButtonGroup, Chip, IconButton, Tooltip } from '@mui/material'
 import CloseIcon from '@mui/icons-material/CloseRounded'
 import type { EventViewModel } from '../../types'
 
@@ -45,10 +45,12 @@ export default function FilterBar({ open, filter, onChange, onClose, events }: P
   const setFilter = (partial: Partial<FilterState>) => onChange({ ...filter, ...partial })
 
   return (
-    <Collapse in={open}>
+    <Box sx={{ display: open ? 'block' : 'none' }}>
       <Box sx={{
         px: 1.5, py: 1, borderBottom: 1, borderColor: 'divider',
-        bgcolor: 'grey.900', display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap',
+        bgcolor: 'background.paper', boxShadow: 2,
+        position: 'relative', zIndex: 10,
+        display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap',
       }}>
         <Box sx={{ minWidth: 140 }}>
           <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.6rem' }}>
@@ -102,7 +104,9 @@ export default function FilterBar({ open, filter, onChange, onClose, events }: P
                 variant={filter.patchStatus === s ? 'filled' : 'outlined'}
                 color={filter.patchStatus === s ? 'primary' : 'default'}
                 onClick={() => setFilter({ patchStatus: s })}
-                sx={{ fontSize: '0.6rem', height: 22, cursor: 'pointer' }}
+                sx={{ fontSize: '0.6rem', height: 22, cursor: 'pointer',
+                  ...(filter.patchStatus !== s ? { borderColor: 'divider', color: 'text.secondary' } : {}),
+                }}
               />
             ))}
           </Box>
@@ -138,7 +142,7 @@ export default function FilterBar({ open, filter, onChange, onClose, events }: P
           </Tooltip>
         </Box>
       </Box>
-    </Collapse>
+    </Box>
   )
 }
 
