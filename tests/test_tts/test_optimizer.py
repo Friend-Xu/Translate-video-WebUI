@@ -21,10 +21,13 @@ from pipeline.tts_caption import CaptionRenderer
 
 FONT_PATH = os.path.join(PROJECT_ROOT, "models", "font", "Minecraft_font",
                          "5_Minecraft_AE_zh_en.ttf")
+_font_available = os.path.isfile(FONT_PATH)
 
 
 @pytest.fixture
 def capturer():
+    if not _font_available:
+        pytest.skip("Font file not available in CI")
     return CaptionRenderer(
         font_path=FONT_PATH,
         max_lines=2,
@@ -158,6 +161,8 @@ class TestEdgeCases:
 
     @pytest.fixture
     def capturer(self):
+        if not _font_available:
+            pytest.skip("Font file not available in CI")
         return CaptionRenderer(
             font_path=FONT_PATH,
             max_lines=2,
