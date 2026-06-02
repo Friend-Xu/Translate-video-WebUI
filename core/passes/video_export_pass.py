@@ -19,11 +19,13 @@ class VideoExportPass(TimelinePass):
     depends_on: list[str] = []
 
     def __init__(self, video_path: str = "", output_dir: str = "",
-                 workspace_dir: str = "", caption: bool = False):
+                 workspace_dir: str = "", caption: bool = False,
+                 caption_config: dict | None = None):
         self.video_path = video_path
         self.output_dir = output_dir or ""
         self.workspace_dir = workspace_dir or ""
         self.caption = caption
+        self.caption_config = caption_config or {}
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         events = state.sorted_events()
@@ -58,7 +60,16 @@ class VideoExportPass(TimelinePass):
         from pipeline.tts_video import VideoSegmenter
         from moviepy import VideoFileClip, AudioFileClip
 
-        seg = VideoSegmenter(video_output_dir=video_dir, caption=self.caption)
+        seg = VideoSegmenter(video_output_dir=video_dir,
+                             caption=self.caption or bool(self.caption_config))
+
+        # 读取 Demucs 分离的背景乐
+        bgm_ref = state.get_global_bgm_ref()
+        audio_instrumental = None
+        if bgm_ref:
+            bgm_path = os.path.join(self.workspace_dir, bgm_ref) if not os.path.isabs(bgm_ref) else bgm_ref
+            if os.path.isfile(bgm_path):
+                audio_instrumental = AudioFileClip(bgm_path)
 
         for i, task in enumerate(tasks):
             next_start = tasks[i + 1]["start"] if i + 1 < len(tasks) else task["end"]
@@ -75,7 +86,7 @@ class VideoExportPass(TimelinePass):
             try:
                 seg.slow_down_video_to_file(
                     current_video=clip,
-                    audio_instrumental=None,
+                    audio_instrumental=audio_instrumental,
                     tts_audio=tts_audio,
                     tts_audio_path=tts_path,
                     start=task["start"],
@@ -91,6 +102,8 @@ class VideoExportPass(TimelinePass):
                 import time; time.sleep(0.05)
 
         video.close()
+        if audio_instrumental is not None:
+            audio_instrumental.close()
 
         from pipeline.video_merger import VideoMerger, MergerConfig
         merger = VideoMerger(MergerConfig(strategy="ffmpeg"))

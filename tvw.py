@@ -253,6 +253,16 @@ def _run_core_pipeline(args) -> None:
     from core.quality.protocol import create_strategy as create_quality_strategy
     quality_strategy = create_quality_strategy(quality_name, gcfg)
 
+    # 构建字幕配置（仅非 None 值传入）
+    caption_config = {}
+    for attr in ("caption_font", "caption_font_size", "caption_font_color",
+                 "caption_stroke_width", "caption_stroke_color", "caption_bg_color",
+                 "caption_alignment", "caption_position", "caption_max_lines",
+                 "caption_width_ratio"):
+        val = getattr(args, attr, None)
+        if val is not None:
+            caption_config[attr] = val
+
     pass_factory = create_pass_factory(
         translate_fn=_translate_fn,
         video_path=video_path,
@@ -261,6 +271,11 @@ def _run_core_pipeline(args) -> None:
         workspace_dir=ws_dir,
         engine=args.engine or "edge",
         quality_strategy=quality_strategy,
+        num_workers=getattr(args, "num_workers", 1),
+        enable_speaker_diarization=getattr(args, "enable_speaker_diarization", False),
+        enable_emotion=getattr(args, "enable_emotion", False),
+        verification_mode=getattr(args, "verification_mode", None),
+        caption_config=caption_config if caption_config else None,
     )
 
     orchestrator = WorkflowOrchestrator(
@@ -862,7 +877,29 @@ def main():
     p_run.add_argument("--skip-tts", action="store_true")
     p_run.add_argument("--skip-demucs", action="store_true")
     p_run.add_argument("--skip-align", action="store_true")
+    p_run.add_argument("--skip-defect-check", action="store_true")
+    p_run.add_argument("--skip-semantic-validation", action="store_true")
+    p_run.add_argument("--skip-naturalness-check", action="store_true")
     p_run.add_argument("--force", action="store_true")
+    # ── 管线控制 ──
+    p_run.add_argument("--num-workers", type=int, default=1, help="ASR worker 数")
+    p_run.add_argument("--enable-speaker-diarization", action="store_true",
+                       help="启用 pyannote 说话人分离")
+    p_run.add_argument("--enable-emotion", action="store_true", help="启用情绪识别")
+    p_run.add_argument("--verification-mode", default=None, help="翻译验证模式")
+    p_run.add_argument("--no-optimize-subtitles", action="store_true", help="跳过字幕拆分优化")
+    p_run.add_argument("--export-external-srt", action="store_true", help="导出双语优化字幕")
+    # ── 字幕配置 ──
+    p_run.add_argument("--caption-font", default=None, help="字幕字体路径")
+    p_run.add_argument("--caption-font-size", type=int, default=None, help="字幕字号")
+    p_run.add_argument("--caption-font-color", default=None, help="字幕颜色")
+    p_run.add_argument("--caption-stroke-width", type=float, default=None, help="字幕描边宽度")
+    p_run.add_argument("--caption-stroke-color", default=None, help="字幕描边颜色")
+    p_run.add_argument("--caption-bg-color", default=None, help="字幕背景色")
+    p_run.add_argument("--caption-alignment", default=None, help="字幕对齐")
+    p_run.add_argument("--caption-position", default=None, help="字幕位置")
+    p_run.add_argument("--caption-max-lines", type=int, default=None, help="字幕最大行数")
+    p_run.add_argument("--caption-width-ratio", type=float, default=None, help="字幕宽度比例")
 
     # ── inspect ──
     p_inspect = sub.add_parser("inspect", help="查看 workspace 状态")

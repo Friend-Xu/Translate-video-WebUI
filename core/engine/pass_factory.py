@@ -66,7 +66,7 @@ _PASS_REGISTRY: dict[str, type] = {
 _RUNTIME_ARGS: dict[str, list[str]] = {
     "media_validate": ["video_path", "output_dir"],
     "media_validator": ["video_path", "output_dir"],
-    "demucs": ["video_path", "output_dir"],
+    "demucs": ["video_path", "output_dir", "skip_demucs"],
     "audio_preprocess": ["video_path", "output_dir"],
     "asr_to_ir": ["segments", "speaker_timeline"],
     "asr": ["audio_path", "workspace_dir"],
@@ -77,7 +77,7 @@ _RUNTIME_ARGS: dict[str, list[str]] = {
     "quality_check": ["quality_strategy"],
     "translation_quality": ["quality_strategy"],
     "srt_export": ["output_path"],
-    "video_export": ["video_path", "output_dir", "workspace_dir"],
+    "video_export": ["video_path", "output_dir", "workspace_dir", "caption_config"],
     "tts": ["output_dir"],
     "tts_composite": ["output_dir"],
     "emotion": ["workspace_dir"],
@@ -100,11 +100,14 @@ def create_pass_factory(
     output_dir: str = "",
     workspace_dir: str = "",
     quality_strategy = None,
+    num_workers: int = 1,
+    enable_speaker_diarization: bool = False,
+    enable_emotion: bool = False,
+    verification_mode: str | None = None,
+    skip_demucs: bool = False,
+    caption_config: dict | None = None,
 ) -> Callable[[str], TimelinePass | None]:
-    """通过闭包注入运行时依赖，返回 Pass 工厂函数。
-
-    quality_strategy: QualityStrategy | None — 可插拔质量把控策略 (v2.0)
-    """
+    """通过闭包注入运行时依赖，返回 Pass 工厂函数。"""
 
     _runtime = {
         "segments": segments,
@@ -117,6 +120,12 @@ def create_pass_factory(
         "output_dir": output_dir,
         "workspace_dir": workspace_dir,
         "quality_strategy": quality_strategy,
+        "num_workers": num_workers,
+        "enable_speaker_diarization": enable_speaker_diarization,
+        "enable_emotion": enable_emotion,
+        "verification_mode": verification_mode,
+        "skip_demucs": skip_demucs,
+        "caption_config": caption_config,
     }
 
     def _factory(name: str) -> TimelinePass | None:
