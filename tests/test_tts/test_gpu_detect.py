@@ -32,8 +32,8 @@ class TestGpuDetect:
         assert result == "libx264"
 
     @patch("subprocess.run")
-    def test_detect_nvenc_available(self, mock_run):
-        """有 nvenc 且 NVIDIA GPU 存在时返回 h264_nvenc"""
+    def test_detect_nvenc_available_returns_libx264(self, mock_run):
+        """有 nvenc 且 NVIDIA GPU 存在 → 返回 libx264 (优先级最高，NVENC 并发限制)"""
         from pipeline.gpu_detect import detect_best_encoder
 
         def side_effect(cmd, **kwargs):
@@ -46,7 +46,7 @@ class TestGpuDetect:
         mock_run.side_effect = side_effect
 
         result = detect_best_encoder(ffmpeg_exe="/fake/ffmpeg")
-        assert result == "h264_nvenc"
+        assert result == "libx264"
 
     @patch("subprocess.run")
     def test_detect_nvenc_absent_no_gpu(self, mock_run):

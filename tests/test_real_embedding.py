@@ -124,7 +124,7 @@ def compute_pairwise_cosine(embeddings: dict[str, list[np.ndarray]]):
     return intra_sims, inter_sims
 
 
-def test_cluster_quality(embeddings: dict[str, list[np.ndarray]]):
+def _eval_cluster_quality(embeddings: dict[str, list[np.ndarray]]):
     """Test if k-means on embeddings can recover the original speaker labels."""
     from sklearn.cluster import KMeans
 
@@ -218,8 +218,8 @@ def main():
 
     # Clustering test
     print(f"\n{'Clustering (if margin > 0.15 = useful)':}")
-    r_cluster = test_cluster_quality(real_embs)
-    n_cluster = test_cluster_quality(random_embs)
+    r_cluster = _eval_cluster_quality(real_embs)
+    n_cluster = _eval_cluster_quality(random_embs)
 
     if r_cluster:
         print(f"  REAL:   ARI={r_cluster['ari']:.3f} NMI={r_cluster['nmi']:.3f} Purity={r_cluster['purity']:.3f}")

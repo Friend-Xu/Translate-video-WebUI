@@ -181,17 +181,12 @@ class SpeakerDiarizer:
             self._pipeline.to(torch.device(self._device))
 
             # 优化默认参数（针对视频/游戏场景）
-            # segmentation-3.0 只有 min_duration_off；clustering 可调 threshold
+            # threshold 0.70: 平衡过拆分（太低）和过合并（太高），适合 2-8 人场景
             self._pipeline.instantiate({
-                "segmentation": {
-                    "min_duration_off": 0.0,
-                },
-                "clustering": {
-                    "threshold": 0.55,
-                    "min_cluster_size": 8,
-                },
+                "segmentation": {"min_duration_off": 0.0},
+                "clustering": {"threshold": 0.65, "min_cluster_size": 8},
             })
-            logger.info("pyannote 参数: min_dur_off=0.0, cluster_threshold=0.55, min_cluster_size=8")
+            logger.info("pyannote 参数: min_dur_off=0.0, cluster_threshold=0.65, min_cluster_size=8")
 
             # 预热 CUDA JIT
             dummy = torch.randn(1, 16000, device=self._device)
@@ -232,6 +227,7 @@ class SpeakerDiarizer:
             logger.info("说话人分离: %s", os.path.basename(vocals_path))
             output = self._pipeline(
                 vocals_path,
+                num_speakers=max_speakers if min_speakers == max_speakers and min_speakers > 0 else None,
                 min_speakers=min_speakers,
                 max_speakers=max_speakers,
             )
