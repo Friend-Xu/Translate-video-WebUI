@@ -18,6 +18,7 @@ from core.runtime.project_state import TimelineProjectState
 from core.runtime.patch_engine import PatchEngine
 from core.adapters.cosyvoice_adapter import CosyVoiceAdapter, CosyVoiceSegmentContext
 from core.tts.cosyvoice_duration import CosyVoiceDurationController
+from core.tts.duration_control import SpeedDecision
 from core.tts.cross_lingual import CrossLingualProcessor
 from core.scoring.cosyvoice_scorer import CosyVoiceScorer
 
@@ -107,8 +108,40 @@ class CosyVoiceCompositePass(TimelinePass):
                 ctx.speed = round(ctx.speed * retry_speed, 3)
                 if 0.5 <= ctx.speed <= 2.0:
                     patch = adapter.synthesize(ctx)
+                    # 重试后重新判定
+                    action = duration_ctrl.check(
+                        patch.value["duration"], ctx.duration_target,
+                    )
+                if action == "split":
+                    es.runtime["tts_status"] = "needs_split"
             elif action == "split":
                 es.runtime["tts_status"] = "needs_split"
+
+            # ── 调速决策 ──
+            if action == "split" or es.runtime.get("tts_status") == "needs_split":
+                sd = SpeedDecision(
+                    strategy="video_slowdown",
+                    original_duration=patch.value["duration"],
+                    final_duration=patch.value["duration"],
+                    search_method="oneshot",
+                    search_iterations=1,
+                    search_reached_limit=True,
+                    video_speed_factor=max(0.60, ctx.duration_target / max(patch.value["duration"], 0.001)),
+                    deviation=abs(patch.value["duration"] - ctx.duration_target) / max(ctx.duration_target, 0.001),
+                    deviation_before=abs(patch.value["duration"] - ctx.duration_target) / max(ctx.duration_target, 0.001),
+                )
+            else:
+                dur = patch.value["duration"]
+                target = ctx.duration_target
+                sd = SpeedDecision(
+                    strategy="accept",
+                    original_duration=dur,
+                    final_duration=dur,
+                    deviation=abs(dur - target) / max(target, 0.001),
+                )
+            es.tts["speed_decision"] = sd.as_dict()
+
+            if es.runtime.get("tts_status") == "needs_split":
                 continue
 
             # 评分

@@ -1,0 +1,104 @@
+"""
+VideoExportPass — 复用旧管线 VideoSegmenter + VideoMerger
+
+调速策略 (slow_down_video_to_file):
+  TTS 时长 ≈ 视频段时长 → 视频不变速
+  TTS 时长 > 视频段时长 → 减速视频 (speed_factor < 1)
+  TTS 时长 < 视频段时长 → 视频正常播放，TTS 音频自然结束
+"""
+from __future__ import annotations
+import os
+from core.engine.pass_base import TimelinePass
+from core.runtime import TimelineProjectState
+
+
+class VideoExportPass(TimelinePass):
+    """TTS 音频 → 视频段 → ffmpeg 合并 → 成品视频"""
+
+    name = "video_export"
+    depends_on: list[str] = []
+
+    def __init__(self, video_path: str = "", output_dir: str = "",
+                 workspace_dir: str = "", caption: bool = False):
+        self.video_path = video_path
+        self.output_dir = output_dir or ""
+        self.workspace_dir = workspace_dir or ""
+        self.caption = caption
+
+    def apply(self, state: TimelineProjectState) -> TimelineProjectState:
+        events = state.sorted_events()
+        tasks = []
+        for es in events:
+            audio_ref = es.derivatives.get("audio_ref")
+            if not audio_ref:
+                continue
+            audio_path = os.path.join(self.workspace_dir, audio_ref) if not os.path.isabs(audio_ref) else audio_ref
+            if not os.path.isfile(audio_path):
+                continue
+            start_ms = int(es.start * 1000)
+            end_ms = int(es.end * 1000)
+            text = es.derivatives.get("translation", "") or es.ir.text_ref
+            tasks.append({
+                "start": start_ms,
+                "end": end_ms,
+                "text": text,
+                "audio_path": audio_path,
+                "speed_decision": es.tts.get("speed_decision", {}),
+            })
+        if not tasks:
+            return state
+
+        # 对齐旧管线目录: video → 05_tts/video/, final → 06_export/dubbed.mp4
+        video_dir = os.path.join(self.output_dir, "05_tts", "video")
+        export_dir = os.path.join(self.output_dir, "06_export")
+        output_path = os.path.join(export_dir, "dubbed.mp4")
+        os.makedirs(video_dir, exist_ok=True)
+        os.makedirs(export_dir, exist_ok=True)
+
+        from pipeline.tts_video import VideoSegmenter
+        from moviepy import VideoFileClip, AudioFileClip
+
+        seg = VideoSegmenter(video_output_dir=video_dir, caption=self.caption)
+
+        for i, task in enumerate(tasks):
+            next_start = tasks[i + 1]["start"] if i + 1 < len(tasks) else task["end"]
+            task["video_end"] = next_start
+
+        video = VideoFileClip(self.video_path)
+
+        for i, task in enumerate(tasks):
+            tts_path = task["audio_path"]
+            clip = video.subclipped(task["start"] / 1000, task["video_end"] / 1000)
+            tts_audio = AudioFileClip(tts_path)
+            sd = task.get("speed_decision", {})
+            sf_override = sd.get("video_speed_factor") if sd.get("strategy") == "video_slowdown" else None
+            try:
+                seg.slow_down_video_to_file(
+                    current_video=clip,
+                    audio_instrumental=None,
+                    tts_audio=tts_audio,
+                    tts_audio_path=tts_path,
+                    start=task["start"],
+                    text=task["text"],
+                    text_eng="",
+                    end=task["end"],
+                    speed_factor_override=sf_override,
+                )
+            finally:
+                clip.close()
+                tts_audio.close()
+                # Windows: 确保 moviepy 内部 ffmpeg 进程释放文件句柄
+                import time; time.sleep(0.05)
+
+        video.close()
+
+        from pipeline.video_merger import VideoMerger, MergerConfig
+        merger = VideoMerger(MergerConfig(strategy="ffmpeg"))
+        result = merger.merge(video_dir, output_path)
+        if result and os.path.isfile(output_path):
+            from pipeline.logger import get_logger
+            logger = get_logger(__name__)
+            sz = os.path.getsize(output_path) / 1024 / 1024
+            logger.info(f"最终视频已保存: {output_path} ({sz:.1f}MB)")
+
+        return state
