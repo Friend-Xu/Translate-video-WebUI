@@ -127,12 +127,15 @@ def _normalize_text(text: str) -> str:
     norm = _get_wetext_normalizer()
     if norm:
         text = norm.normalize(text)
-        return _clean_punctuation(text)
+    # 兜底：wetext 版本差异可能导致部分阿拉伯数字残留
+    # 先处理 "digit.digit" (如 1.19)，再处理 ".digit" (如 .2)，最后处理剩余整数
     text = re.sub(r"(\d+(?:\.\d+)?)%",
                   lambda m: "百分之" + _arabic_to_chinese(m.group(1).split(".")[0])
                   + ("点" + _decimal_to_chinese(m.group(1).split(".")[1]) if "." in m.group(1) else ""), text)
     text = re.sub(r"(\d+)\.(\d+)",
                   lambda m: _arabic_to_chinese(m.group(1)) + "点" + _decimal_to_chinese(m.group(2)), text)
+    text = re.sub(r"\.(\d+)",
+                  lambda m: "点" + _decimal_to_chinese(m.group(1)), text)
     text = re.sub(r"\d+", lambda m: _arabic_to_chinese(m.group()), text)
     return _clean_punctuation(text)
 
