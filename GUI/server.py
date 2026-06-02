@@ -509,6 +509,91 @@ def _load_yaml_defaults() -> dict:
     }
 
 
+def _snake_defaults() -> dict:
+    """蛇形键默认值，匹配 SettingsView 的 config state 键名。"""
+    base = _load_yaml_defaults()
+    return {
+        "tts_engine": base.get("engine", "chattts"),
+        "speed_factor": 1.0,
+        "tts_concurrency": base.get("ttsWorkers", 2),
+        "loudness_norm": base.get("loudnessNormEnabled", True),
+        "chattts_speaker_seed": base.get("chatttsSpeakerSeed", 2),
+        "chattts_speaker_pt": base.get("chatttsSpeakerPt", ""),
+        "chattts_temperature": 0.3,
+        "chattts_top_k": 20,
+        "chattts_top_p": 0.7,
+        "chattts_workers": base.get("chatttsWorkers", 0),
+        "chattts_emotion_injection": True,
+        "edge_voice": base.get("voice", "zh-CN-XiaoxiaoNeural"),
+        "edge_rate": "+0%",
+        "edge_pitch": "+0Hz",
+        "edge_volume": "+0%",
+        "base_speed": 40,
+        "video_speed_min": 0.60,
+        "video_speed_max": 2.00,
+        "loudness_target_lufs": -16.0,
+        "demucs_model": "htdemucs",
+        "skip_demucs": False,
+        "skip_tts": False,
+        "skip_extract": False,
+        "skip_translate": False,
+        "skip_semantic_validation": False,
+        "skip_naturalness_check": False,
+        "asr_model": "turbo",
+        "device": "cuda",
+        "compute_type": "float16",
+        "source_lang": "auto",
+        "max_speakers": 0,
+        "clustering_threshold": 0.65,
+        "api_type": base.get("apiType", "deepseek"),
+        "api_key": base.get("apiKey", ""),
+        "model": "deepseek-v4-flash",
+        "target_lang": base.get("targetLang", "zh"),
+        "translate_concurrency": base.get("concurrency", 3),
+        "temperature": 0.1,
+        "max_tokens": 4000,
+        "top_p": 0.9,
+        "api_base_url": "https://api.deepseek.com",
+        "quality_gate": True,
+        "verification_mode": "logic_gate",
+        "gate_threshold_accept": 0.80,
+        "gate_threshold_reject": 0.60,
+        "gate_beta": 0.6,
+        "gate_gamma": 0.4,
+        "sim_drop_limit": 0.05,
+        "semantic_threshold": 0.70,
+        "joint_verification": False,
+        "custom_prompt": "",
+        "enable_glossary": True,
+        "glossary_files": "minecraft.json",
+        "max_retries": 2,
+        "fallback_to_single": True,
+        "caption_font": base.get("captionFont", ""),
+        "caption_font_size": 0,  # 0 = 自动 (video_width * font_size_factor)
+        "caption_font_color": "#FFFFFF",
+        "caption_stroke_color": "#000000",
+        "caption_stroke_width": 2,
+        "caption_bg_color": "#000000",
+        "caption_alignment": "center",
+        "caption_position": "bottom",
+        "caption_max_lines": 2,
+        "caption_font_size_factor": 0.030,
+        "caption_width_ratio": 0.85,
+        "font_size_mode": "adaptive",
+        "max_font_size": 0,
+        "enable_subtitle_optimization": True,
+        "bilingual_mode": "target_only",
+        "output_format": "mp4",
+        "video_codec": base.get("videoCodec", "libx264"),
+        "output_resolution": "original",
+        "video_bitrate": 8,
+        "preserve_original_audio": False,
+        "bgm_volume": 1.0,
+        "audio_codec": "aac",
+        "audio_bitrate": "192k",
+    }
+
+
 def ensure_backup() -> None:
     if not CONFIG_BAK.exists() and CONFIG_YAML.exists():
         shutil.copy2(CONFIG_YAML, CONFIG_BAK)
@@ -2152,26 +2237,37 @@ async def review_qa_check(srt_path: str, lang: str = "zh") -> dict:
 
 @app.get("/api/config")
 async def get_config() -> dict:
-    base = _load_yaml_defaults()
     settings = load_settings()
-    overrides = settings.get("pipeline", {})
-    base.update(overrides)
-    return base
+    saved = settings.get("pipeline", {})
+    if saved:
+        return {"config": saved}
+    return {"config": _snake_defaults()}
 
 
 @app.post("/api/config")
 async def post_config(payload: dict) -> dict:
-    base = _load_yaml_defaults()
-    overrides: dict = {}
-    for key, value in payload.items():
-        if key in base and value != base.get(key):
-            overrides[key] = value
-        elif key not in base:
-            overrides[key] = value
+    cfg = payload.get("config", payload)
     settings = load_settings()
-    settings["pipeline"] = overrides
+    settings["pipeline"] = cfg
     save_settings(settings)
     return {"status": "ok"}
+
+
+@app.get("/api/glossary/list")
+async def list_glossaries() -> list[dict]:
+    """列出 config/terms/ 目录下的术语表文件。"""
+    terms_dir = PROJECT_ROOT / "config" / "terms"
+    if not terms_dir.is_dir():
+        return []
+    result = []
+    for p in sorted(terms_dir.glob("*.json")):
+        result.append({
+            "name": p.stem,
+            "file": p.name,
+            "path": str(p),
+            "size": p.stat().st_size,
+        })
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -2359,6 +2455,44 @@ async def list_chattts_speakers() -> list[dict]:
         return json.load(f)
 
 
+# Edge TTS 语音列表缓存
+_edge_voices_cache: list[dict] | None = None
+
+@app.get("/api/tts/edge-voices")
+async def list_edge_voices() -> list[dict]:
+    """列出 Edge TTS 可用语音（按常用语言筛选，缓存结果）。"""
+    global _edge_voices_cache
+    if _edge_voices_cache is not None:
+        return _edge_voices_cache
+    import asyncio
+    try:
+        import edge_tts
+        voices = await edge_tts.list_voices()
+    except ImportError:
+        return []
+    except Exception:
+        return []
+
+    # 常用语言前缀
+    USEFUL = ("zh-CN", "zh-TW", "zh-HK", "ja-JP", "ko-KR",
+              "en-US", "en-GB", "en-AU",
+              "fr-FR", "de-DE", "es-ES", "pt-BR",
+              "ru-RU", "ar-SA", "th-TH", "vi-VN", "id-ID", "it-IT")
+    result = []
+    for v in voices:
+        short = v.get("ShortName", "")
+        if any(short.startswith(p) for p in USEFUL):
+            result.append({
+                "name": short,
+                "display": v.get("FriendlyName", short),
+                "locale": v.get("Locale", ""),
+                "gender": v.get("Gender", ""),
+                "language": short.rsplit("-", 1)[0] if "-" in short else short,
+            })
+    _edge_voices_cache = result
+    return result
+
+
 # ---------------------------------------------------------------------------
 # ChatTTS voice preview (gacha)
 # ---------------------------------------------------------------------------
@@ -2514,12 +2648,9 @@ async def tts_preview(req: TTSPreviewRequest) -> dict:
     out_path = os.path.join(tempfile.gettempdir(), f"tvw_preview_{int(time.time())}.wav")
     try:
         if req.engine == "edge":
-            from core.compat import compat_chattts_factory
-            import edge_tts, asyncio
-            async def _t():
-                communicate = edge_tts.Communicate(req.text, req.voice_id or "zh-CN-XiaoxiaoNeural")
-                await communicate.save(out_path)
-            asyncio.run(_t())
+            import edge_tts
+            communicate = edge_tts.Communicate(req.text, req.voice_id or "zh-CN-XiaoxiaoNeural")
+            await communicate.save(out_path)
         else:
             from core.compat import compat_chattts_factory
             engine_cls = compat_chattts_factory()
@@ -2599,6 +2730,47 @@ async def get_glossary_dict(name: str) -> dict:
     return json.loads(path.read_text("utf-8"))
 
 
+# 术语表缓存 — 20 万条 minecraft_mod.json 每次 json.loads 太慢
+_glossary_cache: dict[str, dict] = {}  # {name: {"entries": [(k,v),...], "mtime": float}}
+
+
+def _get_glossary_entries(name: str) -> list[tuple[str, str]]:
+    """返回术语表词条列表，使用缓存避免重复解析大 JSON。"""
+    path = PROJECT_ROOT / "config" / "terms" / f"{name}.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"Dictionary not found: {name}")
+    mtime = path.stat().st_mtime
+    cached = _glossary_cache.get(name)
+    if cached and cached["mtime"] == mtime:
+        return cached["entries"]
+    data = json.loads(path.read_text("utf-8"))
+    entries = list(data.get("terms", {}).items())
+    _glossary_cache[name] = {"entries": entries, "mtime": mtime}
+    return entries
+
+
+def _invalidate_glossary_cache(name: str) -> None:
+    _glossary_cache.pop(name, None)
+
+
+@app.get("/api/glossary/dict/{name}/terms")
+async def search_glossary_terms(name: str, q: str = "", offset: int = 0, limit: int = 200) -> dict:
+    """分页搜索术语表词条。大文件 (20 万条) 走缓存，不反复解析 JSON。"""
+    entries = _get_glossary_entries(name)
+    if q:
+        ql = q.lower()
+        entries = [(k, v) for k, v in entries if ql in k.lower() or ql in v.lower()]
+    total = len(entries)
+    page = entries[offset:offset + limit]
+    return {
+        "name": name,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "items": [{"key": k, "value": v} for k, v in page],
+    }
+
+
 @app.post("/api/glossary/dict/{name}")
 async def save_glossary_dict(name: str, payload: dict) -> dict:
     terms_dir = PROJECT_ROOT / "config" / "terms"
@@ -2610,6 +2782,7 @@ async def save_glossary_dict(name: str, payload: dict) -> dict:
         "terms": payload.get("terms", {}),
     }
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _invalidate_glossary_cache(name)
     return {"ok": True, "name": name, "termCount": len(data["terms"])}
 
 
@@ -2619,6 +2792,7 @@ async def delete_glossary_dict(name: str) -> dict:
     if not path.is_file():
         raise HTTPException(status_code=404, detail=f"Dictionary not found: {name}")
     path.unlink()
+    _invalidate_glossary_cache(name)
     return {"ok": True}
 
 
@@ -3499,6 +3673,9 @@ async def search_videos_recursive(path: str = "") -> dict:
     try:
         for item in sorted(target.rglob("*")):
             if item.is_file() and item.suffix.lower() in VIDEO_EXTENSIONS:
+                # 排除 _project 工作目录内的合成视频
+                if any(p.endswith("_project") for p in item.parts):
+                    continue
                 videos.append({
                     "name": item.name,
                     "path": str(item),
@@ -5183,7 +5360,7 @@ async def list_workflow_presets() -> dict:
 class WorkspaceCreateRequest(BaseModel):
     video_path: str
     name: str = ""
-    workflow_preset: str = "quick_subtitle"
+    workflow_preset: str = "quick_sub_single"
     lang: str = ""
     target_lang: str = ""
 
@@ -5359,7 +5536,7 @@ async def get_workspace_detail(path: str = "") -> dict:
 
 class CoreRunRequest(BaseModel):
     video_path: str
-    workflow_preset: str = "quick_subtitle"
+    workflow_preset: str = "quick_sub_single"
     lang: str = "auto"
     target_lang: str = "zh"
     engine: str = "chattts"
@@ -5660,16 +5837,22 @@ def _run_core_pipeline_sync(job: Job, req: CoreRunRequest) -> None:
 
     _stage_index = {"load": 5, "extract": 20, "translate": 50, "validate": 65, "tts": 75, "export": 90}
 
+    # 从 settings.json 读取全局偏好，弥补前端简化后不再传的字段
+    settings = load_settings()
+    pipeline_cfg = settings.get("pipeline", {})
+    engine = req.engine or pipeline_cfg.get("tts_engine", "chattts")
+    target_lang = req.target_lang or pipeline_cfg.get("target_lang", "zh")
+
     # 构建 tvw.py 参数
     tvw_args = [
         str(VENV_PYTHON), str(TVW_SCRIPT),
         "--json-output", "run", str(req.video_path),
         "--use-core",
     ]
-    if req.target_lang:
-        tvw_args.extend(["--lang", req.target_lang])
-    if req.engine:
-        tvw_args.extend(["--engine", req.engine])
+    if target_lang:
+        tvw_args.extend(["--lang", target_lang])
+    if engine:
+        tvw_args.extend(["--engine", engine])
     # Bootstrap if not explicit export and not full_pipeline
     preset = get_preset(req.workflow_preset) if req.workflow_preset else None
     full_pipeline = preset.config_defaults.get("full_pipeline", False) if preset else False

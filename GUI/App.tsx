@@ -15,6 +15,7 @@ import PatchManagementView from './components/ModeViews/PatchManagementView'
 import ExportView from './components/ModeViews/ExportView'
 import SettingsView from './components/ModeViews/SettingsView'
 import SpeakerReviewView from './components/ModeViews/SpeakerReviewView'
+import GlossaryManager from './components/GlossaryManager'
 import ReviewTable from './components/TimelineArena/ReviewTable'
 import CommandPalette from './components/CommandPalette'
 import { useConfig } from './hooks/useConfig'
@@ -198,6 +199,12 @@ export default function App() {
         )}
         <ReviewTable events={events} workspace={storeWorkspace} onSeek={(t) => useAppStore.getState().setPlayhead(t)} />
       </Box>
+      <Box sx={{ display: mode === 'settings' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
+        <SettingsView />
+      </Box>
+      <Box sx={{ display: mode === 'glossary' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
+        <GlossaryManager />
+      </Box>
       <Box sx={{ display: mode === 'timeline' ? 'flex' : 'none', flex: 1, overflow: 'hidden', position: 'relative' }}>
         {!isWorkspace && (
           <Box sx={{
@@ -230,11 +237,6 @@ export default function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-
-      {mode === 'settings' ? (
-        <SettingsView />
-      ) : (
-      <>
 
       {errorMsg && <ErrorBanner message={errorMsg} onDismiss={() => setErrorMsg(null)} />}
 
@@ -310,8 +312,6 @@ export default function App() {
           {snackbar.msg}
         </Alert>
       </Snackbar>
-      </>
-      )}
     </ThemeProvider>
   )
 }

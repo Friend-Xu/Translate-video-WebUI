@@ -46,6 +46,7 @@ export const TRACK_VISIBILITY_MAP: Record<Mode, Partial<Record<TrackType, { visi
   batch: {},
   export: {},
   settings: {},
+  glossary: {},
 }
 
 // Speaker focus track preset — applied when timelineFocus='speaker'
