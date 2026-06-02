@@ -122,7 +122,7 @@ coverage.xml
 
 # Claude Code (personal config)
 .claude/
-__启动脚本.bat
+__*启动*.bat
 
 # Personal planning / dev notes
 docs/

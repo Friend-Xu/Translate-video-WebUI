@@ -122,8 +122,15 @@ class WhisperAdapter(AdapterProtocol):
     # ── faster-whisper 转录 ───────────────────────────────────
 
     def _transcribe(self, vad_segments: list[tuple[float, float]]) -> tuple[list[dict], str, dict]:
-        """用 faster-whisper 转录 VAD 分段。转录整段音频一次，按 VAD 边界过滤。"""
+        """用 faster-whisper 逐 VAD 段切片转录。
+
+        与旧 pipeline/transcriber.py 一致：为每个 VAD 段从音频文件中切出精确窗口，
+        单独送给 whisper 转录。这样 whisper 只看到 VAD 窗口内的音频，不会产生越界
+        segment，无需事后过滤。
+        """
         from faster_whisper import WhisperModel
+        import soundfile as sf
+        import numpy as np
 
         download_root = self.ctx.model_root
         if not download_root:
@@ -141,55 +148,106 @@ class WhisperAdapter(AdapterProtocol):
             num_workers=self.ctx.num_workers,
         )
 
-        # Transcribe entire audio ONCE, not per-VAD-segment.
-        # Do NOT use vad_filter=True — faster-whisper's internal VAD is more aggressive
-        # than Silero and would discard speech that Silero detected.
-        chunk_segments, info = model.transcribe(
-            self.ctx.audio_path,
-            language=self.ctx.language,
-            word_timestamps=True,
-        )
-        language = info.language
+        # 加载完整音频到内存（一次 I/O 替代逐段 sf.read）
+        audio, sr = sf.read(self.ctx.audio_path)
+        if audio.dtype != np.float32:
+            audio = audio.astype(np.float32)
 
+        # 合并相邻 VAD 段以减少 whisper 调用次数
+        merge_gap = 0.5       # ≤此间隙合并
+        merge_max_dur = 45.0  # 合并后最大时长
+        merged_segs = []
+        cur_start, cur_end = None, None
+        for s, e in vad_segments:
+            if cur_start is None:
+                cur_start, cur_end = s, e
+            elif s - cur_end < merge_gap and (e - cur_start) < merge_max_dur:
+                cur_end = e
+            else:
+                merged_segs.append((cur_start, cur_end))
+                cur_start, cur_end = s, e
+        if cur_start is not None:
+            merged_segs.append((cur_start, cur_end))
+
+        language = self.ctx.language
+        all_words: list[dict] = []
+        segment_gap = 1.5  # 词间停顿超过此值则分裂为新 segment
+
+        for seg_start, seg_end in merged_segs:
+            seg_dur = seg_end - seg_start
+            start_sample = int(seg_start * sr)
+            num_samples = int(seg_dur * sr)
+
+            if num_samples <= 0:
+                continue
+
+            audio_seg = audio[start_sample:start_sample + num_samples].copy()
+
+            chunk_segments, info = model.transcribe(
+                audio_seg,
+                language=self.ctx.language,
+                word_timestamps=True,
+                vad_filter=False,
+            )
+            if language is None:
+                language = info.language
+
+            for seg in chunk_segments:
+                if not seg.words:
+                    continue
+                for w in seg.words:
+                    all_words.append({
+                        "word": w.word.strip(),
+                        "start": w.start + seg_start,
+                        "end": w.end + seg_start,
+                        "score": w.probability,
+                    })
+
+            del audio_seg, chunk_segments
+
+        # 按停顿将词分组为 segments（与 legacy transcriber._group_into_segments 一致）
+        all_words.sort(key=lambda w: w["start"])
         segments: list[dict] = []
-        total_words = 0
+        cur_words: list[dict] = []
+        cur_begin, cur_finish = None, None
 
-        for seg in chunk_segments:
-            seg_start = seg.start
-            seg_end = seg.end
-            if seg_start >= seg_end:
+        for w in all_words:
+            ws, we = w["start"], w["end"]
+            if cur_begin is None:
+                cur_begin, cur_finish = ws, we
+                cur_words.append(w)
                 continue
+            gap = ws - cur_finish
+            if gap > segment_gap:
+                segments.append({
+                    "text": " ".join(w2["word"] for w2 in cur_words),
+                    "start": cur_begin,
+                    "end": cur_finish,
+                    "words": cur_words,
+                })
+                cur_words = [w]
+                cur_begin, cur_finish = ws, we
+            else:
+                cur_finish = we
+                cur_words.append(w)
 
-            # Filter: only keep segments that fall within a VAD interval
-            in_vad = any(start <= seg_start and seg_end <= end for start, end in vad_segments)
-            if not in_vad:
-                continue
-
-            words = [
-                {"word": w.word.strip(), "start": w.start, "end": w.end, "score": w.probability}
-                for w in (seg.words or [])
-            ]
-            text = seg.text.strip()
-            if not text:
-                continue
-            total_words += len(words)
+        if cur_words:
             segments.append({
-                "start": seg_start,
-                "end": seg_end,
-                "text": text,
-                "words": words,
+                "text": " ".join(w2["word"] for w2 in cur_words),
+                "start": cur_begin,
+                "end": cur_finish,
+                "words": cur_words,
             })
 
         stats = {
             "segments_count": len(segments),
-            "total_words": total_words,
+            "total_words": len(all_words),
         }
 
-        # 闭合 segment 间隙：VAD 语音连续但 faster-whisper 内部分段产生的间隙
         segments.sort(key=lambda s: s["start"])
         _close_segment_gaps(segments, vad_segments)
 
-        return segments, language, stats
+        return segments, language or "auto", stats
 
     # ── Patch 转换 ─────────────────────────────────────────────
 
