@@ -34,6 +34,16 @@ class MergerConfig:
     """ffmpeg 策略是否使用 stream copy（不重编码，最快）。
     若各视频段编码参数不完全一致，设 False 回退到重编码。"""
 
+    crf: int = 18
+    """CRF 质量值 (0-51, 越低越好)。仅在 concat_use_stream_copy=False 时生效。
+    18=视觉无损, 23=默认, 28=可接受。"""
+
+    preset: str = "medium"
+    """编码器 preset。仅在 concat_use_stream_copy=False 时生效。"""
+
+    bitrate: Optional[str] = None
+    """视频码率。仅在 concat_use_stream_copy=False 且 crf 未设置时生效。None 表示跟随各段码率。"""
+
 
 class VideoMerger:
     """视频段合并器。
@@ -119,6 +129,7 @@ class VideoMerger:
         `ffmpeg -f concat -safe 0 -i manifest.txt [-c copy] output.mp4`
 
         使用 stream copy 时不重编码，速度最快。
+        stream copy 失败时自动降级为重编码合并。
         """
         ffmpeg = self._get_ffmpeg()
         seg_dir = os.path.dirname(segments[0])
@@ -130,15 +141,26 @@ class VideoMerger:
                 f.write(f"file '{os.path.basename(seg)}'\n")
 
         # 构建命令
-        cmd = [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", manifest]
+        # -fflags +genpts：输入选项，重新生成 PTS（消除编辑列表偏移）
+        # -fps_mode cfr：输出选项，强制恒定帧率
+        cmd = [ffmpeg, "-y", "-fflags", "+genpts",
+               "-f", "concat", "-safe", "0", "-i", manifest,
+               "-fps_mode", "cfr"]
         if self.config.concat_use_stream_copy:
             cmd.extend(["-c", "copy"])
         else:
-            cmd.extend(["-c:v", self.config.video_encoder, "-c:a", self.config.audio_encoder])
+            cmd.extend(["-c:v", self.config.video_encoder])
+            cmd.extend(["-crf", str(self.config.crf)])
+            cmd.extend(["-preset", self.config.preset])
+            cmd.extend(["-tune", "film", "-pix_fmt", "yuv420p", "-profile:v", "high"])
+            if self.config.bitrate:
+                cmd.extend(["-b:v", self.config.bitrate])
+            cmd.extend(["-c:a", self.config.audio_encoder])
         cmd.append(output_path)
 
         logger.info(f"正在合并视频段 (ffmpeg concat)...")
         last_progress = [0.0]
+        stderr_lines: list[str] = []
 
         try:
             proc = subprocess.Popen(
@@ -148,7 +170,7 @@ class VideoMerger:
             assert proc.stderr is not None
             for line in proc.stderr:
                 line = line.strip()
-                # ffmpeg 进度行: "frame=... fps=... time=00:00:05.00 ..."
+                stderr_lines.append(line)
                 if line.startswith("frame=") and "time=" in line:
                     try:
                         time_part = line.split("time=")[1].split()[0]
@@ -176,10 +198,91 @@ class VideoMerger:
             pass
 
         if result != 0:
+            tail = stderr_lines[-20:] if len(stderr_lines) > 20 else stderr_lines
             logger.error(f"ffmpeg concat 失败 (returncode={result})")
+            for err_line in tail:
+                logger.error(f"  ffmpeg: {err_line}")
+
+            if self.config.concat_use_stream_copy:
+                logger.info("stream copy 合并失败，自动回退到重编码模式...")
+                return self._ffmpeg_merge_reencode(segments, output_path)
+
             return None
 
         logger.info(f"视频合并完成: {output_path}")
+        return output_path
+
+    def _ffmpeg_merge_reencode(self, segments: List[str], output_path: str) -> Optional[str]:
+        """stream copy 失败后的回退：重编码合并。
+
+        生成 manifest.txt 后使用 -c:v libx264 重编码，兼容任意编码参数的段。
+        """
+        ffmpeg = self._get_ffmpeg()
+        seg_dir = os.path.dirname(segments[0])
+
+        manifest = os.path.join(seg_dir, "concat_manifest.txt")
+        with open(manifest, "w", encoding="utf-8") as f:
+            for seg in segments:
+                f.write(f"file '{os.path.basename(seg)}'\n")
+
+        cmd = [ffmpeg, "-y", "-fflags", "+genpts",
+               "-f", "concat", "-safe", "0", "-i", manifest,
+               "-fps_mode", "cfr"]
+        cmd.extend(["-c:v", self.config.video_encoder])
+        cmd.extend(["-crf", str(self.config.crf)])
+        cmd.extend(["-preset", self.config.preset])
+        cmd.extend(["-tune", "film", "-pix_fmt", "yuv420p", "-profile:v", "high"])
+        if self.config.bitrate:
+            cmd.extend(["-b:v", self.config.bitrate])
+        cmd.extend(["-c:a", self.config.audio_encoder])
+        cmd.append(output_path)
+
+        logger.info("正在重编码合并视频段...")
+        last_progress = [0.0]
+        stderr_lines: list[str] = []
+
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", errors="replace",
+            )
+            assert proc.stderr is not None
+            for line in proc.stderr:
+                line = line.strip()
+                stderr_lines.append(line)
+                if line.startswith("frame=") and "time=" in line:
+                    try:
+                        time_part = line.split("time=")[1].split()[0]
+                        h, m, s = time_part.split(":")
+                        secs = float(h) * 3600 + float(m) * 60 + float(s)
+                        if secs - last_progress[0] >= 5.0:
+                            logger.info(f"  重编码进度: {time_part}")
+                            last_progress[0] = secs
+                    except Exception:
+                        pass
+            proc.wait(timeout=600)
+            result = proc.returncode
+        except FileNotFoundError:
+            logger.warning(f"ffmpeg 不可用: {ffmpeg}")
+            try:
+                os.remove(manifest)
+            except OSError:
+                pass
+            return None
+
+        try:
+            os.remove(manifest)
+        except OSError:
+            pass
+
+        if result != 0:
+            tail = stderr_lines[-20:] if len(stderr_lines) > 20 else stderr_lines
+            logger.error(f"ffmpeg 重编码合并也失败 (returncode={result})")
+            for err_line in tail:
+                logger.error(f"  ffmpeg: {err_line}")
+            return None
+
+        logger.info(f"重编码视频合并完成: {output_path}")
         return output_path
 
     # ── moviepy concatenate ────────────────────────────

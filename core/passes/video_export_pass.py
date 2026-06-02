@@ -77,12 +77,47 @@ class VideoExportPass(TimelinePass):
 
         video = VideoFileClip(self.video_path)
 
+        # ── 字幕拆分优化 ──
+        caption_groups_all = None
+        if self.caption_config.get("enable_subtitle_optimization", True):
+            try:
+                from pipeline.tts_caption import CaptionRenderer
+                from pipeline.subtitle_optimizer import optimize
+
+                cap_cfg = self.caption_config
+                renderer = CaptionRenderer(
+                    font_path=cap_cfg.get("font", "./models/font/Minecraft_font/5_Minecraft_AE_zh_en.ttf"),
+                    font_size=cap_cfg.get("font_size") or None,
+                    font_color=cap_cfg.get("font_color", "white"),
+                    stroke_color=cap_cfg.get("stroke_color", "black"),
+                    stroke_width=cap_cfg.get("stroke_width", 0.5),
+                    bg_color=cap_cfg.get("bg_color", (0, 0, 0, 128)),
+                    max_lines=cap_cfg.get("max_lines", 2),
+                    caption_width_ratio=cap_cfg.get("width_ratio", 0.85),
+                    alignment=cap_cfg.get("alignment", "center"),
+                    position=cap_cfg.get("position", "bottom"),
+                )
+
+                subs_target = [(t["start"], t["end"], t["text"]) for t in tasks]
+                subs_source = [(t["start"], t["end"], "") for t in tasks]
+
+                caption_groups_all = optimize(subs_target, subs_source, renderer, video.w)
+                total_caps = sum(len(g) for g in caption_groups_all)
+                if total_caps > len(tasks):
+                    from pipeline.logger import get_logger
+                    get_logger(__name__).info(
+                        f"字幕优化: {len(tasks)} → {total_caps} 段"
+                    )
+            except Exception:
+                caption_groups_all = None
+
         for i, task in enumerate(tasks):
             tts_path = task["audio_path"]
             clip = video.subclipped(task["start"] / 1000, task["video_end"] / 1000)
             tts_audio = AudioFileClip(tts_path)
             sd = task.get("speed_decision", {})
             sf_override = sd.get("video_speed_factor") if sd.get("strategy") == "video_slowdown" else None
+            cg = caption_groups_all[i] if caption_groups_all and i < len(caption_groups_all) else None
             try:
                 seg.slow_down_video_to_file(
                     current_video=clip,
@@ -93,6 +128,7 @@ class VideoExportPass(TimelinePass):
                     text=task["text"],
                     text_eng="",
                     end=task["end"],
+                    caption_groups=cg,
                     speed_factor_override=sf_override,
                 )
             finally:

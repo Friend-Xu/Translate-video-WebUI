@@ -18,18 +18,18 @@ logger = get_logger(__name__)
 # 编码器优先级（质量/速度综合排序）
 #
 # 策略:
-# - 只有 h264_nvenc 通过 nvidia-smi 可验证，优先使用
-# - AMF/QSV/VideoToolbox/OMX 虽有编译但无可用运行时验证（避免 BrokenPipe），
-#   需要硬件编码器时可手动指定或通过 test_encode() 验证
+# - libx264 优先：消费级 NVIDIA 限制 NVENC 并发 3 路，多线程场景下
+#   libx264 无并发限制，吞吐量反超
+# - h264_nvenc 兜底：CUDA 解码 + NVENC 编码一体可在单线程场景加速
 _ENCODER_PRIORITY: List[str] = [
-    "h264_nvenc",
     "libx264",
+    "h264_nvenc",
 ]
 
 # 硬件编码器 → ffmpeg-preset 兼容值映射
 # x264 用 "medium"，各硬件编码器 preset 命名与内涵不同。
 _ENCODER_PRESETS: Dict[str, str] = {
-    "h264_nvenc": "p4",   # p4 ≈ medium（NVENC 命名不同）
+    "h264_nvenc": "p5",   # p5 ≈ slow（质量优先）
 }
 
 

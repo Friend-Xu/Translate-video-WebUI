@@ -9,7 +9,7 @@
 **Video Subtitle Extraction → Translation → TTS Voice Synthesis — End-to-End Automated Pipeline**
 
 [![GitHub stars](https://img.shields.io/github/stars/Friend-Xu/Translate_video?style=flat)](https://github.com/Friend-Xu/Translate_video/stargazers)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Friend-Xu/Translate_video?include_prereleases)](https://github.com/Friend-Xu/Translate_video/releases)
 
 </div>
@@ -391,7 +391,7 @@ Translate_video/
 
 ## License
 
-[MIT](LICENSE)
+[Apache License 2.0](LICENSE)
 
 ---
 

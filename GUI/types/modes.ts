@@ -2,7 +2,7 @@
  * modes.ts — 模式切换协议与布局预设类型
  */
 
-export type Mode = 'hub' | 'timeline' | 'speaker' | 'review' | 'patch' | 'batch' | 'export' | 'settings'
+export type Mode = 'hub' | 'timeline' | 'speaker' | 'review' | 'patch' | 'batch' | 'export' | 'settings' | 'glossary'
 
 /** Timeline Runtime states — mirrors backend RuntimeState enum */
 export type RuntimeState = 'uninitialized' | 'bootstrapping' | 'ready' | 'computing' | 'failed' | 'complete'
@@ -15,7 +15,7 @@ export interface CrossModeContext {
   timestamp: number
 }
 
-export const ALL_MODES: Mode[] = ['hub', 'timeline', 'speaker', 'review', 'patch', 'batch', 'export']
+export const ALL_MODES: Mode[] = ['hub', 'timeline', 'speaker', 'review', 'patch', 'batch', 'export', 'glossary']
 
 export interface ModeMeta {
   label: string
@@ -78,6 +78,12 @@ export const MODE_META: Record<Mode, ModeMeta> = {
     defaultShortcuts: { 'Tab': '下一段', 'Enter': '确认', 'Ctrl+K': '命令面板' },
     defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'log',
   },
+  glossary: {
+    label: '术语', labelEn: 'Glossary',
+    accentColor: 'var(--mode-glossary)', hexColor: '#F59E0B', icon: 'Book',
+    defaultShortcuts: { 'Ctrl+K': '命令面板' },
+    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'log',
+  },
 }
 
 export type InspectorTab = 'content' | 'timing' | 'speaker' | 'tts' | 'patch' | 'history' | 'config' | 'review'
@@ -98,6 +104,7 @@ export const LAYOUT_PRESETS: Record<Mode, LayoutPreset> = {
   export: { railComponent: null, inspectorTabs: ['content', 'timing'], defaultDockView: 'log' },
   settings: { railComponent: null, inspectorTabs: [], defaultDockView: 'log' },
   review: { railComponent: null, inspectorTabs: ['content', 'review', 'timing'], defaultDockView: 'log' },
+  glossary: { railComponent: null, inspectorTabs: [], defaultDockView: 'log' },
 }
 
 export type IssueType = 'low_confidence' | 'misaligned' | 'cps_high' | 'duration_short' | 'duration_long' | 'term_conflict' | 'speaker_drift'

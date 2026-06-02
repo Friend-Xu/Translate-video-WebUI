@@ -8,7 +8,6 @@ import SettingsIcon from '@mui/icons-material/SettingsRounded'
 import SearchIcon from '@mui/icons-material/SearchRounded'
 import LogIcon from '@mui/icons-material/ArticleRounded'
 import BugReportIcon from '@mui/icons-material/BugReportRounded'
-import ModelIcon from '@mui/icons-material/AccountTreeRounded'
 import GlossaryIcon from '@mui/icons-material/BookRounded'
 import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOverRounded'
 import RateReviewIcon from '@mui/icons-material/RateReviewRounded'
@@ -23,6 +22,7 @@ const CORE_ICONS: Record<string, React.ReactNode> = {
   export: <ExportIcon />,
   speaker: <RecordVoiceOverIcon />,
   review: <RateReviewIcon />,
+  glossary: <GlossaryIcon />,
 }
 
 export default function NavRail() {
@@ -87,24 +87,6 @@ export default function NavRail() {
       ))}
 
       <Divider sx={{ width: 40, my: 0.5 }} />
-
-      {/* Resource items */}
-      {[
-        { icon: <ModelIcon sx={{ fontSize: 18 }} />, label: '模型' },
-        { icon: <GlossaryIcon sx={{ fontSize: 18 }} />, label: '术语' },
-      ].map(item => (
-        <Box key={item.label} sx={{
-          width: 40, height: 40, display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center', borderRadius: 1.5,
-          cursor: 'pointer', color: 'text.disabled',
-          '&:hover': { color: 'text.secondary', bgcolor: 'action.hover' },
-        }}>
-          {item.icon}
-          <Typography sx={{ fontSize: '0.6rem' }}>{item.label}</Typography>
-        </Box>
-      ))}
-
-      <Box sx={{ flexGrow: 1 }} />
 
       {/* Utility items */}
       <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5, pb: 1 }}>

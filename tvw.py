@@ -141,7 +141,7 @@ def _run_legacy_pipeline(args) -> None:
 
 def _run_core_pipeline(args) -> None:
     """Core 路径 — WorkflowOrchestrator 执行 (计划书 §10)。"""
-    from core.engine import WorkflowOrchestrator, ProgressReport
+    from core.engine import WorkflowOrchestrator, ProgressReport, WorkflowStatus
     from core.engine.pass_factory import create_pass_factory
     from core.config.workflow_policy import WorkflowPolicy, WorkflowStage
     from core.config.global_config import GlobalConfig
@@ -336,13 +336,21 @@ def _run_core_pipeline(args) -> None:
         state = orchestrator.run(video_path)
         events_count = len(state.event_states) if state and hasattr(state, 'event_states') else 0
 
-        # 持久化 timeline.json 到 workspace
-        _persist_timeline(state, ws_dir, video_path, lang)
+        if orchestrator.status == WorkflowStatus.PAUSED:
+            _persist_timeline(state, ws_dir, video_path, lang)
+            SessionStore.transition(ws_dir, SessionState.REVIEWABLE)
+            _json_out({"type": "workflow_paused", "status": "paused",
+                        "stage": orchestrator.current_stage, "events": events_count, "ts": _now_iso()})
+            if not _JSON_OUTPUT:
+                print(f"  [PAUSED] Core Pipeline paused at {orchestrator.current_stage} ({events_count} events)")
+        else:
+            # 持久化 timeline.json 到 workspace
+            _persist_timeline(state, ws_dir, video_path, lang)
 
-        SessionStore.transition(ws_dir, SessionState.REVIEWABLE)
-        _json_out({"type": "workflow_completed", "status": "completed", "events": events_count, "ts": _now_iso()})
-        if not _JSON_OUTPUT:
-            print(f"  [OK] Core Pipeline 完成 ({events_count} events)")
+            SessionStore.transition(ws_dir, SessionState.REVIEWABLE)
+            _json_out({"type": "workflow_completed", "status": "completed", "events": events_count, "ts": _now_iso()})
+            if not _JSON_OUTPUT:
+                print(f"  [OK] Core Pipeline 完成 ({events_count} events)")
     except Exception as e:
         try:
             SessionStore.transition(ws_dir, SessionState.FAILED)

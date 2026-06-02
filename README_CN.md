@@ -9,7 +9,7 @@
 **视频字幕提取 → 翻译 → TTS 语音合成 — 端到端自动化流水线**
 
 [![GitHub stars](https://img.shields.io/github/stars/Friend-Xu/Translate_video?style=flat)](https://github.com/Friend-Xu/Translate_video/stargazers)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/Friend-Xu/Translate_video?include_prereleases)](https://github.com/Friend-Xu/Translate_video/releases)
 
 </div>
@@ -337,7 +337,7 @@ Translate_video/
 
 ## 许可证
 
-[MIT](LICENSE)
+[Apache License 2.0](LICENSE)
 
 ---
 

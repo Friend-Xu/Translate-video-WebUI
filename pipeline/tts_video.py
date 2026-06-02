@@ -52,6 +52,7 @@ class VideoSegmenter:
         video_speed_min: float = 0.60,
         video_speed_max: float = 2.00,
         bgm_volume: float = 1.0,
+        video_crf: Optional[int] = None,
     ):
         self.video_output_dir = video_output_dir
         self.clone_color = clone_color
@@ -66,6 +67,26 @@ class VideoSegmenter:
         self.video_speed_min = video_speed_min
         self.video_speed_max = video_speed_max
         self.bgm_volume = bgm_volume
+        self.video_crf = video_crf
+
+    def _build_ffmpeg_params(self) -> list[str]:
+        params = ["-tune", "film", "-pix_fmt", "yuv420p", "-profile:v", "high"]
+        if self.video_crf is not None:
+            params.extend(["-crf", str(self.video_crf)])
+        return params
+
+    def _write_videofile_kwargs(self) -> dict:
+        kwargs: dict = {
+            "codec": self.video_codec,
+            "audio_codec": self.audio_codec,
+            "preset": self.video_preset,
+            "ffmpeg_params": self._build_ffmpeg_params(),
+            "audio_nbytes": 2,
+            "logger": None,
+        }
+        if self.video_crf is None:
+            kwargs["bitrate"] = self.video_bitrate
+        return kwargs
 
     def decide_speed(self, tts_duration: float, video_duration: float) -> SpeedDecision:
         """两级决策：TTS 时长与视频时长的匹配策略。"""
@@ -385,12 +406,7 @@ class VideoSegmenter:
         output_path = os.path.join(self.video_output_dir, f"TTS_{start}_{end}.mp4")
         slow_down_clip.write_videofile(
             output_path,
-            codec=self.video_codec,
-            audio_codec=self.audio_codec,
-            bitrate=self.video_bitrate,
-            preset=self.video_preset,
-            audio_nbytes=2,  # 16-bit audio (moviepy defaults to 4=32-bit)
-            logger=None,
+            **self._write_videofile_kwargs(),
         )
 
         # 清理：关闭所有中间 clip（防 Windows ffmpeg 句柄泄漏 / 僵尸进程）
@@ -466,7 +482,7 @@ class VideoSegmenter:
             return AudioFileClip(silence_path)
 
         first_start, _, _ = subs[0]
-        if first_start != 0:
+        if first_start >= 500:
             logger.info("处理视频开头无人声片段")
             cm = video.subclipped(0, first_start / 1000)
             audio = _get_audio(0, first_start)
@@ -474,11 +490,7 @@ class VideoSegmenter:
             os.makedirs(self.video_output_dir, exist_ok=True)
             cm.write_videofile(
                 os.path.join(self.video_output_dir, f"TTS_0_{first_start}.mp4"),
-                codec=self.video_codec,
-                audio_codec=self.audio_codec,
-                bitrate=self.video_bitrate,
-                preset=self.video_preset,
-                logger=None,
+                **self._write_videofile_kwargs(),
             )
             audio.close()
             count += 1
@@ -492,11 +504,7 @@ class VideoSegmenter:
             os.makedirs(self.video_output_dir, exist_ok=True)
             cm.write_videofile(
                 os.path.join(self.video_output_dir, f"TTS_{last_end}_{int(total_video_duration * 1000)}.mp4"),
-                codec=self.video_codec,
-                audio_codec=self.audio_codec,
-                bitrate=self.video_bitrate,
-                preset=self.video_preset,
-                logger=None,
+                **self._write_videofile_kwargs(),
             )
             audio.close()
             count += 1

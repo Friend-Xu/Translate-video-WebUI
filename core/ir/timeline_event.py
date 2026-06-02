@@ -24,6 +24,9 @@ class TimelineEventIR:
 
     def __post_init__(self):
         if self.start >= self.end:
-            raise ValueError(
-                f"TimelineEventIR {self.id}: start({self.start}) >= end({self.end})"
-            )
+            orig_end = self.end
+            object.__setattr__(self, "end", self.start + 0.01)
+            import logging
+            logging.getLogger("core.ir").warning(
+                "TimelineEventIR %s: start(%.2f) >= end(%.2f), auto-corrected to +10ms",
+                self.id, self.start, orig_end)

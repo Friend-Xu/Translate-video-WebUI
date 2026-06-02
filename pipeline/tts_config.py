@@ -325,11 +325,17 @@ class TTSConfig:
     video_bitrate: str = "5M"
     """视频比特率。1080p 推荐 '5M' (5 Mbps)，720p 可用 '3M'"""
 
+    video_crf: Optional[int] = None
+    """CRF 质量值 (0-51)。None 表示自动选择（片长短用 CRF 18，片长用 CRF 23）"""
+
+    auto_bitrate: bool = True
+    """是否自动检测源视频码率。True 时忽略 video_bitrate 并使用源视频码率"""
+
     write_logger: Optional[str] = None
     """moviepy write_videofile logger 参数，默认 None 表示无日志"""
 
     # ── ImageMagick（字幕渲染需要） ─────────────────────
-    imagemagick_binary: str = r"F:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe"
+    imagemagick_binary: str = ""
     """ImageMagick 可执行文件路径（字幕渲染依赖）"""
 
     # ── 模型路径 ──────────────────────────────────────────
