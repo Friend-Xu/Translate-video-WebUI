@@ -41,6 +41,11 @@ _*.py
 !__main__.py
 *.wav
 
+# Test artifacts & worktree deps
+_deps/
+GUI/test-results/
+/speaker*.png
+
 # Build artifacts
 *.spec
 build/
