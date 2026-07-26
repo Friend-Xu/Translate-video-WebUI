@@ -12,12 +12,12 @@ from timeline.patch.apply import apply_patch, apply_patch_chain
 
 
 class TestOpCode:
-    """OpCode 枚举 — 6 种固定 opcode"""
+    """OpCode 枚举 — 7 种固定 opcode"""
 
-    def test_all_six_values(self):
+    def test_all_seven_values(self):
         values = {o.value for o in OpCode}
         assert values == {"MERGE", "SPLIT", "RETAG_SPEAKER", "SET_TRANSLATION",
-                          "RELINK_WORDS", "ANNOTATE"}
+                          "RELINK_WORDS", "ANNOTATE", "RESIZE"}
 
     def test_is_valid_opcode(self):
         assert is_valid_opcode("MERGE") is True

@@ -66,21 +66,27 @@ class ASRCompositePass(TimelinePass):
         for p in meta_patches:
             state.add_global_patch(p)
 
-        # Step 2: Wav2Vec2 对齐精炼
-        wav2vec = Wav2Vec2Adapter(
-            audio_path=self.audio_path, language=self.ctx.language or "en",
-        )
-        segments_for_align = self._collect_segments(state)
-        if segments_for_align:
-            align_patches = wav2vec.refine_alignment(segments_for_align)
-            for p in align_patches:
-                engine.apply(state, p)
+        # Step 2: Wav2Vec2 对齐精炼（失败不影响主流程）
+        try:
+            wav2vec = Wav2Vec2Adapter(
+                audio_path=self.audio_path, language=self.ctx.language or "en",
+            )
+            segments_for_align = self._collect_segments(state)
+            if segments_for_align:
+                align_patches = wav2vec.refine_alignment(segments_for_align)
+                for p in align_patches:
+                    engine.apply(state, p)
+        except Exception:
+            pass  # alignment is optional — ASR segments are usable without it
 
-        # Step 3: Wav2Vec2 semantic embedding
-        seg_ids = [es.id for es in state.sorted_events()]
-        sem_patches = wav2vec.extract_semantic(seg_ids)
-        for p in sem_patches:
-            engine.apply(state, p)
+        # Step 3: Wav2Vec2 semantic embedding（失败不影响主流程）
+        try:
+            seg_ids = [es.id for es in state.sorted_events()]
+            sem_patches = wav2vec.extract_semantic(seg_ids)
+            for p in sem_patches:
+                engine.apply(state, p)
+        except Exception:
+            pass
 
         # Step 4: Speaker refine (optional)
         if self.enable_speaker_refine and self.speaker_timeline:
@@ -97,10 +103,13 @@ class ASRCompositePass(TimelinePass):
 
         for p in patches:
             v = p.value
+            start, end = v.get("start", 0.0), v.get("end", 0.0)
+            if start >= end:
+                continue  # 边界清洗：跳过零时长 segment，坏数据不进 IR
             evt = TimelineEventIR(
                 id=p.target_id,
-                start=v.get("start", 0.0),
-                end=v.get("end", 0.0),
+                start=start,
+                end=end,
                 text_ref=v.get("text", ""),
                 speaker_ref=None,
                 source="asr",

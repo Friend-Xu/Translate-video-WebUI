@@ -41,13 +41,13 @@ class TestTimelineEventIR:
         evt = TimelineEventIR(id="e1", start=0.0, end=1.0, speaker_ref=None, text_ref="t")
         assert evt.speaker_ref is None
 
-    def test_start_ge_end_autocorrects(self):
-        evt = TimelineEventIR(id="e1", start=2.0, end=2.0, speaker_ref=None, text_ref="t")
-        assert evt.end == pytest.approx(2.01)
+    def test_start_ge_end_raises(self):
+        with pytest.raises(ValueError):
+            TimelineEventIR(id="e1", start=2.0, end=2.0, speaker_ref=None, text_ref="t")
 
-    def test_start_gt_end_autocorrects(self):
-        evt = TimelineEventIR(id="e1", start=5.0, end=1.0, speaker_ref=None, text_ref="t")
-        assert evt.end == pytest.approx(5.01)
+    def test_start_gt_end_raises(self):
+        with pytest.raises(ValueError):
+            TimelineEventIR(id="e1", start=5.0, end=1.0, speaker_ref=None, text_ref="t")
 
     def test_frozen_immutable(self):
         evt = TimelineEventIR(id="e1", start=0.0, end=1.0, speaker_ref=None, text_ref="t")

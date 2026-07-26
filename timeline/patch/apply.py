@@ -35,6 +35,8 @@ def apply_patch(
         segments, diff = _apply_set_translation(segments, target_indices, patch)
     elif patch.opcode == OpCode.RELINK_WORDS:
         segments, diff = _apply_relink(segments, target_indices, patch)
+    elif patch.opcode == OpCode.RESIZE:
+        segments, diff = _apply_resize(segments, target_indices, patch)
     elif patch.opcode == OpCode.ANNOTATE:
         segments, diff = _apply_annotate(segments, target_indices, patch)
 
@@ -139,7 +141,13 @@ def _apply_retag(segments: list[dict], indices: list[int], patch: TimelinePatch)
 def _apply_set_translation(segments: list[dict], indices: list[int], patch: TimelinePatch):
     translation = patch.payload["translation"]
     for i in indices:
-        segments[i]["translation"] = translation
+        existing = segments[i].get("translation")
+        if isinstance(existing, dict) and isinstance(translation, str):
+            # 保留 v2 译文对象封套（质量分等元数据），只覆盖文本
+            existing["text"] = translation
+            existing["user_edited"] = True
+        else:
+            segments[i]["translation"] = translation
     diff = {"op": "set_translation", "targets": [segments[i]["id"] for i in indices]}
     return segments, diff
 
@@ -157,6 +165,25 @@ def _apply_relink(segments: list[dict], indices: list[int], patch: TimelinePatch
         segments[i]["words"] = [w for w in segments[i].get("words", [])
                                  if w.get("word") not in word_mapping]
     diff = {"op": "relink_words", "mapping": word_mapping}
+    return segments, diff
+
+
+def _apply_resize(segments: list[dict], indices: list[int], patch: TimelinePatch):
+    """Resize segment boundaries — changes start and/or end time."""
+    new_start = patch.payload.get("new_start")
+    new_end = patch.payload.get("new_end")
+    before_state = {}
+    for i in indices:
+        before_state[segments[i]["id"]] = {"start": segments[i].get("start"), "end": segments[i].get("end")}
+        if new_start is not None:
+            segments[i]["start"] = new_start
+        if new_end is not None:
+            segments[i]["end"] = new_end
+    diff = {
+        "before": before_state,
+        "after": {segments[i]["id"]: {"start": new_start, "end": new_end} for i in indices},
+        "op": "resize"
+    }
     return segments, diff
 
 

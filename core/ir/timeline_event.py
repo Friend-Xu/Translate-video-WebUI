@@ -24,9 +24,6 @@ class TimelineEventIR:
 
     def __post_init__(self):
         if self.start >= self.end:
-            orig_end = self.end
-            object.__setattr__(self, "end", self.start + 0.01)
-            import logging
-            logging.getLogger("core.ir").warning(
-                "TimelineEventIR %s: start(%.2f) >= end(%.2f), auto-corrected to +10ms",
-                self.id, self.start, orig_end)
+            raise ValueError(
+                f"TimelineEventIR {self.id}: start({self.start:.2f}) >= end({self.end:.2f}) — "
+                "坏数据必须在 adapter 边界清洗，不得进入 IR")
