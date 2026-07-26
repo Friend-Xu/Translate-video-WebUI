@@ -53,7 +53,7 @@ def _json_out(obj: dict) -> None:
     """输出一行 RS 分隔的 JSON 到 stdout。仅在 --json-output 模式激活。"""
     if not _JSON_OUTPUT:
         return
-    line = _json.dumps(obj, ensure_ascii=False)
+    line = _json.dumps(obj, ensure_ascii=False, default=str)
     sys.stdout.write(f"\x1e{line}\n")
     sys.stdout.flush()
 
@@ -334,10 +334,12 @@ def _run_core_pipeline(args) -> None:
 
     # 初始化 session
     try:
-        SessionStore.transition(ws_dir, SessionState.BOOTSTRAPPING)
-        SessionStore.save(ws_dir, video_path=video_path, current_stage="load")
-    except Exception:
-        pass
+        env = SessionStore.transition(ws_dir, SessionState.BOOTSTRAPPING)
+        env.video_path = video_path
+        env.current_stage = "load"
+        SessionStore.save(ws_dir, env)
+    except Exception as exc:
+        print(f"[WARN] session 初始化失败: {exc}", file=sys.stderr)
 
     try:
         state = orchestrator.run(video_path)
@@ -347,7 +349,8 @@ def _run_core_pipeline(args) -> None:
             _persist_timeline(state, ws_dir, video_path, lang)
             SessionStore.transition(ws_dir, SessionState.REVIEWABLE)
             _json_out({"type": "workflow_paused", "status": "paused",
-                        "stage": orchestrator.current_stage, "events": events_count, "ts": _now_iso()})
+                        "stage": getattr(orchestrator.current_stage, "value", orchestrator.current_stage) or "",
+                        "events": events_count, "ts": _now_iso()})
             if not _JSON_OUTPUT:
                 print(f"  [PAUSED] Core Pipeline paused at {orchestrator.current_stage} ({events_count} events)")
         else:
@@ -824,6 +827,7 @@ def _persist_timeline(state, ws_dir: str, video_path: str, lang: str) -> str:
             "end": es.end,
             "text": es.ir.text_ref,
             "source": es.ir.source,
+            "words": es.asr.get("words", []),
         }
         # translation
         trans = es.translation
@@ -842,6 +846,9 @@ def _persist_timeline(state, ws_dir: str, video_path: str, lang: str) -> str:
                 speakers[sid] = {"id": sid, "label": sid, "confidence": None, "embedding_ref": None}
         # confidence
         evt["confidence"] = es.provenance.get("confidence", 1.0)
+        # review status
+        evt["review_status"] = es.review.get("review_status", "pending")
+        events.append(evt)
 
     # 从 _embeddings/ 目录直接读取 embedding 数据（不依赖 state.ir.speakers）
     import glob as _glob
@@ -869,9 +876,6 @@ def _persist_timeline(state, ws_dir: str, video_path: str, lang: str) -> str:
                 speakers[sid]["confidence"] = conf
             if emb_ref is not None:
                 speakers[sid]["embedding_ref"] = emb_ref
-        # review status
-        evt["review_status"] = es.review.get("review_status", "pending")
-        events.append(evt)
 
     timeline = {
         "schema_version": "2.0",
