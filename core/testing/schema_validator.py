@@ -19,6 +19,7 @@ _SCHEMA_DIR = os.path.join(
 
 _SCHEMA_FILES = {
     "timeline": "timeline.schema.json",
+    "timeline_v3": "timeline_v3.schema.json",
     "patch_log": "patch_log.schema.json",
     "export_config": "export_config.schema.json",
     "speaker_map": "speaker_map.schema.json",
@@ -49,6 +50,12 @@ def assert_valid_timeline_v2(data: dict) -> None:
     ok, errs = validate_json(data, "timeline")
     if not ok:
         raise AssertionError("timeline v2 schema failed:\n" + "\n".join(errs))
+
+
+def assert_valid_timeline_v3(data: dict) -> None:
+    ok, errs = validate_json(data, "timeline_v3")
+    if not ok:
+        raise AssertionError("timeline v3 schema failed:\n" + "\n".join(errs))
 
 
 def assert_valid_patch_log(data: dict) -> None:

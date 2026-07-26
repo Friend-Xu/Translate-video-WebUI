@@ -123,41 +123,18 @@ class WorkflowOrchestrator:
 
         try:
             # 尝试从 workspace 加载已有 timeline 状态（用于 dub-after-review / export 等续跑场景）
+            # 数据结构重设计 Phase 2: 统一走 timeline_io.load_state, 全字段回填
+            # (translation/words/speaker), 修复 reload 丢译文导致 export 产出英文的 bug。
+            import os as _os
+            from core.runtime.timeline_io import load_state
+            ws = _os.path.join(_os.path.dirname(video_path),
+                               _os.path.basename(video_path).rsplit(".", 1)[0] + "_project")
+            tl_path = _os.path.join(ws, "01_extract", "timeline.json")
             state = None
-            try:
-                import json as _json, os as _os
-                ws = _os.path.join(_os.path.dirname(video_path),
-                                   _os.path.basename(video_path).rsplit(".", 1)[0] + "_project")
-                tl_path = _os.path.join(ws, "01_extract", "timeline.json")
-                if _os.path.isfile(tl_path):
-                    with open(tl_path, "r", encoding="utf-8") as f:
-                        tl_data = _json.load(f)
-                    events_data = tl_data if isinstance(tl_data, list) else tl_data.get("events", [])
-                    from core.ir import TimelineEventIR, SpeakerNodeIR
-                    ir_events = {}
-                    ir_speakers = {}
-                    for ev in (events_data if isinstance(events_data, list) else events_data.values()):
-                        if not isinstance(ev, dict):
-                            continue
-                        eid = ev.get("id", ev.get("event_id", ""))
-                        spk = ev.get("speaker", ev.get("speaker_id", ""))
-                        text = ev.get("text", ev.get("translation", "")) or ev.get("source_text", "") or ""
-                        start = ev.get("start", 0.0)
-                        end = ev.get("end", 0.0)
-                        if not eid or start >= end:
-                            continue
-                        ir_events[eid] = TimelineEventIR(
-                            id=eid, start=start, end=end,
-                            speaker_ref=spk or None, text_ref=text,
-                            source=ev.get("source", "asr"),
-                        )
-                        if spk and spk not in ir_speakers:
-                            ir_speakers[spk] = SpeakerNodeIR(id=spk)
-                    if ir_events:
-                        ir = TimelineProjectIR(events=ir_events, speakers=ir_speakers)
-                        state = TimelineProjectState(ir)
-            except Exception:
-                pass
+            if _os.path.isfile(tl_path):
+                # 禁止兜底: 文件损坏/缺字段时 load_state 显式 raise,
+                # 由外层 except 标记 FAILED, 不再 except:pass 静默产出错误输出。
+                state = load_state(tl_path)
 
             if state is not None:
                 self._state = state

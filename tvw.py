@@ -894,86 +894,13 @@ def cmd_rollback(args) -> None:
 
 
 def _persist_timeline(state, ws_dir: str, video_path: str, lang: str) -> str:
-    """将 TimelineProjectState 持久化为 timeline.json，供 WebUI 读取。"""
-    import json as _json_mod
-    extract_dir = os.path.join(ws_dir, "01_extract")
-    os.makedirs(extract_dir, exist_ok=True)
-    tl_path = os.path.join(extract_dir, "timeline.json")
+    """将 TimelineProjectState 持久化为 timeline.json，供 WebUI 读取。
 
-    events = []
-    speakers = {}
-    for es in state.event_states.values():
-        evt = {
-            "id": es.id,
-            "start": es.start,
-            "end": es.end,
-            "text": es.ir.text_ref,
-            "source": es.ir.source,
-            "words": es.asr.get("words", []),
-        }
-        # translation
-        trans = es.translation
-        if isinstance(trans, dict):
-            evt["translation"] = trans
-        elif isinstance(trans, str) and trans:
-            evt["translation"] = {"text": trans}
-        else:
-            evt["translation"] = {}
-        # speaker
-        spk = es.speaker
-        if isinstance(spk, dict) and spk.get("speaker_id"):
-            evt["speaker"] = spk["speaker_id"]
-            sid = spk["speaker_id"]
-            if sid not in speakers:
-                speakers[sid] = {"id": sid, "label": sid, "confidence": None, "embedding_ref": None}
-        # confidence
-        evt["confidence"] = es.provenance.get("confidence", 1.0)
-        # review status
-        evt["review_status"] = es.review.get("review_status", "pending")
-        events.append(evt)
-
-    # 从 _embeddings/ 目录直接读取 embedding 数据（不依赖 state.ir.speakers）
-    import glob as _glob
-    emb_dir = os.path.join(ws_dir, "_embeddings")
-    if os.path.isdir(emb_dir):
-        for npy_path in _glob.glob(os.path.join(emb_dir, "speaker_*.npy")):
-            fname = os.path.basename(npy_path)
-            sid = fname.replace("speaker_", "").replace(".npy", "")
-            if sid in speakers:
-                speakers[sid]["embedding_ref"] = npy_path
-                import numpy as _np
-                try:
-                    centroid = _np.load(npy_path)
-                    speakers[sid]["centroid_norm"] = float(_np.linalg.norm(centroid))
-                except Exception:
-                    pass
-    # 也尝试从 state.ir.speakers 补充（如果有的话）
-    for sid, spk_node in state.ir.speakers.items():
-        conf = getattr(spk_node, "confidence", None)
-        emb_ref = getattr(spk_node, "embedding_ref", None)
-        if sid not in speakers:
-            speakers[sid] = {"id": sid, "label": sid, "confidence": conf, "embedding_ref": emb_ref}
-        else:
-            if conf is not None:
-                speakers[sid]["confidence"] = conf
-            if emb_ref is not None:
-                speakers[sid]["embedding_ref"] = emb_ref
-
-    timeline = {
-        "schema_version": "2.0",
-        "metadata": {
-            "event_count": len(events),
-            "speaker_count": len(speakers),
-            "source_video": video_path,
-            "language": lang,
-            "generated_at": _now_iso(),
-        },
-        "events": events,
-        "speakers": speakers,
-    }
-    with open(tl_path, "w", encoding="utf-8") as f:
-        _json_mod.dump(timeline, f, ensure_ascii=False, indent=2)
-    return tl_path
+    数据结构重设计 Phase 2: 委托 canonical timeline_io.persist_state,
+    统一 v3.0 格式 (translation dict / words 一等字段), 与 reload 互逆。
+    """
+    from core.runtime.timeline_io import persist_state
+    return persist_state(state, ws_dir, video_path, lang)
 
 
 def main():
