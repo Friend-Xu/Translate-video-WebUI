@@ -44,6 +44,7 @@ export default function SpeakerLane({
   const voicePresets = useAppStore(s => s.voicePresets)
   const bindVoice = useAppStore(s => s.bindVoice)
   const addDraft = useAppStore(s => s.addDraft)
+  const applyDraft = useAppStore(s => s.applyDraft)
   const navigateToEvent = useAppStore(s => s.navigateToEvent)
   const timelineFocus = useAppStore(s => s.timelineFocus)
   const setPlayhead = useAppStore(s => s.setPlayhead)
@@ -100,24 +101,13 @@ export default function SpeakerLane({
       after: { displayName: editValue.trim() },
       timestamp: Date.now(),
     })
-    fetch('/api/speaker/diarization/rename', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ speaker: speakerId, new_name: editValue.trim() }),
-    }).catch(() => {})
+    applyDraft(speakerId)
     setEditingName(null)
-  }, [editValue, addDraft])
+  }, [editValue, addDraft, applyDraft])
 
   const handleMerge = useCallback(async () => {
     if (!mergeTarget || !contextMenu) return
     const source = contextMenu.speaker
-    try {
-      await fetch('/api/speaker/diarization/merge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source_speaker: source, target_speaker: mergeTarget }),
-      })
-    } catch { /* API unavailable */ }
     addDraft({
       eventId: source,
       opcode: 'MERGE_SPEAKERS',
@@ -128,18 +118,19 @@ export default function SpeakerLane({
     setMergeDialogOpen(false)
     setMergeTarget('')
     handleCloseMenu()
-  }, [mergeTarget, contextMenu, addDraft])
+    applyDraft(source)
+  }, [mergeTarget, contextMenu, addDraft, applyDraft])
 
   const handleLockSpeaker = useCallback((speakerId: string) => {
     addDraft({
       eventId: speakerId,
       opcode: 'LOCK_SPEAKER',
-      payload: {},
+      payload: { speaker: speakerId },
       before: {}, after: {},
       timestamp: Date.now(),
     })
-    handleCloseMenu()
-  }, [addDraft])
+    applyDraft(speakerId)
+  }, [addDraft, applyDraft])
 
   const handleSegmentClick = useCallback((eventId: string, startTime: number, e: React.MouseEvent) => {
     e.stopPropagation()

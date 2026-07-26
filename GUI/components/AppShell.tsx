@@ -113,7 +113,7 @@ export default function AppShell({
       </Box>
 
       {/* Arena */}
-      <Box gridArea="arena" role="main" sx={{ overflow: 'hidden', position: 'relative' }}>
+      <Box gridArea="arena" role="main" sx={{ overflow: 'hidden', position: 'relative', display: 'flex', flexDirection: 'column' }}>
         {arenaContent || <RegionPlaceholder name="Timeline Arena" role="main" />}
       </Box>
 

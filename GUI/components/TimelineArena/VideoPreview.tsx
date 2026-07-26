@@ -68,13 +68,17 @@ export default function VideoPreview({
     onTimeUpdate?.(t)
   }, [onTimeUpdate])
 
-  // Store playhead sync
+  // Playhead sync: video → store (one-way during playback, threshold-guarded)
   useEffect(() => {
     const video = videoRef.current
     if (!video || !isPlaying) return
+    let lastSynced = video.currentTime
     const iv = setInterval(() => {
       const t = video.currentTime
-      if (t > 0) setPlayhead(t)
+      if (Math.abs(t - lastSynced) > 0.05) {
+        lastSynced = t
+        setPlayhead(t)
+      }
     }, 100)
     return () => clearInterval(iv)
   }, [isPlaying, setPlayhead])

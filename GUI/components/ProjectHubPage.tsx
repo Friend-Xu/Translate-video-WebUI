@@ -217,7 +217,7 @@ export default function ProjectHubPage() {
       appendLog({ _id: Date.now(), level: 'ERROR', message: `启动失败: ${e}`, timestamp: new Date().toISOString() } as LogEntry)
       setPhase('review')
     }
-  }, [workspace, manifest?.video_path, lang, targetLang, selectedPresetId, appendLog, setStatus, loadLogTail, pollStatus])
+  }, [workspace, manifest?.video_path, lang, targetLang, selectedPresetId, numSpeakers, appendLog, setStatus, loadLogTail, pollStatus])
 
   const handleCancel = useCallback(() => {
     cancelPipeline()

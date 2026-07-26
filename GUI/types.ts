@@ -547,6 +547,7 @@ export interface EventViewModel {
   }
   patches: TimelinePatchData[]
   passTrace: string[]
+  words?: { word: string; start: number; end: number; confidence?: number }[]
 }
 
 /** 磁盘 timeline.json v2.0 的结构（对应 schemas/timeline.schema.json） */

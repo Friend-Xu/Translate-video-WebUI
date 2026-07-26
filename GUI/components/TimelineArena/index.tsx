@@ -9,8 +9,6 @@ import ZoomPresets from './ZoomPresets'
 import TimelineToolbar from './TimelineToolbar'
 import ReviewTable from './ReviewTable'
 import SpeakerReviewView from '../ModeViews/SpeakerReviewView'
-import ImpactIndicator from '../ImpactIndicator'
-import RubberBandSelect from './RubberBandSelect'
 import EventContextMenu from './EventContextMenu'
 import FilterBar, { type FilterState, DEFAULT_FILTER, applyFilter } from './FilterBar'
 import PatchDiffPopover from './PatchDiffPopover'
@@ -41,11 +39,10 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
 
   const selectedEventIds = useAppStore(s => s.selectedEventIds)
   const selectEvent = useAppStore(s => s.selectEvent)
-  const pendingDrafts = useAppStore(s => s.pendingDrafts)
   const setTrackScrollLeft = useAppStore(s => s.setTrackScrollLeft)
   const trackScrollLeft = useAppStore(s => s.trackScrollLeft)
 
-  const coord = useTimelineCoordinates(totalDuration || 80, canvasW, trackScrollLeft)
+  const coord = useTimelineCoordinates(totalDuration || 80, canvasW, trackScrollLeft, setTrackScrollLeft)
 
   const containerCallback = useCallback((node: HTMLDivElement | null) => {
     containerRef.current = node
@@ -68,13 +65,11 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
       if (e.deltaY < 0) coord.zoomIn(centerTime)
       else coord.zoomOut(centerTime)
     } else {
-      const newScroll = coord.timeToPixel(0) + e.deltaY
       const totalW = totalDuration * coord.pixelsPerSec
       const maxS = Math.max(0, totalW - canvasW)
-      const clamped = Math.max(0, Math.min(maxS, newScroll))
-      setTrackScrollLeft(clamped)
+      setTrackScrollLeft(Math.max(0, Math.min(maxS, trackScrollLeft + e.deltaY)))
     }
-  }, [coord, totalDuration, canvasW, setTrackScrollLeft])
+  }, [coord, totalDuration, canvasW, trackScrollLeft, setTrackScrollLeft])
 
   // Click arena background → deselect
   const handleArenaClick = useCallback((e: React.MouseEvent) => {
@@ -317,11 +312,6 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
       />
       {!isEmpty && timelineViewMode === 'timeline' ? (
           <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-            <RubberBandSelect
-              events={filteredEvents}
-              pixelToTime={coord.pixelToTime}
-              containerRef={containerRef}
-            >
               <TrackSystem
                 events={filteredEvents}
                 totalDuration={totalDuration || 80}
@@ -334,25 +324,6 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
                 onEventDblClick={handleEventDoubleClick}
                 onEventContextMenu={handleEventContextMenu}
               />
-            </RubberBandSelect>
-            {Array.from(pendingDrafts.values())
-              .filter(d => d.opcode === 'SPLIT' || d.payload.start || d.payload.end)
-              .map(d => {
-                const evt = events.find(e => e.id === d.eventId)
-                if (!evt) return null
-                const startX = coord.timeToPixel(evt.end)
-                const affectedIds = events.filter(e => e.start >= evt.end).slice(0, 5).map(e => e.id)
-                return (
-                  <ImpactIndicator
-                    key={d.eventId}
-                    affectedEventIds={affectedIds}
-                    offsetSeconds={0.5}
-                    startX={startX}
-                    width={60}
-                    arenaHeight={typeof window !== 'undefined' ? window.innerHeight - 300 : 400}
-                  />
-                )
-              })}
           </Box>
         ) : timelineViewMode === 'table' ? (
           <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
@@ -405,21 +376,43 @@ export default function TimelineArena({ events, totalDuration, waveform, ttsWave
         onClose={handleCloseDiffPopover}
       />
 
-      {/* Minimap — 表格/说话人模式下隐藏 */}
+      {/* Bottom bar: zoom presets + native scrollbar + minimap preview */}
       {timelineViewMode === 'timeline' && (
         <Box sx={{
-          display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5,
+          display: 'flex', flexDirection: 'column',
           borderTop: '1px solid rgba(255,255,255,0.1)',
           bgcolor: '#dce2f0', flexShrink: 0,
+          pl: '120px', // align with track content (skip track header)
         }}>
-          <ZoomPresets coord={coord} />
-          <Box sx={{ flexGrow: 1 }} />
-          <TimelineMinimap
-            events={events}
-            coord={coord}
-            totalDuration={totalDuration || 80}
-            canvasWidth={canvasW}
-          />
+          {/* Native range scrollbar (same pattern as speaker view) */}
+          <Box sx={{
+            flexShrink: 0, bgcolor: '#e8ecf4', height: 14, position: 'relative',
+            overflow: 'hidden',
+          }}>
+            <input
+              type="range"
+              min={0}
+              max={Math.max(1, totalDuration * coord.pixelsPerSec - canvasW, 100)}
+              step={1}
+              value={Math.min(trackScrollLeft, Math.max(1, totalDuration * coord.pixelsPerSec - canvasW, 100))}
+              onChange={(e) => setTrackScrollLeft(Number(e.target.value))}
+              style={{
+                width: '100%', height: '100%', margin: 0, padding: 0,
+                cursor: 'col-resize',
+                accentColor: '#6366F1',
+              }}
+            />
+          </Box>
+          {/* Minimap: preview-only */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1, py: 0.5 }}>
+            <ZoomPresets coord={coord} />
+            <Box sx={{ flexGrow: 1 }} />
+            <TimelineMinimap
+              events={events}
+              totalDuration={totalDuration || 80}
+              canvasWidth={canvasW}
+            />
+          </Box>
         </Box>
       )}
     </Box>

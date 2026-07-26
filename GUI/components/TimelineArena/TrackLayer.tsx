@@ -6,7 +6,7 @@ import type { EventViewModel, WaveformData, TrackWaveformData } from '../../type
 import type { TimelineCoordAPI } from '../../hooks/useTimelineCoordinates'
 import SpeakerLane from '../SpeakerLane'
 import WaveformLayer from '../sections/WaveformLayer'
-import EventDragHandler from './EventDragHandler'
+import EventBlock from '../sections/EventBlock'
 import TTSWaveformTrack from './TTSWaveformTrack'
 import { useVirtualEvents } from '../../hooks/useVirtualEvents'
 
@@ -80,7 +80,7 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
         return (
           <Box sx={{
             position: 'relative', width: totalDuration * coord.pixelsPerSec, height: track.height,
-            transform: `translateX(${-trackScrollLeft}px)`,
+            transform: 'none',
           }}>
             {virtualEvents.map(evt => {
               // Off-screen culling by time
@@ -95,19 +95,19 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
               const filtered = dimmedEventIds?.has(evt.id) ?? false
 
               return (
-                <EventDragHandler
+                <EventBlock
                   key={evt.id}
                   event={evt}
-                  coord={coord}
                   laneColor={LANE_COLORS[laneIdx % LANE_COLORS.length]}
+                  left={coord.timeToPixel(evt.start)}
+                  width={Math.max(2, (evt.end - evt.start) * coord.pixelsPerSec)}
                   laneHeight={track.height}
                   isSelected={isSelected}
                   isMultiSelected={dimmed || isDimmed || filtered}
                   hasDraft={hasDraft}
-                  allEvents={events}
                   hasAppliedPatch={appliedEventIds.has(evt.id)}
                   isOverlong={evt.end - evt.start > 8}
-                  readOnly={track.locked}
+                  readOnly={true}
                   onClick={(e) => onEventClick(evt.id, e)}
                   onDoubleClick={() => onEventDblClick(evt.id)}
                   onContextMenu={(e) => { e.preventDefault(); onEventContextMenu(evt.id, e) }}
@@ -128,7 +128,7 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
         }
         if (bySpeaker.size === 0) {
           return (
-            <SpeakerLane lanes={[]} timeToPixel={(t: number) => coord.timeToPixel(t) + trackScrollLeft}
+            <SpeakerLane lanes={[]} timeToPixel={(t: number) => coord.timeToPixel(t)}
               pixelsPerSec={coord.pixelsPerSec} laneHeight={track.height} />
           )
         }
@@ -156,7 +156,7 @@ export default function TrackLayer({ track, coord, events, totalDuration, canvas
         const canvasW = totalDuration * coord.pixelsPerSec
         return (
           <Box sx={{ height: track.height, position: 'relative', width: canvasW,
-            transform: `translateX(${-trackScrollLeft}px)`, overflow: 'hidden' }}>
+            transform: 'none', overflow: 'hidden' }}>
             {speakers.map((sp, si) => {
               const top = si * spH
               return (

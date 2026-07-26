@@ -13,6 +13,7 @@ class OpCode(str, Enum):
     SET_TRANSLATION = "SET_TRANSLATION"
     RELINK_WORDS = "RELINK_WORDS"
     ANNOTATE = "ANNOTATE"
+    RESIZE = "RESIZE"
 
 
 PAYLOAD_SCHEMA = {
@@ -22,6 +23,7 @@ PAYLOAD_SCHEMA = {
     OpCode.SET_TRANSLATION: {"required": ["translation"], "optional": []},
     OpCode.RELINK_WORDS: {"required": ["word_mapping"], "optional": []},
     OpCode.ANNOTATE: {"required": ["key", "value"], "optional": []},
+    OpCode.RESIZE: {"required": ["new_start", "new_end"], "optional": []},
 }
 
 

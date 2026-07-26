@@ -18,6 +18,8 @@ SpeakerCompositePass — Speaker Layer 完整流水线 (Chapter 4 §4.8)
 迭代精炼循环 (§4.8.2): 最多 2 轮，每轮后重算 centroid。
 """
 from __future__ import annotations
+import json
+import os
 from core.engine.pass_base import TimelinePass
 from core.runtime.project_state import TimelineProjectState
 from core.runtime.patch_engine import PatchEngine
@@ -69,6 +71,7 @@ class SpeakerCompositePass(TimelinePass):
             min_speakers=ns or 1,
             max_speakers=ns or 10,
         )
+        self._persist_speaker_timeline(speaker_timeline)
 
         # Step 2-3: Assignment + boundary detection
         segments = self._collect_segments(state)
@@ -164,3 +167,27 @@ class SpeakerCompositePass(TimelinePass):
             if turns and spk_node.confidence is None:
                 avg_conf = sum(t[3] for t in turns) / len(turns)
                 object.__setattr__(spk_node, "confidence", avg_conf)
+
+    def _persist_speaker_timeline(self, speaker_timeline: list[tuple]) -> None:
+        """将 diarization 结果持久化为 speaker_timeline.json。
+
+        格式与 WebUI speaker_load 端点期望一致:
+          { speakers: [{id, name}], turns: [{speaker, start, end, confidence}] }
+        """
+        if not self.output_dir:
+            return
+        extract_dir = os.path.join(self.output_dir, "01_extract")
+        os.makedirs(extract_dir, exist_ok=True)
+
+        # 收集所有说话人 ID
+        speaker_ids = sorted(set(t[0] for t in speaker_timeline))
+        speakers = [{"id": sid, "name": sid} for sid in speaker_ids]
+
+        turns = [
+            {"speaker": t[0], "start": t[1], "end": t[2], "confidence": t[3]}
+            for t in speaker_timeline
+        ]
+
+        stl_path = os.path.join(extract_dir, "speaker_timeline.json")
+        with open(stl_path, "w", encoding="utf-8") as f:
+            json.dump({"speakers": speakers, "turns": turns}, f, ensure_ascii=False, indent=2)

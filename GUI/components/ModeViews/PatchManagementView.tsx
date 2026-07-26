@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from 'react'
+import { useMemo, useState, useCallback, useEffect } from 'react'
 import {
   Box, Typography, Chip, IconButton, Tooltip, Button, Divider,
   ToggleButtonGroup, ToggleButton, Dialog, DialogTitle, DialogContent, DialogActions,
@@ -67,7 +67,10 @@ export default function PatchManagementView({ events }: Props) {
   const applyAllDrafts = useAppStore(s => s.applyAllDrafts)
   const discardAllDrafts = useAppStore(s => s.discardAllDrafts)
   const undoLastPatch = useAppStore(s => s.undoLastPatch)
+  const fetchPatchLog = useAppStore(s => s.fetchPatchLog)
   const navigateToEvent = useAppStore(s => s.navigateToEvent)
+
+  useEffect(() => { fetchPatchLog() }, [fetchPatchLog])
 
   const [selectedPatchId, setSelectedPatchId] = useState<string | null>(null)
   const [selectedPatchIds, setSelectedPatchIds] = useState<Set<string>>(new Set())

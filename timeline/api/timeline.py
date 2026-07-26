@@ -97,6 +97,11 @@ def apply_user_patch(
     acoustic = {s["id"]: s.get("speaker") for s in segments if s.get("speaker")}
     gate_check(patch, segments, acoustic)
 
+    # Save pristine backup before first modification (for undo source)
+    bak_path = timeline_path + ".bak"
+    if not existing and not os.path.isfile(bak_path):
+        _save_timeline_segments(segments, full_data, bak_path)
+
     patch.parent_version = _hash_segments(segments)
     new_segments, diff = apply_patch(segments, patch)
     _save_timeline_segments(new_segments, full_data, timeline_path)
@@ -117,7 +122,10 @@ def apply_user_patch(
 def undo_last_patch(
     source_timeline_path: str, working_timeline_path: str, patch_log_path: str,
 ) -> dict:
-    source_segs, _ = _load_timeline_segments(source_timeline_path)
+    # Use pristine backup as source if available, otherwise the working copy
+    bak_path = working_timeline_path + ".bak"
+    src_path = bak_path if os.path.isfile(bak_path) else source_timeline_path
+    source_segs, _ = _load_timeline_segments(src_path)
     existing = _load_patch_log(patch_log_path)
     if not existing:
         return {"status": "no_patches"}
@@ -126,6 +134,9 @@ def undo_last_patch(
         return {"status": "error"}
     removed = existing.pop()
     _save_patch_log(existing, patch_log_path)
+    # If no more patches remain, clean up the backup
+    if not existing and os.path.isfile(bak_path):
+        os.remove(bak_path)
     _, full_data = _load_timeline_segments(working_timeline_path)
     _save_timeline_segments(reverted, full_data, working_timeline_path)
     return {"status": "undone", "patch_id": removed.patch_id}
