@@ -57,7 +57,6 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
   const setSelectedSpeaker = useAppStore(s => s.setSelectedSpeaker)
   const toggleSpeakerSelection = useAppStore(s => s.toggleSpeakerSelection)
   const addDraft = useAppStore(s => s.addDraft)
-  const applyDraft = useAppStore(s => s.applyDraft)
   const setMode = useAppStore(s => s.setMode)
   const workspace = useAppStore(s => s.workspace)
   const playheadPosition = useAppStore(s => s.playheadPosition)
@@ -243,14 +242,23 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
     if (!mergeTarget || selectedSpeakerIds.length < 2) return
     const source = selectedSpeakerIds.find(id => id !== mergeTarget)
     if (!source) return
-    addDraft({
-      eventId: source, opcode: 'MERGE_SPEAKERS',
-      payload: { source, target: mergeTarget },
-      before: {}, after: {}, timestamp: Date.now(),
-    })
+    // 真实合并：端点改 speaker_timeline + timeline，并写 RETAG 审计 patch
+    try {
+      await fetch('/api/speaker/diarization/merge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workspace: useAppStore.getState().workspace,
+          source,
+          target: mergeTarget,
+        }),
+      })
+      const ws = useAppStore.getState().workspace || ''
+      await useAppStore.getState().fetchSpeakerLanes(ws)
+    } catch {}
     setMergeDialogOpen(false)
     setMergeTarget(null)
-  }, [mergeTarget, selectedSpeakerIds, addDraft])
+  }, [mergeTarget, selectedSpeakerIds])
 
   const handleCreateSpeaker = useCallback(async () => {
     if (!createName.trim()) return
@@ -287,16 +295,9 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
       const ws = useAppStore.getState().workspace || ''
       await useAppStore.getState().fetchSpeakerLanes(ws)
     } catch {}
-    // Record patch for undo
-    addDraft({
-      eventId: speakerId, opcode: 'RENAME_SPEAKER',
-      payload: { newName },
-      before: { displayName: speakerLanes.find(l => l.speaker === speakerId)?.display_name },
-      after: { displayName: newName }, timestamp: Date.now(),
-    })
-    await applyDraft(speakerId)
+    // 审计 patch 由 rename 端点统一记录，前端不再重复打草案
     setEditingName(null)
-  }, [editValue, speakerLanes, addDraft, applyDraft])
+  }, [editValue])
 
   const handleSegmentClick = useCallback((_eventId: string, startTime: number) => {
     setPlayhead(startTime)

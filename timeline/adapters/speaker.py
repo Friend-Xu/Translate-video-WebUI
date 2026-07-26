@@ -17,11 +17,13 @@ def _make_id(prefix: str) -> str:
 def rename_speaker_patch(
     segment_ids: list[str], new_name: str, author: str = "user",
 ) -> TimelinePatch:
+    # rename 只改显示名（speaker_names.json），不能 RETAG 事件 —
+    # 否则事件的 speaker id 会被替换成显示名， speakers 映射表崩坏
     return TimelinePatch(
         patch_id=_make_id("rename"),
-        opcode=OpCode.RETAG_SPEAKER,
+        opcode=OpCode.ANNOTATE,
         targets=segment_ids,
-        payload={"new_speaker": new_name},
+        payload={"key": "display_name", "value": new_name},
         reason=["user_rename"],
         author=author,
     )
