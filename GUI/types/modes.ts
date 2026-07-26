@@ -177,19 +177,5 @@ export interface PatchViewItem {
 
 export type ReviewFilterMode = 'all' | 'pending' | 'flagged' | 'semantic' | 'naturalness' | 'review_critical'
 
-export interface SubtitleEntry {
-  index: number
-  start: string
-  end: string
-  startMs: number
-  endMs: number
-  sourceText: string
-  translatedText: string
-  reviewStatus: 'pending' | 'approved' | 'modified' | 'flagged'
-  issues: { type: string; message: string; severity: string }[]
-  similarity?: number
-  speakerId?: string
-  eventId?: string
-  semanticFlagged?: any
-  quality?: any
-}
+// SubtitleEntry 已统一至 GUI/types.ts (Phase 3c 类型统一), 此处不再重复定义。
+export type { SubtitleEntry } from '../types'

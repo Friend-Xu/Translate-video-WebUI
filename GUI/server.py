@@ -4035,34 +4035,80 @@ def _assign_speakers_by_time_overlap(segments, extract_dir):
             seg["speaker"] = best_spk
 
 
+# ── Canonical event serialization (Phase 3c: 后端 event builder 收敛) ──
+
+def _norm_translation_text(raw) -> str:
+    """translation (dict | string) → 纯文本。v3 统一 dict 后, 前端视图要 text。"""
+    if isinstance(raw, dict):
+        return raw.get("text", "") or ""
+    return str(raw) if raw else ""
+
+
+def _norm_overlap_flag(raw) -> bool:
+    """overlap (bool | {overlap_duration}) → bool。"""
+    if isinstance(raw, dict):
+        return (raw.get("overlap_duration", 0) or 0) > 0
+    return bool(raw)
+
+
+def _canonical_segment(evt: dict, words_fallback: dict | None = None) -> dict:
+    """统一的核心 segment 序列化 — speaker_lanes 与 inspector 的共享基础。
+
+    取代 _build_inspector_from_transcript 与 speaker_load 的内联重复构建。
+    words 缺失时可从 transcript 按 (start, end) 时间匹配补全 (words_fallback)。
+    """
+    words = evt.get("words") or []
+    if not words and words_fallback:
+        key = (round(evt.get("start", 0), 2), round(evt.get("end", 0), 2))
+        words = words_fallback.get(key) or []
+    seg_id = evt.get("id", "")
+    return {
+        "id": seg_id,
+        "eventId": seg_id,
+        "start": evt.get("start", 0),
+        "end": evt.get("end", 0),
+        "text": evt.get("text", ""),
+        "translation": _norm_translation_text(evt.get("translation", "")),
+        "overlap": _norm_overlap_flag(evt.get("overlap")),
+        "words": words,
+    }
+
+
+def _segment_to_inspector(seg: dict, lane: dict, pass_trace: list) -> dict:
+    """canonical segment → inspector_data 项 (加 speaker 上下文 + UI 状态)。"""
+    return {
+        "id": seg["id"], "start": seg["start"], "end": seg["end"],
+        "speaker": lane["speaker"], "displayName": lane["display_name"],
+        "color": lane.get("color", ""),
+        "text": seg["text"], "translation": seg["translation"],
+        "source": "asr", "confidence": 1.0,
+        "words": seg.get("words", []),
+        "patches": [], "passTrace": pass_trace,
+        "visualState": {
+            "hasPatches": False, "hasAiSuggestion": False,
+            "isSelected": False, "isMultiSelected": False,
+        },
+    }
+
+
 def _build_inspector_from_transcript(result: dict, segments: list,
                                       patch_log_data: list, patches_data: dict) -> None:
     """Build inspector_data and speaker_lanes from transcript.json segments.
 
     Used as fallback when timeline.json is missing or empty, so the frontend
     still shows ASR segments even if timeline fusion (NODE 3.75) failed.
+    核心序列化走 _canonical_segment / _segment_to_inspector (Phase 3c)。
     """
     SPEAKER_COLORS = ["#4CAF50", "#2196F3", "#FF9800", "#E91E63", "#9C27B0", "#00BCD4"]
     speaker_segments: dict[str, list] = {}
     for i, seg in enumerate(segments):
         spk = seg.get("speaker") or "UNKNOWN"
-        seg_id = seg.get("id") or f"seg_{i+1:03d}"
-        trans = seg.get("translation", "")
-        if isinstance(trans, dict):
-            trans = trans.get("text", "") or ""
-        entry = {
-            "id": seg_id,
-            "eventId": seg_id,
-            "start": seg.get("start", 0),
-            "end": seg.get("end", 0),
-            "text": seg.get("text", ""),
-            "translation": trans,
-            "overlap": seg.get("overlap", False),
-            "words": seg.get("words", []),
-        }
+        if not seg.get("id"):
+            seg = {**seg, "id": f"seg_{i+1:03d}"}
+        canon = _canonical_segment(seg)
         if spk not in speaker_segments:
             speaker_segments[spk] = []
-        speaker_segments[spk].append(entry)
+        speaker_segments[spk].append(canon)
 
     lanes = []
     for i, (spk, segs) in enumerate(sorted(speaker_segments.items())):
@@ -4077,27 +4123,11 @@ def _build_inspector_from_transcript(result: dict, segments: list,
         })
     result["speaker_lanes"] = lanes
 
-    result["speaker_lanes"] = lanes
-
     # Build inspector_data sorted by start time (not speaker-grouped)
     all_segments = []
     for lane in lanes:
         for seg in lane["segments"]:
-            trans = seg.get("translation", "")
-            if isinstance(trans, dict):
-                trans = trans.get("text", "") or ""
-            all_segments.append((seg["start"], {
-                "id": seg["id"], "start": seg["start"], "end": seg["end"],
-                "speaker": lane["speaker"], "displayName": lane["display_name"],
-                "text": seg["text"], "translation": trans,
-                "source": "asr", "confidence": 1.0,
-                "words": seg.get("words", []),
-                "patches": [], "passTrace": [],
-                "visualState": {
-                    "hasPatches": False, "hasAiSuggestion": False,
-                    "isSelected": False, "isMultiSelected": False,
-                },
-            }))
+            all_segments.append((seg["start"], _segment_to_inspector(seg, lane, [])))
     all_segments.sort(key=lambda x: x[0])
     inspector_data = {item["id"]: item for _, item in all_segments}
     result["inspector_data"] = inspector_data
@@ -4212,25 +4242,8 @@ async def speaker_load(req: SpeakerLoadRequest):
         spk = evt.get("speaker") or "UNKNOWN"
         if spk not in speaker_segments:
             speaker_segments[spk] = []
-        # 规范化 translation: v2 dict → 取 text 字段
-        trans = evt.get("translation", "")
-        if isinstance(trans, dict):
-            trans = trans.get("text", "")
-        words = evt.get("words") or []
-        # 若 timeline.json 无 words，从 transcript.json 按时间匹配补全
-        if not words and _tj_words:
-            key = (round(evt.get("start", 0), 2), round(evt.get("end", 0), 2))
-            words = _tj_words.get(key) or []
-        speaker_segments[spk].append({
-            "id": evt.get("id", ""),
-            "eventId": evt.get("id", ""),
-            "start": evt.get("start", 0),
-            "end": evt.get("end", 0),
-            "text": evt.get("text", ""),
-            "translation": trans,
-            "overlap": (evt.get("overlap") or {}).get("overlap_duration", 0) > 0 if evt.get("overlap") else False,
-            "words": words,
-        })
+        # 核心序列化走 _canonical_segment; words 缺失时从 transcript 补全 (_tj_words)
+        speaker_segments[spk].append(_canonical_segment(evt, _tj_words))
 
     lanes = []
     sorted_speakers = sorted(speaker_segments.items())
@@ -4261,21 +4274,8 @@ async def speaker_load(req: SpeakerLoadRequest):
 
     inspector_data: dict = {}
     for lane in lanes:
-        spk_color = lane.get("color", "")
         for seg in lane["segments"]:
-            inspector_data[seg["id"]] = {
-                "id": seg["id"], "start": seg["start"], "end": seg["end"],
-                "speaker": lane["speaker"], "displayName": lane["display_name"],
-                "color": spk_color,
-                "text": seg["text"], "translation": seg.get("translation", ""),
-                "source": "asr", "confidence": 1.0,
-                "words": seg.get("words", []),
-                "patches": [], "passTrace": result["pass_trace"],
-                "visualState": {
-                    "hasPatches": False, "hasAiSuggestion": False,
-                    "isSelected": False, "isMultiSelected": False,
-                },
-            }
+            inspector_data[seg["id"]] = _segment_to_inspector(seg, lane, result["pass_trace"])
     for p in patch_log_data:
         for tid in p.get("targets", []):
             if tid in inspector_data:

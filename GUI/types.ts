@@ -295,7 +295,7 @@ export interface SubtitleEntry {
   endMs: number
   sourceText: string
   translatedText: string
-  reviewStatus: 'pending' | 'approved' | 'modified'
+  reviewStatus: 'pending' | 'approved' | 'modified' | 'flagged'
   issues: SubtitleIssue[]
   similarity?: number
   semanticFlagged?: {
@@ -312,6 +312,8 @@ export interface SubtitleEntry {
   tierReason?: string
   /** 说话人 ID（多说话人视频） */
   speakerId?: string
+  /** 关联的 timeline event ID */
+  eventId?: string
 }
 
 export interface ReviewSession {
