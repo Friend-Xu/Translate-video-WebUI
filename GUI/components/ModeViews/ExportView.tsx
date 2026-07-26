@@ -63,16 +63,13 @@ export default function ExportView({ events }: Props) {
     setExporting(true)
     setExportResult(null)
     try {
-      const res = await fetch('/api/core/pipeline/run', {
+      const res = await fetch('/api/export/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          video_path: manifest?.video_path || '',
-          preset_id: 'cinema_dub',
-          use_core: true,
           workspace,
+          video_path: manifest?.video_path || '',
           target_lang: 'zh',
-          export_mode: true,
         }),
       })
       if (!res.ok) throw new Error((await res.json().catch(() => ({})) as any).detail || '导出启动失败')

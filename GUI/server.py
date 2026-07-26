@@ -1816,9 +1816,19 @@ async def project_manifest_resolve(workspace: str) -> dict:
     """读取 project.json 并返回解析后的绝对文件路径，供前端直接使用。"""
     manifest_path = os.path.join(workspace, "project.json")
     if not os.path.isfile(manifest_path):
-        raise HTTPException(status_code=404, detail="project.json 不存在")
-    with open(manifest_path, "r", encoding="utf-8") as f:
-        manifest = json.load(f)
+        # CLI (tvw.py) 旧工作区可能没有 project.json — 从 session.json 合成
+        session_path = os.path.join(workspace, "session.json")
+        if not os.path.isfile(session_path):
+            raise HTTPException(status_code=404, detail="project.json 不存在")
+        manifest = {"video_path": "", "files": {}}
+        try:
+            with open(session_path, "r", encoding="utf-8") as f:
+                manifest["video_path"] = json.load(f).get("video_path", "")
+        except Exception:
+            pass
+    else:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
 
     files = manifest.get("files", {})
     workspace_dir = os.path.abspath(workspace)
@@ -1950,6 +1960,48 @@ def _run_qa_checks(entries: list[dict], lang: str = "zh") -> None:
                     "message": f"与上一条重叠 {prev_end - entry['startMs']}ms",
                     "severity": "error",
                 })
+def _synthesize_srt_from_timeline(workspace: str) -> tuple[str, str] | None:
+    """core/ 工作区无 SRT 工件时，从 timeline.json 生成 source.srt / machine.srt。
+
+    返回 (source_srt_path, machine_srt_path)；timeline.json 缺失或为空返回 None。
+    """
+    tl_path = os.path.join(workspace, "01_extract", "timeline.json")
+    if not os.path.isfile(tl_path):
+        return None
+    try:
+        with open(tl_path, "r", encoding="utf-8") as f:
+            events = json.load(f).get("events", [])
+    except Exception:
+        return None
+    if not events:
+        return None
+
+    def _ts(sec: float) -> str:
+        ms = int(round(sec * 1000))
+        h, ms = divmod(ms, 3600000)
+        m, ms = divmod(ms, 60000)
+        s, ms = divmod(ms, 1000)
+        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+    def _dump(items: list, path: str) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            for i, (st, et, txt) in enumerate(items, 1):
+                f.write(f"{i}\n{_ts(st)} --> {_ts(et)}\n{txt}\n\n")
+
+    src_items, tr_items = [], []
+    for e in events:
+        tr = e.get("translation")
+        if isinstance(tr, dict):
+            tr = tr.get("text", "") or ""
+        src_items.append((e.get("start", 0), e.get("end", 0), e.get("text", "")))
+        tr_items.append((e.get("start", 0), e.get("end", 0), tr or ""))
+
+    src_path = os.path.join(workspace, "01_extract", "source.srt")
+    tr_path = os.path.join(workspace, "02_translate", "machine.srt")
+    _dump(src_items, src_path)
+    _dump(tr_items, tr_path)
+    return src_path, tr_path
 
 
 @app.post("/api/subtitle/review/load")
@@ -1987,6 +2039,12 @@ async def review_load(req: ReviewLoadRequest) -> dict:
         )
         quality_report_json = os.path.join(_ws_derived, "02_translate", "quality_report.json")
         prompt_manifest_json = os.path.join(_ws_derived, "02_translate", "source-prompt-manifest.json")
+
+    if not source.is_file() and req.workspace:
+        # core/ 工作区: SRT 工件不存在时从 timeline.json 合成
+        synth = _synthesize_srt_from_timeline(req.workspace)
+        if synth:
+            source, translated = Path(synth[0]), Path(synth[1])
 
     if not source.is_file():
         raise HTTPException(status_code=400, detail=f"原文字幕不存在: {source}")
@@ -3119,10 +3177,11 @@ def _resolve_font_path(font: str, engine: str = "pil") -> str:
             raise HTTPException(status_code=400, detail=f"字体文件不存在: {font}")
         return font
     if font.endswith((".ttf", ".otf", ".ttc")) or "/" in font or "\\" in font:
-        resolved = str(FONT_DIR / font)
-        if not Path(resolved).is_file():
-            raise HTTPException(status_code=400, detail=f"字体文件不存在: {resolved}")
-        return resolved
+        # 兼容两种输入: 相对 FONT_DIR 的裸路径，或已含 models/font 前缀的路径
+        for candidate in (FONT_DIR / font, PROJECT_ROOT / font.lstrip("./")):
+            if Path(candidate).is_file():
+                return str(candidate)
+        raise HTTPException(status_code=400, detail=f"字体文件不存在: {FONT_DIR / font}")
     # System font name
     if engine == "pil":
         sys_path = _resolve_system_font_path(font)
@@ -4359,6 +4418,11 @@ async def speaker_waveform(workspace: str = ""):
     wav_path = os.path.join(extract_dir, "vocals.wav")
     if not os.path.isfile(wav_path):
         wav_path = os.path.join(extract_dir, "audio.wav")
+    if not os.path.isfile(wav_path):
+        # core/ bootstrap 的命名: {stem}_extracted.wav
+        import glob as _glob
+        matches = _glob.glob(os.path.join(extract_dir, "*_extracted.wav"))
+        wav_path = matches[0] if matches else wav_path
     if not os.path.isfile(wav_path):
         raise HTTPException(status_code=404, detail="音频文件不存在")
 
@@ -5808,6 +5872,27 @@ async def list_workspaces() -> dict:
                 except Exception:
                     pass
 
+            # 回退：CLI (tvw.py) 启动的流水线只写 session.json，不写 project.json 的
+            # runtime_state。映射 SessionState → RuntimeState，否则 CLI 建的项目卡片点不开。
+            if runtime_state == RuntimeState.UNINITIALIZED.value:
+                session_path = d / "session.json"
+                if session_path.is_file():
+                    try:
+                        with open(session_path, "r", encoding="utf-8") as f:
+                            s = json.load(f)
+                        _SESSION_TO_RUNTIME = {
+                            "reviewable": RuntimeState.READY.value,
+                            "validated": RuntimeState.READY.value,
+                            "completed": RuntimeState.COMPLETE.value,
+                            "exporting": RuntimeState.COMPUTING.value,
+                            "bootstrapping": RuntimeState.BOOTSTRAPPING.value,
+                            "failed": RuntimeState.FAILED.value,
+                        }
+                        runtime_state = _SESSION_TO_RUNTIME.get(
+                            s.get("session_state", ""), runtime_state)
+                    except Exception:
+                        pass
+
             workspaces.append({
                 "path": str(d),
                 "name": d.name.replace("_project", ""),
@@ -5918,6 +6003,7 @@ class CoreRunRequest(BaseModel):
     device: str = "cuda"
     compute_type: str = "float16"
     num_speakers: int = 0  # 0=自动, >0=指定说话人数
+    export_stage: bool = False  # True=仅跑 TTS→EXPORT（需已存在 bootstrap 工作区）
 
 
 class CoreRunResponse(BaseModel):
@@ -6301,10 +6387,13 @@ def _run_core_pipeline_sync(job: Job, req: CoreRunRequest, flags: dict | None = 
 
         if rc == 0:
             job.status = "completed"
-            job.runtime_state = "ready"
+            is_export = getattr(req, "export_stage", False)
+            job.runtime_state = "complete" if is_export else "ready"
             job.progress = 100
             job.current_step = "core/ Pipeline 完成"
-            _update_workspace_runtime_state(job.workspace_path, RuntimeState.READY)
+            _update_workspace_runtime_state(
+                job.workspace_path,
+                RuntimeState.COMPLETE if is_export else RuntimeState.READY)
             if job._loop is not None and job._queues:
                 ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
                 for q in job._queues:
@@ -6709,6 +6798,33 @@ async def start_export(req: ExportRunRequest) -> dict:
 
     if not Path(video_path).is_file():
         raise HTTPException(status_code=400, detail=f"视频文件不存在: {video_path}")
+
+    # 前置检查：翻译未完成的导出注定在 TTS 阶段失败（zh 语音无法读 fallback 原文），
+    # 在这里 fail fast 而不是跑几分钟 TTS 才死。
+    if workspace:
+        tl_path = Path(workspace) / "01_extract" / "timeline.json"
+        if tl_path.is_file():
+            try:
+                with open(tl_path, "r", encoding="utf-8") as f:
+                    _tl = json.load(f)
+                untranslated = []
+                for evt in _tl.get("events", []):
+                    tr = evt.get("translation")
+                    if isinstance(tr, dict):
+                        tr = tr.get("text", "") or ""
+                    tr = (tr or "").strip()
+                    if not tr or tr.startswith("[TR]"):
+                        untranslated.append(evt.get("id", "?"))
+                if untranslated:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"翻译未完成：{len(untranslated)} 个事件是原文 fallback（[TR] 前缀或空）。"
+                               f"请检查 config/translate.yaml 的 api_key 并先完成翻译阶段。",
+                    )
+            except HTTPException:
+                raise
+            except Exception:
+                pass  # timeline.json 读取失败不阻塞导出（TTS 阶段会自行报错）
 
     job_id = uuid.uuid4().hex[:8]
     job = Job(

@@ -231,7 +231,7 @@ export default function SettingsView() {
         max_lines: String(config.caption_max_lines ?? 2),
         font_size_factor: String(config.caption_font_size_factor ?? 0.030),
         caption_width_ratio: String(config.caption_width_ratio ?? 0.85),
-        font_size_mode: 'fixed',
+        font_size_mode: (config.caption_font_size ?? 0) > 0 ? 'fixed' : 'adaptive',
         text_zh: 'Minecraft我的世界 村民交易',
         text_en: 'Minecraft Villager Trade x64',
         engine: 'pil',

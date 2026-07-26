@@ -25,6 +25,7 @@ export default function SpeakerWaveform({
   useEffect(() => {
     let cancelled = false
     async function load() {
+      if (!workspace) return  // 未加载工作区时不发空请求
       const params = new URLSearchParams({ workspace })
       try {
         const res = await fetch(`/api/speaker/diarization/waveform?${params}`)
