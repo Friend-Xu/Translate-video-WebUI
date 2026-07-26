@@ -2,6 +2,23 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 开发原则（不可协商，2026-07-27 确立）
+
+**1. 禁止兜底（Fail Loud）**
+- 缺数据必须显式报错或进入人工审核，禁止静默默认值：`or text_ref`、`except: pass`、固定 1.0 评分、无警告的 mock 降级，一律禁止
+- 兜底让原则性数据错误变成"成功的错误输出"（英文配音视频、`{"config": {}}` 空译文），病因不可发现
+- 兼容旧数据用**显式一次性迁移**（normalize 脚本），不用永久运行时兜底
+
+**2. 高内聚，低耦合**
+- 每个模块一个职责；pass 只读写自己的 slot，不重建其他 pass 的数据结构
+- 字段级数据契约显式声明——禁止"只保留我认识的字段"式重建（semantic_merge 丢 words 的教训）
+- 系统必须对 AI 维护友好：契约不明确的地方，先补契约再改代码
+
+**3. 单向依赖**
+- 依赖方向唯一：`core/`（编排）→ `pipeline/`（执行层）→ 引擎。禁止反向引用、环形依赖、双入口（main_core.py 之死）
+- `timeline.json` 是唯一事实源：所有派生物（SRT、波形、预览）由它单向生成，派生物永不回写、永不成为别的环节的数据源
+- persist / reload 必须互逆，往返一致性由测试锁死
+
 ## Commands
 
 ```bash
