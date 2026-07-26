@@ -240,6 +240,15 @@ class WorkflowPolicy:
             full.stages.pop(s, None)
         return full
 
+    @classmethod
+    def single_stage(cls, stage: "WorkflowStage", target_lang: str = "zh") -> "WorkflowPolicy":
+        """单阶段预设 — 只执行指定阶段（tvw stage/validate/export 命令用）。"""
+        full = cls.default_preset(target_lang)
+        for s in list(full.stages.keys()):
+            if s != stage:
+                del full.stages[s]
+        return full
+
     def get_stage(self, stage: WorkflowStage) -> StageConfig | None:
         return self.stages.get(stage)
 

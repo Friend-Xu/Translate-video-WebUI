@@ -139,6 +139,140 @@ def _run_legacy_pipeline(args) -> None:
         sys.argv = _orig
 
 
+def _build_translate_fn(lang: str):
+    """构建标签化文本翻译函数 — 直接调 LLM API，不通过 SRT 文件桥接。
+
+    LLMTranslationPass 已将事件渲染为标签化文本、解析 LLM 回复、
+    通过 PatchEngine 写入 runtime state。
+    """
+    def _translate_fn(tagged_text: str) -> str:
+        """直接调 LLM API 翻译标签化文本。
+
+        输入: "[evt_001] 今天天气真好\n[evt_002] 一起去散步吧"
+        输出: "[evt_001] 今日は本当にいい天気ですね\n[evt_002] 一緒に散歩しましょう"
+        """
+        import yaml
+
+        config_path = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+        except Exception:
+            cfg = {}
+
+        # translate.yaml 的实际结构是 {translate: {api_key, ...}} 嵌套
+        t_cfg = cfg.get("translate", cfg) if isinstance(cfg, dict) else {}
+        api_key = t_cfg.get("api_key", "") or os.environ.get("DEEPSEEK_API_KEY", "")
+        if not api_key:
+            # 无 API key → mock translation
+            print("[WARN] 未找到翻译 API key（translate.yaml 的 translate.api_key），"
+                  "使用 mock 翻译（[TR] 前缀）", file=sys.stderr)
+            from core.passes.llm_translation_pass import LLMTranslationPass
+            return LLMTranslationPass._mock_translate(tagged_text)
+
+        base_url = t_cfg.get("api_base_url", "") or "https://api.deepseek.com"
+        model = t_cfg.get("model", "deepseek-chat")
+
+        import requests as _requests
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": (
+                    "You are a subtitle translator. "
+                    "Translate the following tagged text from the source language "
+                    f"to {lang}. Preserve ALL [evt_NNN] tags exactly as-is. "
+                    "Return ONLY the translated text with tags, no explanations."
+                )},
+                {"role": "user", "content": tagged_text},
+            ],
+            "temperature": 0.1,
+            "max_tokens": 4000,
+        }
+        try:
+            resp = _requests.post(
+                f"{base_url.rstrip('/')}/v1/chat/completions",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                timeout=120,
+            )
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"].strip()
+        except Exception as exc:
+            # 降级必须响亮：静默 mock 会让"翻译成功"成为谎言
+            print(f"[WARN] LLM 翻译调用失败（{type(exc).__name__}: {exc}），"
+                  f"本批次降级为 mock 翻译（[TR] 前缀）", file=sys.stderr)
+            from core.passes.llm_translation_pass import LLMTranslationPass
+            return LLMTranslationPass._mock_translate(tagged_text)
+
+    return _translate_fn
+
+
+def _resolve_video_for_ws(ws_dir: str) -> str:
+    """从 workspace 解析源视频路径：session.json 优先，按目录名推断兜底。"""
+    try:
+        from core.runtime.session import SessionStore
+        sess = SessionStore.load(ws_dir)
+        if sess and sess.video_path and os.path.isfile(sess.video_path):
+            return sess.video_path
+    except Exception:
+        pass
+    stem = os.path.basename(ws_dir.rstrip("/\\"))
+    if stem.endswith("_project"):
+        stem = stem[:-len("_project")]
+    for ext in (".mp4", ".mkv", ".avi", ".mov"):
+        cand = os.path.join(os.path.dirname(ws_dir), stem + ext)
+        if os.path.isfile(cand):
+            return cand
+    return ""
+
+
+def _build_pass_factory_for(args, video_path: str, ws_dir: str, lang: str, gcfg):
+    """构建 pass 工厂 — cmd_run / cmd_stage / cmd_validate / cmd_export 共用。"""
+    from core.engine.pass_factory import create_pass_factory
+
+    # 导入策略模块以触发装饰器注册
+    import core.quality.logic_gate_strategy  # noqa: F401 — 注册 logic_gate
+    import core.quality.xcomet_strategy      # noqa: F401 — 注册 xcomet
+    from core.quality.protocol import create_strategy as create_quality_strategy
+
+    stem = os.path.splitext(os.path.basename(video_path))[0]
+    extract_dir = os.path.join(ws_dir, "01_extract")
+    audio_path = os.path.join(extract_dir, f"{stem}_extracted.wav")
+    vocals_path = os.path.join(extract_dir, f"{stem}_vocals.wav")
+
+    quality_name = gcfg.project.translation.get("quality_strategy", "logic_gate")
+    quality_strategy = create_quality_strategy(quality_name, gcfg)
+
+    # 构建字幕配置（仅非 None 值传入）
+    caption_config = {}
+    for attr in ("caption_font", "caption_font_size", "caption_font_color",
+                 "caption_stroke_width", "caption_stroke_color", "caption_bg_color",
+                 "caption_alignment", "caption_position", "caption_max_lines",
+                 "caption_width_ratio"):
+        val = getattr(args, attr, None)
+        if val is not None:
+            caption_config[attr] = val
+
+    return create_pass_factory(
+        translate_fn=_build_translate_fn(lang),
+        video_path=video_path,
+        audio_path=audio_path,
+        output_dir=ws_dir,
+        workspace_dir=ws_dir,
+        engine=getattr(args, "engine", None) or "edge",
+        quality_strategy=quality_strategy,
+        num_workers=getattr(args, "num_workers", 1),
+        enable_speaker_diarization=getattr(args, "enable_speaker_diarization", False),
+        num_speakers=getattr(args, "num_speakers", 0),
+        enable_emotion=getattr(args, "enable_emotion", False),
+        verification_mode=getattr(args, "verification_mode", None),
+        caption_config=caption_config if caption_config else None,
+    )
+
+
 def _run_core_pipeline(args) -> None:
     """Core 路径 — WorkflowOrchestrator 执行 (计划书 §10)。"""
     from core.engine import WorkflowOrchestrator, ProgressReport, WorkflowStatus
@@ -188,102 +322,8 @@ def _run_core_pipeline(args) -> None:
     if args.device:
         gcfg.device = args.device
 
-    # ── 构建 translate_fn ─────────────────────────────────────
-    # 新架构直接调用 LLM API，不通过 SRT 文件桥接。
-    # LLMTranslationPass 已将事件渲染为标签化文本、解析 LLM 回复、
-    # 通过 PatchEngine 写入 runtime state。
-    def _translate_fn(tagged_text: str) -> str:
-        """直接调 LLM API 翻译标签化文本。
-
-        输入: "[evt_001] 今天天气真好\n[evt_002] 一起去散步吧"
-        输出: "[evt_001] 今日は本当にいい天気ですね\n[evt_002] 一緒に散歩しましょう"
-        """
-        import yaml
-
-        config_path = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
-        except Exception:
-            cfg = {}
-
-        api_key = cfg.get("api_key", "") or os.environ.get("DEEPSEEK_API_KEY", "")
-        if not api_key:
-            # 无 API key → mock translation
-            from core.passes.llm_translation_pass import LLMTranslationPass
-            return LLMTranslationPass._mock_translate(tagged_text)
-
-        base_url = cfg.get("api_base_url", "") or "https://api.deepseek.com"
-        model = cfg.get("model", "deepseek-chat")
-
-        import requests as _requests
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": (
-                    "You are a subtitle translator. "
-                    "Translate the following tagged text from the source language "
-                    f"to {lang}. Preserve ALL [evt_NNN] tags exactly as-is. "
-                    "Return ONLY the translated text with tags, no explanations."
-                )},
-                {"role": "user", "content": tagged_text},
-            ],
-            "temperature": 0.1,
-            "max_tokens": 4000,
-        }
-        try:
-            resp = _requests.post(
-                f"{base_url.rstrip('/')}/v1/chat/completions",
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=120,
-            )
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"].strip()
-        except Exception:
-            from core.passes.llm_translation_pass import LLMTranslationPass
-            return LLMTranslationPass._mock_translate(tagged_text)
-
-    # ── 构建 Pass 工厂 ─────────────────────────────────────
-    audio_path = os.path.join(extract_dir, f"{stem}_extracted.wav")
-    vocals_path = os.path.join(extract_dir, f"{stem}_vocals.wav")
-
-    # 选择质量把控策略 (用户可在 config/quality.yaml 中选择)
-    # 导入策略模块以触发装饰器注册
-    import core.quality.logic_gate_strategy  # noqa: F401 — 注册 logic_gate
-    import core.quality.xcomet_strategy     # noqa: F401 — 注册 xcomet
-    quality_name = gcfg.project.translation.get("quality_strategy", "logic_gate")
-    from core.quality.protocol import create_strategy as create_quality_strategy
-    quality_strategy = create_quality_strategy(quality_name, gcfg)
-
-    # 构建字幕配置（仅非 None 值传入）
-    caption_config = {}
-    for attr in ("caption_font", "caption_font_size", "caption_font_color",
-                 "caption_stroke_width", "caption_stroke_color", "caption_bg_color",
-                 "caption_alignment", "caption_position", "caption_max_lines",
-                 "caption_width_ratio"):
-        val = getattr(args, attr, None)
-        if val is not None:
-            caption_config[attr] = val
-
-    pass_factory = create_pass_factory(
-        translate_fn=_translate_fn,
-        video_path=video_path,
-        audio_path=audio_path,
-        output_dir=ws_dir,
-        workspace_dir=ws_dir,
-        engine=args.engine or "edge",
-        quality_strategy=quality_strategy,
-        num_workers=getattr(args, "num_workers", 1),
-        enable_speaker_diarization=getattr(args, "enable_speaker_diarization", False),
-        num_speakers=getattr(args, "num_speakers", 0),
-        enable_emotion=getattr(args, "enable_emotion", False),
-        verification_mode=getattr(args, "verification_mode", None),
-        caption_config=caption_config if caption_config else None,
-    )
+    # ── 构建 Pass 工厂（与 stage/validate/export 命令共用）────────
+    pass_factory = _build_pass_factory_for(args, video_path, ws_dir, lang, gcfg)
 
     orchestrator = WorkflowOrchestrator(
         policy=policy,
@@ -341,6 +381,36 @@ def _run_core_pipeline(args) -> None:
     except Exception as exc:
         print(f"[WARN] session 初始化失败: {exc}", file=sys.stderr)
 
+    # 确保 project.json 存在 — WebUI 的 manifest/resolve 和 /api/workspaces 依赖它
+    try:
+        manifest_path = os.path.join(ws_dir, "project.json")
+        if not os.path.isfile(manifest_path):
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                _json.dump({
+                    "video_path": os.path.abspath(video_path),
+                    "runtime_state": "bootstrapping",
+                    "created_at": _now_iso(),
+                    "updated_at": _now_iso(),
+                    "files": {},
+                }, f, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        print(f"[WARN] project.json 初始化失败: {exc}", file=sys.stderr)
+
+    def _update_manifest_state(state: str) -> None:
+        """运行结束时同步 project.json 的 runtime_state（WebUI 项目卡片依赖）。"""
+        try:
+            manifest_path = os.path.join(ws_dir, "project.json")
+            m = {}
+            if os.path.isfile(manifest_path):
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    m = _json.load(f)
+            m["runtime_state"] = state
+            m["updated_at"] = _now_iso()
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                _json.dump(m, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
     try:
         state = orchestrator.run(video_path)
         events_count = len(state.event_states) if state and hasattr(state, 'event_states') else 0
@@ -348,6 +418,7 @@ def _run_core_pipeline(args) -> None:
         if orchestrator.status == WorkflowStatus.PAUSED:
             _persist_timeline(state, ws_dir, video_path, lang)
             SessionStore.transition(ws_dir, SessionState.REVIEWABLE)
+            _update_manifest_state("ready")
             _json_out({"type": "workflow_paused", "status": "paused",
                         "stage": getattr(orchestrator.current_stage, "value", orchestrator.current_stage) or "",
                         "events": events_count, "ts": _now_iso()})
@@ -358,6 +429,7 @@ def _run_core_pipeline(args) -> None:
             _persist_timeline(state, ws_dir, video_path, lang)
 
             SessionStore.transition(ws_dir, SessionState.REVIEWABLE)
+            _update_manifest_state("complete" if args.export_stage else "ready")
             _json_out({"type": "workflow_completed", "status": "completed", "events": events_count, "ts": _now_iso()})
             if not _JSON_OUTPUT:
                 print(f"  [OK] Core Pipeline 完成 ({events_count} events)")
@@ -366,6 +438,7 @@ def _run_core_pipeline(args) -> None:
             SessionStore.transition(ws_dir, SessionState.FAILED)
         except Exception:
             pass
+        _update_manifest_state("failed")
         _json_error(f"Core pipeline failed: {e}")
         if not _JSON_OUTPUT:
             print(f"  [X] Core Pipeline 失败: {e}", file=sys.stderr)
@@ -466,7 +539,10 @@ def cmd_stage(args) -> None:
 
     stage = WorkflowStage(args.stage_name)
     policy = WorkflowPolicy.single_stage(stage)
-    orchestrator = WorkflowOrchestrator(policy=policy, global_config=GlobalConfig())
+    gcfg = GlobalConfig()
+    orchestrator = WorkflowOrchestrator(policy=policy, global_config=gcfg)
+    orchestrator.set_pass_factory(_build_pass_factory_for(
+        args, _resolve_video_for_ws(ws_dir), ws_dir, "zh", gcfg))
 
     _json_out({"type": "stage_started", "stage": args.stage_name, "ts": _now_iso()})
 
@@ -508,7 +584,10 @@ def cmd_validate(args) -> None:
     from core.config.global_config import GlobalConfig
 
     policy = WorkflowPolicy.single_stage(WorkflowStage.VALIDATE)
-    orchestrator = WorkflowOrchestrator(policy=policy, global_config=GlobalConfig())
+    gcfg = GlobalConfig()
+    orchestrator = WorkflowOrchestrator(policy=policy, global_config=gcfg)
+    orchestrator.set_pass_factory(_build_pass_factory_for(
+        args, _resolve_video_for_ws(ws_dir), ws_dir, "zh", gcfg))
 
     def _progress(report: ProgressReport) -> None:
         print(f"  [{report.stage_label}] {report.message}")
@@ -541,7 +620,10 @@ def cmd_export(args) -> None:
     from core.config.global_config import GlobalConfig
 
     policy = WorkflowPolicy.single_stage(WorkflowStage.EXPORT)
-    orchestrator = WorkflowOrchestrator(policy=policy, global_config=GlobalConfig())
+    gcfg = GlobalConfig()
+    orchestrator = WorkflowOrchestrator(policy=policy, global_config=gcfg)
+    orchestrator.set_pass_factory(_build_pass_factory_for(
+        args, _resolve_video_for_ws(ws_dir), ws_dir, "zh", gcfg))
 
     def _progress(report: ProgressReport) -> None:
         print(f"  [{report.stage_label}] {report.message}")
