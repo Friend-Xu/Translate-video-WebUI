@@ -21,7 +21,7 @@ class ASRScore:
     c_asr: float = 1.0
     c_alignment: float = 1.0
     c_speaker_hint: float = 1.0
-    c_semantic: float = 1.0
+    c_semantic: float | None = None  # None = 无数据（embedding 未接线），composite 自动按剩余维度归一化
     composite: float = 1.0
 
     @property
@@ -57,21 +57,30 @@ class ASRScorer:
         c_speaker = self._calc_speaker_confidence(es)
         c_semantic = self._calc_semantic_consistency(es, prev_embedding)
 
-        composite = (
-            self.weights["asr"] * c_asr
-            + self.weights["alignment"] * c_alignment
-            + self.weights["speaker_hint"] * c_speaker
-            + self.weights["semantic"] * c_semantic
-        )
+        composite = self._weighted_mean([
+            (self.weights["asr"], c_asr),
+            (self.weights["alignment"], c_alignment),
+            (self.weights["speaker_hint"], c_speaker),
+            (self.weights["semantic"], c_semantic),
+        ])
 
         return ASRScore(
             segment_id=es.id,
             c_asr=round(c_asr, 4),
             c_alignment=round(c_alignment, 4),
             c_speaker_hint=round(c_speaker, 4),
-            c_semantic=round(c_semantic, 4),
+            c_semantic=round(c_semantic, 4) if c_semantic is not None else None,
             composite=round(composite, 4),
         )
+
+    @staticmethod
+    def _weighted_mean(dims: list[tuple[float, float | None]]) -> float:
+        """加权平均，跳过 None（无数据）维度并按剩余权重归一化。"""
+        valid = [(w, v) for w, v in dims if v is not None]
+        w_sum = sum(w for w, _ in valid)
+        if w_sum <= 0:
+            return 0.0
+        return sum(w * v for w, v in valid) / w_sum
 
     def score_all(self, state: TimelineProjectState) -> dict[str, ASRScore]:
         """计算所有 segment 的联合评分，写入 runtime 槽位。"""
@@ -79,11 +88,7 @@ class ASRScorer:
         sorted_events = state.sorted_events()
 
         for i, es in enumerate(sorted_events):
-            prev = scores[sorted_events[i - 1].id] if i > 0 else None
-            prev_c_semantic = prev.c_semantic if prev else None
-            score = self.score_segment(es, prev_embedding=(
-                [prev_c_semantic] if prev_c_semantic is not None else None
-            ))
+            score = self.score_segment(es)
             scores[es.id] = score
 
             es.runtime["asr_score"] = score.composite
@@ -120,9 +125,11 @@ class ASRScorer:
 
     @staticmethod
     def _calc_semantic_consistency(es: TimelineEventState,
-                                   prev_embedding: list[float] | None = None) -> float:
-        if prev_embedding is None:
-            return 1.0
-        if not es.semantic:
-            return 1.0
-        return 1.0  # placeholder: 实际余弦相似度计算需加载 embedding 向量
+                                   prev_embedding: list[float] | None = None) -> float | None:
+        """语义连续性 — 返回 None（无数据）。
+
+        真实实现需要前后事件的 wav2vec2 embedding 向量做余弦相似度，
+        当前未接线。返回 None 而非伪造 1.0，让 composite 按真实维度归一化，
+        避免 gate 基于假满分自动放行。
+        """
+        return None
