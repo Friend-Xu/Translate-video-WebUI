@@ -15,6 +15,7 @@ import PatchManagementView from './components/ModeViews/PatchManagementView'
 import ExportView from './components/ModeViews/ExportView'
 import SettingsView from './components/ModeViews/SettingsView'
 import SpeakerReviewView from './components/ModeViews/SpeakerReviewView'
+import SpeakerInspector from './components/Inspector/SpeakerInspector'
 import GlossaryManager from './components/GlossaryManager'
 import ReviewTable from './components/TimelineArena/ReviewTable'
 import CommandPalette from './components/CommandPalette'
@@ -24,8 +25,7 @@ import { useSSE } from './hooks/useSSE'
 import { useBatch } from './hooks/useBatch'
 import { useAppStore } from './store/useAppStore'
 import { ErrorBanner } from './components/LoadingSkeleton'
-import { MOCK_EVENTS, MOCK_WAVEFORM, MOCK_TTS_WAVEFORMS } from './mocks/mockData'
-import { mockSystemStatus } from './mocks/mockHandlers'
+import { MOCK_EVENTS, MOCK_WAVEFORM } from './mocks/mockData'
 import WorkspaceSelector from './components/WorkspaceSelector'
 
 export default function App() {
@@ -46,6 +46,7 @@ export default function App() {
   const mode = useAppStore(s => s.mode)
   const setMode = useAppStore(s => s.setMode)
   const selectedEventId = useAppStore(s => s.selectedEventId)
+  const ttsWaveforms = useAppStore(s => s.ttsWaveforms)
 
   // SSE
   const sseJobId = status.jobId
@@ -61,8 +62,9 @@ export default function App() {
 
   // System status
   useEffect(() => {
-    mockSystemStatus().then(setSysStatus).catch(() => {})
-    const iv = setInterval(() => mockSystemStatus().then(setSysStatus).catch(() => {}), 10000)
+    const poll = () => fetch('/api/system/status').then(r => r.ok ? r.json() : Promise.reject()).then(setSysStatus).catch(() => {})
+    poll()
+    const iv = setInterval(poll, 10000)
     return () => clearInterval(iv)
   }, [])
 
@@ -143,15 +145,23 @@ export default function App() {
 
   // VideoPreview 放在 Inspector 面板上方
   const inspectorWithVideo = mode === 'timeline' || mode === 'speaker' || mode === 'review' ? (
-    <>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <VideoPreview
         videoSrc={videoSrc || null}
         currentTime={playheadPosition}
         events={events}
         onTimeUpdate={(t) => useAppStore.getState().setPlayhead(t)}
       />
-      <IRInspector event={selectedEvent} />
-    </>
+      <Typography variant="caption" sx={{ fontWeight: 600, px: 1.5, pt: 1, display: 'block', color: 'text.secondary', fontSize: '0.65rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        事件详情
+      </Typography>
+      <Box sx={{ flex: '1 1 auto', overflow: 'hidden auto', minHeight: 0 }}>
+        <IRInspector event={selectedEvent} />
+      </Box>
+      {mode === 'speaker' && (
+        <SpeakerInspector events={events} speakerLanes={[]} />
+      )}
+    </Box>
   ) : null
 
   const arenaContent = (
@@ -177,7 +187,7 @@ export default function App() {
       <Box sx={{ display: mode === 'export' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
         <ExportView events={events} />
       </Box>
-      <Box sx={{ display: mode === 'speaker' ? 'flex' : 'none', flex: 1, overflow: 'hidden', position: 'relative' }}>
+      <Box sx={{ display: mode === 'speaker' ? 'flex' : 'none', flex: 1, width: '100%', overflow: 'hidden', position: 'relative' }}>
         {!isWorkspace && (
           <Box sx={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 50,
             display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
@@ -227,7 +237,7 @@ export default function App() {
           events={events}
           waveform={waveform}
           totalDuration={totalDuration}
-          ttsWaveforms={MOCK_TTS_WAVEFORMS}
+          ttsWaveforms={ttsWaveforms || undefined}
           onDropVideo={handleFileDropped}
         />
       </Box>

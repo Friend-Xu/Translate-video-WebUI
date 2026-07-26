@@ -2933,6 +2933,41 @@ async def system_info() -> dict:
     return _sys_info_cache
 
 
+@app.get("/api/system/status")
+async def system_status() -> dict:
+    """实时资源占用 — 状态栏轮询用，不缓存。"""
+    cpu_usage = 0.0
+    mem_usage = 0.0
+    try:
+        import psutil
+        cpu_usage = psutil.cpu_percent(interval=None)
+        mem_usage = psutil.virtual_memory().percent
+    except Exception:
+        pass
+
+    gpu_usage: float | None = None
+    for smi in ("nvidia-smi",
+                r"C:\Windows\System32\nvidia-smi.exe",
+                r"C:\Program Files\NVIDIA Corporation\NVSMI\nvidia-smi.exe"):
+        try:
+            result = subprocess.run(
+                [smi, "--query-gpu=utilization.gpu", "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=3, encoding="utf-8", errors="replace",
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                gpu_usage = float(result.stdout.strip().splitlines()[0])
+                break
+        except Exception:
+            continue
+
+    return {
+        "cpuUsage": round(cpu_usage, 1),
+        "memUsage": round(mem_usage, 1),
+        "gpuUsage": gpu_usage,
+        "modelsOnline": [],
+    }
+
+
 @app.get("/api/video/info")
 async def video_info(path: str) -> dict:
     """Return video metadata including resolution for a given file path."""
@@ -3906,6 +3941,41 @@ def _load_timeline_v2(path: str) -> dict:
     }
 
 
+def _assign_speakers_by_time_overlap(segments, extract_dir):
+    """按时间重叠将 speaker_timeline.json 的说话人分配到 transcript segments。"""
+    import json as _json, os as _os
+    stl_path = _os.path.join(extract_dir, "speaker_timeline.json")
+    if not _os.path.isfile(stl_path):
+        return
+    try:
+        with open(stl_path, "r", encoding="utf-8") as f:
+            stl = _json.load(f)
+    except Exception:
+        return
+    turns = stl.get("turns", stl.get("timeline", []))
+    if not turns:
+        return
+    normalized = []
+    for t in turns:
+        spk = t.get("speaker", t.get("speaker_id", t[0] if isinstance(t, (list, tuple)) else ""))
+        s = float(t.get("start", t[1] if isinstance(t, (list, tuple)) else 0))
+        e = float(t.get("end", t[2] if isinstance(t, (list, tuple)) else 0))
+        if spk and s < e:
+            normalized.append((spk, s, e))
+    if not normalized:
+        return
+    for seg in segments:
+        seg_start = seg.get("start", 0)
+        seg_end = seg.get("end", 0)
+        best_spk, best_overlap = None, 0.0
+        for spk, ts, te in normalized:
+            overlap = min(seg_end, te) - max(seg_start, ts)
+            if overlap > best_overlap:
+                best_overlap, best_spk = overlap, spk
+        if best_spk and best_overlap > 0:
+            seg["speaker"] = best_spk
+
+
 def _build_inspector_from_transcript(result: dict, segments: list,
                                       patch_log_data: list, patches_data: dict) -> None:
     """Build inspector_data and speaker_lanes from transcript.json segments.
@@ -3923,6 +3993,7 @@ def _build_inspector_from_transcript(result: dict, segments: list,
             trans = trans.get("text", "") or ""
         entry = {
             "id": seg_id,
+            "eventId": seg_id,
             "start": seg.get("start", 0),
             "end": seg.get("end", 0),
             "text": seg.get("text", ""),
@@ -3947,23 +4018,29 @@ def _build_inspector_from_transcript(result: dict, segments: list,
         })
     result["speaker_lanes"] = lanes
 
-    inspector_data: dict = {}
+    result["speaker_lanes"] = lanes
+
+    # Build inspector_data sorted by start time (not speaker-grouped)
+    all_segments = []
     for lane in lanes:
         for seg in lane["segments"]:
             trans = seg.get("translation", "")
             if isinstance(trans, dict):
                 trans = trans.get("text", "") or ""
-            inspector_data[seg["id"]] = {
+            all_segments.append((seg["start"], {
                 "id": seg["id"], "start": seg["start"], "end": seg["end"],
                 "speaker": lane["speaker"], "displayName": lane["display_name"],
                 "text": seg["text"], "translation": trans,
                 "source": "asr", "confidence": 1.0,
+                "words": seg.get("words", []),
                 "patches": [], "passTrace": [],
                 "visualState": {
                     "hasPatches": False, "hasAiSuggestion": False,
                     "isSelected": False, "isMultiSelected": False,
                 },
-            }
+            }))
+    all_segments.sort(key=lambda x: x[0])
+    inspector_data = {item["id"]: item for _, item in all_segments}
     result["inspector_data"] = inspector_data
 
 
@@ -4034,6 +4111,8 @@ async def speaker_load(req: SpeakerLoadRequest):
                 tj = _json.load(f)
             segments = tj.get("segments", [])
             if segments:
+                # 用 speaker_timeline.json 按时间重叠分配说话人
+                _assign_speakers_by_time_overlap(segments, extract_dir)
                 _build_inspector_from_transcript(result, segments, result.get("patch_log", []),
                                                   result.get("patches", {}))
                 return result
@@ -4045,11 +4124,29 @@ async def speaker_load(req: SpeakerLoadRequest):
 
     tl = _load_timeline_v2(tl_path)
 
+    # 从 transcript.json 补全 word-level timestamps（若 timeline.json 缺失）
+    _tj_words = None
+    tj_path = os.path.join(extract_dir, "transcript.json")
+    if os.path.isfile(tj_path):
+        try:
+            with open(tj_path, "r", encoding="utf-8") as f:
+                _tj_segments = _json.load(f).get("segments", [])
+            # 按 (start, end, text[:30]) 做索引
+            _tj_words = {}
+            for seg in _tj_segments:
+                w = seg.get("words") or []
+                if w:
+                    key = (round(seg.get("start", 0), 2), round(seg.get("end", 0), 2))
+                    _tj_words[key] = w
+        except Exception:
+            pass
+
     result["audio_id"] = tl.get("project", {}).get("id", "")
     result["version"] = tl.get("schema_version", "2.0")
 
     # 构建 speaker_lanes (从 v2 events 按 speaker 分组)
-    SPEAKER_COLORS = ["#4CAF50","#2196F3","#FF9800","#E91E63","#9C27B0","#00BCD4"]
+    SPEAKER_COLORS = ["#4CAF50","#2196F3","#FF9800","#E91E63","#9C27B0","#00BCD4",
+                       "#F44336","#795548","#607D8B","#CDDC39","#03A9F4","#FF5722"]
     speakers_v2 = tl.get("speakers", {})
     speaker_segments: dict[str, list] = {}
     for evt in tl.get("events", []):
@@ -4060,14 +4157,20 @@ async def speaker_load(req: SpeakerLoadRequest):
         trans = evt.get("translation", "")
         if isinstance(trans, dict):
             trans = trans.get("text", "")
+        words = evt.get("words") or []
+        # 若 timeline.json 无 words，从 transcript.json 按时间匹配补全
+        if not words and _tj_words:
+            key = (round(evt.get("start", 0), 2), round(evt.get("end", 0), 2))
+            words = _tj_words.get(key) or []
         speaker_segments[spk].append({
             "id": evt.get("id", ""),
+            "eventId": evt.get("id", ""),
             "start": evt.get("start", 0),
             "end": evt.get("end", 0),
             "text": evt.get("text", ""),
             "translation": trans,
             "overlap": (evt.get("overlap") or {}).get("overlap_duration", 0) > 0 if evt.get("overlap") else False,
-            "words": evt.get("words", []),
+            "words": words,
         })
 
     lanes = []
@@ -4107,6 +4210,7 @@ async def speaker_load(req: SpeakerLoadRequest):
                 "color": spk_color,
                 "text": seg["text"], "translation": seg.get("translation", ""),
                 "source": "asr", "confidence": 1.0,
+                "words": seg.get("words", []),
                 "patches": [], "passTrace": result["pass_trace"],
                 "visualState": {
                     "hasPatches": False, "hasAiSuggestion": False,
@@ -4625,6 +4729,66 @@ async def speaker_reassign(req: SpeakerReassignRequest):
         pass
 
     return {"status": "ok", "segment_id": req.segment_id, "target_speaker": req.target_speaker}
+
+
+class SpeakerResizeRequest(BaseModel):
+    workspace: str = ""
+    segment_id: str = ""
+    new_start: float = 0.0
+    new_end: float = 0.0
+
+
+@app.post("/api/speaker/diarization/resize")
+async def speaker_resize(req: SpeakerResizeRequest):
+    """Resize a segment's start/end time in speaker_timeline.json, transcript.json and timeline.json."""
+    import json as _json
+    workspace = req.workspace
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    if not extract_dir or not os.path.isdir(extract_dir):
+        raise HTTPException(status_code=400, detail="无效的工作目录")
+    if req.new_start >= req.new_end:
+        raise HTTPException(status_code=400, detail="new_start 必须小于 new_end")
+
+    tl_path = os.path.join(extract_dir, "speaker_timeline.json")
+    if os.path.isfile(tl_path):
+        with open(tl_path, "r", encoding="utf-8") as f:
+            tl = _json.load(f)
+        for t in tl.get("turns", []):
+            sid = t.get("id", t.get("segment_id", ""))
+            if sid == req.segment_id or t.get("segment_id") == req.segment_id:
+                t["start"] = req.new_start
+                t["end"] = req.new_end
+                break
+        with open(tl_path, "w", encoding="utf-8") as f:
+            _json.dump(tl, f, ensure_ascii=False, indent=2)
+
+    # Update transcript.json
+    tj_path = os.path.join(extract_dir, "transcript.json")
+    if os.path.isfile(tj_path):
+        with open(tj_path, "r", encoding="utf-8") as f:
+            tj = _json.load(f)
+        for seg in tj.get("segments", []):
+            if seg.get("id") == req.segment_id or seg.get("eventId") == req.segment_id:
+                seg["start"] = req.new_start
+                seg["end"] = req.new_end
+                break
+        with open(tj_path, "w", encoding="utf-8") as f:
+            _json.dump(tj, f, ensure_ascii=False, indent=2)
+
+    # Update timeline.json if present
+    timeline_path = os.path.join(extract_dir, "timeline.json")
+    if os.path.isfile(timeline_path):
+        with open(timeline_path, "r", encoding="utf-8") as f:
+            timeline = _json.load(f)
+        for ev in timeline.get("events", timeline.get("timeline", [])):
+            if ev.get("id") == req.segment_id:
+                ev["start"] = req.new_start
+                ev["end"] = req.new_end
+                break
+        with open(timeline_path, "w", encoding="utf-8") as f:
+            _json.dump(timeline, f, ensure_ascii=False, indent=2)
+
+    return {"status": "ok", "segment_id": req.segment_id, "new_start": req.new_start, "new_end": req.new_end}
 
 
 class ScreeningRequest(BaseModel):
@@ -6587,7 +6751,7 @@ async def validate_workspace_artifacts(req: ValidateRequest):
         raise HTTPException(status_code=400, detail="工作目录不存在")
     try:
         from core.compat import compat_validate_workspace
-        results = validate_workspace(req.workspace)
+        results = compat_validate_workspace(req.workspace)
         all_ok = all(results.values()) and len(results) > 0
         return {"ok": all_ok, "results": results,
                 "message": "所有工件通过校验" if all_ok else "存在校验失败项，请查看 results"}

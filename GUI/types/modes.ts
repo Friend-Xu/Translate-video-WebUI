@@ -107,7 +107,7 @@ export const LAYOUT_PRESETS: Record<Mode, LayoutPreset> = {
   glossary: { railComponent: null, inspectorTabs: [], defaultDockView: 'log' },
 }
 
-export type IssueType = 'low_confidence' | 'misaligned' | 'cps_high' | 'duration_short' | 'duration_long' | 'term_conflict' | 'speaker_drift'
+export type IssueType = 'low_confidence' | 'misaligned' | 'cps_high' | 'duration_short' | 'duration_long' | 'term_conflict' | 'speaker_drift' | 'speaker_conflict' | 'emotion_jump' | 'length_exceeded'
 
 export interface IssueFilter { types: IssueType[]; severity: 'warning' | 'error' | 'all' }
 export interface IssueItem { eventId: string; type: IssueType; severity: 'warning' | 'error'; message: string; detail: Record<string, unknown>; start: number; end: number }
@@ -189,6 +189,7 @@ export interface SubtitleEntry {
   issues: { type: string; message: string; severity: string }[]
   similarity?: number
   speakerId?: string
+  eventId?: string
   semanticFlagged?: any
   quality?: any
 }

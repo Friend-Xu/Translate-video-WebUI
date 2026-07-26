@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { PatchPreview, SpeakerInfo, TimelinePatchData, ExportPreset, WorkspaceManifest, EventViewModel, WaveformData, DataSource, WorkflowPreset, WorkspaceSummary } from '../types'
-import type { Mode, PatchDraft, IssueFilter, JobState, CrossModeContext, SpeakerLaneData, SpeakerQuality, VoiceCard, SubtitleEntry, ReviewFilterMode } from '../types/modes'
+import type { Mode, PatchDraft, IssueFilter, IssueItem, JobState, CrossModeContext, SpeakerLaneData, SpeakerQuality, VoiceCard, SubtitleEntry, ReviewFilterMode } from '../types/modes'
 import type { TrackDefinition } from '../types/timeline'
 import type { TrackWaveformData } from '../types'
 import { DEFAULT_TRACKS, TRACK_VISIBILITY_MAP, SPEAKER_TRACK_PRESET } from '../types/timeline'
@@ -24,6 +24,7 @@ export interface AppState {
   unappliedPatches: PatchPreview[]
   pendingDrafts: Map<string, PatchDraft>
   appliedPatches: TimelinePatchData[]
+  reviewFlags: IssueItem[]
 
   issueFilter: IssueFilter | null
   speakerFocus: SpeakerInfo | null
@@ -98,14 +99,15 @@ export interface AppState {
   // Actions — Drafts
   addDraft: (draft: PatchDraft) => void
   removeDraft: (eventId: string) => void
-  applyDraft: (eventId: string) => void
+  applyDraft: (eventId: string) => Promise<void>
   discardDraft: (eventId: string) => void
-  applyAllDrafts: () => void
+  applyAllDrafts: () => Promise<void>
   discardAllDrafts: () => void
-  undoLastPatch: () => TimelinePatchData | null
+  undoLastPatch: () => Promise<TimelinePatchData | null>
 
   // Actions — Patches / Filters / Jobs
   setUnappliedPatches: (patches: PatchPreview[]) => void
+  fetchPatchLog: () => Promise<void>
   setIssueFilter: (filter: IssueFilter | null) => void
   setSpeakerFocus: (speaker: SpeakerInfo | null) => void
   setJobStatus: (eventId: string, state: JobState) => void
@@ -132,6 +134,7 @@ export interface AppState {
 
   // Actions — Workspace (TRV-PLAN-2026-001 §8.2)
   loadWorkspace: (workspacePath: string) => Promise<void>
+  reloadEvents: () => Promise<void>
   clearWorkspace: () => void
   setDataSource: (source: DataSource) => void
 
@@ -150,6 +153,51 @@ export interface AppState {
   saveReviewEntries: () => Promise<void>
 }
 
+// ── Opcode mapping: frontend PatchDraft → backend TimelinePatch ──
+
+const OPCODE_MAP: Record<string, string> = {
+  ASSIGN_SPEAKER: 'RETAG_SPEAKER',
+  MERGE_SPEAKERS: 'ANNOTATE',
+  RENAME_SPEAKER: 'ANNOTATE',
+  LOCK_SPEAKER: 'ANNOTATE',
+  SPLIT_SEGMENT: 'SPLIT',
+  RESIZE_SEGMENT: 'RESIZE',
+  SET_TRANSLATION: 'SET_TRANSLATION',
+  MERGE: 'MERGE',
+}
+
+function patchDraftToApiFormat(draft: PatchDraft): Record<string, unknown> {
+  const backendOpcode = OPCODE_MAP[draft.opcode] || 'ANNOTATE'
+
+  let payload = { ...draft.payload }
+  if (backendOpcode === 'ANNOTATE') {
+    // Store original opcode + full payload as annotation
+    payload = { key: draft.opcode.toLowerCase(), value: draft.payload }
+  }
+  if (backendOpcode === 'RETAG_SPEAKER' && !payload.new_speaker) {
+    payload = { new_speaker: (draft.payload as any).target || (draft.payload as any).new_speaker || '' }
+  }
+  if (backendOpcode === 'SPLIT' && !payload.split_point) {
+    payload = { split_point: (draft.payload as any).split_at || (draft.payload as any).split_point || 0 }
+  }
+
+  return {
+    patch_id: `draft_${draft.timestamp}`,
+    opcode: backendOpcode,
+    targets: draft.opcode === 'MERGE' && draft.payload.merge_with
+      ? [draft.eventId, draft.payload.merge_with as string]
+      : [draft.eventId],
+    payload,
+    reason: ['user edit'],
+    score: 1.0,
+    confidence: 1.0,
+    parent_version: '',
+    idempotency_key: `user_${draft.timestamp}`,
+    author: 'user',
+    timestamp: new Date(draft.timestamp).toISOString(),
+  }
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   mode: 'hub' as Mode,
   timelineFocus: 'default' as TimelineFocus,
@@ -165,6 +213,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   unappliedPatches: [],
   pendingDrafts: new Map(),
   appliedPatches: [],
+  reviewFlags: [],
 
   issueFilter: null,
   speakerFocus: null,
@@ -387,30 +436,50 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ pendingDrafts: next })
   },
 
-  applyDraft: (eventId) => {
+  applyDraft: async (eventId) => {
     const draft = get().pendingDrafts.get(eventId)
     if (!draft) return
 
+    const patch = patchDraftToApiFormat(draft)
+    const ws = get().workspace
+
+    // Call backend API to persist the patch
+    try {
+      await fetch('/api/timeline/patch/apply', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace: ws, patch }),
+      })
+    } catch {
+      // API unavailable — still record locally
+    }
+
     // Record as applied patch
     const applied: TimelinePatchData = {
-      patch_id: `draft_${Date.now()}`,
-      opcode: draft.opcode,
-      targets: [draft.eventId],
-      payload: draft.payload,
-      reason: ['user edit'],
-      score: 1.0,
-      confidence: 1.0,
-      parent_version: '',
-      idempotency_key: `user_${Date.now()}`,
+      patch_id: patch.patch_id as string,
+      opcode: patch.opcode as string,
+      targets: patch.targets as string[],
+      payload: patch.payload as Record<string, unknown>,
+      reason: (patch.reason as string[]) || ['user edit'],
+      score: (patch.score as number) || 1.0,
+      confidence: (patch.confidence as number) || 1.0,
+      parent_version: (patch.parent_version as string) || '',
+      idempotency_key: (patch.idempotency_key as string) || '',
       author: 'user',
-      timestamp: new Date().toISOString(),
+      timestamp: patch.timestamp as string,
     }
     const patches = [...get().appliedPatches, applied]
-    if (patches.length > 50) patches.shift() // cap history
+    if (patches.length > 50) patches.shift()
 
     const next = new Map(get().pendingDrafts)
     next.delete(eventId)
     set({ pendingDrafts: next, appliedPatches: patches })
+
+    // Reload data to reflect applied patch
+    if (ws) {
+      try { await get().loadWorkspace(ws) } catch {}
+      try { await get().fetchSpeakerLanes(ws) } catch {}
+    }
   },
 
   discardDraft: (eventId) => {
@@ -419,23 +488,39 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ pendingDrafts: next })
   },
 
-  applyAllDrafts: () => {
+  applyAllDrafts: async () => {
     const drafts = get().pendingDrafts
     if (drafts.size === 0) return
+    const ws = get().workspace
     const now = new Date().toISOString()
     const newPatches: TimelinePatchData[] = []
-    for (const [eventId, draft] of drafts) {
+
+    for (const [, draft] of drafts) {
+      const patch = patchDraftToApiFormat(draft)
+      // Call backend API
+      try {
+        await fetch('/api/timeline/patch/apply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workspace: ws, patch }),
+        })
+      } catch { /* continue */ }
+
       newPatches.push({
-        patch_id: `batch_${Date.now()}_${eventId}`,
-        opcode: draft.opcode,
-        targets: [draft.eventId],
-        payload: draft.payload,
-        reason: ['user batch apply'],
-        score: 1.0, confidence: 1.0,
-        parent_version: '', idempotency_key: `user_${Date.now()}`,
-        author: 'user', timestamp: now,
+        patch_id: patch.patch_id as string,
+        opcode: patch.opcode as string,
+        targets: patch.targets as string[],
+        payload: patch.payload as Record<string, unknown>,
+        reason: (patch.reason as string[]) || ['user batch apply'],
+        score: (patch.score as number) || 1.0,
+        confidence: (patch.confidence as number) || 1.0,
+        parent_version: (patch.parent_version as string) || '',
+        idempotency_key: (patch.idempotency_key as string) || '',
+        author: 'user',
+        timestamp: now,
       })
     }
+
     const history = [...get().appliedPatches, ...newPatches].slice(-50)
     set({ pendingDrafts: new Map(), appliedPatches: history })
   },
@@ -444,16 +529,55 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ pendingDrafts: new Map() })
   },
 
-  undoLastPatch: () => {
+  undoLastPatch: async () => {
     const patches = get().appliedPatches
     if (patches.length === 0) return null
     const removed = patches[patches.length - 1]
+    const ws = get().workspace
+
+    // Call backend API to undo
+    try {
+      await fetch('/api/timeline/patch/undo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace: ws }),
+      })
+    } catch { /* API unavailable */ }
+
     set({ appliedPatches: patches.slice(0, -1) })
+
+    // Reload data to reflect undone changes
+    get().fetchPatchLog().catch(() => {})
+    get().fetchSpeakerLanes(ws).catch(() => {})
+
     return removed
   },
 
   // ── Patches ──
   setUnappliedPatches: (patches) => set({ unappliedPatches: patches }),
+
+  fetchPatchLog: async () => {
+    const ws = get().workspace
+    if (!ws) return
+    try {
+      const res = await fetch(`/api/timeline/patch/log?workspace=${encodeURIComponent(ws)}`)
+      if (!res.ok) return
+      const data = await res.json()
+      set({ appliedPatches: (data.patches || []).map((p: any) => ({
+        patch_id: p.patch_id || '',
+        opcode: p.opcode || '',
+        targets: p.targets || [],
+        payload: p.payload || {},
+        reason: p.reason || [],
+        score: p.score || 0,
+        confidence: p.confidence || 0,
+        parent_version: p.parent_version || '',
+        idempotency_key: p.idempotency_key || '',
+        author: p.author || 'system',
+        timestamp: p.timestamp || '',
+      })) })
+    } catch { /* non-fatal */ }
+  },
 
   // ── Filters ──
   setIssueFilter: (filter) => set({ issueFilter: filter }),
@@ -506,9 +630,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       const lanes: SpeakerLaneData[] = (data.speaker_lanes || []).map((l: any, i: number) => ({
         ...l,
         color: l.color || LANE_COLORS[i % LANE_COLORS.length],
+        segment_count: l.segment_count ?? (l.segments || []).length,
+        total_duration: l.total_duration ?? (l.segments || []).reduce((sum: number, s: any) => sum + ((s.end || 0) - (s.start || 0)), 0),
         segments: (l.segments || []).map((s: any, j: number) => ({
-          ...s,
-          eventId: s.eventId || `${l.speaker}_seg_${j}`,
+          id: s.eventId || s.id || `${l.speaker}_seg_${j}`,
+          start: s.start ?? 0,
+          end: s.end ?? 0,
+          text: s.text || '',
+          translation: s.translation || '',
+          confidence: s.confidence ?? 0.9,
+          eventId: s.eventId || s.id || `${l.speaker}_seg_${j}`,
         })),
       }))
       set({ speakerLanes: lanes })
@@ -606,7 +737,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (!loadRes.ok) throw new Error('无法加载时间轴数据')
       const loadData = await loadRes.json()
 
-      const events = Object.values(loadData.inspector_data || {}) as EventViewModel[]
+      const events = (Object.values(loadData.inspector_data || {}) as EventViewModel[])
+        .sort((a, b) => a.start - b.start)
 
       // Step 3: Load waveform (non-fatal)
       let waveform: WaveformData | null = null
@@ -617,10 +749,59 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (wfRes.ok) waveform = await wfRes.json()
       } catch { /* non-fatal */ }
 
+      // Step 4: Load patch log (non-fatal)
+      let appliedPatches: TimelinePatchData[] = []
+      try {
+        const patchRes = await fetch(
+          `/api/timeline/patch/log?workspace=${encodeURIComponent(workspacePath)}`
+        )
+        if (patchRes.ok) {
+          const patchData = await patchRes.json()
+          appliedPatches = (patchData.patches || []).map((p: any) => ({
+            patch_id: p.patch_id || '',
+            opcode: p.opcode || '',
+            targets: p.targets || [],
+            payload: p.payload || {},
+            reason: p.reason || [],
+            score: p.score || 0,
+            confidence: p.confidence || 0,
+            parent_version: p.parent_version || '',
+            idempotency_key: p.idempotency_key || '',
+            author: p.author || 'system',
+            timestamp: p.timestamp || '',
+          }))
+        }
+      } catch { /* non-fatal */ }
+
+      // Step 5: Load review flags (non-fatal)
+      let reviewFlags: IssueItem[] = []
+      try {
+        const flagRes = await fetch(
+          `/api/timeline/review/flags?workspace=${encodeURIComponent(workspacePath)}`
+        )
+        if (flagRes.ok) {
+          const flagData = await flagRes.json()
+          const SEVERITY: Record<string, 'warning' | 'error'> = { speaker_conflict: 'error' }
+          reviewFlags = (flagData.flags || []).flatMap((f: any) =>
+            (f.flags || []).map((t: string) => ({
+              eventId: f.event_id,
+              type: t as IssueItem['type'],
+              severity: SEVERITY[t] || ('warning' as const),
+              message: f.reason || '',
+              detail: { text: f.text, translation: f.translation },
+              start: f.start || 0,
+              end: f.end || 0,
+            }))
+          )
+        }
+      } catch { /* non-fatal */ }
+
       set({
         workspace: workspacePath,
         events,
         waveform,
+        appliedPatches,
+        reviewFlags,
         manifest: manifestData.manifest,
         loading: false,
         error: null,
@@ -633,12 +814,30 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  reloadEvents: async () => {
+    const ws = get().workspace
+    if (!ws) return
+    try {
+      const res = await fetch('/api/speaker/diarization/load', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspace: ws }),
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      const events = (Object.values(data.inspector_data || {}) as EventViewModel[])
+        .sort((a, b) => a.start - b.start)
+      set({ events })
+    } catch { /* non-fatal */ }
+  },
+
   clearWorkspace: () => set({
     dataSource: 'mock',
     workspace: '',
     events: [],
     waveform: null,
     ttsWaveforms: null,
+    reviewFlags: [],
     manifest: null,
     loading: false,
     error: null,
@@ -686,6 +885,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           reviewStatus: 'pending' as const,
           issues: [],
           speakerId: evt.speaker || undefined,
+          eventId: evt.id || undefined,
         }))
         set({ reviewEntries: entries, reviewTranslatedSrtPath: '' })
       }
@@ -713,6 +913,20 @@ export const useAppStore = create<AppState>((set, get) => ({
           e.reviewStatus === 'modified' ? { ...e, reviewStatus: 'approved' as const } : e
         ),
       }))
+      // Record patches for each modified entry
+      for (const entry of modified) {
+        const eventId = entry.eventId || `entry_${entry.index}`
+        const store = get()
+        store.addDraft({
+          eventId,
+          opcode: 'SET_TRANSLATION',
+          payload: { translation: entry.translatedText },
+          before: { translation: entry.sourceText },
+          after: { translation: entry.translatedText },
+          timestamp: Date.now(),
+        })
+        await store.applyDraft(eventId)
+      }
       console.log(`Review saved: ${data.updated} entries → ${data.output_path}`)
     } catch (err) {
       console.error('Review save failed:', err)
