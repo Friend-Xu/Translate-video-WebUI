@@ -1306,11 +1306,11 @@ core/refiner/
     ├── tvw profile <workspace>       → 工作空间 Profiling
     └── tvw gc <workspace>            → 工作空间清理/归档
 
-核心入口 (main_core.py):
-  main.py --use-core
-    └── main_core.py
+核心入口 (tvw.py run --use-core):
+  tvw.py --use-core
+    └── WorkflowOrchestrator
           ├── WorkflowPolicy         → 统一配置
-          ├── WorkflowOrchestrator   → 6 阶段编排 (LOAD→EXTRACT→TRANSLATE→VALIDATE→TTS→EXPORT)
+          ├── 6 阶段编排 (LOAD→EXTRACT→TRANSLATE→VALIDATE→TTS→EXPORT)
           ├── PassManager.run()      → 16 Pass 线性执行
           └── SynthesisEngine        → 5 层渲染输出
 
@@ -1354,7 +1354,6 @@ translate:
 Translate_video/
 ├── tvw.py                        # → 统一 CLI Runtime（8 命令：run/inspect/stage/validate/export/benchmark/profile/gc）🆕
 ├── main.py                       # → 旧架构主入口（extract→translate→TTS）
-├── main_core.py                  # → 新架构入口（WorkflowOrchestrator + PassManager）🆕
 ├── extract_subtitles.py          # → 主线编排器（薄层，~200 行）
 ├── translate_video.py            # → TTS 全流程入口（4 步：提取→翻译→TTS→拼接）
 ├── pipeline/                   # 主线 + TTS 模块

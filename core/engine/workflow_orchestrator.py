@@ -101,7 +101,7 @@ class WorkflowOrchestrator:
     def set_pass_factory(self, factory: Callable[[str], TimelinePass | None]) -> None:
         """设置 Pass 工厂 — 将 Pass 名称映射为实例。
 
-        外部（main_core.py 或 GUI/server.py）负责理解 Pass 名称
+        外部（tvw.py 或 GUI/server.py）负责理解 Pass 名称
         并返回配置好的实例。这保持核心引擎的依赖反转。
         """
         self._pass_factory = factory

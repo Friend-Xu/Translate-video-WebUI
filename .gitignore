@@ -38,6 +38,7 @@ file/
 # Temporary and diagnostic files
 _*.py
 !__init__.py
+!__main__.py
 *.wav
 
 # Build artifacts

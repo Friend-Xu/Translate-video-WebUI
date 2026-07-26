@@ -337,7 +337,6 @@ Translate_video/
 │   ├── export_config.schema.json
 │   ├── patch_log.schema.json
 │   └── speaker_map.schema.json
-├── main_core.py             # core/ pipeline standalone entry
 ├── pipeline/                # Core modules
 │   ├── audio.py             # Audio extraction + C2 defect fix
 │   ├── transcriber.py       # Silero VAD + faster-whisper + wav2vec2
