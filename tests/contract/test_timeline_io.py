@@ -31,12 +31,11 @@ def _bootstrap_state() -> TimelineProjectState:
         {"word": "Today", "start": 0.0, "end": 0.3, "confidence": 0.98},
         {"word": "guys,", "start": 0.35, "end": 0.6, "confidence": 0.97},
     ]
-    # 模拟 translation pass 写真译文 (dict 态, 同 llm_translation_pass:80)
+    # 模拟 translation pass 写真译文 (dict 态, engine 归 translation.engine, Phase 3a)
     state.get_event("evt_001")._data["translation"] = {
         "text": "各位朋友,今天我们来看模组。", "engine": "deepseek",
         "quality_score": 0.85, "similarity": 0.92, "config": {},
     }
-    state.get_event("evt_001").provenance["translation_engine"] = "deepseek"
     state.get_event("evt_001").provenance["confidence"] = 0.95
     return state
 

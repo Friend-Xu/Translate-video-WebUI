@@ -48,37 +48,50 @@ def _norm_words(raw: list) -> list[Word]:
 
 
 def _extract_translation(es) -> Translation | None:
-    """兼容 translation 三态: dict(含 text) / 纯字符串 / 空 (config-only)。"""
+    """兼容 translation 三态: dict(含 text) / 纯字符串 / 空 (config-only)。
+
+    engine 归 translation.engine (Phase 3a 从 provenance 迁入), 只从 dict 读。
+    """
     raw = es.translation
-    engine = es.provenance.get("translation_engine", "")
     if isinstance(raw, dict):
         text = raw.get("text", "")
         if not text:
             return None
         return Translation(
             text=text,
-            engine=raw.get("engine", "") or engine,
+            engine=raw.get("engine", ""),
             quality_score=raw.get("quality_score"),
             similarity=raw.get("similarity"),
         )
     if isinstance(raw, str) and raw:
-        return Translation(text=raw, engine=engine)
+        return Translation(text=raw)
     return None
 
 
 def _extract_tts(es) -> TTSAudio | None:
-    """audio_ref 可能在 derivatives 顶层 (patch _replace) 或 tts 槽。"""
+    """audio_ref 可能在 derivatives 顶层 (patch _replace) 或 tts 槽。
+
+    quality_score 取胜出引擎评分: tts 槽优先, 否则任一引擎的 provenance 评分
+    (修复旧逻辑只读 tts_score, 丢失 CosyVoice/Edge/OpenVoice/IndexTTS 胜出者评分)。
+    """
     audio_ref = es.derivatives.get("audio_ref") or es.tts.get("audio_ref")
     if not audio_ref:
         return None
     duration = es.derivatives.get("duration") or es.tts.get("duration", 0.0)
     engine = es.derivatives.get("engine") or es.tts.get("engine", "")
+    quality = es.tts.get("quality_score")
+    if quality is None:
+        for key in ("tts_score", "cosyvoice_score", "indextts_score",
+                    "edge_tts_score", "openvoice_score"):
+            quality = es.provenance.get(key)
+            if quality is not None:
+                break
     return TTSAudio(
         audio_path=audio_ref,
         duration=float(duration or 0.0),
         engine=engine or "",
         speed_factor=1.0,
-        quality_score=es.provenance.get("tts_score"),
+        quality_score=quality,
     )
 
 
@@ -89,7 +102,7 @@ def extract_event(es) -> Event:
         spk_slot = es.speaker
         if isinstance(spk_slot, dict):
             spk = spk_slot.get("speaker_id")
-    gate = es.provenance.get("gate_decision")
+    gate = es.review.get("gate_decision")
     review = Review(
         status=es.review.get("review_status", "pending"),
         flags=list(es.review.get("flags", [])),
@@ -119,12 +132,11 @@ def apply_event_to_state(event: Event, state: TimelineProjectState) -> None:
 
     填充目标与现有 pass 的读取端对齐:
       es.asr["words"]            ← asr_composite / speaker pass 读
-      es._data["translation"]    ← tts pass .get("text") 读 (dict 态)
-      es._data["audio_ref"]      ← video_export .derivatives.get("audio_ref") 读
-      es.tts["audio_ref"]        ← tts pass skip 检查读
+      es._data["translation"]    ← tts pass .get("text") 读 (dict 态, 含 engine)
+      es.tts["audio_ref"]        ← tts skip 检查 + video_export 读 (Phase 3b 归 slot)
       es.speaker["speaker_id"]   ← speaker 相关读
-      es.provenance[...]         ← confidence / gate_decision / translation_engine
-      es.review[...]             ← review_status
+      es.provenance["confidence"] ← 整体置信度
+      es.review[...]             ← review_status / gate_decision (Phase 3a 迁入)
     """
     es = state.get_event(event.id)
     if es is None:
@@ -137,19 +149,19 @@ def apply_event_to_state(event: Event, state: TimelineProjectState) -> None:
             "quality_score": t.quality_score, "similarity": t.similarity,
             "config": {},
         }
-        if t.engine:
-            es.provenance["translation_engine"] = t.engine
     if event.tts is not None:
-        es._data["audio_ref"] = event.tts.audio_path   # video_export 读顶层
-        es.tts["audio_ref"] = event.tts.audio_path     # tts skip 检查读槽
+        # audio_ref 归 tts slot (Phase 3b: UPDATE_TTS_AUDIO/video_export 均用 slot)
+        es.tts["audio_ref"] = event.tts.audio_path
         es.tts["duration"] = event.tts.duration
         es.tts["engine"] = event.tts.engine
+        if event.tts.quality_score is not None:
+            es.tts["quality_score"] = event.tts.quality_score
     if event.speaker:
         es.speaker["speaker_id"] = event.speaker
     es.provenance["confidence"] = event.confidence
     es.review["review_status"] = event.review.status
     if event.review.gate_decision:
-        es.provenance["gate_decision"] = event.review.gate_decision
+        es.review["gate_decision"] = event.review.gate_decision
 
 
 # ── persist: state → timeline.json v2.0 (前端兼容) ────────────
@@ -167,6 +179,7 @@ def _event_to_v2_dict(e: Event) -> dict:
         "text": e.text,
         "translation": e.translation.to_dict() if e.translation else "",
         "speaker": e.speaker,
+        "tts": e.tts.to_dict() if e.tts else None,
         "tts_voice_id": None,
         "confidence": e.confidence,
         "words": [w.to_dict() for w in e.words],

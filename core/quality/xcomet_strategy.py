@@ -131,7 +131,7 @@ class XCometStrategy(QualityStrategy):
 
             verdict = QualityVerdict.from_score(score, self._thresholds, self.name)
             verdict.sub_scores = {"xcomet_score": score}
-            es.provenance["gate_decision"] = verdict.gate_decision
+            es.review["gate_decision"] = verdict.gate_decision
             results[seg_id] = verdict
 
         return results

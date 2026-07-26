@@ -44,8 +44,10 @@ class EmotionCompositePass(TimelinePass):
 
         for es in state.sorted_events():
             text = es.ir.text_ref or ""
+            # translation 是 dict (Phase 3a/3b 统一), 正确取 text;
+            # 无译文置空跳过对齐 (不再用 derivatives 兜底返回 dict)
             trans_raw = es.translation
-            trans = (trans_raw.get("text", "") if isinstance(trans_raw, dict) else str(trans_raw or "")) or es.derivatives.get("translation", "")
+            trans = trans_raw.get("text", "") if isinstance(trans_raw, dict) else str(trans_raw or "")
 
             ctx = EmotionRecognizerContext(text=text, segment_id=es.id,
                                            start=es.start, end=es.end)
@@ -66,7 +68,7 @@ class EmotionCompositePass(TimelinePass):
             es.emotion["gate_decision"] = gr.decision
             # WorkflowOrchestrator 读取: E1=accept, E2=downgrade, E3=repair
             emap = {"accept": "E1", "downgrade": "E2", "repair": "E3"}
-            es.provenance["gate_decision"] = emap.get(gr.decision, "E1")
+            es.review["gate_decision"] = emap.get(gr.decision, "E1")
 
             route = router.route(ev)
             es.provenance["emotion_route"] = {

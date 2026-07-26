@@ -38,8 +38,8 @@ class PatchEngine:
             OpCode.ASSIGN_SPEAKER: self._assign_speaker,
             OpCode.MERGE_SPEAKERS: self._merge_speakers,
             OpCode.SPLIT_SEGMENT_BY_SPEAKER: self._split_by_speaker,
-            OpCode.UPDATE_TTS_AUDIO: self._replace,
-            OpCode.UPDATE_TRANSLATION: self._replace,
+            OpCode.UPDATE_TTS_AUDIO: self._update_tts_audio,
+            OpCode.UPDATE_TRANSLATION: self._update_translation,
             OpCode.UPDATE_EMOTION: self._replace,
             OpCode.ANNOTATE: self._annotate,
             # v3.0: 配置 OpCode (定稿 §10.5, §12.3)
@@ -116,6 +116,48 @@ class PatchEngine:
             "target": patch.target_id,
             "before": before,
             "after": dict(target.derivatives),
+        }
+
+    def _update_translation(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """UPDATE_TRANSLATION — 写入 translation slot (dict 态), 不用 _replace 顶层塞字符串。
+
+        修复三态根因: 旧 _replace 把 _data["translation"] 覆盖成裸字符串,
+        丢失 engine/similarity 等字段, 与 slot dict 形态不一致。
+        """
+        target = state.get_event(patch.target_id)
+        if target is None:
+            return {"status": "error", "reason": f"target not found: {patch.target_id}"}
+        slot = target.translation  # lazy-init dict (含 config)
+        val = patch.value.get("translation", "")
+        if isinstance(val, dict):
+            slot.update(val)
+        else:
+            slot["text"] = val
+        target.add_patch(patch)
+        return {
+            "status": "applied",
+            "op": "update_translation",
+            "target": patch.target_id,
+            "after": dict(slot),
+        }
+
+    def _update_tts_audio(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """UPDATE_TTS_AUDIO — 写入 tts slot, 不用 _replace 顶层塞 audio_ref。
+
+        修复: 旧 _replace 把 audio_ref/duration/engine 塞到 _data 顶层,
+        导致各 TTS pass 的 es.tts.get("audio_ref") skip 检查读空槽。
+        """
+        target = state.get_event(patch.target_id)
+        if target is None:
+            return {"status": "error", "reason": f"target not found: {patch.target_id}"}
+        slot = target.tts  # lazy-init dict (含 config)
+        slot.update(patch.value)
+        target.add_patch(patch)
+        return {
+            "status": "applied",
+            "op": "update_tts_audio",
+            "target": patch.target_id,
+            "after": dict(slot),
         }
 
     def _merge(self, state: TimelineProjectState, patch: Patch) -> dict:

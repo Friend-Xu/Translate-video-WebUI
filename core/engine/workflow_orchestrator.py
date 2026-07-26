@@ -275,7 +275,7 @@ class WorkflowOrchestrator:
         any_c = False
 
         for es in state.event_states.values():
-            gate_result = es.provenance.get("gate_decision", "")
+            gate_result = es.review.get("gate_decision", "")
 
             if gate_result in ("C", "E3"):
                 any_c = True

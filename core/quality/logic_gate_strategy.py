@@ -166,9 +166,9 @@ class LogicGateStrategy(QualityStrategy):
 
             # Gate 决策
             if ts.accepted:
-                es.provenance["gate_decision"] = "A"
+                es.review["gate_decision"] = "A"
             else:
-                es.provenance["gate_decision"] = "B" if ts.composite > 0.4 else "C"
+                es.review["gate_decision"] = "B" if ts.composite > 0.4 else "C"
             if ts.hard_fail_reason:
                 es.review.setdefault("flags", []).append("translation_hard_fail")
                 es.review["notes"] = (es.review.get("notes", "") +

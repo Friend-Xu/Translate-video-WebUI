@@ -46,7 +46,7 @@ class TranslationQualityPass(TimelinePass):
             verdict = verdicts.get(es.id)
             if verdict is None:
                 continue
-            es.provenance["gate_decision"] = verdict.gate_decision
+            es.review["gate_decision"] = verdict.gate_decision
             es.translation["quality_score"] = verdict.score
             if verdict.sub_scores:
                 for k, v in verdict.sub_scores.items():

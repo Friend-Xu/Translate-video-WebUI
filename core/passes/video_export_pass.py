@@ -31,7 +31,8 @@ class VideoExportPass(TimelinePass):
         events = state.sorted_events()
         tasks = []
         for es in events:
-            audio_ref = es.derivatives.get("audio_ref")
+            # audio_ref 由 UPDATE_TTS_AUDIO 写入 tts slot (Phase 3b)
+            audio_ref = es.tts.get("audio_ref")
             if not audio_ref:
                 continue
             audio_path = os.path.join(self.workspace_dir, audio_ref) if not os.path.isabs(audio_ref) else audio_ref
@@ -39,7 +40,9 @@ class VideoExportPass(TimelinePass):
                 continue
             start_ms = int(es.start * 1000)
             end_ms = int(es.end * 1000)
-            text = es.derivatives.get("translation", "") or es.ir.text_ref
+            # translation 是 dict (Phase 3a/3b 统一), 正确取 text, 不再把 dict 当字符串
+            trans = es.translation
+            text = (trans.get("text", "") if isinstance(trans, dict) else str(trans or "")) or es.ir.text_ref
             tasks.append({
                 "start": start_ms,
                 "end": end_ms,

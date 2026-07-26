@@ -162,11 +162,13 @@ class SpeakerCompositePass(TimelinePass):
 
     def _write_speaker_registry(self, state: TimelineProjectState,
                                 speaker_timeline: list[tuple]) -> None:
+        from dataclasses import replace
         for spk_id, spk_node in state.ir.speakers.items():
             turns = [t for t in speaker_timeline if t[0] == spk_id]
             if turns and spk_node.confidence is None:
                 avg_conf = sum(t[3] for t in turns) / len(turns)
-                object.__setattr__(spk_node, "confidence", avg_conf)
+                # frozen IR 不可原地改: 用 replace 生成新节点替换, 而非 object.__setattr__
+                state.ir.speakers[spk_id] = replace(spk_node, confidence=avg_conf)
 
     def _persist_speaker_timeline(self, speaker_timeline: list[tuple]) -> None:
         """将 diarization 结果持久化为 speaker_timeline.json。
