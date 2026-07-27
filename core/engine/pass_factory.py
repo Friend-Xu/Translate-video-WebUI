@@ -18,6 +18,7 @@ from core.passes.asr_to_ir_pass import ASRToIRPass
 from core.passes.asr_composite_pass import ASRCompositePass
 from core.passes.audio_preprocess_composite_pass import AudioPreprocessCompositePass
 from core.passes.semantic_merge_pass import SemanticMergePass
+from core.passes.segmentation_pass import SegmentationPass
 from core.passes.speaker_composite_pass import SpeakerCompositePass
 from core.passes.llm_translation_pass import LLMTranslationPass
 from core.passes.translation_quality_pass import TranslationQualityPass
@@ -43,6 +44,7 @@ _PASS_REGISTRY: dict[str, type] = {
     "speaker": SpeakerCompositePass,
     "speaker_composite": SpeakerCompositePass,
     "semantic_merge": SemanticMergePass,
+    "segmentation": SegmentationPass,
     # TRANSLATE stage
     "translate": LLMTranslationPass,
     "llm_translation": LLMTranslationPass,
@@ -69,6 +71,7 @@ _RUNTIME_ARGS: dict[str, list[str]] = {
     "demucs": ["video_path", "output_dir", "skip_demucs"],
     "audio_preprocess": ["video_path", "output_dir"],
     "asr_to_ir": ["segments", "speaker_timeline"],
+    "segmentation": ["language"],
     "asr": ["audio_path", "workspace_dir"],
     "speaker": ["vocals_path", "output_dir", "num_speakers"],
     "speaker_composite": ["vocals_path", "output_dir", "num_speakers"],

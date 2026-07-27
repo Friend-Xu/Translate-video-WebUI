@@ -17,6 +17,13 @@ from core.runtime.config_resolver import deep_merge
 from core.runtime.slot_dependency import SlotLevelDependencyGraph
 
 
+def _join_word_dicts(words: list[dict], lang: str) -> str:
+    """从词 dict 切片派生 text — CJK 无空格, 拉丁单空格。"""
+    cjk = (lang or "").lower().split("-")[0] in ("zh", "ja", "ko", "yue", "cn")
+    sep = "" if cjk else " "
+    return sep.join(w.get("word", "") for w in words).strip()
+
+
 class PatchEngine:
     """Patch 执行器 — 只作用 runtime state，不改 IR。
 
@@ -313,25 +320,56 @@ class PatchEngine:
             evt = state.get_event(mid)
             if evt:
                 all_events.append(evt)
+        all_events.sort(key=lambda e: e.start)
+
+        lang = primary.asr.get("language", "") or "en"
+        words = []
+        for e in all_events:
+            words.extend(e.asr.get("words", []))
+        words.sort(key=lambda w: w.get("start", 0.0))
+
+        if words:
+            text = _join_word_dicts(words, lang)
+        else:
+            # 无词级数据: 拼接各段真实文本 (非虚构, 是各 event 原有 text_ref)
+            text = " ".join(e.ir.text_ref for e in all_events if e.ir.text_ref).strip()
 
         max_end = max(e.end for e in all_events)
-        primary.derivatives["_merged_from"] = merged_ids
-        primary.derivatives["_merged_end"] = max_end
+        min_start = min(e.start for e in all_events)
+        had_translation = any(
+            isinstance(e.translation, dict) and e.translation.get("text")
+            for e in all_events
+        )
 
         ir_merged = TimelineEventIR(
             id=primary_id,
-            start=primary.start,
+            start=min_start,
             end=max_end,
             speaker_ref=primary.speaker_ref,
-            text_ref=primary.ir.text_ref,
+            text_ref=text,
             source=primary.ir.source,
         )
         es_merged = TimelineEventState(ir_merged)
-        es_merged.derivatives.update(primary.derivatives)
         es_merged.patches = list(primary.patches)
         es_merged.add_patch(patch)
+        es_merged.derivatives["_merged_from"] = merged_ids  # 合并血缘
+        if words:
+            es_merged.asr["words"] = words
+            es_merged.asr["language"] = lang
+        spk = primary.speaker.get("speaker_id") or primary.speaker_ref
+        if spk:
+            es_merged.speaker["speaker_id"] = spk
+        # 合并改变了源文本, 旧译文失效: 不带过来, 置标记触发重译 (禁止兜底下保留陈旧译文)
+        if had_translation:
+            es_merged.review["flags"] = ["needs_retranslate"]
+            es_merged.review["needs_human_review"] = True
 
         state.event_states[primary_id] = es_merged
+        # 删除被合并事件, 避免孤儿残留 (IR + state 同步)
+        for mid in merged_ids:
+            state.event_states.pop(mid, None)
+            state.ir.events.pop(mid, None)
+        state.ir.events[primary_id] = ir_merged
         return {
             "status": "applied",
             "op": "segment_merge",

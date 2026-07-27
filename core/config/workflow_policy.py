@@ -124,7 +124,7 @@ class WorkflowPolicy:
             ),
             WorkflowStage.EXTRACT: StageConfig(
                 stage=WorkflowStage.EXTRACT,
-                passes=["asr", "speaker", "semantic_merge"],
+                passes=["asr", "speaker", "segmentation", "semantic_merge"],
                 auto_advance=True,
             ),
             WorkflowStage.TRANSLATE: StageConfig(
@@ -173,7 +173,7 @@ class WorkflowPolicy:
             ),
             WorkflowStage.EXTRACT: StageConfig(
                 stage=WorkflowStage.EXTRACT,
-                passes=["asr", "speaker", "semantic_merge"],
+                passes=["asr", "speaker", "segmentation", "semantic_merge"],
             ),
             WorkflowStage.TRANSLATE: StageConfig(
                 stage=WorkflowStage.TRANSLATE,
