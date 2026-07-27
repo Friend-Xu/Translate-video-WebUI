@@ -98,10 +98,17 @@ class XCometStrategy(QualityStrategy):
         results: dict[str, QualityVerdict] = {}
 
         if self._model is None:
+            # 禁止兜底: 模型未加载时给虚假满分 A 会让"质量门控通过"成为谎言
+            # (英文配音视频事故同款)。诚实降级: 全部置 B + 人工审核。
+            import logging
+            logging.getLogger(__name__).warning(
+                "xCOMET-lite 未加载 — 无法评分, 全部事件置 Gate B + 人工审核, "
+                "不给虚假满分")
             for es in state.sorted_events():
                 results[es.id] = QualityVerdict(
-                    score=1.0, gate_decision="A",
+                    score=0.0, gate_decision="B",
                     reason="xcomet_not_loaded", strategy_name=self.name,
+                    needs_human=True,
                 )
             return results
 

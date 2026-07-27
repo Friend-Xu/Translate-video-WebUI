@@ -139,77 +139,6 @@ def _run_legacy_pipeline(args) -> None:
         sys.argv = _orig
 
 
-def _build_translate_fn(lang: str):
-    """构建标签化文本翻译函数 — 直接调 LLM API，不通过 SRT 文件桥接。
-
-    LLMTranslationPass 已将事件渲染为标签化文本、解析 LLM 回复、
-    通过 PatchEngine 写入 runtime state。
-    """
-    def _translate_fn(tagged_text: str) -> str:
-        """直接调 LLM API 翻译标签化文本。
-
-        输入: "[evt_001] 今天天气真好\n[evt_002] 一起去散步吧"
-        输出: "[evt_001] 今日は本当にいい天気ですね\n[evt_002] 一緒に散歩しましょう"
-        """
-        import yaml
-
-        config_path = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
-        except Exception:
-            cfg = {}
-
-        # translate.yaml 的实际结构是 {translate: {api_key, ...}} 嵌套
-        t_cfg = cfg.get("translate", cfg) if isinstance(cfg, dict) else {}
-        api_key = t_cfg.get("api_key", "") or os.environ.get("DEEPSEEK_API_KEY", "")
-        if not api_key:
-            # 无 API key → mock translation
-            print("[WARN] 未找到翻译 API key（translate.yaml 的 translate.api_key），"
-                  "使用 mock 翻译（[TR] 前缀）", file=sys.stderr)
-            from core.passes.llm_translation_pass import LLMTranslationPass
-            return LLMTranslationPass._mock_translate(tagged_text)
-
-        base_url = t_cfg.get("api_base_url", "") or "https://api.deepseek.com"
-        model = t_cfg.get("model", "deepseek-chat")
-
-        import requests as _requests
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": (
-                    "You are a subtitle translator. "
-                    "Translate the following tagged text from the source language "
-                    f"to {lang}. Preserve ALL [evt_NNN] tags exactly as-is. "
-                    "Return ONLY the translated text with tags, no explanations."
-                )},
-                {"role": "user", "content": tagged_text},
-            ],
-            "temperature": 0.1,
-            "max_tokens": 4000,
-        }
-        try:
-            resp = _requests.post(
-                f"{base_url.rstrip('/')}/v1/chat/completions",
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=120,
-            )
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"].strip()
-        except Exception as exc:
-            # 降级必须响亮：静默 mock 会让"翻译成功"成为谎言
-            print(f"[WARN] LLM 翻译调用失败（{type(exc).__name__}: {exc}），"
-                  f"本批次降级为 mock 翻译（[TR] 前缀）", file=sys.stderr)
-            from core.passes.llm_translation_pass import LLMTranslationPass
-            return LLMTranslationPass._mock_translate(tagged_text)
-
-    return _translate_fn
-
-
 def _resolve_video_for_ws(ws_dir: str) -> str:
     """从 workspace 解析源视频路径：session.json 优先，按目录名推断兜底。"""
     try:
@@ -257,7 +186,8 @@ def _build_pass_factory_for(args, video_path: str, ws_dir: str, lang: str, gcfg)
             caption_config[attr] = val
 
     return create_pass_factory(
-        translate_fn=_build_translate_fn(lang),
+        translate_fn=None,
+        target_lang=lang,
         video_path=video_path,
         audio_path=audio_path,
         output_dir=ws_dir,

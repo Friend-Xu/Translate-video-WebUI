@@ -440,34 +440,14 @@ def step_translate_core(video: str, force: bool = False) -> str:
             for t in st_data.get("turns", [])
         ]
 
-    # 加载 LLM 翻译函数
-    import yaml
-    cfg_path = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
-    with open(cfg_path, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f).get("translate", {})
-    api_key = cfg.get("api_key", "")
-    model = cfg.get("model", "deepseek-chat")
-
-    def _translate(tagged_text: str) -> str:
-        import requests
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": "你是专业字幕翻译器。输入是带标签的多行文本，每行: [event_id] 原文。请翻译为中文，保持完全相同标签格式。只返回翻译结果。"},
-                {"role": "user", "content": tagged_text},
-            ],
-            "temperature": 0.1, "max_tokens": 4000,
-        }
-        resp = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=120)
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-
+    # 翻译由 LLMTranslationPass 默认客户端承担 (config/translate.yaml),
+    # 无 key 时响亮报错并置人工审核, 不再静默 mock。
     # 构建 Pass 工厂（闭包注入运行时依赖）
     machine_srt = os.path.join(ws_dir, "02_translate", "machine.srt")
     os.makedirs(os.path.dirname(machine_srt), exist_ok=True)
     factory = create_pass_factory(
-        translate_fn=_translate,
+        translate_fn=None,
+        target_lang="zh",
         segments=segments,
         speaker_timeline=speaker_timeline,
         output_path=machine_srt,

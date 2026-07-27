@@ -385,7 +385,7 @@ def _run_legacy_tests() -> int:
     check("3 events", len(st_test.event_states) == 3)
     st_test = SemanticMergePass(gap_threshold=0.3).apply(st_test)
     check("merge evt_002", "evt_002" in st_test.get_event("evt_001").derivatives.get("_merged_from",[]))
-    st_test = LLMTranslationPass().apply(st_test)
+    st_test = LLMTranslationPass(translate_fn=lambda u, s: "stub译文").apply(st_test)
     check("translation written", "translation" in st_test.get_event("evt_001").derivatives)
     import tempfile
     tmp = os.path.join(tempfile.gettempdir(), "test_pass_output.srt")

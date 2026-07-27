@@ -29,6 +29,8 @@ class TimelineProjectIR:
     source_video: str | None = None
     audio_sample_rate: int | None = None
     language: str | None = None
+    # 翻译引擎重构 Step 2: 预处理产出的翻译圣经 (TranslationBible.to_dict())
+    translation_bible: dict = field(default_factory=dict)
 
     @property
     def event_list(self) -> list[TimelineEventIR]:

@@ -6052,35 +6052,6 @@ def _preset_to_policy(preset_id: str, target_lang: str) -> tuple:
     return policy, preset_passes, skip_tts
 
 
-def _build_core_pass_factory(
-    video_path: str,
-    translate_fn,
-    segments: list | None,
-    speaker_timeline: list | None,
-    output_path: str,
-    engine: str,
-):
-    """构建 core/ Pass 工厂，使用 WorkspaceResolver 统一路径。"""
-    from core.engine.pass_factory import create_pass_factory
-    from core.runtime.workspace import WorkspaceResolver
-
-    wsr = WorkspaceResolver(video_path)
-    wsr.ensure_dirs()
-    audio_path = wsr.extracted_audio_path
-
-    return create_pass_factory(
-        translate_fn=translate_fn,
-        segments=segments,
-        speaker_timeline=speaker_timeline,
-        output_path=output_path,
-        engine=engine,
-        video_path=video_path,
-        audio_path=audio_path,
-        output_dir=wsr.workspace_root,
-        workspace_dir=wsr.workspace_root,
-    )
-
-
 def _load_core_transcript(video_path: str) -> tuple:
     """加载 extract 阶段的 transcript + speaker_timeline 数据。"""
     video = Path(video_path)

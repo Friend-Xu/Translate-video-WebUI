@@ -227,7 +227,7 @@ def state_to_v2_dict(state: TimelineProjectState, project_id: str,
     total_dur = max((e.end for e in events), default=0.0)
     from datetime import datetime, timezone
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return {
+    data = {
         "schema_version": "2.0",
         "project": {"id": project_id, "source_video": video_path,
                     "source_lang": lang, "target_lang": "",
@@ -239,6 +239,11 @@ def state_to_v2_dict(state: TimelineProjectState, project_id: str,
                      "speaker_count": len(speakers),
                      "pipeline_version": "phase2"},
     }
+    # 翻译圣经 (Step 2): 非空才写, 保持 timeline.json 干净; reload 默认 {}
+    bible = getattr(state.ir, "translation_bible", None) or {}
+    if bible:
+        data["translation_bible"] = bible
+    return data
 
 
 def persist_state(state: TimelineProjectState, ws_dir: str, video_path: str,
@@ -303,7 +308,10 @@ def load_state(path: str) -> TimelineProjectState:
                 confidence=s.get("confidence"),
             )
 
-    ir = TimelineProjectIR(events=ir_events, speakers=ir_speakers)
+    ir = TimelineProjectIR(
+        events=ir_events, speakers=ir_speakers,
+        translation_bible=data.get("translation_bible") or {},
+    )
     state = TimelineProjectState(ir)
     for event in clean_events:
         apply_event_to_state(event, state)

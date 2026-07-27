@@ -129,7 +129,8 @@ class WorkflowPolicy:
             ),
             WorkflowStage.TRANSLATE: StageConfig(
                 stage=WorkflowStage.TRANSLATE,
-                passes=["translate", "quality_check"],
+                passes=["preprocess_translation", "translate", "quality_check",
+                        "refine_translation"],
                 auto_advance=False,
                 gate="text_gate",
                 gate_routing={"A": "validate", "B": "pause", "C": "retry"},
@@ -177,7 +178,7 @@ class WorkflowPolicy:
             ),
             WorkflowStage.TRANSLATE: StageConfig(
                 stage=WorkflowStage.TRANSLATE,
-                passes=["translate"],
+                passes=["preprocess_translation", "translate"],
             ),
             WorkflowStage.VALIDATE: StageConfig(
                 stage=WorkflowStage.VALIDATE,
