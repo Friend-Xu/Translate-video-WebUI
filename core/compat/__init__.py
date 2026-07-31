@@ -1,5 +1,5 @@
 """
-core/compat — Legacy Pipeline 兼容桥接层 + 旧格式导入器 (计划 §11)
+core/compat — Legacy Pipeline 兼容桥接层 (计划 §11)
 """
 from core._compat_module import (
     compat_setup_logging, compat_load_checkpoint,
@@ -11,4 +11,3 @@ from core._compat_module import (
     compat_validate_workspace,
     compat_decode_exit_code, compat_is_native_crash,
 )
-from core.compat.importer import import_workspace_to_timeline, import_and_get_summary

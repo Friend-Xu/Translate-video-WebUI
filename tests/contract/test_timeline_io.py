@@ -114,3 +114,28 @@ class TestPersistLoadRoundtrip:
         }), encoding="utf-8")
         reloaded = load_state(str(v2))
         assert reloaded.get_event("e1").translation.text == "你好"
+
+    def test_speaker_voice_binding_survives_roundtrip(self, tmp_path):
+        """speaker/bind 收敛: engine/voice_profile 注册表字段 persist/load 往返。"""
+        import json
+        ws = str(tmp_path / "test_project")
+        evts = {"evt_001": TimelineEventIR(
+            id="evt_001", start=0.0, end=1.5, speaker_ref="SPK_01", text_ref="hi")}
+        state = TimelineProjectState(TimelineProjectIR(
+            events=evts,
+            speakers={"SPK_01": SpeakerNodeIR(
+                id="SPK_01", name="SPK_01", engine="cosyvoice",
+                voice_id="speaker_v2_01", voice_profile={"spk": "v2", "lang": "zh"})},
+        ))
+        tl = persist_state(state, ws, "test.mp4", "ja")
+
+        with open(tl, encoding="utf-8") as f:
+            data = json.load(f)
+        spk = data["speakers"]["SPK_01"]
+        assert spk["engine"] == "cosyvoice"
+        assert spk["voice_profile"] == {"spk": "v2", "lang": "zh"}
+
+        reloaded = load_state(tl)
+        node = reloaded.ir.speakers["SPK_01"]
+        assert node.engine == "cosyvoice"
+        assert node.voice_profile == {"spk": "v2", "lang": "zh"}

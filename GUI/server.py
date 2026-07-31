@@ -5438,32 +5438,22 @@ class SpeakerBindingRequest(BaseModel):
 async def speaker_bind_voice(req: SpeakerBindingRequest) -> dict:
     """Speaker Binding — 将说话人绑定到 voice profile (T5.2)。
 
-    写入 workspace timeline.json 的 speakers.{id}.voice_id 字段。
-    后续 TTS 阶段通过 speaker_id 自动选择对应 engine + voice。
+    收敛: 唯一写路径 (load_state → 改注册表 → persist_state),
+    不再直接 json.dump timeline.json。
     """
-    ws = req.workspace
-    if not ws or not os.path.isdir(ws):
-        raise HTTPException(status_code=400, detail="无效的 workspace")
+    from core.runtime.timeline_io import load_state
+    from core.ir.speaker import SpeakerNodeIR
 
-    tl_path = os.path.join(ws, "01_extract", "timeline.json")
-    if not os.path.isfile(tl_path):
-        raise HTTPException(status_code=404, detail="未找到 timeline.json")
-
-    with open(tl_path, "r", encoding="utf-8") as f:
-        tl = json.load(f)
-
-    speakers = tl.get("speakers", {})
-    if req.speaker_id not in speakers:
-        speakers[req.speaker_id] = {"id": req.speaker_id, "name": req.speaker_id}
-
-    speakers[req.speaker_id]["voice_id"] = req.voice_id
-    speakers[req.speaker_id]["engine"] = req.engine
-    if req.voice_profile:
-        speakers[req.speaker_id]["voice_profile"] = req.voice_profile
-
-    with open(tl_path, "w", encoding="utf-8") as f:
-        json.dump(tl, f, ensure_ascii=False, indent=2)
-
+    extract_dir, tl_path, _ = _edit_paths(req.workspace)
+    state = load_state(tl_path)
+    node = state.ir.speakers.get(req.speaker_id)
+    if node is None:
+        node = SpeakerNodeIR(id=req.speaker_id, name=req.speaker_id)
+    state.ir.speakers[req.speaker_id] = SpeakerNodeIR(
+        **{**node.__dict__, "voice_id": req.voice_id, "engine": req.engine,
+           "voice_profile": dict(req.voice_profile) if req.voice_profile else None},
+    )
+    _persist_edited(state, extract_dir)
     return {"status": "bound", "speaker_id": req.speaker_id, "voice_id": req.voice_id}
 
 

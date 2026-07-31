@@ -190,10 +190,11 @@ def state_to_v2_dict(state: TimelineProjectState, project_id: str,
     events.sort(key=lambda e: e.start)
 
     def _spk_entry(sid, name=None, conf=None, emb="", voice_id=None,
-                   color=None, is_locked=False):
+                   color=None, is_locked=False, engine=None, voice_profile=None):
         return {"id": sid, "name": name or sid, "label": name or sid,
                 "voice_id": voice_id, "color": color, "is_locked": is_locked,
                 "embedding_ref": emb or "", "confidence": conf,
+                "engine": engine, "voice_profile": voice_profile,
                 "total_duration": None, "segment_count": None}
 
     speakers: dict[str, dict] = {}
@@ -208,9 +209,12 @@ def state_to_v2_dict(state: TimelineProjectState, project_id: str,
         voice_id = getattr(node, "voice_id", None)
         color = getattr(node, "color", None)
         is_locked = bool(getattr(node, "is_locked", False))
+        engine = getattr(node, "engine", None)
+        voice_profile = getattr(node, "voice_profile", None)
         if sid not in speakers:
             speakers[sid] = _spk_entry(sid, nm, conf, emb or "",
-                                       voice_id, color, is_locked)
+                                       voice_id, color, is_locked,
+                                       engine, voice_profile)
         else:
             speakers[sid]["name"] = nm
             speakers[sid]["label"] = nm
@@ -224,6 +228,10 @@ def state_to_v2_dict(state: TimelineProjectState, project_id: str,
                 speakers[sid]["color"] = color
             if is_locked:
                 speakers[sid]["is_locked"] = is_locked
+            if engine:
+                speakers[sid]["engine"] = engine
+            if voice_profile:
+                speakers[sid]["voice_profile"] = voice_profile
     if ws_dir:
         emb_dir = os.path.join(ws_dir, "_embeddings")
         if os.path.isdir(emb_dir):
@@ -319,6 +327,8 @@ def load_state(path: str) -> TimelineProjectState:
             voice_id=s.get("voice_id") or (existing.voice_id if existing else None),
             color=s.get("color") or (existing.color if existing else None),
             is_locked=bool(s.get("is_locked", existing.is_locked if existing else False)),
+            engine=s.get("engine") or (existing.engine if existing else None),
+            voice_profile=s.get("voice_profile") or (existing.voice_profile if existing else None),
         )
         ir_speakers[sid] = merged
 

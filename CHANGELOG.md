@@ -5,6 +5,20 @@
 
 ---
 
+## 2026-08-01 — 绞杀收束: speaker/bind 唯一写路径 + 死代码清除
+
+### 改动
+- `POST /api/speaker/bind` 迁移: 不再直接 json.dump timeline.json, 改走 `load_state → 改注册表 → persist_state` (消灭最后一个绕过唯一写路径的端点)
+- `SpeakerNodeIR` 补 `engine`/`voice_profile` 字段 (bind 端点 T5.2 契约字段), timeline_io persist/load 往返同步; 新增契约测试锁定
+- 删死代码: `timeline/speaker/` (三层模型无消费者)、`timeline/validator/` (空壳)、`core/compat/{importer,fuse_timeline}.py` (零调用)、`timeline/fusion.py` 的 `to_project_ir/from_project_ir` 迁移层 + `tests/test_migration.py` (测试锁定错误预期)
+
+### 决策
+- 唯一写路径是硬约束: bind 端点与 5 个 speaker 编辑端点同批迁移 (Phase 4 漏网, 审计发现)
+- frozen dataclass 重建而非 setattr: SpeakerNodeIR 不可变契约保持, 用 `{**node.__dict__, ...}` 重建
+- 清单外发现: `timeline/io.py` 的 `load_json`/`migrate` 零消费者 (extract_subtitles 仅用 save_json), 未随本轮处理, 待下轮
+
+---
+
 ## 2026-08-01 — CLI 翻译切默认: main.py 默认 core 新引擎
 
 ### 改动
