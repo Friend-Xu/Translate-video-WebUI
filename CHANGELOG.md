@@ -1,0 +1,133 @@
+# Changelog
+
+本分支 `feature/optimize-multi-speaker` 的语义化开发日志。
+记录每次架构级改动的内容与决策理由，不记录琐碎修复。
+
+---
+
+## 2026-08-01 — IR/State 止血 (Phase 1)
+
+**Commit:** 待定
+
+### 改动
+- 修 `workflow_orchestrator._handle_retry` 无限重试：重试计数移入 orchestrator 实例（run/resume 重置），C 级 gate 真正重跑当前阶段、超限暂停
+- 修 `_evaluate_gate` 跨域冲突：emotion 判定只写 `emotion` 槽，text_gate 读 `review` 槽；E1/E2/E3 路由此前永远匹配不到
+- 删 `core/pipeline.persist_timeline` 第三实现（写 02_translate、无 bible），统一走 `timeline_io.persist_state`
+- 修 IR 注册表漂移：新增 `_sync_ir_events`，6 个结构性 patch handler 统一同步 `state.ir.events`
+- 修 `SemanticMergePass` 空壳：legacy `MERGE`（只写标注）→ `SEGMENT_MERGE`（结构性合并）
+- 修假绿测试：gate mock 原写错槽位（provenance vs review）、空 state 不触发 gate
+
+### 决策
+- 重试计数是执行期状态，放 orchestrator 实例而非配置对象（不污染 GlobalConfig、run 重启归零）
+- emotion gate 是独立域，判定与文本门控分槽存储（review 槽保留 A/B/C 语义）
+- 结构性 handler 统一走 `_sync_ir_events` 重建注册表，删除 `_seg_merge` 的手工双写
+
+---
+
+## 2026-07-27 — 翻译引擎重构
+
+**Commit:** `1a8feea`
+
+### 改动
+- 新建 `pipeline/translation_llm.py`（DeepSeek V4 Flash 客户端，json_object 模式，缓存命中计量）
+- 新建 `pipeline/translation_bible.py`（翻译圣经 schema + 规则手册 + 证据校验门 + L0 词典合并 + 说话人画像）
+- 新建 `core/passes/preprocess_translation_pass.py`（预处理生产者，每片一次产出 bible，幂等）
+- 重写 `core/passes/llm_translation_pass.py`（批量标签调用 → 逐句并发，邻居窗口 + 完整性校验）
+- 新建 `core/passes/refine_translation_pass.py`（低分重翻闭环，改善采纳/退化回退）
+- 删除 `tvw.py`/`main.py`/`core/pipeline.py` 三处重复内联 API 客户端
+- 删除 `GUI/server.py` 死函数 `_build_core_pass_factory`
+- 36 行旧 `_mock_translate` 退役（无 key 时不再静默 mock，改 flag + 响亮日志）
+- `core/ir/project.py` 加 `translation_bible` 字段；`timeline_io` persist/load 往返
+
+### 决策
+- **逐句替代整批**：单次调用 max_tokens 截断 + 正则半解析是静默数据丢失的根因，逐句从设计上消灭
+- **预处理 bible**：用户定调"智能前置不事后弥补"，每片一次 LLM 产出术语译法/纠错/领域/风格，证据门机械校验（src 不在原文→丢弃），count 按原文重算
+- **术语写译法不写"保留"**：旧 prompt 让 LLM 自判"术语不翻译"是中英混的根源
+- **说话人画像自动推断**：按 speaker 聚合台词→LLM 推断 role/register/notes，逐句注入尾部保缓存前缀共享
+- **质量闭环**：XComet 未加载从假满分 A → 诚实全 B+人工；B/C 句带对比提示重翻一轮
+
+---
+
+## 2026-07-27 — 标点感知分段 (Phase 4)
+
+**Commit:** `51cf3bf`
+
+### 改动
+- 新建 `pipeline/segmentation.py`（共享分段引擎，移植旧 SRT 处理器算法，零 core 依赖）
+- 新建 `core/passes/segmentation_pass.py`（生产者 pass，ASR/speaker 之后 translation 之前）
+- 修 `core/runtime/patch_engine.py` `_seg_merge`（词级合并：并 words 排序、删被合并 event、旧译文置 needs_retranslate）
+- EXTRACT 阶段 passes 加 `segmentation`
+
+### 决策
+- **旧算法被孤儿化**：grep 证实 `convert_json_to_srt` 全项目仅旧 NODE4 路径调用，core/ 零调用——41s 长段的根因
+- **绞杀者复用不重写**：共享引擎同时服务新 IR 路径和未来旧 SRT 路径迁移
+- **句末立即提交**：忠实于旧处理器逻辑，句末标点→立即切分与长度无关；长 run-on 到 max 才在停顿>从句>连词候选处切
+- **缺词/不可靠时间戳→flag 不虚构**：禁止兜底原则
+
+---
+
+## 2026-07-27 — 前端类型统一 + canonical event builder (Phase 3c)
+
+**Commit:** `38cfdd2`
+
+### 改动
+- `SubtitleEntry` 在 `types.ts` 和 `modes.ts` 双定义合并（以 types.ts 为准加 flagged + eventId）
+- `server.py` 新增 `_norm_translation_text`/`_canonical_segment`/`_segment_to_inspector`，收敛两处内联构建
+
+### 决策
+- 前端"4 套 event 类型"实为 4 个合法 view-DTO，非重复；唯一真重复是 SubtitleEntry
+- v3 磁盘写入推迟到事件结构定型后（Phase 4 之后），避免后端迁移后写回 v2 自相矛盾
+
+---
+
+## 2026-07-27 — provenance 语义归位 + 后门封闭 (Phase 3a+3b)
+
+**Commit:** `dbfe56a`
+
+### 改动
+- provenance 槽解散：gate_decision→review.gate_decision，translation_engine→translation.engine，TTS 胜出评分修复
+- patch_engine 新增 `_update_translation`/`_update_tts_audio`（消灭 translation 三态：string/dict/缺位）
+- `speaker_composite` 的 `object.__setattr__`→dataclasses.replace
+- emotion 删错误 derivatives 兜底
+- tts 首次持久化进 timeline.json（v2 格式原无 tts 字段）
+
+### 决策
+- 绞杀者模式风险排序：3a 语义归位→3b 后门封闭+audio→3c 前端→3d 全合并（可选），替代大爆炸合并
+- audio 确认本就项目级（global_patches），per-event slot 是死槽
+
+---
+
+## 2026-07-27 — 数据契约重设计 (Phase 1+2)
+
+**Commit:** `f35a317`
+
+### 改动
+- 新建 `core/runtime/event_model.py`（合并 Event 模型 + EventRuntime + Project）
+- 新建 `schemas/timeline_v3.schema.json`、`core/runtime/field_contract.py`
+- 新建 `core/runtime/timeline_io.py`（canonical persist/load，7 往返测试）
+- 毁译文 bug 修复：workflow_orchestrator reload 改调 load_state 全字段回填，删 except:pass
+
+### 决策
+- translation 统一为 dict `{text, engine, quality_score}`，禁 string/dict 双态
+- words 提升为 Event 一等字段，持久化进 timeline.json
+- events 平铺按时间交错，不按说话人分组；speakers 是注册表
+- 字段分两层：持久化字段 + EventRuntime（内存 only, TTS 状态机不持久化）
+- persist 仍写 v2.0（前端十几个裸读取端只认 2.0），v3 原生格式+前端迁移留后
+
+---
+
+## 2026-07-27 前 — 基础修复与收敛
+
+**Commits:** `3589ef3`..`494a623` (11 commits)
+
+### 改动
+- 入口收敛：删除 `main_core.py`，`tvw.py` 成为唯一 CLI 入口
+- 三条不可协商开发原则写入 CLAUDE.md
+- 说话人操作收敛到单端点+patch 路径
+- 评分器从虚假满分改为诚实无数据
+- GUI mock 外壳替换为真实数据接线
+- tvw CLI 翻译配置、manifest 生命周期、pass-factory 空壳修复
+
+### 决策
+- **三个原则不是风格建议是硬约束**：此后所有代码决策以之为最高准则
+- **禁止兜底**尤其针对静默默认值、except:pass、无数据满分——这些让原则性 bug 变成"成功的错误输出"

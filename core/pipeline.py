@@ -22,7 +22,7 @@ from core.engine.runtime_event import RuntimeEvent, RuntimeEventType as RET
 from core.config.workflow_policy import WorkflowPolicy, WorkflowStage
 from core.config.global_config import GlobalConfig
 from core.runtime.project_state import TimelineProjectState
-from core.runtime.synthesis import SynthesisEngine
+from core.runtime.timeline_io import persist_state
 from core.runtime.workspace import WorkspaceResolver
 from core.runtime.context import RuntimeContext
 
@@ -107,43 +107,6 @@ def build_pass_factory(
     )
 
 
-# ── 持久化 ──────────────────────────────────────────────
-
-def persist_timeline(state: TimelineProjectState, workspace_dir: str) -> str:
-    """将 Pipeline 输出按 v2.0 schema 持久化为 timeline.json。"""
-    engine = SynthesisEngine()
-    rendered = engine.render_all(state)
-    speakers_data = engine.render_speakers(state)
-
-    ir = state.ir
-    project_info = {
-        "schema_version": ir.schema_version,
-        "ir_version": ir.ir_version,
-        "source_video": ir.source_video,
-        "audio_sample_rate": ir.audio_sample_rate,
-        "language": ir.language,
-        "total_duration": ir.total_duration,
-    }
-
-    timeline_data = {
-        "schema_version": "2.0",
-        "project": project_info,
-        "events": rendered,
-        "speakers": {s["id"]: s for s in speakers_data},
-        "metadata": {
-            "generated_by": "core/pipeline.py",
-            "event_count": len(rendered),
-            "speaker_count": len(speakers_data),
-        },
-    }
-
-    tl_path = os.path.join(workspace_dir, "02_translate", "timeline.json")
-    os.makedirs(os.path.dirname(tl_path), exist_ok=True)
-    with open(tl_path, "w", encoding="utf-8") as f:
-        _json.dump(timeline_data, f, ensure_ascii=False, indent=2)
-    return tl_path
-
-
 # ── 主入口 ──────────────────────────────────────────────
 
 def run_pipeline(
@@ -222,8 +185,10 @@ def run_pipeline(
     )
     state = orchestrator.run(video_path)
 
-    # 9. 持久化 timeline.json
-    timeline_path = persist_timeline(state, ctx.workspace_dir)
+    # 9. 持久化 timeline.json (canonical: 01_extract/timeline.json, 含 translation_bible)
+    timeline_path = persist_state(
+        state, ctx.workspace_dir, video_path, target_lang,
+    )
     bus.emit_now(RuntimeEvent(
         event_type=RET.WORKFLOW_COMPLETED,
         payload={

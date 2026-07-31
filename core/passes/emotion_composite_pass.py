@@ -67,8 +67,10 @@ class EmotionCompositePass(TimelinePass):
             gr = gate.decide(ev, prev)
             es.emotion["gate_decision"] = gr.decision
             # WorkflowOrchestrator 读取: E1=accept, E2=downgrade, E3=repair
+            # (Phase1: 只写 emotion 槽, 不覆盖 review.gate_decision —
+            #  同键会让 TTS 阶段后文本门控 A/B/C 结果丢失)
             emap = {"accept": "E1", "downgrade": "E2", "repair": "E3"}
-            es.review["gate_decision"] = emap.get(gr.decision, "E1")
+            es.emotion["gate_decision"] = emap.get(gr.decision, "E1")
 
             route = router.route(ev)
             es.provenance["emotion_route"] = {

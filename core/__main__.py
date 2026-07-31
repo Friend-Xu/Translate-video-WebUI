@@ -183,7 +183,7 @@ def cmd_inspect(args) -> int:
     from pathlib import Path
     video = Path(args.video)
     ws_dir = video.parent / f"{video.stem}_project"
-    tl_path = ws_dir / "02_translate" / "timeline.json"
+    tl_path = ws_dir / "01_extract" / "timeline.json"
 
     if not tl_path.is_file():
         print(f"[inspect] 未找到 timeline.json: {tl_path}")

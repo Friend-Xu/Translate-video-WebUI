@@ -68,6 +68,7 @@ class WorkflowOrchestrator:
         self._stage_progress: dict[str, StageProgress] = {}
         self._on_progress: Callable[[ProgressReport], None] | None = None
         self._pending_review: list[str] = []
+        self._retry_count: int = 0   # Gate C 重试计数 (执行期状态, run/resume 重置)
         self._video_path: str = ""
         self._started_at: float = 0.0
         self._completed_at: float = 0.0
@@ -87,6 +88,10 @@ class WorkflowOrchestrator:
     @property
     def pending_review(self) -> list[str]:
         return list(self._pending_review)
+
+    @property
+    def retry_count(self) -> int:
+        return self._retry_count
 
     @property
     def elapsed(self) -> float:
@@ -114,6 +119,7 @@ class WorkflowOrchestrator:
         self._status = WorkflowStatus.RUNNING
         self._started_at = time.time()
         self._pending_review = []
+        self._retry_count = 0
 
         self._emit_workflow("开始执行工作流", {"video": video_path})
         EventBus().emit_now(RuntimeEvent(
@@ -142,10 +148,12 @@ class WorkflowOrchestrator:
                 empty_ir = TimelineProjectIR(events={}, speakers={})
                 self._state = TimelineProjectState(empty_ir)
             stage_order = self._policy.stage_order()
-
-            for stage in stage_order:
+            idx = 0
+            while idx < len(stage_order):
+                stage = stage_order[idx]
                 stage_config = self._policy.get_stage(stage)
                 if stage_config is None:
+                    idx += 1
                     continue
 
                 self._current_stage = stage
@@ -162,7 +170,15 @@ class WorkflowOrchestrator:
                     )
                     return self._state
                 elif route == "retry":
-                    self._handle_retry(stage_config)
+                    if self._handle_retry(stage_config) == "pause":
+                        self._emit_workflow(
+                            f"工作流暂停于 {stage_config.stage.display_name}",
+                            {"reason": "retry_exhausted", "retry_count": self._retry_count},
+                        )
+                        return self._state
+                    # 未超限: 重跑当前 stage (idx 不变)
+                    continue
+                idx += 1
 
             self._status = WorkflowStatus.COMPLETED
             self._completed_at = time.time()
@@ -196,6 +212,7 @@ class WorkflowOrchestrator:
             raise RuntimeError("无可用状态")
 
         self._status = WorkflowStatus.RUNNING
+        self._retry_count = 0  # 用户介入后重新计数
         self._emit_workflow("恢复执行", {"decisions": decisions})
 
         for event_id, decision in decisions.items():
@@ -211,9 +228,12 @@ class WorkflowOrchestrator:
             if s.index >= self._current_stage.index
         ]
         try:
-            for stage in remaining:
+            idx = 0
+            while idx < len(remaining):
+                stage = remaining[idx]
                 stage_config = self._policy.get_stage(stage)
                 if stage_config is None:
+                    idx += 1
                     continue
                 self._current_stage = stage
                 executor = self._get_executor(stage_config)
@@ -225,7 +245,11 @@ class WorkflowOrchestrator:
                     self._status = WorkflowStatus.PAUSED
                     return self._state
                 elif route == "retry":
-                    self._handle_retry(stage_config)
+                    if self._handle_retry(stage_config) == "pause":
+                        self._status = WorkflowStatus.PAUSED
+                        return self._state
+                    continue  # 重跑当前 stage
+                idx += 1
 
             self._status = WorkflowStatus.COMPLETED
             self._completed_at = time.time()
@@ -265,17 +289,27 @@ class WorkflowOrchestrator:
     ) -> str:
         """评估 Gate 结果并返回路由指令。
 
-        Returns: "continue" | "pause" | "retry"
+        读取源按 gate 类型区分 (Phase1 跨域修复):
+          text_gate/validate_gate → review 槽 (A/B/C)
+          emotion_gate            → emotion 槽 (E1/E2/E3)
+        旧实现一律读 review.gate_decision, emotion pass 写 E1/E2/E3 到同键
+        覆盖文本门控结果; 且 routing 的 E3 key 永远匹配不到 (检查只认 C/B)。
+
+        Returns: "continue" | "pause" | "retry" (routing 中的动作值)
         """
         if not stage_config.gate:
             return "continue"
 
         routing = stage_config.gate_routing or {}
+        gate = stage_config.gate
         any_b = False
         any_c = False
 
         for es in state.event_states.values():
-            gate_result = es.review.get("gate_decision", "")
+            if gate == "emotion_gate":
+                gate_result = es.emotion.get("gate_decision", "")
+            else:
+                gate_result = es.review.get("gate_decision", "")
 
             if gate_result in ("C", "E3"):
                 any_c = True
@@ -286,28 +320,33 @@ class WorkflowOrchestrator:
                 if es.id not in self._pending_review:
                     self._pending_review.append(es.id)
 
-        if any_c and "C" in routing:
-            return routing["C"]
-        if any_b and "B" in routing:
-            return routing["B"]
+        if any_c:
+            for key in ("C", "E3"):
+                if key in routing:
+                    return routing[key]
+        if any_b:
+            for key in ("B", "E2"):
+                if key in routing:
+                    return routing[key]
         return routing.get("A", "continue")
 
-    def _handle_retry(self, stage_config: StageConfig) -> None:
-        retry_count = 0
-        gc = self._state.global_config
-        if isinstance(gc, dict):
-            retry_count = gc.get("_retry_count", 0)
+    def _handle_retry(self, stage_config: StageConfig) -> str:
+        """Gate C 重试 — 计数在 orchestrator 实例上 (执行期状态, run/resume 重置)。
 
-        if retry_count < stage_config.max_retries:
+        修复: 旧实现读 state.global_config (恒 None) 且 isinstance(gc, dict)
+        对 GlobalConfig 实例恒 False → retry_count 恒 0 → 无限重试。
+        返回 "retry" (未超限, 调用方重跑当前 stage) 或 "pause" (超限, 需人工)。
+        """
+        if self._retry_count < stage_config.max_retries:
+            self._retry_count += 1
             self._emit_workflow(
-                f"触发重试 ({retry_count + 1}/{stage_config.max_retries})",
-                {"retry_count": retry_count + 1},
+                f"触发重试 ({self._retry_count}/{stage_config.max_retries})",
+                {"retry_count": self._retry_count},
             )
-            if isinstance(gc, dict):
-                gc["_retry_count"] = retry_count + 1
-        else:
-            self._emit_workflow("超过最大重试次数，标记为需人工审核")
-            self._status = WorkflowStatus.PAUSED
+            return "retry"
+        self._emit_workflow("超过最大重试次数，标记为需人工审核")
+        self._status = WorkflowStatus.PAUSED
+        return "pause"
 
     def _on_stage_progress(self, report: ProgressReport) -> None:
         self._stage_progress[report.stage] = StageProgress(

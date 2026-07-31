@@ -42,7 +42,10 @@ class SemanticMergePass(TimelinePass):
             patch = Patch(
                 id=f"merge_{a.id}_{b.id}",
                 target_id=a.id,
-                op="merge",
+                # SEGMENT_MERGE (结构性合并): words 合并 + 文本从 words 派生 +
+                # 旧译文失效标记。旧 MERGE 只写 _merged_from 标注, 合并无实际效果
+                # (Phase1: 空壳修复)。
+                op="segment_merge",
                 value={"target_ids": [a.id, b.id]},
                 author="system",
             )

@@ -29,6 +29,9 @@ class PatchEngine:
 
     apply() 接收 state + patch，修改 state 并返回 diff dict。
     通过 _OP_DISPATCH dict 分发到各 handler。
+
+    结构性 handler (_seg_* / speaker 操作) 会创建新的 TimelineEventIR 节点,
+    末尾统一调用 _sync_ir_events 保证 state.ir.events 注册表与 event_states 一致。
     """
 
     def __init__(self):
@@ -56,6 +59,18 @@ class PatchEngine:
             OpCode.BATCH_SET_CONFIG: self._batch_set_config,
         }
         self._slot_dep_graph = SlotLevelDependencyGraph()
+
+    @staticmethod
+    def _sync_ir_events(state: TimelineProjectState) -> None:
+        """从 event_states 重建 state.ir.events — 结构性 handler 后注册表同步。
+
+        修复: _assign_speaker/_seg_split 等造新 IR 节点但不同步注册表,
+        ir.events 与 event_states 键集/内容漂移 (IR 引用只读, 直接复用节点)。
+        """
+        state.ir.events.clear()
+        state.ir.events.update(
+            {eid: es.ir for eid, es in state.event_states.items()}
+        )
 
     # ── public API ──────────────────────────────────────
 
@@ -246,6 +261,7 @@ class PatchEngine:
         es = TimelineEventState(ir)
         es.add_patch(patch)
         state.event_states[patch.target_id] = es
+        self._sync_ir_events(state)
         return {
             "status": "applied",
             "op": "segment_insert",
@@ -296,6 +312,7 @@ class PatchEngine:
 
         state.event_states[patch.target_id] = es_a
         state.event_states[new_id] = es_b
+        self._sync_ir_events(state)
         return {
             "status": "applied",
             "op": "segment_split",
@@ -368,8 +385,7 @@ class PatchEngine:
         # 删除被合并事件, 避免孤儿残留 (IR + state 同步)
         for mid in merged_ids:
             state.event_states.pop(mid, None)
-            state.ir.events.pop(mid, None)
-        state.ir.events[primary_id] = ir_merged
+        self._sync_ir_events(state)
         return {
             "status": "applied",
             "op": "segment_merge",
@@ -429,6 +445,7 @@ class PatchEngine:
         es_new.patches = list(target.patches)
         es_new.add_patch(patch)
         state.event_states[target.ir.id] = es_new
+        self._sync_ir_events(state)
 
         return {
             "status": "applied",
@@ -464,6 +481,7 @@ class PatchEngine:
                 es.speaker["speaker_id"] = into_id
 
         state.add_global_patch(patch)
+        self._sync_ir_events(state)
         return {
             "status": "applied",
             "op": "merge_speakers",
@@ -503,6 +521,7 @@ class PatchEngine:
             state.event_states[seg_id] = es
             created.append(seg_id)
 
+        self._sync_ir_events(state)
         return {
             "status": "applied",
             "op": "split_segment_by_speaker",

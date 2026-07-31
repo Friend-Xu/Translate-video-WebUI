@@ -109,3 +109,47 @@ class TestPatchEngineConsistency:
         assert all(r["status"] == "applied" for r in results)
         assert s.get_event("e1").derivatives.get("a") == 1
         assert s.get_event("e2").derivatives.get("b") == 2
+
+    # ── IR 注册表同步 (Phase1: 结构性 handler 后 ir.events 与 event_states 一致) ──
+
+    def _assert_ir_registry_synced(self, s):
+        assert set(s.ir.events.keys()) == set(s.event_states.keys())
+        for eid, es in s.event_states.items():
+            assert s.ir.events[eid] is es.ir  # 同一 IR 节点, 内容一致
+
+    def test_segment_insert_syncs_ir_registry(self):
+        s = make_state({"e1": make_event("e1", 0, 1, "hello")})
+        PatchEngine().apply(s, make_patch("p1", "e2", "segment_insert", {
+            "start": 1.5, "end": 2.5, "text": "world", "speaker": "S1"}))
+        self._assert_ir_registry_synced(s)
+
+    def test_segment_split_syncs_ir_registry(self):
+        s = make_state({"e1": make_event("e1", 0, 4, "hello world")})
+        PatchEngine().apply(s, make_patch("p1", "e1", "segment_split", {"at": 2.0}))
+        self._assert_ir_registry_synced(s)
+        # 新事件 e1_b 必须进入 IR 注册表
+        assert "e1_b" in s.ir.events
+        assert s.ir.events["e1_b"].start == 2.0
+
+    def test_segment_merge_syncs_ir_registry(self):
+        s = make_state({"e1": make_event("e1", 0, 1, "hello"), "e2": make_event("e2", 1, 2, "world")})
+        PatchEngine().apply(s, make_patch("p1", "e1", "segment_merge", {"target_ids": ["e1", "e2"]}))
+        self._assert_ir_registry_synced(s)
+        assert "e2" not in s.ir.events          # 被合并事件从注册表移除
+
+    def test_assign_speaker_syncs_ir_registry(self):
+        s = make_state({"e1": make_event("e1", 0, 1, "hello")})
+        PatchEngine().apply(s, make_patch("p1", "e1", "assign_speaker", {"speaker_id": "S2", "confidence": 0.9}))
+        self._assert_ir_registry_synced(s)
+        assert s.ir.events["e1"].speaker_ref == "S2"   # 新 IR 节点带新 speaker_ref
+
+    def test_merge_speakers_syncs_ir_registry(self):
+        s = make_state({
+            "e1": make_event("e1", 0, 1, "hello", speaker="S1"),
+            "e2": make_event("e2", 1, 2, "world", speaker="S1"),
+        })
+        PatchEngine().apply(s, make_patch("p1", "e1", "merge_speakers",
+                                          {"from_ids": ["S1"], "into_id": "S2"}))
+        self._assert_ir_registry_synced(s)
+        assert s.ir.events["e1"].speaker_ref == "S2"
+        assert s.ir.events["e2"].speaker_ref == "S2"
