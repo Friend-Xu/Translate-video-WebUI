@@ -5,6 +5,22 @@
 
 ---
 
+## 2026-08-01 — CLI 翻译切默认: main.py 默认 core 新引擎
+
+### 改动
+- main.py 翻译步骤默认走 `step_translate_core` (WorkflowOrchestrator: bible + 逐句 + 质量闭环); 旧 SRT_Translator 路径保留为 `--legacy-translate` 显式回退
+- `--use-core` flag 退役 (语义反转后冗余); tvw run 委托路径注释同步 (tvw 的 `--use-core` 完整 orchestrator 分支保留)
+- `step_translate_core` 增强: target_lang 从 config/translate.yaml 读 (不再硬编码 zh), policy 同步
+- `step_translate_core` 完成后 persist v2 到 `01_extract/timeline.json` (唯一事实源) — CLI 产物译文 GUI 编辑可读; 02_translate/timeline_v2.json (SRT 桥接) 并存
+- 契约测试 2 个: CLI persist 路径约定 + GUI 加载读 CLI 输出
+
+### 决策
+- **切默认不是删旧路径**: SRT_Translator 保留显式回退入口 (--legacy-translate), 防止新引擎异常时无退路
+- **checkpoint 语义**: translate_core 是新 key, 旧工作区 (translate done) 切换后重跑翻译 — 换引擎应重翻, 而非复用旧译文
+- **CLI/GUI 产物统一**: 翻译后 timeline.json 必须是 v2 (含译文), 否则 GUI 加载 CLI 工作区只见 v1 提取产物
+
+---
+
 ## 2026-08-01 — Phase 4: GUI 编辑路径收敛 + 旧 timeline/ 写路径退役
 
 ### 改动

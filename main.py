@@ -403,8 +403,24 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
     print("  [OK] 字幕提取完成")
 
 
+def _load_target_lang() -> str:
+    """从 config/translate.yaml 读目标语言 (与旧路径一致), 无配置显式默认 zh。"""
+    translate_yaml = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
+    if not os.path.isfile(translate_yaml):
+        return "zh"
+    import yaml as _yaml
+    with open(translate_yaml, "r", encoding="utf-8") as _f:
+        _tc = _yaml.safe_load(_f) or {}
+    _tl = (_tc.get("translate") or {}).get("target_lang", "")
+    return _tl if _tl else "zh"
+
+
 def step_translate_core(video: str, force: bool = False) -> str:
-    """步骤 2 (core): 使用 WorkflowOrchestrator 驱动翻译 + SRT 导出。(批次02 §四第二步)"""
+    """步骤 2 (core 默认): 使用 WorkflowOrchestrator 驱动翻译 + SRT 导出。(批次02 §四第二步)
+
+    CLI 默认路径 (Phase 4 收敛): 新引擎 (bible + 逐句 + 质量闭环)。
+    完成后 persist v2 到 01_extract/timeline.json (唯一事实源, GUI 编辑可读译文)。
+    """
     from core.engine import WorkflowOrchestrator
     from core.engine.pass_factory import create_pass_factory
     from core.config import GlobalConfig, WorkflowPolicy
@@ -430,6 +446,7 @@ def step_translate_core(video: str, force: bool = False) -> str:
     with open(transcript_path, "r", encoding="utf-8") as f:
         transcript = json.load(f)
     segments = transcript.get("segments", [])
+    source_lang = transcript.get("language", "")
 
     speaker_timeline = None
     if os.path.exists(speaker_timeline_path):
@@ -440,6 +457,9 @@ def step_translate_core(video: str, force: bool = False) -> str:
             for t in st_data.get("turns", [])
         ]
 
+    # 目标语言从 translate.yaml 读 (CLI 切默认后保持一致), 驱动 policy + 翻译 pass
+    target_lang = _load_target_lang()
+
     # 翻译由 LLMTranslationPass 默认客户端承担 (config/translate.yaml),
     # 无 key 时响亮报错并置人工审核, 不再静默 mock。
     # 构建 Pass 工厂（闭包注入运行时依赖）
@@ -447,14 +467,14 @@ def step_translate_core(video: str, force: bool = False) -> str:
     os.makedirs(os.path.dirname(machine_srt), exist_ok=True)
     factory = create_pass_factory(
         translate_fn=None,
-        target_lang="zh",
+        target_lang=target_lang,
         segments=segments,
         speaker_timeline=speaker_timeline,
         output_path=machine_srt,
     )
 
     # 构建编排器（使用 quick_preset，绕过 Gate 快速跑通 TRANSLATE → EXPORT）
-    policy = WorkflowPolicy.quick_preset("zh")
+    policy = WorkflowPolicy.quick_preset(target_lang)
     global_config = GlobalConfig()
     orchestrator = WorkflowOrchestrator(
         policy=policy,
@@ -482,13 +502,18 @@ def step_translate_core(video: str, force: bool = False) -> str:
     print(f"  PassManager 完成: {len(state.ir.events)} events")
     print(f"  SRT 导出: {machine_srt}")
 
-    # 导出 timeline_v2.json
+    # 导出 timeline_v2.json (02_translate, GUI SRT 桥接优先读)
     from core.runtime import SynthesisEngine
     synth = SynthesisEngine()
     rendered = synth.render_all(state)
     timeline_v2_path = os.path.join(ws_dir, "02_translate", "timeline_v2.json")
     with open(timeline_v2_path, "w", encoding="utf-8") as f:
         json.dump(rendered, f, ensure_ascii=False, indent=2)
+
+    # Phase 4 收敛: persist v2 到 01_extract/timeline.json (唯一事实源, GUI 编辑可读译文)
+    from core.runtime.timeline_io import persist_state
+    persist_state(state, ws_dir, video, source_lang,
+                  project_id=os.path.basename(ws_dir))
 
     ck.complete_step("translate_core")
     ck.save()
@@ -1003,8 +1028,8 @@ def main():
                         help="闭环验证模式: joint_formula (联合公式) | logic_gate (逻辑门控)")
     parser.add_argument("--skip-translate", action="store_true",
                         help="跳过翻译")
-    parser.add_argument("--use-core", action="store_true",
-                        help="使用 core/ PassManager 架构翻译（替代 SRT_Translator）")
+    parser.add_argument("--legacy-translate", action="store_true",
+                        help="使用旧 SRT_Translator 翻译 (默认 core 新引擎, 兼容回退)")
     parser.add_argument("--skip-tts", action="store_true",
                         help="跳过 TTS 合成")
     parser.add_argument("--force", action="store_true",
@@ -1116,16 +1141,17 @@ def main():
             sys.exit(1)
 
         # ── 步骤 2: 翻译 ──
+        # 默认 core 新引擎 (bible + 逐句 + 质量闭环); --legacy-translate 回退旧 SRT_Translator
         srt_translated = srt_source
         if not args.skip_translate:
-            if args.use_core:
-                srt_translated = step_translate_core(video, force=args.force)
-            else:
+            if args.legacy_translate:
                 srt_translated = step_translate(video, srt_source, force=args.force, backup_dir=args.backup_dir,
                                                   checkpoint=ck,
                                                   skip_semantic_validation=args.skip_semantic_validation,
                                                   skip_naturalness_check=args.skip_naturalness_check,
                                                   verification_mode=args.verification_mode)
+            else:
+                srt_translated = step_translate_core(video, force=args.force)
         else:
             print("[2/3] 翻译 — 已跳过 (--skip-translate)")
             existing = guess_translated_srt(video)

@@ -88,8 +88,8 @@ def _find_workspace(video_or_ws: str) -> str:
 def cmd_run(args) -> None:
     """完整管线执行。
 
-    无 --use-core: 委托 main.py
-    有 --use-core: 直接调用 WorkflowOrchestrator (计划书 §10 统一 Runtime 入口)
+    无 --use-core: 委托 main.py (翻译已是 core 新引擎, CLI 切默认)
+    有 --use-core: 直接调用 WorkflowOrchestrator 全流程 (计划书 §10 统一 Runtime 入口)
     """
     if args.use_core:
         _run_core_pipeline(args)
@@ -850,7 +850,7 @@ def main():
     p_run.add_argument("--model", default="turbo", help="Whisper 模型")
     p_run.add_argument("--device", default="cuda", help="计算设备")
     p_run.add_argument("--compute-type", default="float16", help="计算精度")
-    p_run.add_argument("--use-core", action="store_true", help="使用 core/ WorkflowOrchestrator 执行")
+    p_run.add_argument("--use-core", action="store_true", help="完整管线用 core/ WorkflowOrchestrator 执行 (默认委托 main.py, 翻译已走 core 新引擎)")
     p_run.add_argument("--bootstrap", action="store_true",
                        help="仅执行 Bootstrap (LOAD→EXTRACT→TRANSLATE→VALIDATE), TTS/Export 推迟")
     p_run.add_argument("--extract-only", action="store_true",
