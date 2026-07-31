@@ -80,7 +80,7 @@ class TestPatchEngineV2:
         p = Patch(id="p1", target_id="evt_001", op=OpCode.REFINE_ALIGNMENT,
                   value={"word_timestamps": [{"word": "hi", "start": 0.0, "end": 0.5}]})
         assert engine.apply(state, p)["status"] == "applied"
-        assert "word_timestamps" in state.get_event("evt_001").derivatives["alignment"]
+        assert state.get_event("evt_001").asr.words != []
 
     def test_assign_speaker(self, engine, state):
         p = Patch(id="p1", target_id="evt_001", op=OpCode.ASSIGN_SPEAKER,
@@ -132,23 +132,26 @@ class TestReducer:
         return TimelineProjectState(sample_project)
 
     def test_reduce_deterministic(self, reducer, state):
-        p1 = Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE, value={"x": 1}, timestamp=100)
-        p2 = Patch(id="p2", target_id="evt_001", op=OpCode.REPLACE, value={"y": 2}, timestamp=200)
+        p1 = Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE,
+                   value={"review": {"notes": "first"}}, timestamp=100)
+        p2 = Patch(id="p2", target_id="evt_001", op=OpCode.REPLACE,
+                   value={"review": {"notes": "second"}}, timestamp=200)
         reducer.reduce(state, [p1, p2])
-        assert state.get_event("evt_001").derivatives["x"] == 1
-        assert state.get_event("evt_001").derivatives["y"] == 2
+        assert state.get_event("evt_001").review.notes == "second"
 
     def test_replay_to_timestamp(self, reducer, state):
-        p1 = Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE, value={"x": 1}, timestamp=100)
-        p2 = Patch(id="p2", target_id="evt_001", op=OpCode.REPLACE, value={"y": 2}, timestamp=200)
+        p1 = Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE,
+                   value={"review": {"notes": "first"}}, timestamp=100)
+        p2 = Patch(id="p2", target_id="evt_001", op=OpCode.REPLACE,
+                   value={"review": {"notes": "second"}}, timestamp=200)
         reducer.replay(state, [p1, p2], target_timestamp=150)
-        assert state.get_event("evt_001").derivatives.get("x") == 1
-        assert "y" not in state.get_event("evt_001").derivatives
+        assert state.get_event("evt_001").review.notes == "first"
 
     def test_compute_diff(self, reducer, state):
         before = TimelineProjectState(state.ir)
         after = TimelineProjectState(state.ir)
-        PatchEngine().apply(after, Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE, value={"z": 99}))
+        PatchEngine().apply(after, Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE,
+                                         value={"review": {"notes": "changed"}}))
         diff = reducer.compute_diff(before, after)
         assert "evt_001" in diff["modified_events"]
 
@@ -156,15 +159,19 @@ class TestReducer:
         assert reducer.reduce(state, []) is state
 
     def test_sorts_by_timestamp(self, reducer, state):
-        p2 = Patch(id="p2", target_id="evt_001", op=OpCode.REPLACE, value={"last": True}, timestamp=200)
-        p1 = Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE, value={"first": True}, timestamp=100)
+        p2 = Patch(id="p2", target_id="evt_001", op=OpCode.REPLACE,
+                   value={"review": {"notes": "last"}}, timestamp=200)
+        p1 = Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE,
+                   value={"review": {"notes": "first"}}, timestamp=100)
         reducer.reduce(state, [p2, p1])
-        assert state.get_event("evt_001").derivatives["first"] is True
+        # 按 timestamp 排序应用 → p1(100) 先, p2(200) 后 → 最终 "last"
+        assert state.get_event("evt_001").review.notes == "last"
 
     def test_replay_from_snapshot(self, reducer, sample_project):
-        p = Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE, value={"s": True}, timestamp=100)
+        p = Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE,
+                  value={"review": {"notes": "snap"}}, timestamp=100)
         st = reducer.replay_from_snapshot(sample_project, [p])
-        assert st.get_event("evt_001").derivatives["s"] is True
+        assert st.get_event("evt_001").review.notes == "snap"
 
 
 # ═══════════ DependencyGraph ═══════════
@@ -307,13 +314,14 @@ class TestConflictResolver:
         assert kept[0].author == "whisper"
 
     def test_confidence(self, r):
-        p1 = Patch("p_a", "e1", OpCode.REPLACE, {"x": 1}, confidence=0.9)
-        p2 = Patch("p_b", "e1", OpCode.REPLACE, {"x": 2}, confidence=0.3)
+        p1 = Patch("p_a", "e1", OpCode.REPLACE, {"review": {"notes": "x"}}, confidence=0.9)
+        p2 = Patch("p_b", "e1", OpCode.REPLACE, {"review": {"notes": "x2"}}, confidence=0.3)
         c = Conflict(ConflictType.OVERWRITE, p1, p2, "e1", "test")
         kept = r.resolve([c], "confidence")
         assert kept[0].id == "p_a"
 
     def test_range_union(self, r):
+        # conflict 解析不经过 PatchEngine, value 可为任意范围字段
         p1 = Patch("p_a", "e1", OpCode.REPLACE, {"start": 0.0, "end": 5.0})
         p2 = Patch("p_b", "e1", OpCode.REPLACE, {"start": 3.0, "end": 8.0})
         c = Conflict(ConflictType.TEMPORAL, p1, p2, "", "overlap")
@@ -334,11 +342,11 @@ class TestSnapshotManager:
         return TimelineProjectState(sample_project)
 
     def test_roundtrip(self, mgr, state):
-        state.get_event("evt_001").derivatives["k"] = "before"
+        state.get_event("evt_001").meta["k"] = "before"
         snap = mgr.create(state, "test")
-        state.get_event("evt_001").derivatives["k"] = "after"
+        state.get_event("evt_001").meta["k"] = "after"
         mgr.restore(state, snap)
-        assert state.get_event("evt_001").derivatives["k"] == "before"
+        assert state.get_event("evt_001").meta["k"] == "before"
 
     def test_latest(self, mgr, state):
         assert mgr.latest() is None
@@ -364,10 +372,10 @@ class TestRollbackManager:
 
     def test_rollback_segment(self, mgr, state):
         eng = PatchEngine()
-        eng.apply(state, Patch("p1", "evt_001", OpCode.REPLACE, {"v": 1}, timestamp=100))
-        eng.apply(state, Patch("p2", "evt_001", OpCode.REPLACE, {"v": 2}, timestamp=200))
+        eng.apply(state, Patch("p1", "evt_001", OpCode.REPLACE, {"review": {"notes": "v1"}}, timestamp=100))
+        eng.apply(state, Patch("p2", "evt_001", OpCode.REPLACE, {"review": {"notes": "v2"}}, timestamp=200))
         mgr.rollback_segment(state, "evt_001", 0)
-        assert state.get_event("evt_001").derivatives.get("v") == 1
+        assert state.get_event("evt_001").review.notes == "v1"
         assert len(state.get_event("evt_001").patches) == 1
 
     def test_get_versions(self, mgr, state):
@@ -381,15 +389,15 @@ class TestRollbackManager:
 
     def test_reverse_patch(self, mgr, state):
         eng = PatchEngine()
-        eng.apply(state, Patch("p1", "evt_001", OpCode.REPLACE, {"a": 1}, timestamp=100))
-        eng.apply(state, Patch("p2", "evt_001", OpCode.REPLACE, {"a": 2}, timestamp=200))
+        eng.apply(state, Patch("p1", "evt_001", OpCode.REPLACE, {"review": {"notes": "a1"}}, timestamp=100))
+        eng.apply(state, Patch("p2", "evt_001", OpCode.REPLACE, {"review": {"notes": "a2"}}, timestamp=200))
         rev = mgr.compute_reverse_patch(state.get_event("evt_001").patches[1], state)
         assert rev is not None
-        assert rev.value["a"] == 1
+        assert rev.value["review"]["notes"] == "a1"
 
     def test_reverse_patch_first_returns_undo(self, mgr, state):
         eng = PatchEngine()
-        eng.apply(state, Patch("p1", "evt_001", OpCode.REPLACE, {"a": 1}, timestamp=100))
+        eng.apply(state, Patch("p1", "evt_001", OpCode.REPLACE, {"review": {"notes": "a1"}}, timestamp=100))
         rev = mgr.compute_reverse_patch(state.get_event("evt_001").patches[0], state)
         assert rev is not None
         assert rev.op == OpCode.REPLACE

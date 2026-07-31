@@ -31,7 +31,11 @@ class SnapshotManager:
             timestamp=time.time(),
             event_states_snapshot={
                 eid: {
-                    "derivatives": dict(es.derivatives),
+                    "derivatives": {
+                        # 类型化槽位序列化为 dict (Phase 3A)
+                        k: (v.to_dict() if hasattr(v, "to_dict") else dict(v))
+                        for k, v in es._data.items()
+                    },
                     "patch_count": len(es.patches),  # 批次04 §四
                 }
                 for eid, es in state.event_states.items()
@@ -51,8 +55,8 @@ class SnapshotManager:
                 continue
             # 兼容两种格式: 旧格式 {key: val, ...}，新格式 {"derivatives": {...}, "patch_count": N}
             derivs = saved.get("derivatives", saved) if isinstance(saved, dict) else {}
-            es.derivatives.clear()
-            es.derivatives.update(derivs)
+            es._data.clear()
+            es._data.update(derivs)  # dict 形态由 _slot from_dict 迁移
             pc = saved.get("patch_count") if isinstance(saved, dict) else None
             if pc is not None and len(es.patches) > pc:
                 es.patches = es.patches[:pc]

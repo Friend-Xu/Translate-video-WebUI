@@ -39,21 +39,14 @@ class TestNineSlots:
         es.translation.text = "hola"
         assert es.translation.text == "hola"
 
-    def test_derivatives_backward_compat(self):
+    def test_meta_lineage_slot(self):
+        """Phase 3B: 血缘元数据走 meta, 不污染槽位容器自由键。"""
         es = TimelineEventState(TimelineEventIR(
             id="e1", start=0, end=1, text_ref="hello", speaker_ref=None,
         ))
-        es.derivatives["key"] = "val"
-        assert es.derivatives["key"] == "val"
-        assert es.derivatives is es._data
-
-    def test_derivatives_setter(self):
-        es = TimelineEventState(TimelineEventIR(
-            id="e1", start=0, end=1, text_ref="hello", speaker_ref=None,
-        ))
-        es.derivatives = {"a": 1}
-        assert es.derivatives["a"] == 1
-        assert es._data["a"] == 1
+        es.meta["merged_from"] = ["e0"]
+        assert es.meta["merged_from"] == ["e0"]
+        assert "meta" in es._data
 
 
 class TestSpeakerV21:
@@ -166,25 +159,25 @@ class TestSynthesisFiveLayer:
         es = TimelineEventState(TimelineEventIR(
             id="e1", start=0, end=1, text_ref="hello", speaker_ref=None,
         ))
-        es.derivatives["translation"] = "hola"
-        es.derivatives["emotion"] = "happy"
+        es.translation.text = "hola"
+        es.emotion.emotion = "happy"
         synth = SynthesisEngine()
         result = synth.render(es)
-        assert result["translation"] == "hola"
-        assert result["emotion"] == "happy"
+        assert result["translation"]["text"] == "hola"
+        assert result["emotion"]["emotion"] == "happy"
 
     def test_patches_override_derivatives(self):
         es = TimelineEventState(TimelineEventIR(
             id="e1", start=0, end=1, text_ref="hello", speaker_ref=None,
         ))
-        es.derivatives["translation"] = "hola"
+        es.translation.text = "hola"
         es.add_patch(Patch(
             id="p1", target_id="e1", op="replace",
-            value={"translation": "replaced"},
+            value={"translation": {"text": "replaced"}},
         ))
         synth = SynthesisEngine()
         result = synth.render(es)
-        assert result["translation"] == "replaced"
+        assert result["translation"]["text"] == "replaced"
 
     def test_render_speakers_with_new_fields(self):
         spk = SpeakerNodeIR(

@@ -54,7 +54,7 @@ class TestEventStateSlots:
         assert es.ir is ir
         assert es.start == 0.0
 
-    def test_derivatives_compat(self):
+    def test_meta_compat(self):
         es = self._make_es()
-        es.derivatives["custom"] = 42
-        assert es.derivatives["custom"] == 42
+        es.meta["custom"] = 42
+        assert es.meta["custom"] == 42

@@ -6,9 +6,10 @@ timeline_io — timeline.json 的唯一 canonical persist/load (数据结构重�
   - server.py:_persist_core_timeline (写 string 译文, 有 project 块, 已是死代码)
   - workflow_orchestrator reload   (只读 6 字段, 丢 translation/words → 毁译文)
 
-设计: 以 Event 模型为干净中转, 互逆由 extract/apply + Event.from_dict 保证。
-  extract_event:        乱态 slot (translation 三态 / audio_ref 顶层) → 干净 Event
-  apply_event_to_state: 干净 Event → 乱态 slot (供现有 pass 消费)
+设计: 槽位类型化后 (Phase 3A/3B) extract/apply 是薄映射 —
+  内存模型 (类型化槽位) ↔ v2.0 磁盘格式 (前端兼容)。
+  extract_event:       类型化槽位 → Event (v2 序列化中转)
+  apply_event_to_state: Event → 类型化槽位 (reload 回填)
 
 磁盘格式: v2.0 (匹配前端 _load_timeline_v2 + 裸读取端, 避免破坏 WebUI)。
 v3.0 原生格式连同前端读取端迁移一起留待 Phase 3。
@@ -31,7 +32,7 @@ from core.runtime.event_model import (
 TIMELINE_REL_PATH = os.path.join("01_extract", "timeline.json")
 
 
-# ── 乱态 slot → 干净 Event ──────────────────────────────────
+# ── 类型化槽位 → Event (v2 序列化中转) ────────────────────
 
 def _norm_words(raw: list) -> list[Word]:
     words = []
@@ -70,11 +71,11 @@ def _extract_tts(es) -> TTSAudio | None:
     quality_score 取胜出引擎评分: tts 槽优先, 否则任一引擎的 provenance 评分
     (修复旧逻辑只读 tts_score, 丢失 CosyVoice/Edge/OpenVoice/IndexTTS 胜出者评分)。
     """
-    audio_ref = es.derivatives.get("audio_ref") or es.tts.audio_ref
+    audio_ref = es._data.get("audio_ref") or es.tts.audio_ref
     if not audio_ref:
         return None
-    duration = es.derivatives.get("duration") or es.tts.duration
-    engine = es.derivatives.get("engine") or es.tts.engine
+    duration = es._data.get("duration") or es.tts.duration
+    engine = es._data.get("engine") or es.tts.engine
     quality = es.tts.quality_score
     if quality is None:
         for key in ("tts_score", "cosyvoice_score", "indextts_score",
@@ -119,18 +120,14 @@ def extract_event(es) -> Event:
     )
 
 
-# ── 干净 Event → 乱态 slot (load 用) ────────────────────────
+# ── Event → 类型化槽位 (load 回填) ──────────────────────────
 
 def apply_event_to_state(event: Event, state: TimelineProjectState) -> None:
-    """把干净 Event 的数据填入 TimelineProjectState 的乱态 slot。
+    """把 Event 数据填入 TimelineProjectState 类型化槽位 (reload 回填)。
 
-    填充目标与现有 pass 的读取端对齐:
-      es.asr.words            ← asr_composite / speaker pass 读
-      es._data["translation"]    ← tts pass .get("text") 读 (dict 态, 含 engine)
-      es.tts.audio_ref        ← tts skip 检查 + video_export 读 (Phase 3b 归 slot)
-      es.speaker.speaker_id   ← speaker 相关读
-      es.provenance["confidence"] ← 整体置信度
-      es.review[...]             ← review_status / gate_decision (Phase 3a 迁入)
+    填充目标与现有 pass 的读取端对齐 (Phase 3A 类型化):
+      es.asr.words / es.translation.* / es.tts.* / es.speaker.speaker_id /
+      es.provenance["confidence"] / es.review.*
     """
     es = state.get_event(event.id)
     if es is None:

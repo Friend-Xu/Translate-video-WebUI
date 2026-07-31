@@ -5,9 +5,29 @@
 
 ---
 
-## 2026-08-01 — Event 转正 Phase 3A: 槽位类型化 + 访问模式替换
+## 2026-08-01 — Event 转正 Phase 3B: 关闭自由后门 + 桥接层收尾
 
 **Commit:** 待定
+
+### 改动
+- 删 `derivatives` 别名（28 处自由写后门关闭）；`_data` 收窄为槽位容器 + meta
+- `REPLACE` 收窄为槽位路由：value key 必须合法槽位，未知 key 响亮报错
+- `UPDATE_EMOTION` 独立 handler 写 emotion 槽；`REFINE_ALIGNMENT` 写 asr 槽（words/confidence 精修）
+- 删 `PROPAGATE` 操作码（无生产调用方，死 op）
+- 血缘元数据（merged_from/split_at/split_from）迁入 `es.meta` 明确键集
+- snapshot/rollback/reducer 适配类型化：rollback 重放走 PatchEngine，快照序列化 to_dict
+- timeline_io 桥接层注释清理（薄映射确认）
+
+### 决策
+- 自由写不是"方便"，是类型契约失效的后门 — 未知槽位响亮报错而非静默塞 dict
+- rollback 重放统一走 PatchEngine（类型化写入单一路径），不再 deep_merge 直塞
+- 血缘是持久化元数据，独立 meta 槽位与运行时状态分离
+
+---
+
+## 2026-08-01 — Event 转正 Phase 3A: 槽位类型化 + 访问模式替换
+
+**Commit:** `ca8d106`
 
 ### 改动
 - `event_model.py` 槽位类型转正：Translation 加 ppl_ratio、TTSAudio 对齐实测（audio_ref/speed_decision/emotion_hint）、Review 对齐实测（review_status/needs_human_review）、新增 ASRData/SpeakerAssignment/EmotionData，全部带 config 子块 + to_dict/from_dict

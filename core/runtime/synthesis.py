@@ -42,9 +42,11 @@ class SynthesisEngine:
             "text": ir.text_ref,
             "source": ir.source,
         }
-        # Layer 2-4: Derived + Decision State (from derivatives)
-        # 类型化槽位 (Phase 3A) → to_dict, 保持渲染输出为纯 dict
-        for key, value in event_state.derivatives.items():
+        # Layer 2-4: Derived + Decision State (from _data 槽位容器)
+        # 类型化槽位 (Phase 3A) → to_dict; meta 血缘不进入渲染输出
+        for key, value in event_state._data.items():
+            if key == "meta":
+                continue
             result[key] = value.to_dict() if hasattr(value, "to_dict") else value
         # Layer 5: Patches (sorted — 最高优先级覆盖)
         for p in event_state.patches:

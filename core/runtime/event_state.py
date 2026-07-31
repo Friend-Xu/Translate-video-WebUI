@@ -60,16 +60,17 @@ class TimelineEventState:
     def speaker_ref(self) -> str | None:
         return self.ir.speaker_ref
 
-    # ── 向后兼容：derivatives 属性 (Phase 3B 删除) ─────────
+    # ── 结构血缘 (split/merge 元数据, Phase 3B 收窄) ─────────
 
     @property
-    def derivatives(self) -> dict:
-        """向后兼容 — 返回槽位容器引用 (3B 消灭自由写后删除)。"""
-        return self._data
+    def meta(self) -> dict:
+        """结构血缘元数据 — 仅存明确键集 (merged_from/split_at/split_from)。
 
-    @derivatives.setter
-    def derivatives(self, value: dict):
-        self._data = value
+        取代 derivatives 自由键写血缘 (Phase 3B: 关闭自由后门)。
+        """
+        if "meta" not in self._data:
+            self._data["meta"] = {}
+        return self._data["meta"]
 
     # ── 槽位容器 ──────────────────────────────────────────
 

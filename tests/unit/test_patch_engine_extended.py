@@ -13,17 +13,17 @@ class TestPatchEngineCRUD:
     def test_replace_writes_derivatives(self):
         s = make_state({"e1": make_event("e1", 0, 1, "hello")})
         PatchEngine().apply(s, make_patch("p1", "e1", "replace", {"translation": "hi"}))
-        assert s.get_event("e1").derivatives.get("translation") == "hi"
+        assert s.get_event("e1").translation.text == "hi"
 
     def test_merge_records_merged_from(self):
         s = make_state({"e1": make_event("e1", 0, 1, "hello"), "e2": make_event("e2", 1, 2, "world")})
         PatchEngine().apply(s, make_patch("p1", "e1", "merge", {"target_ids": ["e1","e2"]}))
-        assert "e2" in s.get_event("e1").derivatives.get("_merged_from", [])
+        assert "e2" in s.get_event("e1").meta.get("merged_from", [])
 
     def test_split_records_split_at(self):
         s = make_state({"e1": make_event("e1", 0, 2, "hello world")})
         PatchEngine().apply(s, make_patch("p1", "e1", "split", {"at": 1.0}))
-        assert s.get_event("e1").derivatives.get("_split_at") == 1.0
+        assert s.get_event("e1").meta.get("split_at") == 1.0
 
     def test_segment_insert_adds_event(self):
         s = make_state({"e1": make_event("e1", 0, 1, "hello")})
@@ -77,16 +77,18 @@ class TestPatchEngineErrors:
 
     def test_idempotency_key_dedup(self):
         s = make_state({"e1": make_event("e1", 0, 1, "hello")})
-        p1 = Patch(id="p1", target_id="e1", op="replace", value={"a": 1}, idempotency_key="k1")
-        p2 = Patch(id="p2", target_id="e1", op="replace", value={"a": 2}, idempotency_key="k1")
+        p1 = Patch(id="p1", target_id="e1", op="replace",
+                   value={"review": {"notes": "a"}}, idempotency_key="k1")
+        p2 = Patch(id="p2", target_id="e1", op="replace",
+                   value={"review": {"notes": "b"}}, idempotency_key="k1")
         PatchEngine().apply(s, p1)
         assert PatchEngine().apply(s, p2)["status"] == "skipped"
 
     def test_dry_run_does_not_mutate(self):
         s = make_state({"e1": make_event("e1", 0, 1, "hello")})
-        r = PatchEngine().dry_run(s, make_patch("p1", "e1", "replace", {"x": 1}))
+        r = PatchEngine().dry_run(s, make_patch("p1", "e1", "replace", {"review": {"notes": "x"}}))
         assert r["valid"] is True
-        assert "x" not in s.get_event("e1").derivatives
+        assert s.get_event("e1").review.notes == ""
 
 
 @pytest.mark.unit
@@ -95,20 +97,20 @@ class TestPatchEngineConsistency:
     def test_split_preserves_time_continuity(self):
         s = make_state({"e1": make_event("e1", 0, 4, "hello world")})
         PatchEngine().apply(s, make_patch("p1", "e1", "segment_split", {"at": 2.0}))
-        assert s.get_event("e1").derivatives.get("_split_at") == 2.0
+        assert s.get_event("e1").meta.get("split_at") == 2.0
 
     def test_merge_combines_time_range(self):
         s = make_state({"e1": make_event("e1", 0, 1, "hello"), "e2": make_event("e2", 1, 2, "world")})
         PatchEngine().apply(s, make_patch("p1", "e1", "segment_merge", {"target_ids": ["e1","e2"]}))
-        assert "e2" in s.get_event("e1").derivatives.get("_merged_from", [])
+        assert "e2" in s.get_event("e1").meta.get("merged_from", [])
 
     def test_batch_apply_consistency(self):
         s = make_state({"e1": make_event("e1", 0, 1, "hello"), "e2": make_event("e2", 1, 2, "world")})
-        patches = [make_patch("p1", "e1", "replace", {"a": 1}), make_patch("p2", "e2", "replace", {"b": 2})]
+        patches = [make_patch("p1", "e1", "replace", {"review": {"notes": "a"}}), make_patch("p2", "e2", "replace", {"review": {"notes": "b"}})]
         results = PatchEngine().apply_many(s, patches)
         assert all(r["status"] == "applied" for r in results)
-        assert s.get_event("e1").derivatives.get("a") == 1
-        assert s.get_event("e2").derivatives.get("b") == 2
+        assert s.get_event("e1").review.notes == "a"
+        assert s.get_event("e2").review.notes == "b"
 
     # ── IR 注册表同步 (Phase1: 结构性 handler 后 ir.events 与 event_states 一致) ──
 

@@ -53,7 +53,6 @@ class PatchEngine:
             OpCode.REPLACE: self._replace,
             OpCode.MERGE: self._merge,
             OpCode.SPLIT: self._split,
-            OpCode.PROPAGATE: self._propagate,
             OpCode.SEGMENT_INSERT: self._seg_insert,
             OpCode.SEGMENT_SPLIT: self._seg_split,
             OpCode.SEGMENT_MERGE: self._seg_merge,
@@ -64,7 +63,7 @@ class PatchEngine:
             OpCode.SPLIT_SEGMENT_BY_SPEAKER: self._split_by_speaker,
             OpCode.UPDATE_TTS_AUDIO: self._update_tts_audio,
             OpCode.UPDATE_TRANSLATION: self._update_translation,
-            OpCode.UPDATE_EMOTION: self._replace,
+            OpCode.UPDATE_EMOTION: self._update_emotion,
             OpCode.ANNOTATE: self._annotate,
             # v3.0: 配置 OpCode (定稿 §10.5, §12.3)
             OpCode.SET_CONFIG: self._set_config,
@@ -140,18 +139,42 @@ class PatchEngine:
     # ── legacy ops ──────────────────────────────────────
 
     def _replace(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """REPLACE — 收窄为槽位路由 (Phase 3B 关闭自由后门)。
+
+        value 的 key 必须是合法槽位名, 未知 key 响亮报错。
+        旧实现自由写 _data 任意 key, 是类型契约失效的后门。
+        """
+        from core.runtime.field_contract import VALID_SLOTS
         target = state.get_event(patch.target_id)
         if target is None:
             return {"status": "error", "reason": f"target not found: {patch.target_id}"}
-        before = dict(target.derivatives)
-        target.derivatives.update(patch.value)
+        before = {}
+        for key, val in patch.value.items():
+            if key not in VALID_SLOTS:
+                return {"status": "error",
+                        "reason": f"replace 未知槽位 '{key}' (合法: {sorted(VALID_SLOTS)})"}
+            slot = getattr(target, key, None)
+            if slot is None:
+                return {"status": "error", "reason": f"unknown slot: {key}"}
+            before[key] = slot.to_dict() if hasattr(slot, "to_dict") else dict(slot)
+            if hasattr(slot, "to_dict"):
+                if isinstance(val, dict):
+                    for k, v in val.items():
+                        if hasattr(slot, k):
+                            setattr(slot, k, v)
+                else:
+                    # 裸值写第一个字段 (text 类槽位兼容)
+                    first = next(iter(slot.__dataclass_fields__), None)
+                    if first and hasattr(slot, first):
+                        setattr(slot, first, val)
+            else:
+                slot.update(val if isinstance(val, dict) else {"value": val})
         target.add_patch(patch)
         return {
             "status": "applied",
             "op": "replace",
             "target": patch.target_id,
             "before": before,
-            "after": dict(target.derivatives),
         }
 
     def _update_translation(self, state: TimelineProjectState, patch: Patch) -> dict:
@@ -198,6 +221,28 @@ class PatchEngine:
             "after": slot.to_dict(),
         }
 
+    def _update_emotion(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """UPDATE_EMOTION — 写 emotion 槽 (类型化, Phase 3B)。
+
+        旧实现经 _replace 自由写 _data["emotion"] = dict。
+        """
+        target = state.get_event(patch.target_id)
+        if target is None:
+            return {"status": "error", "reason": f"target not found: {patch.target_id}"}
+        val = patch.value.get("emotion", {})
+        if isinstance(val, dict):
+            emo = target.emotion
+            for k, v in val.items():
+                if hasattr(emo, k):
+                    setattr(emo, k, v)
+        target.add_patch(patch)
+        return {
+            "status": "applied",
+            "op": "update_emotion",
+            "target": patch.target_id,
+            "after": target.emotion.to_dict(),
+        }
+
     def _merge(self, state: TimelineProjectState, patch: Patch) -> dict:
         ids = patch.value.get("target_ids", [patch.target_id])
         if len(ids) < 2:
@@ -206,8 +251,8 @@ class PatchEngine:
         if primary is None:
             return {"status": "error", "reason": f"primary not found: {ids[0]}"}
         merged_ids = ids[1:]
-        primary.derivatives["_merged_from"] = merged_ids
-        primary.derivatives["_merged_end"] = max(
+        primary.meta["merged_from"] = merged_ids
+        primary.meta["merged_end"] = max(
             primary.end,
             max(
                 (state.get_event(mid).end if state.get_event(mid) else 0)
@@ -227,31 +272,13 @@ class PatchEngine:
         target = state.get_event(patch.target_id)
         if target is None:
             return {"status": "error", "reason": f"target not found: {patch.target_id}"}
-        target.derivatives["_split_at"] = split_at
+        target.meta["split_at"] = split_at
         target.add_patch(patch)
         return {
             "status": "applied",
             "op": "split",
             "target": patch.target_id,
             "split_at": split_at,
-        }
-
-    def _propagate(self, state: TimelineProjectState, patch: Patch) -> dict:
-        propagated_to = patch.value.get("to_ids", [])
-        key = patch.value.get("key", "")
-        val = patch.value.get("val")
-        for eid in propagated_to:
-            es = state.get_event(eid)
-            if es:
-                es.derivatives[key] = val
-        target = state.get_event(patch.target_id)
-        if target:
-            target.add_patch(patch)
-        return {
-            "status": "applied",
-            "op": "propagate",
-            "from": patch.target_id,
-            "to": propagated_to,
         }
 
     # ── structural ops ──────────────────────────────────
@@ -308,9 +335,9 @@ class PatchEngine:
             source=target.ir.source,
         )
         es_b = TimelineEventState(ir_b)
-        es_b.derivatives.update(target.derivatives)
+        es_b._data.update(target._data)
         es_b.patches = list(target.patches)
-        es_b.derivatives["_split_from"] = patch.target_id
+        es_b.meta["split_from"] = patch.target_id
 
         ir_a = TimelineEventIR(
             id=patch.target_id,
@@ -321,8 +348,8 @@ class PatchEngine:
             source=target.ir.source,
         )
         es_a = TimelineEventState(ir_a)
-        es_a.derivatives.update(target.derivatives)
-        es_a.derivatives["_split_at"] = split_at
+        es_a._data.update(target._data)
+        es_a.meta["split_at"] = split_at
         es_a.patches = list(target.patches)
         es_a.add_patch(patch)
 
@@ -382,7 +409,7 @@ class PatchEngine:
         es_merged = TimelineEventState(ir_merged)
         es_merged.patches = list(primary.patches)
         es_merged.add_patch(patch)
-        es_merged.derivatives["_merged_from"] = merged_ids  # 合并血缘
+        es_merged.meta["merged_from"] = merged_ids  # 合并血缘
         if words:
             es_merged.asr.words = words
             es_merged.asr.language = lang
@@ -410,20 +437,29 @@ class PatchEngine:
     # ── ASR ops ─────────────────────────────────────────
 
     def _refine_alignment(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """REFINE_ALIGNMENT — 词级对齐精修写 asr 槽 (Phase 3B 归位)。
+
+        旧实现写自由 key derivatives["alignment"] (无生产读取端)。
+        word_timestamps → asr.words; confidence_delta → asr.confidence 精修。
+        """
         target = state.get_event(patch.target_id)
         if target is None:
             return {"status": "error", "reason": f"target not found: {patch.target_id}"}
-        before = dict(target.derivatives.get("alignment", {}))
-        current = target.derivatives.get("alignment", {})
-        current.update(patch.value)
-        target.derivatives["alignment"] = current
+        before_words = list(target.asr.words)
+        if "word_timestamps" in patch.value:
+            target.asr.words = list(patch.value["word_timestamps"])
+        if "confidence_delta" in patch.value:
+            delta = float(patch.value["confidence_delta"])
+            cur = target.asr.confidence
+            target.asr.confidence = max(
+                0.0, min(1.0, (cur if cur is not None else 1.0) + delta))
         target.add_patch(patch)
         return {
             "status": "applied",
             "op": "refine_alignment",
             "target": patch.target_id,
-            "before": before,
-            "after": dict(current),
+            "before": before_words,
+            "after": list(target.asr.words),
         }
 
     # ── Speaker ops ─────────────────────────────────────
@@ -454,7 +490,7 @@ class PatchEngine:
             source=target.ir.source,
         )
         es_new = TimelineEventState(ir_new)
-        es_new.derivatives.update(target.derivatives)
+        es_new._data.update(target._data)
         es_new.patches = list(target.patches)
         es_new.add_patch(patch)
         state.event_states[target.ir.id] = es_new
@@ -485,7 +521,7 @@ class PatchEngine:
                     source=es.ir.source,
                 )
                 es_new = TimelineEventState(ir_new)
-                es_new.derivatives.update(es.derivatives)
+                es_new._data.update(es._data)
                 es_new.patches = list(es.patches)
                 state.event_states[es.ir.id] = es_new
                 remapped += 1
@@ -529,7 +565,7 @@ class PatchEngine:
             )
             es = TimelineEventState(ir)
             es.speaker.speaker_id = spk
-            es.derivatives["_split_from"] = patch.target_id
+            es.meta["split_from"] = patch.target_id
             es.add_patch(patch)
             state.event_states[seg_id] = es
             created.append(seg_id)

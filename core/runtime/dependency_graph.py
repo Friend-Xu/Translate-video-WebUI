@@ -75,11 +75,11 @@ class DependencyGraph:
                     self._add_edge(eid, sorted_events[i + 1].id, "semantic", 0.7)
 
             # structural: split/merge 父子
-            derivs = es.derivatives
-            for merged_id in derivs.get("_merged_from", []):
+            derivs = es.meta
+            for merged_id in derivs.get("merged_from", []):
                 self._add_edge(merged_id, eid, "structural", 1.0)
-            if "_split_from" in derivs:
-                self._add_edge(derivs["_split_from"], eid, "structural", 1.0)
+            if "split_from" in derivs:
+                self._add_edge(derivs["split_from"], eid, "structural", 1.0)
 
     def _add_edge(self, upstream: str, downstream: str, relation: str, strength: float) -> None:
         edge = DependencyEdge(upstream, downstream, relation, strength)
