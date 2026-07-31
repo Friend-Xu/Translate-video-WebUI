@@ -44,8 +44,11 @@ class SynthesisEngine:
         }
         # Layer 2-4: Derived + Decision State (from _data 槽位容器)
         # 类型化槽位 (Phase 3A) → to_dict; meta 血缘不进入渲染输出
+        # speaker 槽位是派生视图, 权威在 ir.speaker_ref (基础字段 str):
+        # 槽位 to_dict() 覆盖会把 speaker 变 dict, 破坏 render 消费者契约
+        # (preprocess/llm_translation 用 {r["speaker"]} 集合 + dict key)
         for key, value in event_state._data.items():
-            if key == "meta":
+            if key in ("meta", "speaker"):
                 continue
             result[key] = value.to_dict() if hasattr(value, "to_dict") else value
         # Layer 5: Patches (sorted — 最高优先级覆盖)

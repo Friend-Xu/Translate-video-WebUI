@@ -82,8 +82,9 @@ class VAD_Segmenter:
             device: 运行设备
         """
         self.audio_path = Path(audio_path)
-        if not self.audio_path.exists():
-            raise FileNotFoundError(f"音频文件不存在: {audio_path}")
+        # Path("") == Path(".") 恒存在, 空路径必须显式拒绝 (禁止兜底: 不静默用当前目录)
+        if not audio_path or not self.audio_path.exists():
+            raise FileNotFoundError(f"音频文件不存在: {audio_path!r}")
 
         self.min_silence_gap = min_silence_gap
         self.min_speech_duration = min_speech_duration

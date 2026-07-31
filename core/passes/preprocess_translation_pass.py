@@ -33,10 +33,13 @@ logger = logging.getLogger(__name__)
 
 
 class PreprocessTranslationPass(TimelinePass):
-    """翻译预处理 — 全片一次, 产出 TranslationBible 写项目级元数据。"""
+    """翻译预处理 — 全片一次, 产出 TranslationBible 写项目级元数据。
+
+    跨 stage 前置 (segmentation 在 EXTRACT) 由 stage_order 保证,
+    不声明 depends_on (PassManager 只校验同 stage 注册表)。
+    """
 
     name = "preprocess_translation"
-    depends_on = ["segmentation"]
 
     def __init__(
         self,

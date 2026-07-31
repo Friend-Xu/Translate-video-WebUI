@@ -20,10 +20,14 @@ from pipeline.segmentation import segment_event_stream
 
 
 class SegmentationPass(TimelinePass):
-    """ASR 长批 → 句级 event (speaker 之后, translation 之前)。"""
+    """ASR 长批 → 句级 event (speaker 之后, translation 之前)。
+
+    依赖的事件 speaker 字段由 asr (完整链) 或 asr_to_ir (注入产物) 提供;
+    不声明 depends_on — 跨 stage 顺序由 stage_order 保证, 同 stage 顺序由
+    passes 列表声明 (CLI 链无 speaker_composite pass, 声明它会锁死完整链)。
+    """
 
     name = "segmentation"
-    depends_on = ["speaker_composite"]
 
     def __init__(self, language: str = ""):
         self.language = language

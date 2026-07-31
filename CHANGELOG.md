@@ -5,6 +5,43 @@
 
 ---
 
+## 2026-08-01 — 真实 E2E 验证: 修 7 处首跑崩溃, 新引擎全链路跑通
+
+**验证**: `main.py Test_JP.mp4 --lang ja --skip-tts` 真实视频 + GPU + DeepSeek API。
+产出: bible (domain/summary/style_guide/hotwords/说话人画像) + 逐句译文 33/33
+(177s, deepseek-v4-flash) + persist v2 到 01_extract/timeline.json + machine.srt +
+GUI diarization/load 读 CLI 产物 (33 事件/11 lane/译文全可读)。
+
+### 修复 (7 处, 均首跑暴露)
+1. **manifest 旧格式崩溃**: 旧工作区 project.json 无 pipeline 键, `_manifest_set_step`
+   KeyError → `_manifest_ensure_v2` 显式迁移 (保留旧字段, 补 v2 生命周期键)
+2. **VAD 空路径静默通过**: `Path("") == Path(".")` 恒存在, ffmpeg `-i '.'` 谜之失败 →
+   显式 `not audio_path` 拒绝 (禁止兜底)
+3. **load_state 遇 v1 静默空 state**: v1 提取格式无 events 键, 返回空 state 让调用方
+   误判"无事件" → 显式 ValueError; orchestrator 捕获后显式 log + 跳过加载
+   (v1 无译文可复用, 由注入 ASR 产物重建)
+4. **跨 stage depends_on 过严**: segmentation 依赖 speaker_composite、
+   preprocess 依赖 segmentation — PassManager 只校验同 stage 注册表, 完整流程
+   必然崩 → depends_on 只约束同 stage, 跨 stage 顺序由 stage_order 保证
+   (CLI 链 asr_to_ir 已带 speaker 字段, 无需 speaker pass)
+5. **SynthesisEngine.render speaker 类型回归** (Phase 3A 引入): 槽位 dict 覆盖基础
+   str 字段 → preprocess/llm_translation 的 `{r["speaker"]}` 集合 unhashable 崩溃 →
+   speaker 槽位 (派生) 不覆盖 ir.speaker_ref (权威, str)
+6. **CLI policy 缺质量闭环**: quick_preset TRANSLATE 只有 preprocess+translate,
+   CHANGELOG 宣称的质量闭环实际没跑 → CLI policy TRANSLATE 加 quality_check +
+   refine_translation
+7. **asr_to_ir 未注入 words**: CLI 产物 GUI 词级编辑不可用 → 从 transcript.json
+   segments 补 words + confidence
+
+### 决策
+- **完整 orchestrator 流程首次被真实跑通**: 单 pass/单 stage 测试掩盖了跨 stage
+  依赖与路径注入的契约缺口, E2E 是唯一能暴露的验证层
+- **depends_on 语义收窄**: 同 stage 排序用 depends_on, 跨 stage 顺序用 stage_order —
+  双机制各司其职
+- 契约测试 +3: load_state v1 raise / render speaker 保持 str / v1 格式显式报错
+
+---
+
 ## 2026-08-01 — 绞杀收束: speaker/bind 唯一写路径 + 死代码清除
 
 ### 改动

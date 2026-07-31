@@ -101,6 +101,20 @@ class TestPersistLoadRoundtrip:
         with pytest.raises(ValueError, match="text"):
             load_state(str(bad))
 
+    def test_load_v1_extract_format_raises(self, tmp_path):
+        """E2E 修复: v1 提取格式 (timeline.ir) 无 events 键, 显式报错而非静默空 state。
+
+        静默空 state 会让 orchestrator 误判"无事件"并重跑 ASR。
+        """
+        import json
+        v1 = tmp_path / "timeline.json"
+        v1.write_text(json.dumps({
+            "version": "1.0", "audio_id": "x",
+            "timeline": [], "speaker_map": {}, "metadata": {},
+        }), encoding="utf-8")
+        with pytest.raises(ValueError, match="v1"):
+            load_state(str(v1))
+
     def test_v2_string_translation_normalized(self, tmp_path):
         """兼容 v2: translation 为 string 时归一为 dict, reload 后 TTS 可读。"""
         import json

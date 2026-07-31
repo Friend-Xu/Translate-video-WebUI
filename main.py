@@ -208,6 +208,23 @@ def _create_manifest(video: str) -> dict:
     return data
 
 
+def _manifest_ensure_v2(data: dict) -> dict:
+    """旧格式 manifest (v1: 无 version/pipeline/state) 显式迁移到 v2 schema。
+
+    保留已有字段 (video_path/runtime_state/files)，补齐 v2 生命周期键；
+    步骤状态初始 pending，由 PipelineCheckpoint 控制实际重跑。
+    """
+    if "pipeline" not in data:
+        data["version"] = 2
+        data["state"] = "draft"
+        data["pipeline"] = {"extract": "pending", "translate": "pending", "tts": "pending"}
+        data.setdefault("files", {})
+        data.setdefault("timeline_frozen_at", None)
+        data.setdefault("created_at", "")
+        data.setdefault("updated_at", "")
+    return data
+
+
 def _manifest_set_step(video: str, step: str, status: str) -> None:
     """更新管线步骤状态。"""
     ws = _workspace_dir(video)
@@ -216,6 +233,7 @@ def _manifest_set_step(video: str, step: str, status: str) -> None:
         return
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
+    data = _manifest_ensure_v2(data)
     data["pipeline"][step] = status
     _save_manifest(video, data)
 
@@ -228,6 +246,7 @@ def _manifest_set_files(video: str, file_map: dict) -> None:
         return
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
+    data = _manifest_ensure_v2(data)
     data["files"].update(file_map)
     _save_manifest(video, data)
 
@@ -465,16 +484,33 @@ def step_translate_core(video: str, force: bool = False) -> str:
     # 构建 Pass 工厂（闭包注入运行时依赖）
     machine_srt = os.path.join(ws_dir, "02_translate", "machine.srt")
     os.makedirs(os.path.dirname(machine_srt), exist_ok=True)
+    audio_path = os.path.join(ws_dir, "01_extract", "audio.wav")
     factory = create_pass_factory(
         translate_fn=None,
         target_lang=target_lang,
         segments=segments,
         speaker_timeline=speaker_timeline,
         output_path=machine_srt,
+        video_path=video,
+        audio_path=audio_path,
+        workspace_dir=ws_dir,
     )
 
-    # 构建编排器（使用 quick_preset，绕过 Gate 快速跑通 TRANSLATE → EXPORT）
+    # 构建编排器（CLI 专用: EXTRACT 阶段用注入的提取产物建事件, 不重跑 ASR;
+    # TRANSLATE 含质量闭环 (quality_check + refine_translation);
+    # 去掉 TTS 阶段, CLI 翻译步骤只产出译文 + SRT)
     policy = WorkflowPolicy.quick_preset(target_lang)
+    from core.config.workflow_policy import StageConfig, WorkflowStage
+    policy.stages[WorkflowStage.EXTRACT] = StageConfig(
+        stage=WorkflowStage.EXTRACT,
+        passes=["asr_to_ir", "segmentation", "semantic_merge"],
+    )
+    policy.stages[WorkflowStage.TRANSLATE] = StageConfig(
+        stage=WorkflowStage.TRANSLATE,
+        passes=["preprocess_translation", "translate", "quality_check",
+                "refine_translation"],
+    )
+    policy.stages.pop(WorkflowStage.TTS, None)
     global_config = GlobalConfig()
     orchestrator = WorkflowOrchestrator(
         policy=policy,

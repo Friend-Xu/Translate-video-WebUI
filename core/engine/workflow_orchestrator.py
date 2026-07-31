@@ -138,9 +138,18 @@ class WorkflowOrchestrator:
             tl_path = _os.path.join(ws, "01_extract", "timeline.json")
             state = None
             if _os.path.isfile(tl_path):
-                # 禁止兜底: 文件损坏/缺字段时 load_state 显式 raise,
-                # 由外层 except 标记 FAILED, 不再 except:pass 静默产出错误输出。
-                state = load_state(tl_path)
+                try:
+                    # 禁止兜底: 文件损坏/缺字段时 load_state 显式 raise,
+                    # 由外层 except 标记 FAILED, 不再 except:pass 静默产出错误输出。
+                    state = load_state(tl_path)
+                except ValueError as e:
+                    # v1 提取格式 (timeline.ir) 无译文可复用: 显式跳过加载,
+                    # 由注入的 ASR 产物 (segments) 重建事件 (CLI 翻译路径)。
+                    self._emit_workflow(
+                        f"跳过 v1 timeline 加载: {e}",
+                        {"reason": "v1_format", "path": tl_path},
+                    )
+                    state = None
 
             if state is not None:
                 self._state = state

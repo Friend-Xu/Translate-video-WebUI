@@ -321,6 +321,18 @@ class TestSynthesisEngine:
         ids = [r["id"] for r in results]
         assert ids == ["evt_001", "evt_002", "evt_003"]
 
+    def test_render_speaker_stays_str_when_slot_set(self, engine, state):
+        """E2E 修复: speaker 槽位 (dict) 不得覆盖基础字段 (ir.speaker_ref, str)。
+
+        preprocess/llm_translation 用 {r["speaker"]} 集合 + dict key,
+        speaker 变 dict 会 unhashable 崩溃。
+        """
+        es = state.get_event("evt_001")
+        es.speaker.speaker_id = "SPEAKER_00"
+        result = engine.render(es)
+        assert isinstance(result["speaker"], str)
+        assert result["speaker"] == "SPEAKER_00"
+
     def test_render_all_empty_state(self, engine):
         ir = TimelineProjectIR()
         state = TimelineProjectState(ir)

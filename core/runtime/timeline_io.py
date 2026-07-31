@@ -286,6 +286,14 @@ def load_state(path: str) -> TimelineProjectState:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
+    # v1 提取格式 (timeline.ir: version "1.0" + timeline 数组) 无 events 键,
+    # 静默返回空 state 会让调用方以为"无事件" — 显式报错 (禁止兜底)
+    if "events" not in data and "timeline" in data:
+        raise ValueError(
+            f"load_state: {path} 是 v1 提取格式 (timeline.ir), 无 events 键; "
+            "需经 CLI 翻译 (persist v2) 或显式迁移后加载"
+        )
+
     events_data = data.get("events", [])
     if isinstance(events_data, dict):
         events_data = list(events_data.values())
