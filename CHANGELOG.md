@@ -7,7 +7,7 @@
 
 ## 2026-08-01 — Event 转正 Phase 3B: 关闭自由后门 + 桥接层收尾
 
-**Commit:** 待定
+**Commit:** `c6002c1`
 
 ### 改动
 - 删 `derivatives` 别名（28 处自由写后门关闭）；`_data` 收窄为槽位容器 + meta
