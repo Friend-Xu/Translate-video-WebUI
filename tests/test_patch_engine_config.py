@@ -52,7 +52,7 @@ class TestConfigUndo:
         undo = Patch(id="undo010", target_id="evt_001", op=OpCode.OVERRIDE_CONFIG, value={"slot": "tts", "partial_config": prev}, author="undo")
         patch_engine.apply(simple_state, undo)
         # v3.0: undo restores previous RAW config (None). ConfigResolver handles null→inherit.
-        assert es.tts["config"].get("speed_factor") is None
+        assert es.tts.config.get("speed_factor") is None
 
 class TestSchemaReject:
     def test_reject_invalid_enum(self, simple_state, patch_engine):
@@ -71,10 +71,10 @@ class TestResetConfig:
         es = simple_state.get_event("evt_001")
         patch_engine.apply(simple_state, Patch(id="s1", target_id="evt_001", op=OpCode.OVERRIDE_CONFIG, value={"slot": "tts", "partial_config": {"engine": "edge"}}, author="user"))
         patch_engine.apply(simple_state, Patch(id="r1", target_id="evt_001", op=OpCode.RESET_CONFIG, value={"slot": "tts"}, author="user"))
-        assert es.tts["config"] == {}
+        assert es.tts.config == {}
 
 class TestBatchSetConfig:
     def test_batch_multi(self, simple_state, patch_engine):
         patch_engine.apply(simple_state, Patch(id="b1", target_id="evt_001", op=OpCode.BATCH_SET_CONFIG, targets=["evt_001", "evt_002"], value={"slot": "translation", "config_block": {"lang": "ja"}}, author="user"))
         for eid in ["evt_001", "evt_002"]:
-            assert simple_state.get_event(eid).translation["config"].get("lang") == "ja"
+            assert simple_state.get_event(eid).translation.config.get("lang") == "ja"

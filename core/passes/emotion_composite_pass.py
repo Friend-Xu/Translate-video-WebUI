@@ -59,18 +59,18 @@ class EmotionCompositePass(TimelinePass):
 
             if not self.skip_alignment and trans:
                 ar = EmotionAlignmentChecker().check(ev, trans)
-                es.emotion["translation_aligned"] = ar.aligned
+                es.emotion.translation_aligned = ar.aligned
                 if ar.drift_type:
-                    es.emotion["drift_type"] = ar.drift_type
+                    es.emotion.drift_type = ar.drift_type
 
-            es.emotion["emotion_score"] = scorer.score(ev, prev).composite
+            es.emotion.emotion_score = scorer.score(ev, prev).composite
             gr = gate.decide(ev, prev)
-            es.emotion["gate_decision"] = gr.decision
+            es.emotion.gate_decision = gr.decision
             # WorkflowOrchestrator 读取: E1=accept, E2=downgrade, E3=repair
             # (Phase1: 只写 emotion 槽, 不覆盖 review.gate_decision —
             #  同键会让 TTS 阶段后文本门控 A/B/C 结果丢失)
             emap = {"accept": "E1", "downgrade": "E2", "repair": "E3"}
-            es.emotion["gate_decision"] = emap.get(gr.decision, "E1")
+            es.emotion.gate_decision = emap.get(gr.decision, "E1")
 
             route = router.route(ev)
             es.provenance["emotion_route"] = {

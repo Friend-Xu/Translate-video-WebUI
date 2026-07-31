@@ -130,15 +130,12 @@ class XCometStrategy(QualityStrategy):
             if es is None:
                 continue
 
-            trans_slot = es.translation
-            if isinstance(trans_slot, str):
-                es._data["translation"] = {"text": trans_slot}
-            es.translation["quality_score"] = score
+            es.translation.quality_score = score
             es.provenance["translation_quality"] = {"composite": score, "engine": "xcomet-lite"}
 
             verdict = QualityVerdict.from_score(score, self._thresholds, self.name)
             verdict.sub_scores = {"xcomet_score": score}
-            es.review["gate_decision"] = verdict.gate_decision
+            es.review.gate_decision = verdict.gate_decision
             results[seg_id] = verdict
 
         return results

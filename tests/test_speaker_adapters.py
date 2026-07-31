@@ -212,11 +212,10 @@ class TestSpeakerSlotPopulation:
         es = TimelineEventState(TimelineEventIR(
             id="evt_001", start=0, end=2.5, text_ref="Hello", speaker_ref=None,
         ))
-        es.speaker["speaker_id"] = "SPEAKER_00"
-        es.speaker["confidence"] = 0.95
-        es.speaker["source"] = "pyannote_v3.1"
-        assert es.speaker["speaker_id"] == "SPEAKER_00"
-        assert es.speaker["confidence"] == 0.95
+        es.speaker.speaker_id = "SPEAKER_00"
+        es.speaker.confidence = 0.95
+        assert es.speaker.speaker_id == "SPEAKER_00"
+        assert es.speaker.confidence == 0.95
 
     def test_speaker_node_embedding_fields(self):
         spk = SpeakerNodeIR(

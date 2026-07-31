@@ -37,11 +37,11 @@ def _make_state(specs):
     for i, (text, trans, gate, score) in enumerate(specs, 1):
         es = state.get_event(f"evt_{i:03d}")
         if trans:
-            es.translation["text"] = trans
-            es.translation["quality_score"] = score
-        es.review["gate_decision"] = gate
+            es.translation.text = trans
+            es.translation.quality_score = score
+        es.review.gate_decision = gate
         if gate in ("B", "C"):
-            es.review["needs_human_review"] = True
+            es.review.needs_human_review = True
     return state
 
 
@@ -56,7 +56,7 @@ class _TextBasedStrategy(QualityStrategy):
     def score_batch(self, state) -> dict:
         out = {}
         for es in state.sorted_events():
-            t = es.translation.get("text", "")
+            t = es.translation.text
             if not t:
                 continue
             score = 0.9 if "good" in t else 0.3
@@ -95,10 +95,10 @@ def test_refine_accepted_when_improved():
     ).apply(state)
 
     es = state.get_event("evt_001")
-    assert es.translation["text"] == "good translation"
-    assert es.translation["quality_score"] == 0.9
-    assert es.review["gate_decision"] == "A"
-    assert es.review["needs_human_review"] is False
+    assert es.translation.text == "good translation"
+    assert es.translation.quality_score == 0.9
+    assert es.review.gate_decision == "A"
+    assert es.review.needs_human_review is False
     assert len(fn_calls) == 1
 
 
@@ -114,10 +114,10 @@ def test_refine_rejected_when_not_improved():
     ).apply(state)
 
     es = state.get_event("evt_001")
-    assert es.translation["text"] == "初译"          # 回退
-    assert es.translation["quality_score"] == 0.3
-    assert "refine_rejected" in es.review["flags"]
-    assert es.review["needs_human_review"] is True
+    assert es.translation.text == "初译"          # 回退
+    assert es.translation.quality_score == 0.3
+    assert "refine_rejected" in es.review.flags
+    assert es.review.needs_human_review is True
 
 
 def test_gate_a_events_not_refined():
@@ -139,7 +139,7 @@ def test_no_strategy_skips_loud():
     RefineTranslationPass(translate_fn=lambda u, s: "good x",
                           quality_strategy=None).apply(state)
     es = state.get_event("evt_001")
-    assert es.translation["text"] == "烂译"          # 状态不变
+    assert es.translation.text == "烂译"          # 状态不变
 
 
 def test_refine_fn_failure_keeps_original():
@@ -154,5 +154,5 @@ def test_refine_fn_failure_keeps_original():
         concurrency=1,
     ).apply(state)
     es = state.get_event("evt_001")
-    assert es.translation["text"] == "初译"
-    assert "refine_rejected" not in es.review.get("flags", [])
+    assert es.translation.text == "初译"
+    assert "refine_rejected" not in es.review.flags

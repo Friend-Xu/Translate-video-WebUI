@@ -109,15 +109,14 @@ class LLMTranslationPass(TimelinePass):
             if es is None:
                 continue
             if i in results:
-                trans = es.translation
-                trans["text"] = results[i]
-                trans["engine"] = self._engine_name
+                es.translation.text = results[i]
+                es.translation.engine = self._engine_name
                 translated += 1
             else:
-                flags = es.review.setdefault("flags", [])
+                flags = es.review.flags
                 if "translation_failed" not in flags:
                     flags.append("translation_failed")
-                es.review["needs_human_review"] = True
+                es.review.needs_human_review = True
 
         if failures:
             sample = next(iter(failures.values()))
@@ -145,7 +144,7 @@ class LLMTranslationPass(TimelinePass):
         if state.ir.language:
             return state.ir.language
         for es in state.sorted_events():
-            lg = es.asr.get("language", "")
+            lg = es.asr.language
             if lg:
                 return lg
         return "en"

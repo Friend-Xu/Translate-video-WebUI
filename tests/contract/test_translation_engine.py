@@ -69,11 +69,9 @@ def test_all_events_translated_and_slot_shape():
 
     assert len(rec.calls) == 3
     for es in state.sorted_events():
-        trans = es.translation
-        assert isinstance(trans, dict)
-        assert trans["text"].startswith("译文:")
-        assert trans["engine"] == "llm"
-        assert not es.review.get("needs_human_review")
+        assert es.translation.text.startswith("译文:")
+        assert es.translation.engine == "llm"
+        assert not es.review.needs_human_review
 
 
 def test_events_without_text_are_skipped():
@@ -81,7 +79,7 @@ def test_events_without_text_are_skipped():
     rec = _Recorder()
     LLMTranslationPass(translate_fn=rec, concurrency=1).apply(state)
     assert len(rec.calls) == 2
-    assert "text" not in state.get_event("evt_002").translation
+    assert state.get_event("evt_002").translation.text == ""
 
 
 def test_failure_flags_only_failed_sentence():
@@ -94,12 +92,12 @@ def test_failure_flags_only_failed_sentence():
     # apply 不得抛异常
     LLMTranslationPass(translate_fn=rec, concurrency=1).apply(state)
 
-    assert state.get_event("evt_001").translation.get("text", "").startswith("译文:")
+    assert state.get_event("evt_001").translation.text.startswith("译文:")
     bad = state.get_event("evt_002")
-    assert "text" not in bad.translation
-    assert "translation_failed" in bad.review.get("flags", [])
-    assert bad.review.get("needs_human_review") is True
-    assert state.get_event("evt_003").translation.get("text", "").startswith("译文:")
+    assert bad.translation.text == ""
+    assert "translation_failed" in bad.review.flags
+    assert bad.review.needs_human_review is True
+    assert state.get_event("evt_003").translation.text.startswith("译文:")
 
 
 # ── 邻居窗口 ────────────────────────────────────────────────

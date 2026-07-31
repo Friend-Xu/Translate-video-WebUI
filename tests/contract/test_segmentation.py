@@ -123,9 +123,9 @@ def _make_state_with_long_event():
     proj = TimelineProjectIR(events={"evt_001": ir}, speakers={})
     state = TimelineProjectState(proj)
     es = state.get_event("evt_001")
-    es.asr["words"] = words
-    es.asr["language"] = "en"
-    es.speaker["speaker_id"] = "A"
+    es.asr.words = words
+    es.asr.language = "en"
+    es.speaker.speaker_id = "A"
     return state, len(words)
 
 
@@ -139,10 +139,10 @@ def test_segmentation_pass_resegments_and_preserves_words():
     ids = [es.id for es in events]
     assert ids == [f"evt_{i:03d}" for i in range(1, len(events) + 1)]
     # 每个 event 都带 words, 且总数守恒
-    total = sum(len(es.asr.get("words", [])) for es in events)
+    total = sum(len(es.asr.words) for es in events)
     assert total == n_words
     # speaker 保留
-    assert all(es.speaker.get("speaker_id") == "A" for es in events)
+    assert all(es.speaker.speaker_id == "A" for es in events)
     # 每个 event 的 text 非空且来自其 words
     for es in events:
         assert es.ir.text_ref.strip()
@@ -155,5 +155,5 @@ def test_segmentation_pass_flags_no_words_event():
     state = TimelineProjectState(proj)
     SegmentationPass().apply(state)
     es = state.get_event("evt_001")
-    assert "no_word_timestamps" in es.review.get("flags", [])
-    assert es.review.get("needs_human_review") is True
+    assert "no_word_timestamps" in es.review.flags
+    assert es.review.needs_human_review is True

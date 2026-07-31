@@ -32,7 +32,7 @@ class VideoExportPass(TimelinePass):
         tasks = []
         for es in events:
             # audio_ref 由 UPDATE_TTS_AUDIO 写入 tts slot (Phase 3b)
-            audio_ref = es.tts.get("audio_ref")
+            audio_ref = es.tts.audio_ref
             if not audio_ref:
                 continue
             audio_path = os.path.join(self.workspace_dir, audio_ref) if not os.path.isabs(audio_ref) else audio_ref
@@ -48,7 +48,7 @@ class VideoExportPass(TimelinePass):
                 "end": end_ms,
                 "text": text,
                 "audio_path": audio_path,
-                "speed_decision": es.tts.get("speed_decision", {}),
+                "speed_decision": es.tts.speed_decision,
             })
         if not tasks:
             return state

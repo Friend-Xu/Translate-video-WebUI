@@ -58,9 +58,8 @@ class RefineTranslationPass(TimelinePass):
 
         candidates = []
         for es in state.sorted_events():
-            trans = es.translation
-            old_text = trans.get("text", "")
-            gate = es.review.get("gate_decision", "")
+            old_text = es.translation.text
+            gate = es.review.gate_decision
             if old_text.strip() and gate in ("B", "C"):
                 candidates.append(es)
 
@@ -89,8 +88,8 @@ class RefineTranslationPass(TimelinePass):
         concurrency = self.concurrency or 8
 
         def _work(es):
-            old = es.translation["text"]
-            score = es.translation.get("quality_score", 0.0)
+            old = es.translation.text
+            score = es.translation.quality_score
             user = (f"[待译] {rendered[es.id]['text']}\n"
                     + _REFINE_NOTE.format(old=old, score=score))
             return fn(user, system_by_speaker[rendered[es.id].get("speaker")])
@@ -109,10 +108,10 @@ class RefineTranslationPass(TimelinePass):
         old_scores = {}
         for eid, new_text in refined.items():
             es = state.get_event(eid)
-            old_texts[eid] = es.translation["text"]
-            old_scores[eid] = float(es.translation.get("quality_score", 0.0))
-            es.translation["text"] = new_text
-            es.translation["engine"] = self._engine_name + "_refine"
+            old_texts[eid] = es.translation.text
+            old_scores[eid] = float(es.translation.quality_score)
+            es.translation.text = new_text
+            es.translation.engine = self._engine_name + "_refine"
 
         verdicts = self._strategy.score_batch(state)
 
@@ -122,18 +121,18 @@ class RefineTranslationPass(TimelinePass):
             v = verdicts.get(eid)
             new_score = v.score if v else 0.0
             if v is not None and new_score > old_scores[eid]:
-                es.translation["quality_score"] = new_score
-                es.review["gate_decision"] = v.gate_decision
-                if v.gate_decision == "A" and not es.review.get("flags"):
-                    es.review["needs_human_review"] = False
+                es.translation.quality_score = new_score
+                es.review.gate_decision = v.gate_decision
+                if v.gate_decision == "A" and not es.review.flags:
+                    es.review.needs_human_review = False
                 accepted += 1
             else:
-                es.translation["text"] = old_texts[eid]
-                es.translation["quality_score"] = old_scores[eid]
-                flags = es.review.setdefault("flags", [])
+                es.translation.text = old_texts[eid]
+                es.translation.quality_score = old_scores[eid]
+                flags = es.review.flags
                 if "refine_rejected" not in flags:
                     flags.append("refine_rejected")
-                es.review["needs_human_review"] = True
+                es.review.needs_human_review = True
 
         logger.info("重翻闭环: %d 候选, %d 采纳, %d 回退",
                     len(candidates), accepted, len(refined) - accepted)
@@ -160,7 +159,7 @@ class RefineTranslationPass(TimelinePass):
         if state.ir.language:
             return state.ir.language
         for es in state.sorted_events():
-            lg = es.asr.get("language", "")
+            lg = es.asr.language
             if lg:
                 return lg
         return "en"

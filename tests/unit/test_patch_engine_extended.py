@@ -48,19 +48,19 @@ class TestPatchEngineSpeakerConfig:
     def test_assign_speaker_updates_ref(self):
         s = make_state({"e1": make_event("e1", 0, 1, "hello")})
         PatchEngine().apply(s, make_patch("p1", "e1", "assign_speaker", {"speaker_id": "S2", "confidence": 0.9}))
-        assert s.get_event("e1").speaker.get("speaker_id") == "S2"
+        assert s.get_event("e1").speaker.speaker_id == "S2"
 
     def test_set_config_replaces_all(self):
         s = make_state({"e1": make_event("e1", 0, 1, "hello")})
-        s.get_event("e1").tts["config"] = {"speed_factor": 0.8}
+        s.get_event("e1").tts.config = {"speed_factor": 0.8}
         PatchEngine().apply(s, make_patch("p1", "e1", "set_config", {"slot": "tts", "config_block": {"engine": "edge"}}))
-        assert s.get_event("e1").tts["config"].get("engine") == "edge"
+        assert s.get_event("e1").tts.config.get("engine") == "edge"
 
     def test_override_config_merges(self):
         s = make_state({"e1": make_event("e1", 0, 1, "hello")})
-        s.get_event("e1").tts["config"] = {"speed_factor": 1.0, "engine": "chattts"}
+        s.get_event("e1").tts.config = {"speed_factor": 1.0, "engine": "chattts"}
         PatchEngine().apply(s, make_patch("p1", "e1", "override_config", {"slot": "tts", "partial_config": {"speed_factor": 1.5}}))
-        assert s.get_event("e1").tts["config"]["engine"] == "chattts"
+        assert s.get_event("e1").tts.config["engine"] == "chattts"
 
 
 @pytest.mark.unit

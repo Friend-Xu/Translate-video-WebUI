@@ -5,9 +5,28 @@
 
 ---
 
-## 2026-08-01 — 契约对齐 + 死代码清理 (Phase 2)
+## 2026-08-01 — Event 转正 Phase 3A: 槽位类型化 + 访问模式替换
 
 **Commit:** 待定
+
+### 改动
+- `event_model.py` 槽位类型转正：Translation 加 ppl_ratio、TTSAudio 对齐实测（audio_ref/speed_decision/emotion_hint）、Review 对齐实测（review_status/needs_human_review）、新增 ASRData/SpeakerAssignment/EmotionData，全部带 config 子块 + to_dict/from_dict
+- `event_state.py` 10 个 lazy dict 槽位 → 类型化对象（缺失创建空对象、旧 dict 形态经 from_dict 迁移）；audio 死槽删除
+- 访问模式替换 ~40 文件：`es.translation["text"]` → `es.translation.text`；三态 isinstance 死分支清理；自由 key runtime 写入迁入 engine_scores；sub_scores 并入 provenance.translation_quality
+- `patch_engine`：_annotate 类型化写入（已知字段 setattr）、config ops 统一 `_slot_config`/`_set_slot_config` 辅助
+- `SynthesisEngine.render`：类型化槽位 to_dict 后输出（渲染保持纯 dict）
+- v3 schema 对齐实测字段
+
+### 决策
+- 空槽位语义选「空类型化对象」而非 None（读端改动最小化，persist 按对象判空）
+- 动态自由 key（引擎诊断/子评分）迁入已设计好的容器（engine_scores / provenance.translation_quality），不膨胀类型定义
+- 三态兼容代码（dict/str/缺位）在类型化后是死分支，一律删除而非保留
+
+---
+
+## 2026-08-01 — 契约对齐 + 死代码清理 (Phase 2)
+
+**Commit:** `a78efc3`
 
 ### 改动
 - `field_contract.py` 按实测补全 10 槽位合法字段：新增 asr/speaker/emotion/provenance，修正 tts（audio_ref 替代 audio_path）、review（review_status 替代 status），translation 加 ppl_ratio

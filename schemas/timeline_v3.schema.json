@@ -84,32 +84,38 @@
             "text": { "type": "string" },
             "engine": { "type": "string" },
             "quality_score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
-            "similarity": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+            "similarity": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+            "ppl_ratio": { "type": ["number", "null"], "minimum": 0 },
+            "config": { "type": "object" }
           }
         },
         "tts": {
           "type": ["object", "null"],
           "additionalProperties": false,
           "properties": {
-            "audio_path": { "type": "string" },
+            "audio_ref": { "type": "string" },
             "duration": { "type": "number", "minimum": 0 },
             "engine": { "type": "string" },
-            "speed_factor": { "type": "number", "minimum": 0 },
-            "quality_score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+            "quality_score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+            "speed_decision": { "type": "object" },
+            "emotion_hint": { "type": "string" },
+            "config": { "type": "object" }
           }
         },
         "review": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "status": {
+            "review_status": {
               "type": "string",
               "enum": ["pending", "approved", "modified", "flagged"],
               "default": "pending"
             },
             "flags": { "type": "array", "items": { "type": "string" } },
             "gate_decision": { "type": ["string", "null"], "enum": ["A", "B", "C", null] },
-            "notes": { "type": "string" }
+            "needs_human_review": { "type": "boolean" },
+            "notes": { "type": "string" },
+            "config": { "type": "object" }
           }
         }
       }

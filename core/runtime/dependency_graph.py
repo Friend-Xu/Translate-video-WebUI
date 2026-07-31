@@ -58,20 +58,20 @@ class DependencyGraph:
                 self._add_edge(eid, sorted_events[i + 1].id, "temporal", strength)
 
             # speaker: 同 speaker_id
-            spk = es.speaker_ref or es.speaker.get("speaker_id", "")
+            spk = es.speaker_ref or es.speaker.speaker_id
             if spk:
                 for j, other in enumerate(sorted_events):
                     if j <= i:
                         continue
-                    other_spk = other.speaker_ref or other.speaker.get("speaker_id", "")
+                    other_spk = other.speaker_ref or other.speaker.speaker_id
                     if other_spk == spk:
                         self._add_edge(eid, other.id, "speaker", 0.8)
 
             # semantic: embedding 共享时标记弱依赖
             sem = es.semantic
-            if sem.get("embedding_ref") and i < len(sorted_events) - 1:
+            if sem.embedding_ref and i < len(sorted_events) - 1:
                 next_sem = sorted_events[i + 1].semantic
-                if next_sem.get("embedding_ref"):
+                if next_sem.embedding_ref:
                     self._add_edge(eid, sorted_events[i + 1].id, "semantic", 0.7)
 
             # structural: split/merge 父子

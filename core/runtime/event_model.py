@@ -75,13 +75,21 @@ class Word:
 class Semantic:
     """语义嵌入 — TTS 零样本克隆用的声学语义向量 (数据源 TBD)。"""
     embedding_ref: str = ""
+    config: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {"embedding_ref": self.embedding_ref}
+        d = {"embedding_ref": self.embedding_ref}
+        if self.config:
+            d["config"] = dict(self.config)
+        return d
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "Semantic":
-        return cls(embedding_ref=(d or {}).get("embedding_ref", ""))
+        d = d or {}
+        return cls(
+            embedding_ref=d.get("embedding_ref", ""),
+            config=d.get("config") or {},
+        )
 
 
 @dataclass
@@ -91,6 +99,8 @@ class Translation:
     engine: str = ""
     quality_score: float | None = None
     similarity: float | None = None
+    ppl_ratio: float | None = None
+    config: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         d = {"text": self.text, "engine": self.engine}
@@ -98,6 +108,10 @@ class Translation:
             d["quality_score"] = self.quality_score
         if self.similarity is not None:
             d["similarity"] = self.similarity
+        if self.ppl_ratio is not None:
+            d["ppl_ratio"] = self.ppl_ratio
+        if self.config:
+            d["config"] = dict(self.config)
         return d
 
     @classmethod
@@ -107,67 +121,86 @@ class Translation:
             engine=d.get("engine", ""),
             quality_score=d.get("quality_score"),
             similarity=d.get("similarity"),
+            ppl_ratio=d.get("ppl_ratio"),
+            config=d.get("config") or {},
         )
 
 
 @dataclass
 class TTSAudio:
     """TTS 产出 — 只记最终胜出引擎的结果 (中间引擎状态在 EventRuntime)。"""
-    audio_path: str = ""
+    audio_ref: str = ""
     duration: float = 0.0
     engine: str = ""
-    speed_factor: float = 1.0
     quality_score: float | None = None
+    speed_decision: dict = field(default_factory=dict)
+    emotion_hint: str = ""
+    config: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         d = {
-            "audio_path": self.audio_path,
+            "audio_ref": self.audio_ref,
             "duration": self.duration,
             "engine": self.engine,
-            "speed_factor": self.speed_factor,
         }
         if self.quality_score is not None:
             d["quality_score"] = self.quality_score
+        if self.speed_decision:
+            d["speed_decision"] = self.speed_decision
+        if self.emotion_hint:
+            d["emotion_hint"] = self.emotion_hint
+        if self.config:
+            d["config"] = dict(self.config)
         return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "TTSAudio":
         return cls(
-            audio_path=d.get("audio_path", ""),
+            audio_ref=d.get("audio_ref", ""),
             duration=float(d.get("duration", 0.0)),
             engine=d.get("engine", ""),
-            speed_factor=float(d.get("speed_factor", 1.0)),
             quality_score=d.get("quality_score"),
+            speed_decision=d.get("speed_decision") or {},
+            emotion_hint=d.get("emotion_hint", ""),
+            config=d.get("config") or {},
         )
 
 
 @dataclass
 class Review:
     """审核 — 人工决策 + 门控 (gate_decision 从旧 provenance 迁入)。"""
-    status: str = "pending"          # REVIEW_STATUSES
+    review_status: str = "pending"     # REVIEW_STATUSES
     flags: list[str] = field(default_factory=list)
-    gate_decision: str | None = None  # "A"|"B"|"C" — orchestrator 路由依据
+    gate_decision: str | None = None   # "A"|"B"|"C" — orchestrator 路由依据
+    needs_human_review: bool = False
     notes: str = ""
+    config: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {
-            "status": self.status,
+        d = {
+            "review_status": self.review_status,
             "flags": list(self.flags),
             "gate_decision": self.gate_decision,
+            "needs_human_review": self.needs_human_review,
             "notes": self.notes,
         }
+        if self.config:
+            d["config"] = dict(self.config)
+        return d
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "Review":
         d = d or {}
-        status = d.get("status", "pending")
+        status = d.get("review_status", "pending")
         if status not in REVIEW_STATUSES:
-            raise ValueError(f"Review: 非法 status '{status}' (合法={REVIEW_STATUSES})")
+            raise ValueError(f"Review: 非法 review_status '{status}' (合法={REVIEW_STATUSES})")
         return cls(
-            status=status,
+            review_status=status,
             flags=list(d.get("flags", [])),
             gate_decision=d.get("gate_decision"),
+            needs_human_review=bool(d.get("needs_human_review", False)),
             notes=d.get("notes", ""),
+            config=d.get("config") or {},
         )
 
 
@@ -200,6 +233,123 @@ class Speaker:
         )
 
 
+# ── 槽位类型 (Phase 3A: TimelineEventState 九槽位类型化) ─────────
+
+@dataclass
+class ASRData:
+    """asr 槽 — ASR 产出 (words/confidence/language)。"""
+    words: list[dict] = field(default_factory=list)
+    confidence: float | None = None
+    language: str = ""
+    config: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        d = {"words": list(self.words)}
+        if self.confidence is not None:
+            d["confidence"] = self.confidence
+        if self.language:
+            d["language"] = self.language
+        if self.config:
+            d["config"] = dict(self.config)
+        if self.config:
+            d["config"] = dict(self.config)
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ASRData":
+        return cls(
+            words=list(d.get("words", [])),
+            confidence=d.get("confidence"),
+            language=d.get("language", ""),
+            config=d.get("config") or {},
+        )
+
+
+@dataclass
+class SpeakerAssignment:
+    """speaker 槽 — 事件级说话人指派。"""
+    speaker_id: str | None = None
+    confidence: float | None = None
+    embedding_ref: str = ""
+    config: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        d = {}
+        if self.speaker_id is not None:
+            d["speaker_id"] = self.speaker_id
+        if self.confidence is not None:
+            d["confidence"] = self.confidence
+        if self.embedding_ref:
+            d["embedding_ref"] = self.embedding_ref
+        if self.config:
+            d["config"] = dict(self.config)
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict | None) -> "SpeakerAssignment":
+        d = d or {}
+        return cls(
+            speaker_id=d.get("speaker_id"),
+            confidence=d.get("confidence"),
+            embedding_ref=d.get("embedding_ref", ""),
+            config=d.get("config") or {},
+        )
+
+
+@dataclass
+class EmotionData:
+    """emotion 槽 — 情感识别产出 + 门控判定。"""
+    emotion: str = ""
+    valence: float = 0.0
+    arousal: float = 0.0
+    dominance: float = 0.0
+    confidence: float = 0.0
+    intensity: float = 0.0
+    translation_aligned: bool | None = None
+    drift_type: str = ""
+    emotion_score: float | None = None
+    gate_decision: str = ""          # E1|E2|E3 — emotion_gate 路由 (Phase 1 分槽)
+    config: dict = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        d = {
+            "emotion": self.emotion,
+            "valence": self.valence,
+            "arousal": self.arousal,
+            "dominance": self.dominance,
+            "confidence": self.confidence,
+            "intensity": self.intensity,
+        }
+        if self.translation_aligned is not None:
+            d["translation_aligned"] = self.translation_aligned
+        if self.drift_type:
+            d["drift_type"] = self.drift_type
+        if self.emotion_score is not None:
+            d["emotion_score"] = self.emotion_score
+        if self.gate_decision:
+            d["gate_decision"] = self.gate_decision
+        if self.config:
+            d["config"] = dict(self.config)
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict | None) -> "EmotionData":
+        d = d or {}
+        return cls(
+            emotion=d.get("emotion", ""),
+            valence=float(d.get("valence", 0.0)),
+            arousal=float(d.get("arousal", 0.0)),
+            dominance=float(d.get("dominance", 0.0)),
+            confidence=float(d.get("confidence", 0.0)),
+            intensity=float(d.get("intensity", 0.0)),
+            translation_aligned=d.get("translation_aligned"),
+            drift_type=d.get("drift_type", ""),
+            emotion_score=d.get("emotion_score"),
+            gate_decision=d.get("gate_decision", ""),
+            config=d.get("config") or {},
+        )
+
+
 # ── 运行时状态 (内存 only, 不持久化) ──────────────────────────
 
 @dataclass
@@ -210,11 +360,26 @@ class EventRuntime:
     一律不写入 timeline.json; reload 后为空, 靠 Event.tts 是否存在判断"已配音"。
     """
     tts_status: str = ""          # ""|needs_split|rejected|fallback_accepted|...
+    status: str = ""              # 通用事件状态 (pending|processing|done|accepted|...)
     generation_mode: str = ""     # ""|primary|fallback
     reject_reason: str = ""       # 各引擎失败原因 (当次诊断)
     engine_scores: dict = field(default_factory=dict)    # 中间引擎评分
     dirty_flags: dict = field(default_factory=dict)      # SlotDependencyGraph 传播
     config_versions: dict = field(default_factory=dict)  # patch_engine 配置版本
+
+    @classmethod
+    def from_dict(cls, d: dict | None) -> "EventRuntime":
+        """从 dict 形态恢复 (旧数据/诊断), 缺失字段取默认。"""
+        d = d or {}
+        return cls(
+            tts_status=d.get("tts_status", ""),
+            status=d.get("status", ""),
+            generation_mode=d.get("generation_mode", ""),
+            reject_reason=d.get("reject_reason", ""),
+            engine_scores=d.get("engine_scores", {}),
+            dirty_flags=d.get("dirty_flags", {}),
+            config_versions=d.get("config_versions", {}),
+        )
 
 
 # ── Event (合并 IR + State 的单一工作模型) ───────────────────

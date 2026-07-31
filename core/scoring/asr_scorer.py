@@ -91,8 +91,8 @@ class ASRScorer:
             score = self.score_segment(es)
             scores[es.id] = score
 
-            es.runtime["asr_score"] = score.composite
-            es.runtime["asr_confidence_label"] = score.confidence_label
+            es.runtime.engine_scores["asr_score"] = score.composite
+            es.runtime.engine_scores["asr_confidence_label"] = score.confidence_label
             es.provenance["score_components"] = {
                 "c_asr": score.c_asr,
                 "c_alignment": score.c_alignment,
@@ -106,9 +106,9 @@ class ASRScorer:
 
     @staticmethod
     def _calc_asr_confidence(es: TimelineEventState) -> float:
-        words = es.asr.get("words", [])
+        words = es.asr.words
         if not words:
-            return es.asr.get("confidence", 1.0)
+            return es.asr.confidence or 1.0
         scores = [w.get("score", 0.0) for w in words if w.get("score") is not None]
         return sum(scores) / len(scores) if scores else 1.0
 
@@ -121,7 +121,7 @@ class ASRScorer:
 
     @staticmethod
     def _calc_speaker_confidence(es: TimelineEventState) -> float:
-        return es.speaker.get("confidence", 1.0)
+        return es.speaker.confidence or 1.0
 
     @staticmethod
     def _calc_semantic_consistency(es: TimelineEventState,

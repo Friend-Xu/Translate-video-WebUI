@@ -142,12 +142,12 @@ class TestASRScorer:
         es = TimelineEventState(TimelineEventIR(
             id="evt_001", start=0, end=1, text_ref="hello", speaker_ref=None,
         ))
-        es.asr["words"] = [
+        es.asr.words = [
             {"word": "hello", "score": 0.85},
             {"word": "world", "score": 0.75},
         ]
-        es.asr["confidence"] = 0.80
-        es.speaker["confidence"] = 0.70
+        es.asr.confidence = 0.80
+        es.speaker.confidence = 0.70
 
         score = scorer.score_segment(es)
         assert score.c_asr == 0.80
@@ -170,7 +170,7 @@ class TestASRScorer:
         assert "evt_002" in scores
 
         es1 = state.get_event("evt_001")
-        assert "asr_score" in es1.runtime
+        assert "asr_score" in es1.runtime.engine_scores
         assert "score_components" in es1.provenance
 
     def test_confidence_labels(self):

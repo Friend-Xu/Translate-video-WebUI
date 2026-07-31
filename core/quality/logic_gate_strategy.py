@@ -151,13 +151,10 @@ class LogicGateStrategy(QualityStrategy):
             )
 
             # 更新 event state — 与旧 TranslationQualityPass 行为一致
-            trans_slot = es.translation
-            if isinstance(trans_slot, str):
-                es._data["translation"] = {"text": trans_slot}
-            es.translation["quality_score"] = ts.composite
-            es.translation["similarity"] = sim
+            es.translation.quality_score = ts.composite
+            es.translation.similarity = sim
             if ppl_ratio is not None:
-                es.translation["ppl_ratio"] = round(ppl_ratio, 4)
+                es.translation.ppl_ratio = round(ppl_ratio, 4)
             es.provenance["translation_quality"] = {
                 "composite": ts.composite,
                 "gate_decision": ts.gate_decision,
@@ -166,12 +163,12 @@ class LogicGateStrategy(QualityStrategy):
 
             # Gate 决策
             if ts.accepted:
-                es.review["gate_decision"] = "A"
+                es.review.gate_decision = "A"
             else:
-                es.review["gate_decision"] = "B" if ts.composite > 0.4 else "C"
+                es.review.gate_decision = "B" if ts.composite > 0.4 else "C"
             if ts.hard_fail_reason:
-                es.review.setdefault("flags", []).append("translation_hard_fail")
-                es.review["notes"] = (es.review.get("notes", "") +
+                es.review.flags.append("translation_hard_fail")
+                es.review.notes = (es.review.notes +
                                       f"; {ts.hard_fail_reason}")
 
             verdict = QualityVerdict.from_score(

@@ -144,7 +144,7 @@ class PreprocessTranslationPass(TimelinePass):
         if state.ir.language:
             return state.ir.language
         for es in state.sorted_events():
-            lg = es.asr.get("language", "")
+            lg = es.asr.language
             if lg:
                 return lg
         return "en"

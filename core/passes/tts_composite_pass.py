@@ -45,7 +45,7 @@ class TTSCompositePass(TimelinePass):
         speaker_history = self._build_speaker_history(state)
 
         for es in state.sorted_events():
-            if es.tts.get("audio_ref"):
+            if es.tts.audio_ref:
                 continue
 
             ctx = self._build_context(es)
@@ -73,7 +73,7 @@ class TTSCompositePass(TimelinePass):
                 patch.value["duration"], ctx.duration_target,
             )
             if action == "split":
-                es.runtime["tts_status"] = "needs_split"
+                es.runtime.tts_status = "needs_split"
                 continue
 
             # ── 调速决策 + RubberBand 拉伸 ──
@@ -94,7 +94,7 @@ class TTSCompositePass(TimelinePass):
                         engine_has_native_rate=True,
                     )
 
-            es.tts["speed_decision"] = sd.as_dict()
+            es.tts.speed_decision = sd.as_dict()
 
             score = scorer.score(ctx, patch, speaker_history)
             patch.confidence = score.composite
@@ -108,7 +108,7 @@ class TTSCompositePass(TimelinePass):
                     "emotion_consistency": score.emotion_consistency,
                 }
             else:
-                es.runtime["tts_status"] = "rejected"
+                es.runtime.tts_status = "rejected"
 
             self._update_history(speaker_history, ctx, patch)
 
@@ -126,21 +126,21 @@ class TTSCompositePass(TimelinePass):
             segment_id=es.id,
             translation_text=translation,
             source_text=es.ir.text_ref,
-            speaker_id=es.speaker.get("speaker_id"),
-            speaker_embedding_ref=es.speaker.get("embedding_ref", ""),
+            speaker_id=es.speaker.speaker_id,
+            speaker_embedding_ref=es.speaker.embedding_ref,
             duration_target=es.end - es.start,
-            semantic_embedding_ref=es.semantic.get("embedding_ref", ""),
+            semantic_embedding_ref=es.semantic.embedding_ref,
         )
 
     @staticmethod
     def _build_speaker_history(state: TimelineProjectState) -> list[dict]:
         history = []
         for es in state.sorted_events():
-            if es.tts.get("audio_ref"):
+            if es.tts.audio_ref:
                 history.append({
-                    "speaker_id": es.speaker.get("speaker_id"),
-                    "emotion_hint": es.tts.get("emotion_hint", ""),
-                    "duration": es.tts.get("duration", 0),
+                    "speaker_id": es.speaker.speaker_id,
+                    "emotion_hint": es.tts.emotion_hint,
+                    "duration": es.tts.duration,
                 })
         return history
 

@@ -24,14 +24,14 @@ class TestConfigResolver:
 
     def test_event_override(self):
         state = self._make_state()
-        state.get_event("evt_001").tts["config"] = {"speed_factor": 1.5}
+        state.get_event("evt_001").tts.config = {"speed_factor": 1.5}
         resolved = ConfigResolver(GlobalConfig()).resolve_event_config("evt_001", "tts", state)
         assert resolved["speed_factor"] == 1.5
         assert resolved["engine"] == "chattts"
 
     def test_null_deletion(self):
         state = self._make_state()
-        state.get_event("evt_001").tts["config"] = {"engine": None}
+        state.get_event("evt_001").tts.config = {"engine": None}
         resolved = ConfigResolver(GlobalConfig()).resolve_event_config("evt_001", "tts", state)
         assert resolved["engine"] == "chattts"  # null restores global default
 

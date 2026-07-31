@@ -63,7 +63,7 @@ class CosyVoiceCompositePass(TimelinePass):
         prompt_history: list[dict] = self._build_prompt_history(state)
 
         for es in state.sorted_events():
-            if es.tts.get("audio_ref"):
+            if es.tts.audio_ref:
                 continue
 
             ctx = self._build_context(es, prompt_map)
@@ -113,12 +113,12 @@ class CosyVoiceCompositePass(TimelinePass):
                         patch.value["duration"], ctx.duration_target,
                     )
                 if action == "split":
-                    es.runtime["tts_status"] = "needs_split"
+                    es.runtime.tts_status = "needs_split"
             elif action == "split":
-                es.runtime["tts_status"] = "needs_split"
+                es.runtime.tts_status = "needs_split"
 
             # ── LUFS 归一化 ──
-            if es.runtime.get("tts_status") != "needs_split":
+            if es.runtime.tts_status != "needs_split":
                 import os as _os
                 from pipeline.loudness import normalize_segment_loudness
                 audio_path = patch.value.get("audio_ref", "")
@@ -129,7 +129,7 @@ class CosyVoiceCompositePass(TimelinePass):
                         normalize_segment_loudness(audio_path, target_lufs=-16.0)
 
             # ── 调速决策 ──
-            if action == "split" or es.runtime.get("tts_status") == "needs_split":
+            if action == "split" or es.runtime.tts_status == "needs_split":
                 sd = SpeedDecision(
                     strategy="video_slowdown",
                     original_duration=patch.value["duration"],
@@ -150,9 +150,9 @@ class CosyVoiceCompositePass(TimelinePass):
                     final_duration=dur,
                     deviation=abs(dur - target) / max(target, 0.001),
                 )
-            es.tts["speed_decision"] = sd.as_dict()
+            es.tts.speed_decision = sd.as_dict()
 
-            if es.runtime.get("tts_status") == "needs_split":
+            if es.runtime.tts_status == "needs_split":
                 continue
 
             # 评分
@@ -169,7 +169,7 @@ class CosyVoiceCompositePass(TimelinePass):
                     "segment_continuity": score.segment_continuity,
                 }
             else:
-                es.runtime["tts_status"] = "rejected"
+                es.runtime.tts_status = "rejected"
 
             self._update_prompt_history(prompt_history, ctx, patch)
 
@@ -193,7 +193,7 @@ class CosyVoiceCompositePass(TimelinePass):
             tts = es.tts
             if tts.get("audio_ref") and tts.get("engine") == "cosyvoice":
                 history.append({
-                    "speaker_id": es.speaker.get("speaker_id"),
+                    "speaker_id": es.speaker.speaker_id,
                     "prompt_audio": tts.get("prompt_audio", ""),
                     "speed": tts.get("speed", 1.0),
                     "lang": tts.get("lang", ""),
@@ -218,7 +218,7 @@ class CosyVoiceCompositePass(TimelinePass):
         trans_raw = es.translation
         translation = (trans_raw.get("text", "") if isinstance(trans_raw, dict) else str(trans_raw or "")) or es.ir.text_ref
         trans_lang = trans_raw.get("lang", "") if isinstance(trans_raw, dict) else ""
-        speaker_id = es.speaker.get("speaker_id")
+        speaker_id = es.speaker.speaker_id
         return CosyVoiceSegmentContext(
             segment_id=es.id,
             translation_text=translation,
@@ -226,7 +226,7 @@ class CosyVoiceCompositePass(TimelinePass):
             speaker_id=speaker_id,
             speaker_embedding_ref=prompt_map.get(speaker_id or "", ""),
             duration_target=es.end - es.start,
-            semantic_embedding_ref=es.semantic.get("embedding_ref", ""),
+            semantic_embedding_ref=es.semantic.embedding_ref,
             lang=trans_lang or self.default_lang,
             model_version=self.model_version,
             speed=self.default_speed,

@@ -46,12 +46,13 @@ class TranslationQualityPass(TimelinePass):
             verdict = verdicts.get(es.id)
             if verdict is None:
                 continue
-            es.review["gate_decision"] = verdict.gate_decision
-            es.translation["quality_score"] = verdict.score
+            es.review.gate_decision = verdict.gate_decision
+            es.translation.quality_score = verdict.score
             if verdict.sub_scores:
-                for k, v in verdict.sub_scores.items():
-                    es.translation[k] = v
+                # 子评分并入 provenance.translation_quality (类型化后 translation 槽无动态 key)
+                tq = es.provenance.setdefault("translation_quality", {})
+                tq.update(verdict.sub_scores)
             if verdict.needs_human:
-                es.review["needs_human_review"] = True
+                es.review.needs_human_review = True
 
         return state

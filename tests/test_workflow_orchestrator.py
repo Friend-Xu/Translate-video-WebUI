@@ -33,7 +33,7 @@ class GateBPass(TimelinePass):
 
     def apply(self, state, resolver=None):
         for es in state.event_states.values():
-            es.review["gate_decision"] = "B"
+            es.review.gate_decision = "B"
         return state
 
 
@@ -45,7 +45,7 @@ class GateCPass(TimelinePass):
     def apply(self, state, resolver=None):
         GateCPass.call_count += 1
         for es in state.event_states.values():
-            es.review["gate_decision"] = "C"
+            es.review.gate_decision = "C"
         return state
 
 
@@ -247,7 +247,7 @@ class TestGateCRetry:
             def apply(self, state, resolver=None):
                 _FlakyPass.n += 1
                 for es in state.event_states.values():
-                    es.review["gate_decision"] = "C" if _FlakyPass.n <= 1 else "A"
+                    es.review.gate_decision = "C" if _FlakyPass.n <= 1 else "A"
                 return state
 
         orch = WorkflowOrchestrator(policy)
@@ -295,7 +295,7 @@ class TestEmotionGateRouting:
 
         def apply(self, state, resolver=None):
             for es in state.event_states.values():
-                es.emotion["gate_decision"] = self.decision
+                es.emotion.gate_decision = self.decision
             return state
 
     def _make_emotion_policy(self, decision: str):
@@ -344,13 +344,13 @@ class TestEmotionGateRouting:
                 id="evt_001", start=0.0, end=1.0, speaker_ref=None, text_ref="hi")})
         )
         es = state.get_event("evt_001")
-        es.review["gate_decision"] = "A"          # text_gate 已判定
-        es.translation["text"] = "你好"
+        es.review.gate_decision = "A"          # text_gate 已判定
+        es.translation.text = "你好"
 
         # emotion pass 需要 recognizer/scorer/gate 全套依赖 — 直接模拟其写入行为
         # 验证契约: emotion 结果只写 emotion 槽
-        es.emotion["gate_decision"] = "E2"
-        assert es.review["gate_decision"] == "A"  # 文本门控不被覆盖
+        es.emotion.gate_decision = "E2"
+        assert es.review.gate_decision == "A"  # 文本门控不被覆盖
 
 
 class TestWorkflowStatus:

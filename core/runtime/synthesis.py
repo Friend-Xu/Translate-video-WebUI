@@ -43,8 +43,9 @@ class SynthesisEngine:
             "source": ir.source,
         }
         # Layer 2-4: Derived + Decision State (from derivatives)
-        # 包含 audio/asr/speaker/semantic/translation/tts/review/runtime/provenance
-        result.update(event_state.derivatives)
+        # 类型化槽位 (Phase 3A) → to_dict, 保持渲染输出为纯 dict
+        for key, value in event_state.derivatives.items():
+            result[key] = value.to_dict() if hasattr(value, "to_dict") else value
         # Layer 5: Patches (sorted — 最高优先级覆盖)
         for p in event_state.patches:
             if p.op in self._PATCH_OPS:

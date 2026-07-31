@@ -28,9 +28,10 @@ def _sample_event() -> Event:
         semantic=Semantic(embedding_ref="_embeddings/evt_001.npy"),
         translation=Translation(text="各位朋友,今天我们来看模组。",
                                 engine="deepseek", quality_score=0.85, similarity=0.92),
-        tts=TTSAudio(audio_path="03_tts/evt_001.wav", duration=11.8,
-                     engine="cosyvoice", speed_factor=1.05, quality_score=0.88),
-        review=Review(status="pending", flags=["low_confidence"],
+        tts=TTSAudio(audio_ref="03_tts/evt_001.wav", duration=11.8,
+                     engine="cosyvoice", quality_score=0.88,
+                     speed_decision={"strategy": "accept"}),
+        review=Review(review_status="pending", flags=["low_confidence"],
                       gate_decision="B", notes=""),
     )
 
@@ -109,8 +110,8 @@ class TestFromDictFailLoud:
             Event(id="e1", start=2.0, end=1.0, text="x")
 
     def test_bad_review_status_raises(self):
-        with pytest.raises(ValueError, match="status"):
-            Review.from_dict({"status": "INVALID"})
+        with pytest.raises(ValueError, match="review_status"):
+            Review.from_dict({"review_status": "INVALID"})
 
     def test_missing_words_defaults_empty(self):
         """words 缺失默认 [] (外部 SRT 导入), 不崩。"""

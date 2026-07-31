@@ -24,6 +24,20 @@ def _join_word_dicts(words: list[dict], lang: str) -> str:
     return sep.join(w.get("word", "") for w in words).strip()
 
 
+def _slot_config(slot_dict) -> dict:
+    """类型化槽位的 config 子块 (Phase 3A) — dict 槽位 (provenance) 无 config → {}。"""
+    cfg = getattr(slot_dict, "config", None)
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def _set_slot_config(slot_dict, value: dict) -> None:
+    """写槽位 config 子块 — 类型化属性或 dict 兼容。"""
+    if hasattr(slot_dict, "config"):
+        slot_dict.config = dict(value)
+    else:
+        slot_dict["config"] = dict(value)
+
+
 class PatchEngine:
     """Patch 执行器 — 只作用 runtime state，不改 IR。
 
@@ -149,25 +163,27 @@ class PatchEngine:
         target = state.get_event(patch.target_id)
         if target is None:
             return {"status": "error", "reason": f"target not found: {patch.target_id}"}
-        slot = target.translation  # lazy-init dict (含 config)
+        slot = target.translation  # 类型化对象 (Phase 3A)
         val = patch.value.get("translation", "")
         if isinstance(val, dict):
-            slot.update(val)
+            for k in ("text", "engine", "quality_score", "similarity", "ppl_ratio"):
+                if k in val:
+                    setattr(slot, k, val[k])
         else:
-            slot["text"] = val
+            slot.text = val
         target.add_patch(patch)
         return {
             "status": "applied",
             "op": "update_translation",
             "target": patch.target_id,
-            "after": dict(slot),
+            "after": slot.to_dict(),
         }
 
     def _update_tts_audio(self, state: TimelineProjectState, patch: Patch) -> dict:
         """UPDATE_TTS_AUDIO — 写入 tts slot, 不用 _replace 顶层塞 audio_ref。
 
         修复: 旧 _replace 把 audio_ref/duration/engine 塞到 _data 顶层,
-        导致各 TTS pass 的 es.tts.get("audio_ref") skip 检查读空槽。
+        导致各 TTS pass 的 es.tts.audio_ref skip 检查读空槽。
         """
         target = state.get_event(patch.target_id)
         if target is None:
@@ -179,7 +195,7 @@ class PatchEngine:
             "status": "applied",
             "op": "update_tts_audio",
             "target": patch.target_id,
-            "after": dict(slot),
+            "after": slot.to_dict(),
         }
 
     def _merge(self, state: TimelineProjectState, patch: Patch) -> dict:
@@ -339,10 +355,10 @@ class PatchEngine:
                 all_events.append(evt)
         all_events.sort(key=lambda e: e.start)
 
-        lang = primary.asr.get("language", "") or "en"
+        lang = primary.asr.language or "en"
         words = []
         for e in all_events:
-            words.extend(e.asr.get("words", []))
+            words.extend(e.asr.words)
         words.sort(key=lambda w: w.get("start", 0.0))
 
         if words:
@@ -353,10 +369,7 @@ class PatchEngine:
 
         max_end = max(e.end for e in all_events)
         min_start = min(e.start for e in all_events)
-        had_translation = any(
-            isinstance(e.translation, dict) and e.translation.get("text")
-            for e in all_events
-        )
+        had_translation = any(e.translation.text for e in all_events)
 
         ir_merged = TimelineEventIR(
             id=primary_id,
@@ -371,15 +384,15 @@ class PatchEngine:
         es_merged.add_patch(patch)
         es_merged.derivatives["_merged_from"] = merged_ids  # 合并血缘
         if words:
-            es_merged.asr["words"] = words
-            es_merged.asr["language"] = lang
-        spk = primary.speaker.get("speaker_id") or primary.speaker_ref
+            es_merged.asr.words = words
+            es_merged.asr.language = lang
+        spk = primary.speaker.speaker_id or primary.speaker_ref
         if spk:
-            es_merged.speaker["speaker_id"] = spk
+            es_merged.speaker.speaker_id = spk
         # 合并改变了源文本, 旧译文失效: 不带过来, 置标记触发重译 (禁止兜底下保留陈旧译文)
         if had_translation:
-            es_merged.review["flags"] = ["needs_retranslate"]
-            es_merged.review["needs_human_review"] = True
+            es_merged.review.flags = ["needs_retranslate"]
+            es_merged.review.needs_human_review = True
 
         state.event_states[primary_id] = es_merged
         # 删除被合并事件, 避免孤儿残留 (IR + state 同步)
@@ -424,13 +437,13 @@ class PatchEngine:
         confidence = patch.value.get("confidence", 1.0)
         embedding_ref = patch.value.get("embedding_ref")
 
-        before_speaker = dict(target.speaker)
+        before_speaker = target.speaker.to_dict()
         before_ref = target.ir.speaker_ref
 
-        target.speaker["speaker_id"] = speaker_id
-        target.speaker["confidence"] = confidence
+        target.speaker.speaker_id = speaker_id
+        target.speaker.confidence = confidence
         if embedding_ref:
-            target.speaker["embedding_ref"] = embedding_ref
+            target.speaker.embedding_ref = embedding_ref
 
         ir_new = TimelineEventIR(
             id=target.ir.id,
@@ -477,8 +490,8 @@ class PatchEngine:
                 state.event_states[es.ir.id] = es_new
                 remapped += 1
                 es = es_new
-            if es.speaker.get("speaker_id") in from_ids:
-                es.speaker["speaker_id"] = into_id
+            if es.speaker.speaker_id in from_ids:
+                es.speaker.speaker_id = into_id
 
         state.add_global_patch(patch)
         self._sync_ir_events(state)
@@ -515,7 +528,7 @@ class PatchEngine:
                 source=target.ir.source,
             )
             es = TimelineEventState(ir)
-            es.speaker["speaker_id"] = spk
+            es.speaker.speaker_id = spk
             es.derivatives["_split_from"] = patch.target_id
             es.add_patch(patch)
             state.event_states[seg_id] = es
@@ -559,11 +572,17 @@ class PatchEngine:
             slot = slot_map.get(key)
             if slot is not None:
                 try:
-                    before_snap[key] = dict(slot) if not isinstance(slot, str) else str(slot)
+                    before_snap[key] = slot.to_dict() if hasattr(slot, "to_dict") else dict(slot)
                 except (ValueError, TypeError):
                     before_snap[key] = str(slot)
                 if isinstance(slot, dict):
                     slot.update(val if isinstance(val, dict) else {"value": val})
+                else:
+                    # 类型化槽位 (Phase 3A): 只写已知字段, 未知 key 静默跳过
+                    if isinstance(val, dict):
+                        for k, v in val.items():
+                            if hasattr(slot, k):
+                                setattr(slot, k, v)
 
         target.add_patch(patch)
         return {
@@ -594,25 +613,23 @@ class PatchEngine:
         if slot_dict is None:
             return {"status": "error", "reason": "unknown slot: %s" % slot}
 
-        if "config" not in slot_dict:
-            slot_dict["config"] = {}
-
+        config = _slot_config(slot_dict)
         # 增量快照：仅记录被修改字段的路径和旧值
         previous_state = {}
         for key, new_value in partial.items():
-            old_value = slot_dict["config"].get(key)
+            old_value = config.get(key)
             if old_value != new_value:
                 previous_state[key] = old_value
 
         # 深度合并
-        deep_merge(slot_dict["config"], partial)
+        deep_merge(config, partial)
         es.add_patch(patch)
 
         # 标记脏并传播
         dirty_slots = self._slot_dep_graph.propagate_dirty(event_id, slot, state)
 
         # 更新槽位版本号
-        vers = es.runtime.setdefault("config_versions", {})
+        vers = es.runtime.config_versions
         vers[slot] = vers.get(slot, 0) + 1
 
         return {
@@ -643,8 +660,8 @@ class PatchEngine:
             return {"status": "error", "reason": "unknown slot: %s" % slot}
 
         # 完整快照旧 config
-        old_config = dict(slot_dict.get("config", {}))
-        slot_dict["config"] = dict(config_block)  # 全量替换
+        old_config = dict(_slot_config(slot_dict))
+        _set_slot_config(slot_dict, config_block)  # 全量替换
         es.add_patch(patch)
 
         dirty_slots = self._slot_dep_graph.propagate_dirty(event_id, slot, state)
@@ -677,18 +694,16 @@ class PatchEngine:
         if slot_dict is None:
             return {"status": "error", "reason": "unknown slot: %s" % slot}
 
-        config = slot_dict.get("config", {})
+        config = _slot_config(slot_dict)
         previous_state = {}
 
         if fields is None:
             previous_state = {"_full_config": dict(config)}
-            slot_dict["config"] = {}
+            _set_slot_config(slot_dict, {})
         else:
             for field in fields:
                 if field in config:
                     previous_state[field] = config.pop(field)
-            if not slot_dict["config"]:
-                slot_dict["config"] = {}
 
         es.add_patch(patch)
         dirty_slots = self._slot_dep_graph.propagate_dirty(event_id, slot, state)
@@ -727,8 +742,8 @@ class PatchEngine:
                 results.append({"target": eid, "status": "error", "reason": "unknown slot"})
                 continue
 
-            old_config = dict(slot_dict.get("config", {}))
-            slot_dict["config"] = dict(config_block)
+            old_config = dict(_slot_config(slot_dict))
+            _set_slot_config(slot_dict, config_block)
             es.add_patch(patch)
 
             dirty = self._slot_dep_graph.propagate_dirty(eid, slot, state)

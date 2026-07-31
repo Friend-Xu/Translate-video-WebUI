@@ -218,9 +218,9 @@ class WorkflowOrchestrator:
         for event_id, decision in decisions.items():
             event = self._state.get_event(event_id)
             if event is not None:
-                event.review["gate_decision"] = decision
+                event.review.gate_decision = decision
                 if decision == "reject":
-                    event.review["flags"] = event.review.get("flags", []) + ["rejected"]
+                    event.review.flags = event.review.flags + ["rejected"]
                     self._pending_review.remove(event_id)
 
         remaining = [
@@ -307,16 +307,16 @@ class WorkflowOrchestrator:
 
         for es in state.event_states.values():
             if gate == "emotion_gate":
-                gate_result = es.emotion.get("gate_decision", "")
+                gate_result = es.emotion.gate_decision
             else:
-                gate_result = es.review.get("gate_decision", "")
+                gate_result = es.review.gate_decision
 
             if gate_result in ("C", "E3"):
                 any_c = True
-                es.review["needs_human_review"] = True
+                es.review.needs_human_review = True
             elif gate_result in ("B", "E2"):
                 any_b = True
-                es.review["needs_human_review"] = True
+                es.review.needs_human_review = True
                 if es.id not in self._pending_review:
                     self._pending_review.append(es.id)
 

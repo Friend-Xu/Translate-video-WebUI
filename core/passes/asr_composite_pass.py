@@ -138,7 +138,7 @@ class ASRCompositePass(TimelinePass):
         """收集 state 中的 segments 用于 wav2vec2 对齐。"""
         segments = []
         for es in state.sorted_events():
-            words = es.asr.get("words", [])
+            words = es.asr.words
             segments.append({
                 "text": es.ir.text_ref,
                 "start": es.start,
@@ -154,7 +154,7 @@ class ASRCompositePass(TimelinePass):
             from core.refiner import WordLevelRefiner
             all_words = []
             for es in state.sorted_events():
-                for w in es.asr.get("words", []):
+                for w in es.asr.words:
                     w_copy = dict(w)
                     w_copy["segment_id"] = es.id
                     all_words.append(w_copy)
@@ -165,7 +165,7 @@ class ASRCompositePass(TimelinePass):
             for w in refined["words"]:
                 es = state.get_event(w.get("segment_id", ""))
                 if es and "speaker" in w:
-                    es.speaker["speaker_id"] = w["speaker"]
-                    es.speaker["confidence"] = w.get("speaker_confidence", 0.0)
+                    es.speaker.speaker_id = w["speaker"]
+                    es.speaker.confidence = w.get("speaker_confidence", 0.0)
         except ImportError:
             pass

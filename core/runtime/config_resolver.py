@@ -143,7 +143,7 @@ class ConfigResolver:
         slot_dict = getattr(event, slot, None)
         if slot_dict is None:
             return {}
-        return slot_dict.get("config", {})
+        return getattr(slot_dict, "config", None) or {}
 
     @staticmethod
     def _get_speaker_for_event(
@@ -153,8 +153,8 @@ class ConfigResolver:
         speaker_ref = getattr(event, 'speaker_ref', None)
         if speaker_ref is None:
             # 尝试从 speaker slot 读取
-            speaker_slot = getattr(event, 'speaker', {})
-            speaker_ref = speaker_slot.get("speaker_id")
+            speaker_slot = getattr(event, 'speaker', None)
+            speaker_ref = speaker_slot.speaker_id if speaker_slot is not None else None
 
         if speaker_ref is None:
             return None
@@ -186,7 +186,7 @@ def serialize_event_config(
     if slot_dict is None:
         return {}
 
-    raw_config = slot_dict.get("config", {})
+    raw_config = getattr(slot_dict, "config", None) or {}
     if not raw_config:
         return {}
 

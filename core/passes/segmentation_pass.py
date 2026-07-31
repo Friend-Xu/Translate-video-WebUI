@@ -48,20 +48,20 @@ class SegmentationPass(TimelinePass):
         if state.ir.language:
             return state.ir.language
         for es in events:
-            lg = es.asr.get("language", "")
+            lg = es.asr.language
             if lg:
                 return lg
         return "en"
 
     @staticmethod
     def _to_stream_dict(es) -> dict:
-        speaker = es.speaker.get("speaker_id") or es.ir.speaker_ref
+        speaker = es.speaker.speaker_id or es.ir.speaker_ref
         return {
             "id": es.id,
             "start": es.start,
             "end": es.end,
             "text": es.ir.text_ref,
-            "words": es.asr.get("words", []),
+            "words": es.asr.words,
             "speaker": speaker,
         }
 
@@ -81,17 +81,17 @@ class SegmentationPass(TimelinePass):
             )
             es = TimelineEventState(ir)
             if seg.words:
-                es.asr["words"] = seg.words
+                es.asr.words = seg.words
                 confs = [w.get("confidence") for w in seg.words
                          if isinstance(w.get("confidence"), (int, float))]
                 if confs:
-                    es.asr["confidence"] = sum(confs) / len(confs)
+                    es.asr.confidence = sum(confs) / len(confs)
             if seg.speaker:
-                es.speaker["speaker_id"] = seg.speaker
+                es.speaker.speaker_id = seg.speaker
             es.provenance["engine"] = "segmentation"
             if seg.flag:
-                es.review["flags"] = [seg.flag]
-                es.review["needs_human_review"] = True
+                es.review.flags = [seg.flag]
+                es.review.needs_human_review = True
             new_events[eid] = ir
             new_states[eid] = es
 

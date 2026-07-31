@@ -49,8 +49,8 @@ class TestPassIO:
         state = TimelineProjectState(TimelineProjectIR(events=evts))
         # ASR pass 写入的 words + language (segment_merge 从 words 派生 text)
         for es in state.event_states.values():
-            es.asr["language"] = "en"
-            es.asr["words"] = [
+            es.asr.language = "en"
+            es.asr.words = [
                 {"word": w, "start": es.start + i * 0.05, "end": es.start + (i + 1) * 0.05}
                 for i, w in enumerate(("hello" if es.id == "evt_001" else "world").split())
             ]
@@ -84,11 +84,11 @@ class TestPassIO:
         }
         state = TimelineProjectState(TimelineProjectIR(events=evts))
         for es in state.event_states.values():
-            es.translation["text"] = "旧译文"
+            es.translation.text = "旧译文"
         SemanticMergePass(gap_threshold=0.3).apply(state)
         es = state.get_event("evt_001")
-        assert "needs_retranslate" in es.review.get("flags", [])
-        assert es.review.get("needs_human_review") is True
+        assert "needs_retranslate" in es.review.flags
+        assert es.review.needs_human_review is True
 
     def test_srt_export_preserves_state(self):
         state = self._make_state()
@@ -102,7 +102,7 @@ class TestPassIO:
 
     def test_synthesis_after_passes(self):
         state = self._make_state()
-        state.get_event("evt_001").translation["text"] = "ni hao"
-        state.get_event("evt_002").translation["text"] = "shi jie"
+        state.get_event("evt_001").translation.text = "ni hao"
+        state.get_event("evt_002").translation.text = "shi jie"
         rendered = SynthesisEngine().render_all(state)
         assert len(rendered) == 2

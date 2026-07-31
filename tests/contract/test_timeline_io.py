@@ -27,15 +27,15 @@ def _bootstrap_state() -> TimelineProjectState:
     state = TimelineProjectState(TimelineProjectIR(events=evts, speakers=spks))
 
     # 模拟 ASR pass 写 words
-    state.get_event("evt_001").asr["words"] = [
+    state.get_event("evt_001").asr.words = [
         {"word": "Today", "start": 0.0, "end": 0.3, "confidence": 0.98},
         {"word": "guys,", "start": 0.35, "end": 0.6, "confidence": 0.97},
     ]
-    # 模拟 translation pass 写真译文 (dict 态, engine 归 translation.engine, Phase 3a)
-    state.get_event("evt_001")._data["translation"] = {
-        "text": "各位朋友,今天我们来看模组。", "engine": "deepseek",
-        "quality_score": 0.85, "similarity": 0.92, "config": {},
-    }
+    # 模拟 translation pass 写真译文 (类型化, engine 归 translation.engine, Phase 3a)
+    state.get_event("evt_001").translation.text = "各位朋友,今天我们来看模组。"
+    state.get_event("evt_001").translation.engine = "deepseek"
+    state.get_event("evt_001").translation.quality_score = 0.85
+    state.get_event("evt_001").translation.similarity = 0.92
     state.get_event("evt_001").provenance["confidence"] = 0.95
     return state
 
@@ -51,9 +51,9 @@ class TestPersistLoadRoundtrip:
         reloaded = load_state(tl)
         es = reloaded.get_event("evt_001")
         assert es is not None
-        # TTS pass 读取路径: es.translation.get("text")
-        assert es.translation.get("text") == "各位朋友,今天我们来看模组。"
-        assert es.translation.get("engine") == "deepseek"
+        # TTS pass 读取路径: es.translation.text
+        assert es.translation.text == "各位朋友,今天我们来看模组。"
+        assert es.translation.engine == "deepseek"
 
     def test_words_survive_roundtrip(self, tmp_path):
         ws = str(tmp_path / "test_project")
@@ -61,7 +61,7 @@ class TestPersistLoadRoundtrip:
         tl = persist_state(state, ws, "test.mp4", "en")
 
         reloaded = load_state(tl)
-        words = reloaded.get_event("evt_001").asr.get("words", [])
+        words = reloaded.get_event("evt_001").asr.words
         assert len(words) == 2
         assert words[0]["word"] == "Today"
 
@@ -113,4 +113,4 @@ class TestPersistLoadRoundtrip:
             "speakers": {},
         }), encoding="utf-8")
         reloaded = load_state(str(v2))
-        assert reloaded.get_event("e1").translation.get("text") == "你好"
+        assert reloaded.get_event("e1").translation.text == "你好"

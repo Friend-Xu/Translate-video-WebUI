@@ -138,7 +138,7 @@ class SpeakerCompositePass(TimelinePass):
             from core.refiner import WordLevelRefiner
             all_words = []
             for es in state.sorted_events():
-                for w in es.asr.get("words", []):
+                for w in es.asr.words:
                     w_copy = dict(w)
                     w_copy["segment_id"] = es.id
                     all_words.append(w_copy)
@@ -149,8 +149,8 @@ class SpeakerCompositePass(TimelinePass):
                 for w in refined["words"]:
                     es = state.get_event(w.get("segment_id", ""))
                     if es and "speaker" in w:
-                        es.speaker["speaker_id"] = w["speaker"]
-                        es.speaker["confidence"] = w.get("speaker_confidence", 0.0)
+                        es.speaker.speaker_id = w["speaker"]
+                        es.speaker.confidence = w.get("speaker_confidence", 0.0)
         except ImportError:
             pass
 
