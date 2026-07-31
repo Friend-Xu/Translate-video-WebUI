@@ -9,7 +9,7 @@ Phase 1 提供合法字段词表 + 声明基类 + 声明校验; Phase 3 迁移�
 """
 from __future__ import annotations
 
-# ── 合法字段词表 (与 event_model 对齐, 单一事实源) ──────────────
+# ── 合法字段词表 (以实测读写为准, 单一事实源) ──────────────
 
 # Event 顶层持久化字段
 EVENT_FIELDS = frozenset({
@@ -17,15 +17,32 @@ EVENT_FIELDS = frozenset({
     "speaker", "confidence", "words",
 })
 
-# slot → 该 slot 的合法字段
+# slot → 该 slot 的合法字段 (Phase 2: 按实测槽位契约图补全 —
+#   tts 用 audio_ref (非 audio_path), review 用 review_status (非 status),
+#   translation 加 ppl_ratio, 新增 asr/speaker/emotion/provenance)
 SLOT_FIELDS: dict[str, frozenset[str]] = {
-    "translation": frozenset({"text", "engine", "quality_score", "similarity"}),
-    "tts": frozenset({"audio_path", "duration", "engine", "speed_factor", "quality_score"}),
-    "review": frozenset({"status", "flags", "gate_decision", "notes"}),
+    "asr": frozenset({"words", "confidence", "language"}),
+    "speaker": frozenset({"speaker_id", "confidence", "embedding_ref"}),
+    "translation": frozenset({"text", "engine", "quality_score", "similarity",
+                              "ppl_ratio"}),
+    "tts": frozenset({"audio_ref", "duration", "engine", "quality_score",
+                      "speed_decision", "emotion_hint"}),
     "semantic": frozenset({"embedding_ref"}),
+    "emotion": frozenset({"emotion", "valence", "arousal", "dominance", "confidence",
+                          "intensity", "translation_aligned", "drift_type",
+                          "emotion_score", "gate_decision"}),
+    "review": frozenset({"review_status", "flags", "gate_decision",
+                         "needs_human_review", "notes"}),
     # runtime 是内存 only, 不持久化, 但仍是合法读写对象
     "runtime": frozenset({"tts_status", "generation_mode", "reject_reason",
                           "engine_scores", "dirty_flags", "config_versions"}),
+    # provenance: 引擎评分暂存 (gate/engine 已迁出, Phase 3a 收窄)
+    "provenance": frozenset({"confidence", "engine", "tts_score", "tts_score_detail",
+                             "cosyvoice_score", "cosyvoice_detail",
+                             "indextts_score", "indextts_detail",
+                             "edge_tts_score", "edge_tts_detail",
+                             "openvoice_score", "openvoice_detail",
+                             "emotion_route", "translation_quality"}),
 }
 
 VALID_SLOTS = frozenset(SLOT_FIELDS.keys())

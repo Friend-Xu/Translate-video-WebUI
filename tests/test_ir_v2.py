@@ -7,7 +7,6 @@ import pytest
 from core.ir.timeline_event import TimelineEventIR
 from core.ir.speaker import SpeakerNodeIR
 from core.ir.project import TimelineProjectIR
-from core.ir.timeline import TimelineIR
 from core.ir.version import SCHEMA_VERSION, IR_VERSION, PATCH_VERSION, check_schema_compatible
 from core.runtime.event_state import TimelineEventState
 from core.runtime.project_state import TimelineProjectState
@@ -148,35 +147,6 @@ class TestVersionSystem:
         assert ir.ir_version == IR_VERSION
         assert ir.source_video is None
         assert ir.language is None
-
-
-class TestTimelineIR:
-    """Timeline 中间层验证"""
-
-    def test_construct_defaults(self):
-        tl = TimelineIR(id="tl_001")
-        assert tl.id == "tl_001"
-        assert tl.tracks == ()
-        assert tl.segment_order == ()
-        assert tl.patch_history_ref is None
-        assert tl.snapshot_list == ()
-        assert tl.quality_summary is None
-        assert tl.repair_queue == ()
-        assert tl.schema_version == "2.1"
-
-    def test_with_segments(self):
-        tl = TimelineIR(
-            id="tl_001",
-            segment_order=("seg_001", "seg_002", "seg_003"),
-            tracks=("vocal", "bgm"),
-        )
-        assert len(tl.segment_order) == 3
-        assert tl.tracks == ("vocal", "bgm")
-
-    def test_frozen(self):
-        tl = TimelineIR(id="tl_001")
-        with pytest.raises(Exception):
-            tl.id = "new"
 
 
 class TestSynthesisFiveLayer:

@@ -134,9 +134,13 @@ class TestFieldContract:
     def test_valid_field_refs(self):
         validate_field_ref("event", "text")
         validate_field_ref("translation", "quality_score")
-        validate_field_ref("tts", "audio_path")
+        validate_field_ref("tts", "audio_ref")       # 实测: 运行时用 audio_ref, 非 audio_path
         validate_field_ref("review", "gate_decision")
         validate_field_ref("runtime", "tts_status")
+        validate_field_ref("asr", "words")
+        validate_field_ref("speaker", "speaker_id")
+        validate_field_ref("emotion", "gate_decision")
+        validate_field_ref("provenance", "translation_quality")
 
     def test_invalid_slot_raises(self):
         with pytest.raises(ValueError, match="非法 slot"):

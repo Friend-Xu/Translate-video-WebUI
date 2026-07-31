@@ -545,16 +545,11 @@ class PatchEngine:
                 }
             return {"status": "error", "reason": f"target not found: {patch.target_id}"}
 
+        # slot_map 从 field_contract 生成 (Phase 2: 消灭硬编码清单漂移)
+        from core.runtime.field_contract import VALID_SLOTS
         slot_map = {
-            "audio": target.audio,
-            "asr": target.asr,
-            "speaker": target.speaker,
-            "semantic": target.semantic,
-            "translation": target.translation,
-            "tts": target.tts,
-            "review": target.review,
-            "runtime": target.runtime,
-            "provenance": target.provenance,
+            slot: getattr(target, slot)
+            for slot in VALID_SLOTS if hasattr(target, slot)
         }
 
         before_snap = {}
@@ -594,15 +589,6 @@ class PatchEngine:
         es = state.get_event(event_id)
         if es is None:
             return {"status": "error", "reason": "target not found: %s" % event_id}
-
-        # v3.0: 乐观锁版本检查 (定稿 §12.4.2)
-        base_version = patch.value.get("base_version", -1)
-        current_version = es.runtime.get("config_versions", {}).get(slot, 0)
-        if current_version != base_version and base_version >= 0:
-            # 检测是否可自动合并 (修改不同字段)
-            partial_keys = set((patch.value.get("partial_config") or {}).keys())
-            # 简单策略: 若版本不匹配，仍允许应用但标记 auto_merged
-            pass  # 当前版本: 乐观策略，不阻塞，依赖用户意图优先
 
         slot_dict = getattr(es, slot, None)
         if slot_dict is None:
@@ -652,15 +638,6 @@ class PatchEngine:
         if es is None:
             return {"status": "error", "reason": "target not found: %s" % event_id}
 
-        # v3.0: 乐观锁版本检查 (定稿 §12.4.2)
-        base_version = patch.value.get("base_version", -1)
-        current_version = es.runtime.get("config_versions", {}).get(slot, 0)
-        if current_version != base_version and base_version >= 0:
-            # 检测是否可自动合并 (修改不同字段)
-            partial_keys = set((patch.value.get("partial_config") or {}).keys())
-            # 简单策略: 若版本不匹配，仍允许应用但标记 auto_merged
-            pass  # 当前版本: 乐观策略，不阻塞，依赖用户意图优先
-
         slot_dict = getattr(es, slot, None)
         if slot_dict is None:
             return {"status": "error", "reason": "unknown slot: %s" % slot}
@@ -695,15 +672,6 @@ class PatchEngine:
         es = state.get_event(event_id)
         if es is None:
             return {"status": "error", "reason": "target not found: %s" % event_id}
-
-        # v3.0: 乐观锁版本检查 (定稿 §12.4.2)
-        base_version = patch.value.get("base_version", -1)
-        current_version = es.runtime.get("config_versions", {}).get(slot, 0)
-        if current_version != base_version and base_version >= 0:
-            # 检测是否可自动合并 (修改不同字段)
-            partial_keys = set((patch.value.get("partial_config") or {}).keys())
-            # 简单策略: 若版本不匹配，仍允许应用但标记 auto_merged
-            pass  # 当前版本: 乐观策略，不阻塞，依赖用户意图优先
 
         slot_dict = getattr(es, slot, None)
         if slot_dict is None:

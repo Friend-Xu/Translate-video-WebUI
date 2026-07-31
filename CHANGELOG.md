@@ -5,9 +5,25 @@
 
 ---
 
-## 2026-08-01 — IR/State 止血 (Phase 1)
+## 2026-08-01 — 契约对齐 + 死代码清理 (Phase 2)
 
 **Commit:** 待定
+
+### 改动
+- `field_contract.py` 按实测补全 10 槽位合法字段：新增 asr/speaker/emotion/provenance，修正 tts（audio_ref 替代 audio_path）、review（review_status 替代 status），translation 加 ppl_ratio
+- `_annotate` slot_map 从硬编码 9 项改为 field_contract 生成（消灭双份清单漂移）；audio 死槽不再接受 per-event ANNOTATE
+- 删 `core/ir/timeline.py`（TimelineIR 纯规划产物，生产零消费者）+ `ProjectIR.timelines` 恒空字段 + 相关测试
+- 删 `patch_engine` 3 处乐观锁空壳（base_version 计算后 pass）
+
+### 决策
+- 契约以实测读写为准，不猜设计意图（audio_path 与 status 是设计稿字段，运行时从未用过）
+- 有测试锁定但无消费者的规划产物（TimelineIR）一并删除 — 测试锁定的是错误预期
+
+---
+
+## 2026-08-01 — IR/State 止血 (Phase 1)
+
+**Commit:** `f6cc0b6`
 
 ### 改动
 - 修 `workflow_orchestrator._handle_retry` 无限重试：重试计数移入 orchestrator 实例（run/resume 重置），C 级 gate 真正重跑当前阶段、超限暂停

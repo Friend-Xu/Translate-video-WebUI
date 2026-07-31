@@ -95,9 +95,21 @@ class TestPatchEngineV2:
 
     def test_annotate_writes_slots(self, engine, state):
         p = Patch(id="p1", target_id="evt_001", op=OpCode.ANNOTATE,
+                  value={"runtime": {"status": "done"}})
+        assert engine.apply(state, p)["status"] == "applied"
+        assert state.get_event("evt_001").runtime["status"] == "done"
+
+    def test_annotate_rejects_removed_audio_slot(self, engine, state):
+        """audio 槽已上移项目级 (Phase 3b), 不再接受 per-event ANNOTATE (Phase 2 契约对齐)。
+
+        slot_map 从 field_contract 生成, 未知 slot 静默跳过 (兼容旧 patch 文件)。
+        """
+        p = Patch(id="p1", target_id="evt_001", op=OpCode.ANNOTATE,
                   value={"audio": {"sample_rate": 16000}, "runtime": {"status": "done"}})
         assert engine.apply(state, p)["status"] == "applied"
-        assert state.get_event("evt_001").audio["sample_rate"] == 16000
+        es = state.get_event("evt_001")
+        assert "audio" not in es._data          # audio key 被跳过, 不创建死槽
+        assert es.runtime["status"] == "done"   # 合法槽位正常写入
 
     def test_annotate_global(self, engine, state):
         p = Patch(id="p1", target_id="__g__", op=OpCode.ANNOTATE,
