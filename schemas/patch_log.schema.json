@@ -34,7 +34,7 @@
             "ANNOTATE", "MERGE", "SPLIT", "REPLACE", "PROPAGATE",
             "merge", "split", "replace", "propagate",
             "segment_insert", "segment_split", "segment_merge",
-            "update_transcription", "refine_alignment",
+            "update_transcription", "refine_alignment", "update_bounds",
             "assign_speaker", "merge_speakers", "split_segment_by_speaker",
             "update_tts_audio", "update_translation", "update_emotion",
             "set_config", "override_config", "reset_config", "batch_set_config",

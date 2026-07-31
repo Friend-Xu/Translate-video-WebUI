@@ -21,6 +21,8 @@ class OpCode(str, Enum):
     # ASR 类
     UPDATE_TRANSCRIPTION = "update_transcription"
     REFINE_ALIGNMENT = "refine_alignment"
+    # 时间边界 (Phase 4: 旧 RESIZE 对等物)
+    UPDATE_BOUNDS = "update_bounds"
     # Speaker 类
     ASSIGN_SPEAKER = "assign_speaker"
     MERGE_SPEAKERS = "merge_speakers"
@@ -71,3 +73,49 @@ class Patch:
     def __post_init__(self):
         if self.timestamp is None or abs(self.timestamp) < 1e-9:
             self.timestamp = time.time()
+
+    def to_dict(self) -> dict:
+        """序列化 (Phase 4: patch 链持久化用)。op 存小写字符串。"""
+        return {
+            "id": self.id,
+            "target_id": self.target_id,
+            "op": self.op.value,
+            "value": self.value,
+            "timestamp": self.timestamp,
+            "author": self.author,
+            "targets": self.targets,
+            "reason": self.reason,
+            "score": self.score,
+            "confidence": self.confidence,
+            "parent_version": self.parent_version,
+            "idempotency_key": self.idempotency_key,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Patch":
+        """从 to_dict 恢复。op 必须是 OpCode 已知值, 未知响亮报错 (禁止兜底)。"""
+        op_raw = d.get("op", "")
+        if isinstance(op_raw, OpCode):
+            op = op_raw
+        else:
+            try:
+                op = OpCode(str(op_raw).lower())
+            except ValueError:
+                raise ValueError(
+                    f"Patch.from_dict: 未知 opcode '{op_raw}' "
+                    f"(合法: {[o.value for o in OpCode]})"
+                )
+        return cls(
+            id=d["id"],
+            target_id=d.get("target_id", ""),
+            op=op,
+            value=d.get("value", {}),
+            timestamp=d.get("timestamp", 0.0),
+            author=d.get("author", "system"),
+            targets=d.get("targets"),
+            reason=d.get("reason"),
+            score=d.get("score", 1.0),
+            confidence=d.get("confidence", 1.0),
+            parent_version=d.get("parent_version", ""),
+            idempotency_key=d.get("idempotency_key", ""),
+        )

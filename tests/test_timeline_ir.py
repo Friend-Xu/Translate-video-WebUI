@@ -1,13 +1,12 @@
 """
-Phase 4 — 旧版 Timeline IR + Schema 单元测试 (P0)
+Phase 4 — 旧版 Timeline IR 单元测试 (P0) — Phase 4 裁剪: schema.py 已退役
 
-覆盖: TimelineWord, TimelineSegment, TimelineIR, SegmentSchema, TimelineIRSchema
+覆盖: TimelineWord, TimelineSegment, TimelineIR, SpeakerMapEntry
 """
 
 import pytest
 from pydantic import ValidationError
 from timeline.ir import TimelineWord, TimelineSegment, TimelineIR, SpeakerMapEntry
-from timeline.schema import SegmentSchema, TimelineIRSchema, WordSchema, SpeakerMapEntrySchema
 
 
 # ═══════════════════════════════════════════════════════════
@@ -177,75 +176,3 @@ class TestTimelineIR:
         assert ir2.speaker_map["S1"].voice_id == "v1"
 
 
-# ═══════════════════════════════════════════════════════════
-# Schema (Pydantic)
-# ═══════════════════════════════════════════════════════════
-
-class TestSegmentSchema:
-    """SegmentSchema — Pydantic 验证"""
-
-    def test_normal_construction(self):
-        seg = SegmentSchema(id="seg_001", start=0.0, end=2.5, text="Hello")
-        assert seg.id == "seg_001"
-        assert seg.start == 0.0
-        assert seg.end == 2.5
-
-    def test_time_positive_raises(self):
-        with pytest.raises(ValidationError):
-            SegmentSchema(id="s1", start=5.0, end=3.0)
-
-    def test_start_equals_end_raises(self):
-        with pytest.raises(ValidationError):
-            SegmentSchema(id="s1", start=3.0, end=3.0)
-
-    def test_word_start_gt_end_raises(self):
-        with pytest.raises(ValidationError):
-            SegmentSchema(
-                id="s1", start=0.0, end=5.0,
-                words=[WordSchema(word="x", start=3.0, end=1.0)],
-            )
-
-    def test_words_non_monotonic_raises(self):
-        with pytest.raises(ValidationError):
-            SegmentSchema(
-                id="s1", start=0.0, end=5.0,
-                words=[
-                    WordSchema(word="a", start=2.0, end=2.5),
-                    WordSchema(word="b", start=1.0, end=1.5),
-                ],
-            )
-
-    def test_empty_words_valid(self):
-        seg = SegmentSchema(id="s1", start=0.0, end=1.0)
-        assert seg.words == []
-
-    def test_speaker_none_valid(self):
-        seg = SegmentSchema(id="s1", start=0.0, end=1.0, speaker=None)
-        assert seg.speaker is None
-
-    def test_extra_forbidden(self):
-        with pytest.raises(ValidationError):
-            SegmentSchema(id="s1", start=0.0, end=1.0, extra_field="x")  # type: ignore
-
-
-class TestTimelineIRSchema:
-    """TimelineIRSchema — Pydantic 顶层验证"""
-
-    def test_normal_construction(self):
-        schema = TimelineIRSchema(
-            audio_id="test",
-            timeline=[SegmentSchema(id="s1", start=0.0, end=1.0, text="Hello")],
-        )
-        assert schema.audio_id == "test"
-        assert len(schema.timeline) == 1
-
-    def test_extra_forbidden(self):
-        with pytest.raises(ValidationError):
-            TimelineIRSchema(audio_id="test", extra="x")  # type: ignore
-
-    def test_speaker_map_valid(self):
-        schema = TimelineIRSchema(
-            audio_id="test",
-            speaker_map={"S1": SpeakerMapEntrySchema(alias="主持人")},
-        )
-        assert schema.speaker_map["S1"].alias == "主持人"

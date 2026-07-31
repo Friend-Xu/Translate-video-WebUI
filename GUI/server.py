@@ -4288,11 +4288,11 @@ async def speaker_load(req: SpeakerLoadRequest):
                     inspector_data[tid]["visualState"]["hasAiSuggestion"] = True
     result["inspector_data"] = inspector_data
 
-    # 加载 speaker names
-    sn_path = os.path.join(extract_dir, "speaker_names.json")
-    if os.path.isfile(sn_path):
-        with open(sn_path, "r", encoding="utf-8") as f:
-            result["speakerNames"] = _json.load(f)
+    # 加载 speaker names — Phase 4: 从 timeline.json speakers 注册表构建 (唯一事实源)
+    result["speakerNames"] = {
+        sid: (s.get("name") or s.get("label") or sid)
+        for sid, s in (tl.get("speakers") or {}).items()
+    }
 
     # AI Patch 建议
     try:
@@ -4481,317 +4481,103 @@ class SpeakerRegenerateRequest(BaseModel):
     workspace: str = ""
 
 
-def _propagate_speaker_changes(workspace: str, mapping: dict[str, str]):
-    """同步更新 transcript.json + speaker_map.json + timeline.json 中的 speaker ID。
-    mapping: {old_speaker_id: new_speaker_id}
-    """
-    import json as _json
-    extract_dir = os.path.join(workspace, "01_extract")
-
-    # 1. transcript.json — segments + words
-    tj_path = os.path.join(extract_dir, "transcript.json")
-    if os.path.isfile(tj_path):
-        with open(tj_path, "r", encoding="utf-8") as f:
-            tj = _json.load(f)
-        for seg in tj.get("segments", []):
-            old = seg.get("speaker")
-            if old in mapping:
-                seg["speaker"] = mapping[old]
-            for w in seg.get("words", []):
-                old_w = w.get("speaker")
-                if old_w in mapping:
-                    w["speaker"] = mapping[old_w]
-        if "words" in tj:
-            for w in tj["words"]:
-                old_w = w.get("speaker")
-                if old_w in mapping:
-                    w["speaker"] = mapping[old_w]
-        with open(tj_path, "w", encoding="utf-8") as f:
-            _json.dump(tj, f, ensure_ascii=False, indent=2)
-
-    # 2. speaker_map.json — SRT 索引映射
-    sm_path = os.path.join(extract_dir, "speaker_map.json")
-    if os.path.isfile(sm_path):
-        with open(sm_path, "r", encoding="utf-8") as f:
-            sm = _json.load(f)
-        for entry in sm:
-            old = entry.get("speaker")
-            if old in mapping:
-                entry["speaker"] = mapping[old]
-        with open(sm_path, "w", encoding="utf-8") as f:
-            _json.dump(sm, f, ensure_ascii=False, indent=2)
-
-    # 3. timeline.json (v2.0 schema)
-    tl_path = os.path.join(extract_dir, "timeline.json")
-    if os.path.isfile(tl_path):
-        tl = _load_timeline_v2(tl_path)
-        for evt in tl.get("events", []):
-            old = evt.get("speaker")
-            if old in mapping:
-                evt["speaker"] = mapping[old]
-            for w in evt.get("words", []):
-                old_w = w.get("speaker")
-                if old_w in mapping:
-                    w["speaker"] = mapping[old_w]
-        spk_data = tl.get("speakers", {})
-        new_spk = {}
-        for k, v in spk_data.items():
-            new_spk[mapping.get(k, k)] = v
-        tl["speakers"] = new_spk
-        with open(tl_path, "w", encoding="utf-8") as f:
-            _json.dump(tl, f, ensure_ascii=False, indent=2)
-
-    # 4. speaker_names.json（如存在）
-    sn_path = os.path.join(extract_dir, "speaker_names.json")
-    if os.path.isfile(sn_path):
-        with open(sn_path, "r", encoding="utf-8") as f:
-            sn = _json.load(f)
-        new_sn = {}
-        for k, v in sn.items():
-            new_sn[mapping.get(k, k)] = v
-        with open(sn_path, "w", encoding="utf-8") as f:
-            _json.dump(new_sn, f, ensure_ascii=False, indent=2)
-
-
 @app.post("/api/speaker/diarization/merge")
 async def speaker_merge(req: SpeakerMergeRequest):
-    """合并两个 speaker（source → target）— Patch-driven。"""
-    workspace = req.workspace
-    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
-    if not extract_dir or not os.path.isdir(extract_dir):
-        raise HTTPException(status_code=400, detail="无效的工作目录")
+    """合并两个 speaker（source → target）— Phase 4: PatchEngine MERGE_SPEAKERS。
+
+    不再写 speaker_timeline.json/transcript.json (上游提取数据不污染, 唯一事实源 timeline.json)。
+    """
+    from core.runtime.patch import Patch, OpCode
+
     if not req.source or not req.target or req.source == req.target:
         raise HTTPException(status_code=400, detail="source 和 target 不能相同")
-    import json as _json
-
-    # 1. 更新 speaker_timeline.json (pyannote output)
-    tl_path = os.path.join(extract_dir, "speaker_timeline.json")
-    if not os.path.isfile(tl_path):
-        raise HTTPException(status_code=404, detail="speaker_timeline.json 不存在")
-    with open(tl_path, "r", encoding="utf-8") as f:
-        tl = _json.load(f)
-    turns = tl.get("turns", [])
-    for t in turns:
-        if t.get("speaker") == req.source:
-            t["speaker"] = req.target
-    speakers = sorted(set(t.get("speaker", "?") for t in turns))
-    tl["speakers"] = speakers
-    tl["turns"] = turns
-    with open(tl_path, "w", encoding="utf-8") as f:
-        _json.dump(tl, f, ensure_ascii=False, indent=2)
-
-    _propagate_speaker_changes(workspace, {req.source: req.target})
-
-    # 2. Patch Engine: 生成 RETAG_SPEAKER patch 并记录
-    try:
-        from timeline.adapters.speaker import merge_speaker_patch
-        from timeline.api.timeline import apply_user_patch
-        timeline_path = os.path.join(extract_dir, "timeline.json")
-        patch_log_path = os.path.join(extract_dir, "timeline_patches.json")
-        if os.path.isfile(timeline_path):
-            from timeline.api.timeline import _load_timeline_segments
-            events, _ = _load_timeline_segments(timeline_path)
-            source_seg_ids = [s["id"] for s in events if s.get("speaker") == req.source]
-            if source_seg_ids:
-                patch = merge_speaker_patch(source_seg_ids, req.target, author="user")
-                apply_user_patch(timeline_path, patch.to_dict(), patch_log_path)
-    except Exception:
-        pass  # Patch engine failure is non-fatal for existing speaker merge flow
-
-    return {"status": "ok", "speakers": speakers, "turns_count": len(turns)}
+    patch = Patch(id=f"merge_spk_{uuid.uuid4().hex[:8]}", target_id=req.target,
+                  op=OpCode.MERGE_SPEAKERS,
+                  value={"from_ids": [req.source], "into_id": req.target},
+                  author="user")
+    _apply_edit_patch(req.workspace, patch)
+    return {"status": "ok"}
 
 
 @app.post("/api/speaker/diarization/split")
 async def speaker_split(req: SpeakerSplitRequest):
-    """从指定 turn 索引切分 speaker，后半段分配给新 speaker ID。"""
-    workspace = req.workspace
-    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
-    if not extract_dir or not os.path.isdir(extract_dir):
-        raise HTTPException(status_code=400, detail="无效的工作目录")
+    """从指定 turn 索引切分 speaker，后半段分配给新 speaker ID — Phase 4。
+
+    切分点参考 speaker_timeline.json (只读, pyannote 上游数据);
+    写只走 timeline.json (该 speaker 且 start >= 切分时间的事件 → ASSIGN_SPEAKER 新 ID)。
+    """
     import json as _json
+    from core.runtime.patch import Patch, OpCode
+    from core.runtime.patch_engine import PatchEngine
+    from core.runtime.timeline_io import load_state
+    from GUI.patch_adapter import load_chain, save_chain
 
-    tl_path = os.path.join(extract_dir, "speaker_timeline.json")
-    if not os.path.isfile(tl_path):
+    extract_dir, tl_path, log_path = _edit_paths(req.workspace)
+    stl_path = os.path.join(extract_dir, "speaker_timeline.json")
+    if not os.path.isfile(stl_path):
         raise HTTPException(status_code=404, detail="speaker_timeline.json 不存在")
-    with open(tl_path, "r", encoding="utf-8") as f:
-        tl = _json.load(f)
-
-    turns = tl.get("turns", [])
-    speakers = tl.get("speakers", [])
+    with open(stl_path, "r", encoding="utf-8") as f:
+        turns = _json.load(f).get("turns", [])
     if req.split_index < 0 or req.split_index >= len(turns):
         raise HTTPException(status_code=400, detail="split_index 超出范围")
+    target_speaker = turns[req.split_index].get("speaker", "")
+    split_time = float(turns[req.split_index].get("start", 0.0))
+    if not target_speaker:
+        raise HTTPException(status_code=400, detail="切分点 turn 无 speaker")
 
+    state = load_state(tl_path)
     max_id = 0
-    for s in speakers:
-        parts = s.rsplit("_", 1)
+    for sid in state.ir.speakers:
+        parts = sid.rsplit("_", 1)
         if len(parts) == 2 and parts[0] == "SPEAKER" and parts[1].isdigit():
             max_id = max(max_id, int(parts[1]))
     new_speaker = f"SPEAKER_{max_id + 1:02d}"
 
-    target_speaker = turns[req.split_index].get("speaker", "")
-    affected_indices = []
-    for i in range(req.split_index, len(turns)):
-        if turns[i].get("speaker") == target_speaker:
-            turns[i]["speaker"] = new_speaker
-            affected_indices.append(i)
+    target_ids = [eid for eid, es in state.event_states.items()
+                  if es.speaker_ref == target_speaker and es.start >= split_time]
+    if not target_ids:
+        raise HTTPException(status_code=400, detail="切分点之后没有该 speaker 的事件")
 
-    speakers = sorted(set(t.get("speaker", "?") for t in turns))
-    tl["speakers"] = speakers
-    tl["turns"] = turns
-    with open(tl_path, "w", encoding="utf-8") as f:
-        _json.dump(tl, f, ensure_ascii=False, indent=2)
+    engine = PatchEngine()
+    patches = []
+    for eid in target_ids:
+        patch = Patch(id=f"split_{uuid.uuid4().hex[:8]}", target_id=eid,
+                      op=OpCode.ASSIGN_SPEAKER,
+                      value={"speaker_id": new_speaker}, author="user")
+        result = engine.apply(state, patch)
+        if result.get("status") != "applied":
+            raise HTTPException(status_code=500, detail=str(result))
+        patches.append(patch)
 
-    _split_propagate(workspace, target_speaker, new_speaker, turns, affected_indices)
-
-    # Patch Engine: 为新 speaker 生成 RETAG_SPEAKER patch
-    try:
-        from timeline.adapters.speaker import rename_speaker_patch
-        from timeline.api.timeline import apply_user_patch
-        timeline_path = os.path.join(extract_dir, "timeline.json")
-        patch_log_path = os.path.join(extract_dir, "timeline_patches.json")
-        if os.path.isfile(timeline_path):
-            from timeline.api.timeline import _load_timeline_segments
-            events, _ = _load_timeline_segments(timeline_path)
-            affected_seg_ids = [
-                s["id"] for s in events if s.get("speaker") == new_speaker
-            ]
-            if affected_seg_ids:
-                patch = rename_speaker_patch(affected_seg_ids, new_speaker, author="user")
-                apply_user_patch(timeline_path, patch.to_dict(), patch_log_path)
-    except Exception:
-        pass
-
-    return {"status": "ok", "new_speaker": new_speaker, "speakers": speakers,
-            "affected_turns": len(affected_indices)}
-
-
-def _split_propagate(workspace: str, old_spk: str, new_spk: str,
-                     turns: list, affected_indices: list):
-    """切分后按时间范围传播 speaker 变更到 transcript.json + timeline.json。"""
-    if not affected_indices:
-        return
-    import json as _json
-    affected_starts = {turns[i]["start"] for i in affected_indices if "start" in turns[i]}
-    affected_ends = {turns[i]["end"] for i in affected_indices if "end" in turns[i]}
-    min_t = min(affected_starts) if affected_starts else 0
-    max_t = max(affected_ends) if affected_ends else float("inf")
-
-    extract_dir = os.path.join(workspace, "01_extract")
-
-    def _update_segments(segs):
-        for seg in segs:
-            s_start = seg.get("start", 0)
-            s_end = seg.get("end", 0)
-            if s_start < max_t and s_end > min_t:
-                if seg.get("speaker") == old_spk:
-                    seg["speaker"] = new_spk
-            for w in seg.get("words", []):
-                w_start = w.get("start", 0)
-                w_end = w.get("end", 0)
-                if w_start < max_t and w_end > min_t:
-                    if w.get("speaker") == old_spk:
-                        w["speaker"] = new_spk
-
-    tj_path = os.path.join(extract_dir, "transcript.json")
-    if os.path.isfile(tj_path):
-        with open(tj_path, "r", encoding="utf-8") as f:
-            tj = _json.load(f)
-        _update_segments(tj.get("segments", []))
-        if "words" in tj:
-            _update_segments([{"words": tj["words"]}])
-        with open(tj_path, "w", encoding="utf-8") as f:
-            _json.dump(tj, f, ensure_ascii=False, indent=2)
-
-    tl_path = os.path.join(extract_dir, "timeline.json")
-    if os.path.isfile(tl_path):
-        tl = _load_timeline_v2(tl_path)
-        _update_segments(tl.get("events", tl.get("timeline", [])))
-        with open(tl_path, "w", encoding="utf-8") as f:
-            _json.dump(tl, f, ensure_ascii=False, indent=2)
+    bak_path = tl_path + ".bak"
+    chain = load_chain(log_path)
+    if not chain and not os.path.isfile(bak_path):
+        import shutil
+        shutil.copy2(tl_path, bak_path)
+    chain.extend(patches)
+    save_chain(chain, log_path)
+    _persist_edited(state, extract_dir)
+    return {"status": "ok", "new_speaker": new_speaker, "affected": len(target_ids)}
 
 
 @app.post("/api/speaker/diarization/reassign")
 async def speaker_reassign(req: SpeakerReassignRequest):
-    """将单个 segment 从一个 speaker 重新分配到另一个 speaker。"""
-    workspace = req.workspace
-    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
-    if not extract_dir or not os.path.isdir(extract_dir):
-        raise HTTPException(status_code=400, detail="无效的工作目录")
+    """将单个 segment 重新分配到另一个 speaker — Phase 4: ASSIGN_SPEAKER。
+
+    不再写 speaker_timeline.json/transcript.json (上游数据不污染)。
+    """
+    from core.runtime.patch import Patch, OpCode
+
     if not req.source_speaker or not req.target_speaker:
         raise HTTPException(status_code=400, detail="source_speaker 和 target_speaker 不能为空")
     if req.source_speaker == req.target_speaker:
         raise HTTPException(status_code=400, detail="source 和 target 不能相同")
-    import json as _json
-
-    # 1. 更新 speaker_timeline.json
-    tl_path = os.path.join(extract_dir, "speaker_timeline.json")
-    if not os.path.isfile(tl_path):
-        raise HTTPException(status_code=404, detail="speaker_timeline.json 不存在")
-    with open(tl_path, "r", encoding="utf-8") as f:
-        tl = _json.load(f)
-    turns = tl.get("turns", [])
-    found = False
-    for t in turns:
-        if t.get("id") == req.segment_id or t.get("segment_id") == req.segment_id:
-            if t.get("speaker") == req.source_speaker:
-                t["speaker"] = req.target_speaker
-                found = True
-            break
-    if not found:
-        raise HTTPException(status_code=404, detail="segment 未找到或 speaker 不匹配")
-
-    speakers = sorted(set(t.get("speaker", "?") for t in turns))
-    tl["speakers"] = speakers
-    tl["turns"] = turns
-    with open(tl_path, "w", encoding="utf-8") as f:
-        _json.dump(tl, f, ensure_ascii=False, indent=2)
-
-    # 2. 传播到 transcript.json + timeline.json
-    from pipeline.diarization_verify import _load_speaker_timeline
-    _load_speaker_timeline.cache_clear() if hasattr(_load_speaker_timeline, 'cache_clear') else None
-
-    transcript_path = os.path.join(extract_dir, "transcript.json")
-    if os.path.isfile(transcript_path):
-        with open(transcript_path, "r", encoding="utf-8") as f:
-            transcript = _json.load(f)
-        for seg in transcript.get("segments", []):
-            if seg.get("id") == req.segment_id:
-                seg["speaker"] = req.target_speaker
-                break
-        with open(transcript_path, "w", encoding="utf-8") as f:
-            _json.dump(transcript, f, ensure_ascii=False, indent=2)
-
-    # 3. 更新 timeline.json
-    timeline_path = os.path.join(extract_dir, "timeline.json")
-    if os.path.isfile(timeline_path):
-        with open(timeline_path, "r", encoding="utf-8") as f:
-            timeline = _json.load(f)
-        events = timeline.get("events", timeline.get("timeline", []))
-        for ev in events:
-            if ev.get("id") == req.segment_id or ev.get("segment_id") == req.segment_id:
-                ev["speaker"] = req.target_speaker
-                ev["speaker_id"] = req.target_speaker
-                break
-            if isinstance(ev, dict):
-                for sub in ev.get("sub_events", ev.get("caption_groups", [])):
-                    if isinstance(sub, dict) and (sub.get("id") == req.segment_id):
-                        sub["speaker"] = req.target_speaker
-                        break
-        with open(timeline_path, "w", encoding="utf-8") as f:
-            _json.dump(timeline, f, ensure_ascii=False, indent=2)
-
-    # 4. 生成 RETAG_SPEAKER patch
-    try:
-        from timeline.adapters.speaker import merge_speaker_patch
-        from timeline.api.timeline import apply_user_patch
-        timeline_path = os.path.join(extract_dir, "timeline.json")
-        patch_log_path = os.path.join(extract_dir, "timeline_patches.json")
-        if os.path.isfile(timeline_path):
-            patch = merge_speaker_patch([req.segment_id], req.target_speaker, author="user")
-            apply_user_patch(timeline_path, patch.to_dict(), patch_log_path)
-    except Exception:
-        pass
-
+    if not req.segment_id:
+        raise HTTPException(status_code=400, detail="segment_id 不能为空")
+    patch = Patch(id=f"reassign_{uuid.uuid4().hex[:8]}", target_id=req.segment_id,
+                  op=OpCode.ASSIGN_SPEAKER,
+                  value={"speaker_id": req.target_speaker}, author="user")
+    _apply_edit_patch(req.workspace, patch)
     return {"status": "ok", "segment_id": req.segment_id, "target_speaker": req.target_speaker}
 
 
@@ -4804,54 +4590,17 @@ class SpeakerResizeRequest(BaseModel):
 
 @app.post("/api/speaker/diarization/resize")
 async def speaker_resize(req: SpeakerResizeRequest):
-    """Resize a segment's start/end time in speaker_timeline.json, transcript.json and timeline.json."""
-    import json as _json
-    workspace = req.workspace
-    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
-    if not extract_dir or not os.path.isdir(extract_dir):
-        raise HTTPException(status_code=400, detail="无效的工作目录")
+    """调整事件时间边界 — Phase 4: UPDATE_BOUNDS (不再双写上游文件)。"""
+    from core.runtime.patch import Patch, OpCode
+
     if req.new_start >= req.new_end:
         raise HTTPException(status_code=400, detail="new_start 必须小于 new_end")
-
-    tl_path = os.path.join(extract_dir, "speaker_timeline.json")
-    if os.path.isfile(tl_path):
-        with open(tl_path, "r", encoding="utf-8") as f:
-            tl = _json.load(f)
-        for t in tl.get("turns", []):
-            sid = t.get("id", t.get("segment_id", ""))
-            if sid == req.segment_id or t.get("segment_id") == req.segment_id:
-                t["start"] = req.new_start
-                t["end"] = req.new_end
-                break
-        with open(tl_path, "w", encoding="utf-8") as f:
-            _json.dump(tl, f, ensure_ascii=False, indent=2)
-
-    # Update transcript.json
-    tj_path = os.path.join(extract_dir, "transcript.json")
-    if os.path.isfile(tj_path):
-        with open(tj_path, "r", encoding="utf-8") as f:
-            tj = _json.load(f)
-        for seg in tj.get("segments", []):
-            if seg.get("id") == req.segment_id or seg.get("eventId") == req.segment_id:
-                seg["start"] = req.new_start
-                seg["end"] = req.new_end
-                break
-        with open(tj_path, "w", encoding="utf-8") as f:
-            _json.dump(tj, f, ensure_ascii=False, indent=2)
-
-    # Update timeline.json if present
-    timeline_path = os.path.join(extract_dir, "timeline.json")
-    if os.path.isfile(timeline_path):
-        with open(timeline_path, "r", encoding="utf-8") as f:
-            timeline = _json.load(f)
-        for ev in timeline.get("events", timeline.get("timeline", [])):
-            if ev.get("id") == req.segment_id:
-                ev["start"] = req.new_start
-                ev["end"] = req.new_end
-                break
-        with open(timeline_path, "w", encoding="utf-8") as f:
-            _json.dump(timeline, f, ensure_ascii=False, indent=2)
-
+    if not req.segment_id:
+        raise HTTPException(status_code=400, detail="segment_id 不能为空")
+    patch = Patch(id=f"resize_{uuid.uuid4().hex[:8]}", target_id=req.segment_id,
+                  op=OpCode.UPDATE_BOUNDS,
+                  value={"start": req.new_start, "end": req.new_end}, author="user")
+    _apply_edit_patch(req.workspace, patch)
     return {"status": "ok", "segment_id": req.segment_id, "new_start": req.new_start, "new_end": req.new_end}
 
 
@@ -4921,41 +4670,36 @@ async def speaker_screening_run(req: ScreeningRequest):
 
 @app.post("/api/speaker/diarization/rename")
 async def speaker_rename(req: SpeakerRenameRequest):
-    """重命名 speaker 显示名 → speaker_names.json。"""
-    workspace = req.workspace
-    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
-    if not extract_dir or not os.path.isdir(extract_dir):
-        raise HTTPException(status_code=400, detail="无效的工作目录")
-    import json as _json
-    sn_path = os.path.join(extract_dir, "speaker_names.json")
-    names = {}
-    if os.path.isfile(sn_path):
-        with open(sn_path, "r", encoding="utf-8") as f:
-            names = _json.load(f)
-    if req.display_name:
-        names[req.speaker] = req.display_name
-    else:
-        names.pop(req.speaker, None)
-    with open(sn_path, "w", encoding="utf-8") as f:
-        _json.dump(names, f, ensure_ascii=False, indent=2)
+    """重命名 speaker 显示名 → timeline.json speakers 注册表 (Phase 4 收敛)。
 
-    # Patch Engine: 记录 rename 到 Patch 日志
-    try:
-        from timeline.adapters.speaker import rename_speaker_patch
-        from timeline.api.timeline import apply_user_patch
-        timeline_path = os.path.join(extract_dir, "timeline.json")
-        patch_log_path = os.path.join(extract_dir, "timeline_patches.json")
-        if os.path.isfile(timeline_path):
-            from timeline.api.timeline import _load_timeline_segments
-            events, _ = _load_timeline_segments(timeline_path)
-            seg_ids = [s["id"] for s in events if s.get("speaker") == req.speaker]
-            if seg_ids:
-                patch = rename_speaker_patch(seg_ids, req.display_name, author="user")
-                apply_user_patch(timeline_path, patch.to_dict(), patch_log_path)
-    except Exception:
-        pass
+    不再写 speaker_names.json (独立派生物, 前端 speakerNames 改从 timeline.json 构建)。
+    """
+    from core.runtime.timeline_io import load_state
+    from core.ir.speaker import SpeakerNodeIR
 
-    return {"status": "ok", "speaker_names": names}
+    extract_dir, tl_path, log_path = _edit_paths(req.workspace)
+    if not req.speaker:
+        raise HTTPException(status_code=400, detail="speaker 不能为空")
+    state = load_state(tl_path)
+    node = state.ir.speakers.get(req.speaker)
+    if node is None:
+        raise HTTPException(status_code=404, detail=f"speaker 不存在: {req.speaker}")
+    # IR frozen → 替换节点 (保留其他字段, 只改名)
+    new_node = SpeakerNodeIR(
+        id=node.id,
+        name=req.display_name or None,
+        voice_id=node.voice_id,
+        color=node.color,
+        is_locked=node.is_locked,
+        embedding_ref=node.embedding_ref,
+        gender_prob=node.gender_prob,
+        voice_style=node.voice_style,
+        confidence=node.confidence,
+        config=node.config,
+    )
+    state.ir.speakers[req.speaker] = new_node
+    _persist_edited(state, extract_dir)
+    return {"status": "ok", "speaker_names": {req.speaker: req.display_name}}
 
 
 @app.post("/api/speaker/diarization/continue-dub")
@@ -5062,6 +4806,59 @@ class PatchUndoRequest(BaseModel):
     workspace: str = ""
 
 
+# ── Phase 4: 编辑写路径统一走 core PatchEngine + timeline_io ─────────
+
+def _edit_paths(workspace: str):
+    """校验 workspace 并返回 (extract_dir, tl_path, log_path)。"""
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    if not extract_dir or not os.path.isdir(extract_dir):
+        raise HTTPException(status_code=400, detail="无效的工作目录")
+    tl_path = os.path.join(extract_dir, "timeline.json")
+    if not os.path.isfile(tl_path):
+        raise HTTPException(status_code=404, detail="timeline.json 不存在")
+    return extract_dir, tl_path, os.path.join(extract_dir, "timeline_patches.json")
+
+
+def _project_meta(extract_dir: str) -> tuple[str, str, str]:
+    """从磁盘 timeline.json 读 project 元数据 (persist 需要)。"""
+    with open(os.path.join(extract_dir, "timeline.json"), "r", encoding="utf-8") as f:
+        proj = (json.load(f) or {}).get("project", {})
+    return (proj.get("source_video", ""), proj.get("source_lang", ""),
+            proj.get("id", ""))
+
+
+def _persist_edited(state, extract_dir: str) -> None:
+    """编辑后持久化 — 唯一写路径 (timeline_io.persist_state)。
+
+    persist_state 的 ws_dir 参数是 workspace 根目录 (内部拼 01_extract/timeline.json)。
+    """
+    from core.runtime.timeline_io import persist_state
+    video, lang, pid = _project_meta(extract_dir)
+    persist_state(state, os.path.dirname(extract_dir), video, lang, pid)
+
+
+def _apply_edit_patch(workspace: str, patch) -> dict:
+    """统一编辑写路径: load_state → PatchEngine.apply → 链落盘 → persist。"""
+    from core.runtime.patch_engine import PatchEngine
+    from core.runtime.timeline_io import load_state
+    from GUI.patch_adapter import load_chain, save_chain
+
+    extract_dir, tl_path, log_path = _edit_paths(workspace)
+    state = load_state(tl_path)
+    result = PatchEngine().apply(state, patch)
+    if result.get("status") != "applied":
+        raise HTTPException(status_code=422, detail=str(result))
+    bak_path = tl_path + ".bak"
+    chain = load_chain(log_path)
+    if not chain and not os.path.isfile(bak_path):
+        import shutil
+        shutil.copy2(tl_path, bak_path)
+    chain.append(patch)
+    save_chain(chain, log_path)
+    _persist_edited(state, extract_dir)
+    return result
+
+
 @app.post("/api/timeline/patch/generate")
 async def timeline_patch_generate(req: SpeakerRegenerateRequest):
     """AI 生成候选 patches。只读，不修改 timeline。"""
@@ -5082,89 +4879,94 @@ async def timeline_patch_generate(req: SpeakerRegenerateRequest):
 
 @app.post("/api/timeline/patch/apply")
 async def timeline_patch_apply(req: PatchApplyRequest):
-    """应用一个 patch（系统生成或用户操作）。"""
-    workspace = req.workspace
-    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
-    if not extract_dir or not os.path.isdir(extract_dir):
-        raise HTTPException(status_code=400, detail="无效的工作目录")
-    tl_path = os.path.join(extract_dir, "timeline.json")
-    log_path = os.path.join(extract_dir, "timeline_patches.json")
-    if not os.path.isfile(tl_path):
-        raise HTTPException(status_code=404, detail="timeline.json 不存在")
+    """应用一个 patch — Phase 4: 统一走 PatchEngine + timeline_io。
+
+    旧前端契约 (patchDraftToApiFormat 旧词表) 经 patch_adapter.legacy_to_core 映射。
+    """
+    from GUI.patch_adapter import legacy_to_core, UnsupportedPatchError
+
     try:
-        from timeline.api.timeline import apply_user_patch
-        result = apply_user_patch(tl_path, req.patch, log_path)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        patch = legacy_to_core(req.patch)
+    except UnsupportedPatchError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    result = _apply_edit_patch(req.workspace, patch)
+    return {"status": "applied", "patch_id": patch.id, "diff": result}
 
 
 @app.post("/api/timeline/patch/undo")
 async def timeline_patch_undo(req: PatchUndoRequest):
-    """回滚最近一个 patch。"""
-    workspace = req.workspace
-    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
-    if not extract_dir or not os.path.isdir(extract_dir):
-        raise HTTPException(status_code=400, detail="无效的工作目录")
-    tl_path = os.path.join(extract_dir, "timeline.json")
-    log_path = os.path.join(extract_dir, "timeline_patches.json")
-    if not os.path.isfile(tl_path):
-        raise HTTPException(status_code=404, detail="timeline.json 不存在")
-    try:
-        from timeline.api.timeline import undo_last_patch
-        result = undo_last_patch(tl_path, tl_path, log_path)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """回滚最近一个 patch — Phase 4: pristine + PatchEngine 重放链。
+
+    修复旧系统静默 no-op (bak 缺失时用当前副本当源重放, 结果不变但返回 undone):
+    无 pristine 源显式报错 (禁止兜底)。
+    """
+    from core.runtime.patch_engine import PatchEngine
+    from core.runtime.timeline_io import load_state
+    from GUI.patch_adapter import load_chain, save_chain
+
+    extract_dir, tl_path, log_path = _edit_paths(req.workspace)
+    chain = load_chain(log_path)
+    if not chain:
+        return {"status": "no_patches"}
+
+    bak_path = tl_path + ".bak"
+    if not os.path.isfile(bak_path):
+        raise HTTPException(
+            status_code=409,
+            detail="undo 需要 pristine 备份 (timeline.json.bak), 但备份缺失且补丁链非空。"
+                   "请手动恢复备份或清除补丁链。")
+
+    state = load_state(bak_path)
+    engine = PatchEngine()
+    removed = chain.pop()
+    for p in chain:
+        r = engine.apply(state, p)
+        if r.get("status") != "applied":
+            raise HTTPException(
+                status_code=500,
+                detail=f"undo 重放失败 (patch {p.id}): {r.get('reason')}")
+    _persist_edited(state, extract_dir)
+    save_chain(chain, log_path)
+    if not chain and os.path.isfile(bak_path):
+        os.remove(bak_path)
+    return {"status": "undone", "patch_id": removed.id}
 
 
 @app.get("/api/timeline/patch/log")
 async def timeline_patch_log(workspace: str = ""):
-    """获取 patch 历史记录。"""
+    """获取 patch 历史记录 — Phase 4: 链读取 (新旧格式混合归一)。"""
+    from GUI.patch_adapter import load_chain, core_to_legacy
     extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
-    if not extract_dir or not os.path.isdir(extract_dir):
-        raise HTTPException(status_code=400, detail="无效的工作目录")
     log_path = os.path.join(extract_dir, "timeline_patches.json")
-    try:
-        from timeline.api.timeline import get_patch_log
-        patches = get_patch_log(log_path)
-        return {"patches": patches, "count": len(patches)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    if not os.path.isfile(log_path):
+        return {"patches": [], "count": 0}
+    patches = [core_to_legacy(p) for p in load_chain(log_path)]
+    return {"patches": patches, "count": len(patches)}
 
 
 # ── T4.2 Patch Debug — Git-log style patch history ──────────────
 
 @app.get("/api/timeline/patch/history")
 async def timeline_patch_history(workspace: str = "", limit: int = 20):
-    """Patch Debug 面板 — Git-log 风格的补丁历史 (T4.2)。"""
+    """Patch Debug 面板 — Git-log 风格的补丁历史 (T4.2)。Phase 4: 链读取。"""
+    from GUI.patch_adapter import load_chain
     extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
     log_path = os.path.join(extract_dir, "timeline_patches.json") if extract_dir else ""
     items: list[dict] = []
     if log_path and os.path.isfile(log_path):
-        try:
-            with open(log_path, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-            patches = raw if isinstance(raw, list) else raw.get("patches", [])
-            patches = patches[-limit:]
-            for p in patches:
-                op = p.get("opcode") or p.get("op", "?")
-                tid = p.get("target_id", "")
-                targets = p.get("targets", [tid]) if isinstance(p.get("targets"), list) else [tid]
-                val = p.get("value", {})
-                items.append({
-                    "id": p.get("id", p.get("patch_id", "")),
-                    "op": str(op),
-                    "targets": targets,
-                    "author": p.get("author", "system"),
-                    "timestamp": p.get("timestamp", ""),
-                    "reason": p.get("reason", []),
-                    "diff": {"slot": val.get("slot", ""),
-                             "before": p.get("previous_state", {}),
-                             "after": val.get("partial_config") or val.get("config_block") or val},
-                })
-        except Exception:
-            pass
+        for p in load_chain(log_path)[-limit:]:
+            val = p.value or {}
+            items.append({
+                "id": p.id,
+                "op": p.op.value,
+                "targets": p.targets or [p.target_id],
+                "author": p.author,
+                "timestamp": p.timestamp,
+                "reason": p.reason or [],
+                "diff": {"slot": val.get("slot", ""),
+                         "before": {},
+                         "after": val.get("partial_config") or val.get("config_block") or val},
+            })
     return {"items": items, "count": len(items)}
 
 
@@ -5357,7 +5159,7 @@ class ConfigResolveResponse(BaseModel):
 async def timeline_config_apply(req: ConfigApplyRequest):
     """Apply a config override to a single event."""
     try:
-        from timeline.ui_adapter.patch_factory import make_override_config, make_set_config, make_reset_config
+        from core.runtime.patch_factory import make_override_config, make_set_config, make_reset_config
         from core.runtime.patch_engine import PatchEngine
         from core.runtime.project_state import TimelineProjectState
 
@@ -5396,7 +5198,7 @@ async def timeline_config_apply(req: ConfigApplyRequest):
 async def timeline_config_batch(req: ConfigBatchRequest):
     """Batch apply config to multiple events."""
     try:
-        from timeline.ui_adapter.patch_factory import make_batch_set_config
+        from core.runtime.patch_factory import make_batch_set_config
         patch = make_batch_set_config(req.event_ids, req.slot, req.config_block)
         return {
             "status": "batch_patch_created",

@@ -58,6 +58,7 @@ class PatchEngine:
             OpCode.SEGMENT_MERGE: self._seg_merge,
             OpCode.UPDATE_TRANSCRIPTION: self._replace,
             OpCode.REFINE_ALIGNMENT: self._refine_alignment,
+            OpCode.UPDATE_BOUNDS: self._update_bounds,
             OpCode.ASSIGN_SPEAKER: self._assign_speaker,
             OpCode.MERGE_SPEAKERS: self._merge_speakers,
             OpCode.SPLIT_SEGMENT_BY_SPEAKER: self._split_by_speaker,
@@ -435,6 +436,51 @@ class PatchEngine:
         }
 
     # ── ASR ops ─────────────────────────────────────────
+
+    def _update_bounds(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """UPDATE_BOUNDS — 调整事件时间边界 (Phase 4: 旧 RESIZE 对等物)。
+
+        时间在 IR (frozen), 重建 TimelineEventIR + 复制槽位, 注册表同步。
+        """
+        target = state.get_event(patch.target_id)
+        if target is None:
+            return {"status": "error", "reason": f"target not found: {patch.target_id}"}
+        new_start = patch.value.get("start")
+        new_end = patch.value.get("end")
+        if new_start is not None:
+            new_start = float(new_start)
+        if new_end is not None:
+            new_end = float(new_end)
+        if new_start is None and new_end is None:
+            return {"status": "error", "reason": "update_bounds requires start or end"}
+        if new_start is not None and new_start >= (new_end if new_end is not None else target.end):
+            return {"status": "error", "reason": f"invalid range: start {new_start} >= end {new_end or target.end}"}
+        if new_end is not None and new_end <= (new_start if new_start is not None else target.start):
+            return {"status": "error", "reason": f"invalid range: end {new_end} <= start {new_start or target.start}"}
+
+        ir_new = TimelineEventIR(
+            id=target.ir.id,
+            start=new_start if new_start is not None else target.start,
+            end=new_end if new_end is not None else target.end,
+            speaker_ref=target.ir.speaker_ref,
+            text_ref=target.ir.text_ref,
+            source=target.ir.source,
+        )
+        es_new = TimelineEventState(ir_new)
+        es_new._data.update(target._data)
+        es_new.patches = list(target.patches)
+        es_new.add_patch(patch)
+        state.event_states[target.ir.id] = es_new
+        self._sync_ir_events(state)
+        return {
+            "status": "applied",
+            "op": "update_bounds",
+            "target": patch.target_id,
+            "start": ir_new.start,
+            "end": ir_new.end,
+            "before_start": target.start,
+            "before_end": target.end,
+        }
 
     def _refine_alignment(self, state: TimelineProjectState, patch: Patch) -> dict:
         """REFINE_ALIGNMENT — 词级对齐精修写 asr 槽 (Phase 3B 归位)。

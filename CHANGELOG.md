@@ -5,6 +5,29 @@
 
 ---
 
+## 2026-08-01 — Phase 4: GUI 编辑路径收敛 + 旧 timeline/ 写路径退役
+
+### 改动
+- `patch/*` 四端点 (apply/undo/log/history) 迁移: 旧 timeline.api 直写 → `load_state → PatchEngine.apply → persist_state` 唯一写路径, patch 链 (timeline_patches.json) 以 core Patch 序列化落盘
+- 新增 `GUI/patch_adapter.py`: 旧前端契约 (MERGE/SPLIT/RETAG_SPEAKER/SET_TRANSLATION/RESIZE/ANNOTATE) → core Patch 薄映射; 未迁移操作 (RELINK_WORDS, speaker 编码 rename/lock) 响亮报错
+- `speaker/diarization/{rename,merge,split,reassign,resize}` 迁移: 只写 timeline.json, 删除 speaker_timeline.json/transcript.json 双写 (上游提取数据不污染) 与 `except: pass` 吞错
+- 新增 `UPDATE_BOUNDS` opcode (旧 RESIZE 对等物): 改事件边界, 重建 IR + 注册表同步; patch_log schema 同步
+- Patch 序列化 `to_dict/from_dict` (op 存 value 非枚举 repr — 修 str(OpCode) 输出 'OpCode.X' bug); rollback 显示同修
+- 修数据丢失缺口: load_state 合并 speakers 块字段 (事件建节点后 name/voice_id/color 不再丢), persist 从 IR 读回外观字段; 修 persist 侧事件条目覆盖 speaker name
+- load 端点 speakerNames 改从 timeline.json 注册表构建 (speaker_names.json 派生物退役)
+- `patch_factory` 从 timeline/ui_adapter 迁入 core/runtime (纯 core 依赖)
+- 退役: timeline/{patch.apply,conflict,recovery,adapters,safety,abstract,config,schema,dual_write} + api 写路径 + MigrationRouter; 保留 fusion/io/ir (CLI 提取路径) + rules/scorer/planner (AI 建议) + UIMapper
+- 修复旧系统 undo 静默 no-op (bak 缺失时用工作副本当源): 现在显式 409 报错
+
+### 决策
+- **唯一写路径**: 所有 timeline.json 修改 (GUI 编辑) 必须经 PatchEngine, 重放/回滚统一走类型化写入
+- **上游数据不污染**: speaker_timeline.json (pyannote) / transcript.json (ASR) 是提取产物, 说话人编辑只改 timeline.json; split 切分点参考它们时只读
+- **前端零改动**: 旧契约在适配层消化, log 显示回映射旧词表 (pass_trace 兼容)
+- **不假装支持**: speaker 外观编码操作 (颜色) 现状本就不持久, 适配层显式 unsupported 而非静默失效
+- **遗留**: CLI 翻译双轨 (main.py SRTTranslator), AI 建议逻辑未迁 core, speaker 级 config 覆盖空转 (config/resolve Layer 2), Test_JP 旧数据 `[TR]` fallback 展示
+
+---
+
 ## 2026-08-01 — Event 转正 Phase 3B: 关闭自由后门 + 桥接层收尾
 
 **Commit:** `c6002c1`

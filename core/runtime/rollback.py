@@ -54,7 +54,7 @@ class RollbackManager:
         if es is None:
             return []
         return [
-            {"version": i, "patch_id": p.id, "op": str(p.op),
+            {"version": i, "patch_id": p.id, "op": p.op.value,
              "timestamp": p.timestamp, "author": p.author,
              "confidence": p.confidence}
             for i, p in enumerate(es.patches)
