@@ -122,11 +122,10 @@ class ASRCompositePass(TimelinePass):
         for p in patches:
             es = state.get_event(p.target_id)
             if es:
-                es.asr.update({
-                    "words": p.value.get("words", []),
-                    "confidence": p.confidence,
-                    "language": p.value.get("language", ""),
-                })
+                # 类型化槽位 (Phase 3A) — 显式字段赋值, 不用 dict 风格 update
+                es.asr.words = p.value.get("words", [])
+                es.asr.confidence = p.confidence
+                es.asr.language = p.value.get("language", "")
                 es.provenance.update({
                     "engine": p.value.get("source", "faster-whisper"),
                     "confidence": p.confidence,

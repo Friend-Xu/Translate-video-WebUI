@@ -4596,6 +4596,61 @@ async def get_core_status(job_id: str) -> CoreStatusResponse:
     )
 
 
+# ── core Pipeline 日志流实现 (P5-B 端点曾引用未定义函数 — 补齐) ──
+
+async def stream_logs(job_id: str, request: Request) -> StreamingResponse:
+    """SSE 实时日志流: 转发 job._queues 的 stage/done 事件 + keepalive。
+
+    历史日志由前端通过 /logs/tail 预取, 本流只推实时事件避免重复。
+    """
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    q = job.subscribe()
+
+    async def gen():
+        try:
+            while True:
+                try:
+                    evt = await asyncio.wait_for(q.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                if isinstance(evt, dict):
+                    if evt.get("event") == "done":
+                        yield f"event: done\ndata: {json.dumps({'status': evt.get('status', 'completed')}, ensure_ascii=False)}\n\n"
+                    else:
+                        yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
+                else:
+                    yield f"data: {json.dumps({'message': str(evt)}, ensure_ascii=False)}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            job.unsubscribe(q)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def logs_tail(job_id: str, limit: int = 200) -> dict:
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"lines": job.logs[-limit:], "total": len(job.logs)}
+
+
+async def logs_range(job_id: str, before: int = 0, limit: int = 200) -> dict:
+    """返回全局索引 [before-limit, before) 的日志段 (滚动向上加载)。"""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    start = max(0, before - limit)
+    return {"lines": job.logs[start:before], "first": start, "total": len(job.logs)}
+
+
 @app.get("/api/core/pipeline/{job_id}/logs")
 async def get_core_logs(job_id: str, request: Request) -> StreamingResponse:
     """core/ Pipeline SSE 日志流。"""
