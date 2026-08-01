@@ -164,7 +164,13 @@ async def _http_exc_handler(request: Request, exc: HTTPException):
     )
     return JSONResponse(
         status_code=exc.status_code,
-        content={"error": exc.detail, "code": f"HTTP_{exc.status_code}"},
+        content={
+            # detail 字段兼容前端 res.json().detail 读取 (P1 吞错修复后
+            # 前端按 FastAPI 标准解析, 缺 detail 会退化为裸 "HTTP 400")
+            "error": exc.detail,
+            "detail": exc.detail,
+            "code": f"HTTP_{exc.status_code}",
+        },
     )
 
 
@@ -1297,9 +1303,9 @@ async def review_load(req: ReviewLoadRequest) -> dict:
             source, translated = Path(synth[0]), Path(synth[1])
 
     if not source.is_file():
-        raise HTTPException(status_code=400, detail=f"原文字幕不存在: {source}")
+        raise HTTPException(status_code=400, detail=f"原文字幕不存在: {source}（项目可能尚未运行字幕提取）")
     if not translated.is_file():
-        raise HTTPException(status_code=400, detail=f"译文字幕不存在: {translated}")
+        raise HTTPException(status_code=400, detail=f"译文字幕不存在: {translated}（项目可能尚未完成翻译）")
 
     src_subs = pysrt.open(str(source))
     tr_subs = pysrt.open(str(translated))
