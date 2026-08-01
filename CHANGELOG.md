@@ -5,6 +5,42 @@
 
 ---
 
+## 2026-08-01 — E2E 复验修复 + xCOMET-lite 质量策略真实集成
+
+### E2E 复验暴露 (3 处)
+1. **v2 reload 后 EXTRACT 重跑丢译文**: 续跑场景 (v2 timeline 有事件) 下 asr_to_ir
+   无条件重建 state, 丢已加载译文且对空 words 事件切分产生坏段 (evt_005 end=0) →
+   CLI policy 检测 v2 有事件时跳过 EXTRACT, 直接走翻译链
+2. **策略注册表空**: create_strategy 依赖策略模块 import 时装饰器注册, 调用方只
+   import protocol 时注册表为空 → create_strategy 首次调用懒加载全部策略模块
+3. **quality_check/refine 未生效**: 质量闭环此前从未真实跑通 —
+   refine 无策略时跳过 (契约测试锁定 "None→响亮跳过" 语义), CLI 侧显式注入
+   quality_strategy=create_strategy(gate.mode), quality_check 与 refine 共用同策略
+
+### xCOMET-lite 真实集成 (原实现从设计上无法加载)
+- **原 bug**: xcomet_strategy 用 AutoModelForSequenceClassification.from_pretrained
+  ("Unbabel/xCOMET-lite") — 该仓库无 config.json (纯权重), 从未真实加载成功
+- **重写**: 用专用 XCOMETLite 加载器 (models/xCOMET-lite-main 源码) + 本地基座
+  models/mdeberta-v3-base + 本地权重 models/XCOMET-lite/pytorch_model.bin,
+  零运行时下载、零新 pip 包 (复用现有 torch/transformers/comet 2.2.7)
+- **实测**: 33 句真实评分 9.3s (GPU), Gate A=12/B=10/C=11, 好译文 0.86 / 烂译文 0.33
+  合理; xcomet 路径 4 次运行 0 次 torch 崩溃 (MiniLM 路径仍偶发, 见遗留)
+- **接线**: GlobalConfig translation.gate.mode (logic_gate|xcomet) → quality_check
+  策略选择; translation_quality_pass.configure 保存槽位配置读 gate.mode
+- **契约测试 +4**: gate.mode 驱动策略 / 默认 logic_gate / 模型缺失诚实降级 B / 注册可用
+- logic_gate_strategy 同步修 typed slot 访问 (es.translation 恒为 Translation 对象,
+  dict 兼容分支是死分支)
+
+### 决策
+- **无策略契约**: refine 的 None → 响亮跳过 (既有测试锁定), 重翻闭环由显式注入
+  开启 — "调用方没配置就不重翻" 比隐式默认更诚实
+- **本地模型优先**: 模型已手动下载则零下载集成; HF 镜像/在线下载不阻塞本地路径
+- **环境观察**: torch 2.6.0 Windows 原生崩溃 (nn.Parameter 分配 access violation)
+  为环境级问题, MiniLM 路径偶发 (6 次 2 成功), xcomet 路径实测稳定 — 未归因,
+  留作依赖治理专项
+
+---
+
 ## 2026-08-01 — 真实 E2E 验证: 修 7 处首跑崩溃, 新引擎全链路跑通
 
 **验证**: `main.py Test_JP.mp4 --lang ja --skip-tts` 真实视频 + GPU + DeepSeek API。

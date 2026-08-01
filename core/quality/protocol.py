@@ -87,7 +87,14 @@ def register_strategy(name: str) -> callable:
 
 
 def create_strategy(name: str, config: "GlobalConfig | None" = None) -> QualityStrategy:
-    """工厂: 按名称创建策略实例"""
+    """工厂: 按名称创建策略实例。
+
+    注册表由策略模块 import 时装饰器填充 — 首次调用懒加载全部策略模块,
+    避免调用方只 import protocol 时注册表为空 (E2E 复验暴露)。
+    """
+    if not _STRATEGY_REGISTRY:
+        from core.quality import logic_gate_strategy  # noqa: F401
+        from core.quality import xcomet_strategy      # noqa: F401
     cls = _STRATEGY_REGISTRY.get(name)
     if cls is None:
         available = ", ".join(sorted(_STRATEGY_REGISTRY.keys()))

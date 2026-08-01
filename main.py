@@ -485,6 +485,10 @@ def step_translate_core(video: str, force: bool = False) -> str:
     machine_srt = os.path.join(ws_dir, "02_translate", "machine.srt")
     os.makedirs(os.path.dirname(machine_srt), exist_ok=True)
     audio_path = os.path.join(ws_dir, "01_extract", "audio.wav")
+    # 质量策略按配置选择 (GlobalConfig translation.gate.mode: logic_gate|xcomet);
+    # quality_check 与 refine_translation 共用, 保证重翻闭环判定一致
+    from core.quality.protocol import create_strategy
+    gate_mode = GlobalConfig().project.translation.get("gate", {}).get("mode", "logic_gate")
     factory = create_pass_factory(
         translate_fn=None,
         target_lang=target_lang,
@@ -494,6 +498,7 @@ def step_translate_core(video: str, force: bool = False) -> str:
         video_path=video,
         audio_path=audio_path,
         workspace_dir=ws_dir,
+        quality_strategy=create_strategy(gate_mode),
     )
 
     # 构建编排器（CLI 专用: EXTRACT 阶段用注入的提取产物建事件, 不重跑 ASR;
@@ -511,6 +516,14 @@ def step_translate_core(video: str, force: bool = False) -> str:
                 "refine_translation"],
     )
     policy.stages.pop(WorkflowStage.TTS, None)
+    # 续跑场景 (v2 timeline 已有事件): 跳过 EXTRACT, 直接走翻译链 —
+    # asr_to_ir 无条件重建会丢已加载译文, 且对空 words 事件切分产生坏段
+    tl_path_check = os.path.join(ws_dir, "01_extract", "timeline.json")
+    if os.path.isfile(tl_path_check):
+        with open(tl_path_check, "r", encoding="utf-8") as f:
+            _tl_data = json.load(f)
+        if _tl_data.get("events"):
+            policy.stages.pop(WorkflowStage.EXTRACT, None)
     global_config = GlobalConfig()
     orchestrator = WorkflowOrchestrator(
         policy=policy,

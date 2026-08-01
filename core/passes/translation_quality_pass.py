@@ -21,24 +21,32 @@ class TranslationQualityPass(TimelinePass):
                  auto_retry: bool = False, semantic_threshold: float = 0.70,
                  naturalness_threshold: float = 3.0):
         self._strategy = quality_strategy
+        self._slot_config: dict = {}
         # 保留旧参数签名用于向后兼容 — 当 strategy 为 None 时自动用 logic_gate
         self._skip_minilm = skip_minilm
         self._skip_ppl = skip_ppl
 
     def configure(self, resolved_config: dict | None = None) -> None:
-        if resolved_config and "quality_strategy" in resolved_config:
-            self._strategy = resolved_config["quality_strategy"]
+        # resolved_config 是槽位配置 {slot: {…}}, 保存供 apply 读 gate.mode
+        if resolved_config:
+            self._slot_config = dict(resolved_config)
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         strategy = self._strategy
         if strategy is None:
+            # 配置接线: GlobalConfig translation.gate.mode 决定策略 (logic_gate|xcomet)
+            gate_cfg = (self._slot_config.get("translation") or {}).get("gate") or {}
+            mode = gate_cfg.get("mode", "logic_gate")
             from core.quality.protocol import create_strategy
-            strategy = create_strategy("logic_gate")
+            strategy = create_strategy(mode)
 
         try:
             strategy.warmup()
-        except Exception:
-            pass
+        except Exception as e:
+            # warmup 失败也要走 score_batch 的诚实降级, 不静默吞
+            import logging
+            logging.getLogger(__name__).warning(
+                "质量策略 %s warmup 失败: %s", getattr(strategy, "name", "?"), e)
 
         verdicts = strategy.score_batch(state)
 

@@ -53,6 +53,8 @@ class RefineTranslationPass(TimelinePass):
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         if self._strategy is None:
+            # 无策略 = 调用方未配置质量闭环 → 响亮跳过重翻 (契约测试锁定)。
+            # CLI 需重翻时在 main.py 显式注入 quality_strategy。
             logger.warning("无 quality_strategy, 重翻闭环跳过 (响亮记录)")
             return state
 

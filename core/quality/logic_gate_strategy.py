@@ -81,11 +81,8 @@ class LogicGateStrategy(QualityStrategy):
         segments = []
         for es in state.sorted_events():
             text = es.ir.text_ref or ""
-            raw_trans = es.translation
-            if isinstance(raw_trans, dict):
-                trans_text = raw_trans.get("text", "")
-            else:
-                trans_text = raw_trans or ""
+            # 槽位类型化 (Phase 3A): es.translation 恒为 Translation 对象
+            trans_text = (es.translation.text or "") if es.translation else ""
             if trans_text and text:
                 segments.append((es.id, text, trans_text))
 
