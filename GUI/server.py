@@ -3435,6 +3435,36 @@ def _persist_edited(state, extract_dir: str) -> None:
     persist_state(state, os.path.dirname(extract_dir), video, lang, pid)
 
 
+def _inspector_from_state(state) -> dict:
+    """从内存 state 构建事件 inspector 视图 (apply/undo 响应局部刷新, 零 IO)。
+
+    与 _build_timeline_views 的 inspector 结构一致; pass_trace 空 (局部刷新
+    不重算), hasPatches 由前端本地 appliedPatches 维护。
+    """
+    lanes_cache: dict[str, dict] = {}
+    out: dict = {}
+    for es in state.sorted_events():
+        spk = es.ir.speaker_ref or "UNKNOWN"
+        if spk not in lanes_cache:
+            node = state.ir.speakers.get(spk)
+            lanes_cache[spk] = {
+                "speaker": spk,
+                "display_name": (node.name if node else None) or spk,
+                "voice_id": (node.voice_id if node else "") or "",
+                "color": (node.color if node else "") or SPEAKER_COLORS[len(lanes_cache) % len(SPEAKER_COLORS)],
+            }
+        seg = _canonical_segment({
+            "id": es.id,
+            "start": es.start,
+            "end": es.end,
+            "text": es.ir.text_ref or "",
+            "translation": es.translation.text if es.translation else "",
+            "words": list(es.asr.words or []),
+        })
+        out[es.id] = _segment_to_inspector(seg, lanes_cache[spk], [])
+    return out
+
+
 def _apply_edit_patch(workspace: str, patch) -> dict:
     """统一编辑写路径: load_state → PatchEngine.apply → 链落盘 → persist。"""
     from core.runtime.patch_engine import PatchEngine
@@ -3454,7 +3484,8 @@ def _apply_edit_patch(workspace: str, patch) -> dict:
     chain.append(patch)
     save_chain(chain, log_path)
     _persist_edited(state, extract_dir)
-    return result
+    # P3-D: 局部刷新 — 返回应用后的事件快照, 前端不再全量 loadWorkspace
+    return {**result, "events": _inspector_from_state(state)}
 
 
 class TimelineLoadRequest(BaseModel):
@@ -3494,7 +3525,8 @@ async def timeline_patch_apply(req: PatchApplyRequest):
     except UnsupportedPatchError as e:
         raise HTTPException(status_code=422, detail=str(e))
     result = _apply_edit_patch(req.workspace, patch)
-    return {"status": "applied", "patch_id": patch.id, "diff": result}
+    return {"status": "applied", "patch_id": patch.id,
+            "diff": result, "events": result.get("events", {})}
 
 
 @app.post("/api/timeline/patch/undo")
@@ -3533,7 +3565,9 @@ async def timeline_patch_undo(req: PatchUndoRequest):
     save_chain(chain, log_path)
     if not chain and os.path.isfile(bak_path):
         os.remove(bak_path)
-    return {"status": "undone", "patch_id": removed.id}
+    # P3-D: 局部刷新 — 回滚后事件快照
+    return {"status": "undone", "patch_id": removed.id,
+            "events": _inspector_from_state(state)}
 
 
 @app.get("/api/timeline/patch/log")

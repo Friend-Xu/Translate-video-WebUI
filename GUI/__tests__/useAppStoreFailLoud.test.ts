@@ -296,6 +296,65 @@ describe('P3-B 残留静默失败响亮化', () => {
   })
 })
 
+describe('P3-D 局部刷新 (mutation 响应驱动, 借鉴时间轴编辑器本地状态模式)', () => {
+  it('applyDraft 成功 → events 用响应快照更新, 不再全量 loadWorkspace', async () => {
+    const urls: string[] = []
+    mockFetchByUrl((url) => {
+      urls.push(url)
+      if (url.includes('/patch/apply')) {
+        return jsonResponse({
+          status: 'applied',
+          events: {
+            evt_001: { id: 'evt_001', start: 0.5, end: 3.0, text: '新原文', translation: '你好' },
+          },
+        })
+      }
+      return okWorkspaceResponses()
+    })
+    useAppStore.setState({ events: [{ id: 'evt_001', start: 1, end: 2 }] as any })
+    useAppStore.getState().addDraft(draftFactory())
+
+    const ok = await useAppStore.getState().applyDraft('evt_001')
+
+    expect(ok).toBe(true)
+    const events = useAppStore.getState().events
+    expect(events).toHaveLength(1)
+    expect(events[0].start).toBe(0.5)
+    expect(events[0].translation).toBe('你好')
+    // 局部刷新: 不再全量 loadWorkspace (无 /timeline/load 请求)
+    expect(urls.some(u => u.includes('/api/timeline/load'))).toBe(false)
+    // 只刷新随编辑变化的 review flags
+    expect(urls.some(u => u.includes('/api/timeline/review/flags'))).toBe(true)
+  })
+
+  it('undoLastPatch 成功 → events 用响应快照更新', async () => {
+    const urls: string[] = []
+    mockFetchByUrl((url) => {
+      urls.push(url)
+      if (url.includes('/patch/undo')) {
+        return jsonResponse({
+          status: 'undone', patch_id: 'p1',
+          events: {
+            evt_001: { id: 'evt_001', start: 7.0, end: 8.0, text: '回滚后', translation: '' },
+          },
+        })
+      }
+      return jsonResponse({ patches: [], flags: [], speaker_lanes: [], voice_presets: [] })
+    })
+    useAppStore.setState({ appliedPatches: [{
+      patch_id: 'p1', opcode: 'SET_TRANSLATION', targets: ['evt_001'],
+      payload: {}, reason: [], score: 1, confidence: 1,
+      parent_version: '', idempotency_key: '', author: 'user', timestamp: '',
+    }] })
+
+    const result = await useAppStore.getState().undoLastPatch()
+
+    expect(result.ok).toBe(true)
+    expect(useAppStore.getState().events[0].start).toBe(7.0)
+    expect(urls.some(u => u.includes('/api/timeline/load'))).toBe(false)
+  })
+})
+
 describe('saveReviewEntries 事件关联 (entry_N 修复)', () => {
   const entryFactory = (overrides = {}) => ({
     index: 1, start: '00:00:00,730', end: '00:00:02,490',

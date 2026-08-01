@@ -5,6 +5,26 @@
 
 ---
 
+## 2026-08-01 — P3-D: 局部刷新 — 编辑不再全量 loadWorkspace (借鉴时间轴编辑器本地状态模式)
+
+### 改动
+- **apply/undo 响应携带事件快照** (server.py): `_inspector_from_state(state)` 从内存 state 构建 inspector (零 IO, 不重读盘/不重算波形/AI); `_apply_edit_patch` 与 undo 端点返回 `events`; timeline_patch_apply 响应 `{status, patch_id, diff, events}`
+- **前端局部刷新** (useAppStore.ts): applyDraft 成功用响应 events 快照本地更新 + appliedPatches 本地 append + **只刷 review flags** (唯一随编辑变化的派生数据); applyAllDrafts 收集最后响应快照一次更新; undoLastPatch 用响应快照 — **不再调 loadWorkspace (5 请求) + fetchSpeakerLanes (1-2 请求), 每次编辑从 ~7 请求降到 2 请求** (1 apply + 1 flags)
+- **新增 fetchReviewFlags action** (从 loadWorkspace Step5 提取, P3-B 响亮语义)
+- 契约测试 +2 (apply 后 events 来自响应且无 /timeline/load 请求 / undo 快照)
+
+### 决策
+- **借鉴类似项目 (Kimu Video Editor/Aegisub/mcut)**: 时间轴/字幕编辑器都是本地状态主导 — 编辑改内存, 保存才碰服务器; 我们的 patch 链架构 (apply 即持久化) 不能完全照搬按需保存, 但采纳 mcut 的形态 — **dispatch 返回应用结果, UI 订阅本地状态不回源**
+- **静态数据不随编辑重刷**: manifest/waveform/AI 建议不随编辑变化 — 只在加载时取一次 (waveform 每请求重读 wav 是最大浪费源)
+- **review flags 是例外**: 规则检查依赖编辑后文本, 单独轻量刷新 (1 请求)
+- 后端 events 快照是 apply 响应契约的一部分 (非可选) — 前端无 fallback 到 loadWorkspace
+
+### 验证
+- apply 响应实测: 32 事件快照 + evt_001 译文更新 ✓
+- vitest 42/42, tsc 0, Playwright p3a_smoke 全链路 PASS
+
+---
+
 ## 2026-08-01 — P3-C: _annotate 响亮化 + 主数据源挂靠 timeline 端点
 
 ### 改动

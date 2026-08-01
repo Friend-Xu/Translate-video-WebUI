@@ -107,6 +107,7 @@ export interface AppState {
   // Actions — Patches / Filters / Jobs
   setUnappliedPatches: (patches: PatchPreview[]) => void
   fetchPatchLog: () => Promise<void>
+  fetchReviewFlags: (workspace?: string) => Promise<void>
   setIssueFilter: (filter: IssueFilter | null) => void
   setSpeakerFocus: (speaker: SpeakerInfo | null) => void
   setJobStatus: (eventId: string, state: JobState) => void
@@ -482,7 +483,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       return false
     }
 
-    // Record as applied patch
+    // Record as applied patch + 局部刷新 (P3-D)
+    const data = await res.json()
     const applied: TimelinePatchData = {
       patch_id: patch.patch_id as string,
       opcode: patch.opcode as string,
@@ -501,13 +503,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     const next = new Map(get().pendingDrafts)
     next.delete(eventId)
-    set({ pendingDrafts: next, appliedPatches: patches })
+    // 用 apply 响应的事件快照更新本地 (不再全量 loadWorkspace 7 请求)
+    const serverEvents = (data.events || {}) as Record<string, EventViewModel>
+    const newEvents = Object.values(serverEvents).sort((a, b) => a.start - b.start)
+    set({ pendingDrafts: next, appliedPatches: patches, events: newEvents })
 
-    // Reload data to reflect applied patch (失败由 loadWorkspace/fetchSpeakerLanes 内部设 error)
-    if (ws) {
-      await get().loadWorkspace(ws)
-      await get().fetchSpeakerLanes(ws)
-    }
+    // review flags 是唯一随编辑变化的派生数据 — 单独轻量刷新
+    if (ws) await get().fetchReviewFlags(ws)
     return true
   },
 
@@ -524,6 +526,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const now = new Date().toISOString()
     const newPatches: TimelinePatchData[] = []
     const failedIds: string[] = []
+    let latestEvents: Record<string, EventViewModel> | null = null
 
     for (const [eventId, draft] of drafts) {
       // 本地状态 draft 跳过: 预览/丢弃不是写操作, 不提交也不删
@@ -542,6 +545,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           body: JSON.stringify({ workspace: ws, patch }),
         })
         if (!res.ok) { failedIds.push(eventId); continue }
+        // P3-D: 收集最后一个 apply 响应的事件快照 (批量不逐条 reload)
+        const data = await res.json()
+        if (data.events) latestEvents = data.events as Record<string, EventViewModel>
       } catch { failedIds.push(eventId); continue }
 
       newPatches.push({
@@ -568,12 +574,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
 
     const history = [...get().appliedPatches, ...newPatches].slice(-50)
-    set({ pendingDrafts: nextDrafts, appliedPatches: history })
-
-    // 先 reload (成功会清 error), 再设失败信息 — 避免成功刷新吞掉失败提示
-    if (ws && newPatches.length > 0) {
-      await get().loadWorkspace(ws)
-      await get().fetchSpeakerLanes(ws)
+    // P3-D 局部刷新: 用 apply 响应快照更新本地, 不再全量 loadWorkspace
+    set({
+      pendingDrafts: nextDrafts,
+      appliedPatches: history,
+      ...(latestEvents
+        ? { events: Object.values(latestEvents).sort((a, b) => a.start - b.start) }
+        : {}),
+    })
+    if (ws && newPatches.length > 0 && latestEvents) {
+      await get().fetchReviewFlags(ws)
     }
     const submittedCount = Array.from(drafts.values())
       .filter(d => !LOCAL_ONLY_OPCODES.has(d.opcode)).length
@@ -612,12 +622,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { ok: false, patch: null }
     }
 
-    set({ appliedPatches: patches.slice(0, -1) })
+    // P3-D 局部刷新: undo 响应带回滚后的事件快照 (不再全量 reload)
+    const data = await res.json()
+    const serverEvents = (data.events || {}) as Record<string, EventViewModel>
+    const undoneEvents = Object.values(serverEvents).sort((a, b) => a.start - b.start)
+    set({ appliedPatches: patches.slice(0, -1), events: undoneEvents })
 
-    // Reload data to reflect undone changes
     // 撤销后刷新 — fetchPatchLog/fetchSpeakerLanes 内部已响亮, 不再静默吞 rejection
     get().fetchPatchLog()
+    // undo 可能回退 speaker 操作 (lane 名字/颜色变化), lanes 需刷新; review flags 轻量刷新
     get().fetchSpeakerLanes(ws)
+    get().fetchReviewFlags(ws)
 
     return { ok: true, patch: removed }
   },
@@ -654,6 +669,37 @@ export const useAppStore = create<AppState>((set, get) => ({
       author: p.author || 'system',
       timestamp: p.timestamp || '',
     })) })
+  },
+
+  fetchReviewFlags: async (workspace?: string) => {
+    const ws = workspace || get().workspace
+    if (!ws) return
+    // 失败必须响亮 (P3-B) — 静默会让校验标记显示为空
+    let res: Response
+    try {
+      res = await fetch(`/api/timeline/review/flags?workspace=${encodeURIComponent(ws)}`)
+    } catch (e) {
+      set({ error: `校验标记加载失败: ${e instanceof Error ? e.message : String(e)}` })
+      return
+    }
+    if (!res.ok) {
+      set({ error: `校验标记加载失败: HTTP ${res.status}` })
+      return
+    }
+    const flagData = await res.json()
+    const SEVERITY: Record<string, 'warning' | 'error'> = { speaker_conflict: 'error' }
+    const reviewFlags = (flagData.flags || []).flatMap((f: any) =>
+      (f.flags || []).map((t: string) => ({
+        eventId: f.event_id,
+        type: t as IssueItem['type'],
+        severity: SEVERITY[t] || ('warning' as const),
+        message: f.reason || '',
+        detail: { text: f.text, translation: f.translation },
+        start: f.start || 0,
+        end: f.end || 0,
+      }))
+    )
+    set({ reviewFlags })
   },
 
   // ── Filters ──
