@@ -4,6 +4,7 @@ import type { Mode, PatchDraft, IssueFilter, IssueItem, JobState, CrossModeConte
 import type { TrackDefinition } from '../types/timeline'
 import type { TrackWaveformData } from '../types'
 import { DEFAULT_TRACKS, TRACK_VISIBILITY_MAP, SPEAKER_TRACK_PRESET } from '../types/timeline'
+import { recordUserAction } from '../activityLog'
 
 export type { Mode, PatchDraft, IssueFilter, JobState }
 export type TimelineFocus = 'default' | 'speaker' | 'patch'
@@ -117,7 +118,7 @@ export interface AppState {
   // Actions — Drafts
   addDraft: (draft: PatchDraft) => void
   removeDraft: (eventId: string) => void
-  applyDraft: (eventId: string) => Promise<boolean>
+  applyDraft: (eventId: string, silent?: boolean) => Promise<boolean>
   discardDraft: (eventId: string) => void
   applyAllDrafts: () => Promise<number>
   discardAllDrafts: () => void
@@ -483,7 +484,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ pendingDrafts: next })
   },
 
-  applyDraft: async (eventId) => {
+  applyDraft: async (eventId, silent = false) => {
     const t0 = performance.now()
     const draft = get().pendingDrafts.get(eventId)
     if (!draft) {
@@ -502,6 +503,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       set({ error: `补丁应用失败: ${msg}` })
+      if (!silent) recordUserAction('applied', `事件 ${eventId}`, `补丁应用失败: ${msg}`, 'failed')
       get()._logOp('applyDraft', false, performance.now() - t0, '', msg, draft.opcode, eventId)
       return false
     }
@@ -518,6 +520,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       set({ error: `补丁应用失败: ${msg}` })
+      if (!silent) recordUserAction('applied', `事件 ${eventId}`, `补丁应用失败: ${msg}`, 'failed')
       get()._logOp('applyDraft', false, performance.now() - t0, '', msg, draft.opcode, eventId)
       return false
     }
@@ -525,6 +528,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const detail = await res.json().catch(() => ({}))
       const msg = (detail as any).detail || (detail as any).error || `HTTP ${res.status}`
       set({ error: `补丁应用失败: ${msg}` })
+      if (!silent) recordUserAction('applied', `事件 ${eventId}`, `补丁应用失败: ${msg}`, 'failed')
       get()._logOp('applyDraft', false, performance.now() - t0, '', msg, draft.opcode, eventId)
       return false
     }
@@ -558,6 +562,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     // review flags 是唯一随编辑变化的派生数据 — 单独轻量刷新
     if (ws) await get().fetchReviewFlags(ws)
+    if (!silent) recordUserAction('applied', `事件 ${eventId}`, `应用补丁 ${draft.opcode}`)
     get()._logOp('applyDraft', true, performance.now() - t0,
       `${Object.keys(serverEvents).length} events`, '', draft.opcode, eventId)
     return true
@@ -643,6 +648,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (failedIds.length > 0) {
       set({ error: `批量应用失败 ${failedIds.length}/${submittedCount} 条 (${failedIds.join(', ')})，失败条目已保留` })
     }
+    recordUserAction('applied', undefined,
+      `批量应用补丁: ${newPatches.length}/${submittedCount} 成功${failedIds.length ? `, ${failedIds.length} 失败` : ''}`,
+      failedIds.length > 0 ? 'failed' : 'ok')
     get()._logOp('applyAllDrafts', failedIds.length === 0, performance.now() - t0,
       `${newPatches.length}/${submittedCount} 成功${failedIds.length ? `, ${failedIds.length} 失败` : ''}`,
       failedIds.length > 0 ? `失败: ${failedIds.join(', ')}` : '')
@@ -852,6 +860,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       l.speaker === speakerId ? { ...l, voice_id: voiceId } : l
     )
     set({ speakerLanes: lanes })
+    const name = get().speakerLanes.find(l => l.speaker === speakerId)?.display_name || speakerId
+    recordUserAction(voiceId ? 'bound' : 'unbound', `说话人 ${name}`,
+      voiceId ? `绑定声线 ${voiceId}` : '解绑声线')
   },
 
   fetchSpeakerLanes: async (workspace) => {
@@ -1044,11 +1055,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       get()._logOp('loadWorkspace', loadErrors.length === 0, performance.now() - t0,
         `${events.length} events${loadErrors.length ? `, 部分失败: ${loadErrors.join('、')}` : ''}`,
         loadErrors.length > 0 ? `部分数据加载失败: ${loadErrors.join('、')}` : '')
+      recordUserAction('opened', workspacePath.split(/[/\\]/).pop() || workspacePath,
+        `打开项目 · ${events.length} 个事件${loadErrors.length ? `（${loadErrors.join('、')}加载失败）` : ''}`,
+        loadErrors.length > 0 ? 'failed' : 'ok')
     } catch (err) {
       set({
         loading: false,
         error: err instanceof Error ? err.message : '未知错误',
       })
+      recordUserAction('opened', workspacePath.split(/[/\\]/).pop() || workspacePath,
+        `打开项目失败: ${err instanceof Error ? err.message : '未知错误'}`, 'failed')
       get()._logOp('loadWorkspace', false, performance.now() - t0, '',
         err instanceof Error ? err.message : '未知错误')
     }
@@ -1180,13 +1196,16 @@ export const useAppStore = create<AppState>((set, get) => ({
           after: { translation: entry.translatedText },
           timestamp: Date.now(),
         })
-        const ok = await store.applyDraft(eventId)
+        const ok = await store.applyDraft(eventId, true)
         if (!ok) {
           throw new Error(`评审保存失败: 第 ${entry.index} 条补丁未应用 (${get().error || '未知错误'})`)
         }
       }
+      recordUserAction('saved', undefined, `保存字幕校验: ${data.updated} 条`)
       console.log(`Review saved: ${data.updated} entries → ${data.output_path}`)
     } catch (err) {
+      recordUserAction('saved', undefined,
+        `保存字幕校验失败: ${err instanceof Error ? err.message : String(err)}`, 'failed')
       console.error('Review save failed:', err)
       throw err
     }
@@ -1242,6 +1261,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       const data = await res.json()
       set({ workspace: data.workspace, manifest: data.manifest, loading: false })
+      recordUserAction('created', name || data.workspace, `创建项目 ${name || data.workspace}`)
       return data.workspace as string
     } catch (err) {
       set({ loading: false, error: err instanceof Error ? err.message : '未知错误' })

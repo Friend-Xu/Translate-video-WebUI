@@ -31,7 +31,7 @@ import WorkspaceSelector from './components/WorkspaceSelector'
 
 export default function App() {
   const { config, updateConfig } = useConfig()
-  const { status, logs, appendLog, handleDone, logFirstIndex, logTotal, loadOlderLogs } = usePipeline()
+  const { status, logs, appendLog, handleDone } = usePipeline()
   const { batch, cancelBatch, skipCurrent } = useBatch()
 
   const [snackbar, setSnackbar] = useState<{ open: boolean; msg: string; severity: 'success' | 'error' | 'info' }>({
@@ -223,7 +223,7 @@ export default function App() {
         <GlossaryManager />
       </Box>
       <Box sx={{ display: mode === 'logs' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
-        <LogsView />
+        <LogsView logs={logs} connectionState={connectionState} />
       </Box>
       <Box sx={{ display: mode === 'timeline' ? 'flex' : 'none', flex: 1, overflow: 'hidden', position: 'relative' }}>
         {!isWorkspace && (
@@ -278,11 +278,6 @@ export default function App() {
         inspectorContent={inspectorWithVideo}
         dockContent={mode === 'timeline' || mode === 'speaker' || mode === 'review' ? (
           <EvidenceDock
-            logs={logs}
-            connectionState={connectionState}
-            logFirstIndex={logFirstIndex.current}
-            logTotal={logTotal.current}
-            onLoadOlder={() => loadOlderLogs(status.jobId)}
             events={events}
             passTrace={events.length > 0 ? events[0].passTrace : undefined}
             batchStatus={batch}
