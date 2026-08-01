@@ -5,6 +5,28 @@
 
 ---
 
+## 2026-08-01 — P3-B: 残留静默失败响亮化 (useAppStore 全量审计)
+
+### 改动
+- **fetchPatchLog**: `if (!res.ok) return` + `catch {}` 静默 → 响亮 (补丁历史显示为空会误导"无编辑记录")
+- **loadWorkspace Step3-5** (waveform/patch log/review flags): 三个 `catch { /* non-fatal */ }` → 收集 loadErrors, 成功态之后统一 set error "部分数据加载失败: 波形/补丁历史/校验标记" (先 set 成功再设错误, 避免被 error:null 吞掉 — applyAllDrafts 同款模式)
+- **reloadEvents**: `catch { /* non-fatal */ }` → 响亮 — 编辑后刷新失败静默 = 用户看到旧数据误以为编辑已生效 (P1 同款最危险形态)
+- **undoLastPatch 刷新**: 删 `fetchPatchLog().catch(() => {})` / `fetchSpeakerLanes(ws).catch(() => {})` 静默吞 — 两个 action 内部已响亮, 不再防御性吞 rejection
+- **loadReviewEntries**: 删 events→entries 本地合成兜底 (静默假数据 — 后端含 SRT 关联/审核状态, 本地合成语义不同) → 响亮报错
+- **fetchWorkflowPresets/fetchWorkspaceList**: `catch { /* non-critical */ }` → 响亮 (列表显示为空误导用户)
+- 保留的合理静默: localStorage quota (导出预设本地缓存, 非核心数据)
+- 契约测试 +6 (fetchPatchLog 网络失败 / loadWorkspace 波形 500 + 补丁历史 404 / reloadEvents 500 / loadReviewEntries 404 不合成 / fetchWorkspaceList 失败)
+
+### 决策
+- **刷新失败 = 数据可见性问题**: 静默刷新失败让用户基于旧数据决策 (编辑白做/历史缺失), 与 P1 编辑失败同权
+- **先成功态后错误态**: 部分数据失败不 block 工作区加载, 但必须在成功 set 之后设 error, 否则被 error:null 吞掉 (applyAllDrafts 已验证的模式)
+- **本地合成不是兜底是假数据**: events→entries 合成丢失审核状态/关联, 是静默数据降级 — 一律删
+
+### 验证
+- vitest 39/39 (+6), tsc 0, Playwright p3a_smoke 回归 PASS (成功路径无误报)
+
+---
+
 ## 2026-08-01 — P3-A: timeline 编辑假 draft 补映射 (RETRIGGER/SPLIT/MERGE/MOVE/TRIM/AI 建议)
 
 ### 改动

@@ -615,8 +615,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ appliedPatches: patches.slice(0, -1) })
 
     // Reload data to reflect undone changes
-    get().fetchPatchLog().catch(() => {})
-    get().fetchSpeakerLanes(ws).catch(() => {})
+    // 撤销后刷新 — fetchPatchLog/fetchSpeakerLanes 内部已响亮, 不再静默吞 rejection
+    get().fetchPatchLog()
+    get().fetchSpeakerLanes(ws)
 
     return { ok: true, patch: removed }
   },
@@ -627,24 +628,32 @@ export const useAppStore = create<AppState>((set, get) => ({
   fetchPatchLog: async () => {
     const ws = get().workspace
     if (!ws) return
+    // 失败必须响亮 — 静默返回会让补丁历史显示为空 (用户误以为无编辑记录)
+    let res: Response
     try {
-      const res = await fetch(`/api/timeline/patch/log?workspace=${encodeURIComponent(ws)}`)
-      if (!res.ok) return
-      const data = await res.json()
-      set({ appliedPatches: (data.patches || []).map((p: any) => ({
-        patch_id: p.patch_id || '',
-        opcode: p.opcode || '',
-        targets: p.targets || [],
-        payload: p.payload || {},
-        reason: p.reason || [],
-        score: p.score || 0,
-        confidence: p.confidence || 0,
-        parent_version: p.parent_version || '',
-        idempotency_key: p.idempotency_key || '',
-        author: p.author || 'system',
-        timestamp: p.timestamp || '',
-      })) })
-    } catch { /* non-fatal */ }
+      res = await fetch(`/api/timeline/patch/log?workspace=${encodeURIComponent(ws)}`)
+    } catch (e) {
+      set({ error: `补丁历史加载失败: ${e instanceof Error ? e.message : String(e)}` })
+      return
+    }
+    if (!res.ok) {
+      set({ error: `补丁历史加载失败: HTTP ${res.status}` })
+      return
+    }
+    const data = await res.json()
+    set({ appliedPatches: (data.patches || []).map((p: any) => ({
+      patch_id: p.patch_id || '',
+      opcode: p.opcode || '',
+      targets: p.targets || [],
+      payload: p.payload || {},
+      reason: p.reason || [],
+      score: p.score || 0,
+      confidence: p.confidence || 0,
+      parent_version: p.parent_version || '',
+      idempotency_key: p.idempotency_key || '',
+      author: p.author || 'system',
+      timestamp: p.timestamp || '',
+    })) })
   },
 
   // ── Filters ──
@@ -790,16 +799,20 @@ export const useAppStore = create<AppState>((set, get) => ({
       const events = (Object.values(loadData.inspector_data || {}) as EventViewModel[])
         .sort((a, b) => a.start - b.start)
 
-      // Step 3: Load waveform (non-fatal)
+      // Step 3-5: 辅助数据加载失败必须响亮 (禁止兜底 — 静默会显示为空数据误导用户)
+      const loadErrors: string[] = []
+
+      // Step 3: Load waveform
       let waveform: WaveformData | null = null
       try {
         const wfRes = await fetch(
           `/api/speaker/diarization/waveform?workspace=${encodeURIComponent(workspacePath)}`
         )
         if (wfRes.ok) waveform = await wfRes.json()
-      } catch { /* non-fatal */ }
+        else loadErrors.push('波形')
+      } catch { loadErrors.push('波形') }
 
-      // Step 4: Load patch log (non-fatal)
+      // Step 4: Load patch log
       let appliedPatches: TimelinePatchData[] = []
       try {
         const patchRes = await fetch(
@@ -820,10 +833,10 @@ export const useAppStore = create<AppState>((set, get) => ({
             author: p.author || 'system',
             timestamp: p.timestamp || '',
           }))
-        }
-      } catch { /* non-fatal */ }
+        } else loadErrors.push('补丁历史')
+      } catch { loadErrors.push('补丁历史') }
 
-      // Step 5: Load review flags (non-fatal)
+      // Step 5: Load review flags
       let reviewFlags: IssueItem[] = []
       try {
         const flagRes = await fetch(
@@ -843,8 +856,8 @@ export const useAppStore = create<AppState>((set, get) => ({
               end: f.end || 0,
             }))
           )
-        }
-      } catch { /* non-fatal */ }
+        } else loadErrors.push('校验标记')
+      } catch { loadErrors.push('校验标记') }
 
       set({
         workspace: workspacePath,
@@ -856,6 +869,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         loading: false,
         error: null,
       })
+      // 部分数据失败在成功态之后设置, 避免被 set 的 error: null 吞掉
+      if (loadErrors.length > 0) {
+        set({ error: `部分数据加载失败: ${loadErrors.join('、')}` })
+      }
     } catch (err) {
       set({
         loading: false,
@@ -867,18 +884,26 @@ export const useAppStore = create<AppState>((set, get) => ({
   reloadEvents: async () => {
     const ws = get().workspace
     if (!ws) return
+    // 编辑后刷新失败必须响亮 — 静默会让用户看到旧数据误以为编辑已生效
+    let res: Response
     try {
-      const res = await fetch('/api/speaker/diarization/load', {
+      res = await fetch('/api/speaker/diarization/load', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspace: ws }),
       })
-      if (!res.ok) return
-      const data = await res.json()
-      const events = (Object.values(data.inspector_data || {}) as EventViewModel[])
-        .sort((a, b) => a.start - b.start)
-      set({ events })
-    } catch { /* non-fatal */ }
+    } catch (e) {
+      set({ error: `事件刷新失败: ${e instanceof Error ? e.message : String(e)}` })
+      return
+    }
+    if (!res.ok) {
+      set({ error: `事件刷新失败: HTTP ${res.status}` })
+      return
+    }
+    const data = await res.json()
+    const events = (Object.values(data.inspector_data || {}) as EventViewModel[])
+      .sort((a, b) => a.start - b.start)
+    set({ events })
   },
 
   clearWorkspace: () => set({
@@ -909,37 +934,29 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadReviewEntries: async (workspaceOverride) => {
     const ws = workspaceOverride || get().workspace
     if (!ws) return
+    // 失败必须响亮 — 旧实现回退本地 events 合成条目是静默假数据
+    // (后端 review/load 含 SRT 关联/审核状态, 本地合成语义不同)
+    let res: Response
     try {
-      const res = await fetch('/api/subtitle/review/load', {
+      res = await fetch('/api/subtitle/review/load', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspace: ws }),
       })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      set({
-        reviewEntries: data.entries || [],
-        reviewTranslatedSrtPath: data.translatedSrtPath || '',
-      })
-    } catch {
-      // Fallback: convert store events to entries
-      const events = get().events
-      if (events.length > 0) {
-        const entries: SubtitleEntry[] = events.map((evt, i) => ({
-          index: i + 1,
-          start: '', end: '',
-          startMs: Math.round(evt.start * 1000),
-          endMs: Math.round(evt.end * 1000),
-          sourceText: evt.text || '',
-          translatedText: evt.translation || '',
-          reviewStatus: 'pending' as const,
-          issues: [],
-          speakerId: evt.speaker || undefined,
-          eventId: evt.id || undefined,
-        }))
-        set({ reviewEntries: entries, reviewTranslatedSrtPath: '' })
-      }
+    } catch (e) {
+      set({ error: `评审条目加载失败: ${e instanceof Error ? e.message : String(e)}` })
+      return
     }
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}))
+      set({ error: `评审条目加载失败: ${(detail as any).detail || `HTTP ${res.status}`}` })
+      return
+    }
+    const data = await res.json()
+    set({
+      reviewEntries: data.entries || [],
+      reviewTranslatedSrtPath: data.translatedSrtPath || '',
+    })
   },
 
   saveReviewEntries: async () => {
@@ -1004,23 +1021,37 @@ export const useAppStore = create<AppState>((set, get) => ({
   // ── Hub Actions (Phase 1) ──
 
   fetchWorkflowPresets: async () => {
+    // 失败必须响亮 — 静默会让预设列表显示为空 (用户误以为无预设)
+    let res: Response
     try {
-      const res = await fetch('/api/workflow/presets')
-      if (res.ok) {
-        const data = await res.json()
-        set({ workflowPresets: data.presets || [] })
-      }
-    } catch { /* non-critical */ }
+      res = await fetch('/api/workflow/presets')
+    } catch (e) {
+      set({ error: `工作流预设加载失败: ${e instanceof Error ? e.message : String(e)}` })
+      return
+    }
+    if (!res.ok) {
+      set({ error: `工作流预设加载失败: HTTP ${res.status}` })
+      return
+    }
+    const data = await res.json()
+    set({ workflowPresets: data.presets || [] })
   },
 
   fetchWorkspaceList: async () => {
+    // 失败必须响亮 — 静默会让工作区列表显示为空 (用户误以为无项目)
+    let res: Response
     try {
-      const res = await fetch('/api/workspaces')
-      if (res.ok) {
-        const data = await res.json()
-        set({ workspaceList: data.workspaces || [] })
-      }
-    } catch { /* non-critical */ }
+      res = await fetch('/api/workspaces')
+    } catch (e) {
+      set({ error: `工作区列表加载失败: ${e instanceof Error ? e.message : String(e)}` })
+      return
+    }
+    if (!res.ok) {
+      set({ error: `工作区列表加载失败: HTTP ${res.status}` })
+      return
+    }
+    const data = await res.json()
+    set({ workspaceList: data.workspaces || [] })
   },
 
   createWorkspace: async (videoPath, presetId, name) => {

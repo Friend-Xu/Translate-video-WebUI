@@ -192,6 +192,90 @@ describe('fetchSpeakerLanes 禁止 mock 降级', () => {
   })
 })
 
+describe('P3-B 残留静默失败响亮化', () => {
+  it('fetchPatchLog 失败 → error 设置 (旧行为: 静默返回, 历史显示为空)', async () => {
+    mockFetchByUrl(() => { throw new TypeError('fetch failed') })
+    useAppStore.setState({ appliedPatches: [{
+      patch_id: 'p1', opcode: 'SET_TRANSLATION', targets: ['evt_001'],
+      payload: {}, reason: [], score: 1, confidence: 1,
+      parent_version: '', idempotency_key: '', author: 'user', timestamp: '',
+    }] })
+
+    await useAppStore.getState().fetchPatchLog()
+
+    expect(useAppStore.getState().error).toContain('补丁历史加载失败')
+    expect(useAppStore.getState().appliedPatches).toHaveLength(1)
+  })
+
+  it('loadWorkspace 部分数据失败 → 成功态后设置 error (波形 500)', async () => {
+    mockFetchByUrl((url) => {
+      if (url.includes('/project/manifest/resolve')) {
+        return jsonResponse({ manifest: { video_path: 'x.mp4', pipeline: {} } })
+      }
+      if (url.includes('/speaker/diarization/load')) {
+        return jsonResponse({ inspector_data: {} })
+      }
+      if (url.includes('/speaker/diarization/waveform')) {
+        return jsonResponse({ detail: 'boom' }, 500)
+      }
+      if (url.includes('/timeline/patch/log')) return jsonResponse({ patches: [] })
+      if (url.includes('/timeline/review/flags')) return jsonResponse({ flags: [] })
+      return jsonResponse({})
+    })
+
+    await useAppStore.getState().loadWorkspace('test_ws')
+
+    expect(useAppStore.getState().error).toContain('部分数据加载失败')
+    expect(useAppStore.getState().error).toContain('波形')
+    expect(useAppStore.getState().workspace).toBe('test_ws')
+  })
+
+  it('loadWorkspace 补丁历史失败 → error 含 补丁历史', async () => {
+    mockFetchByUrl((url) => {
+      if (url.includes('/timeline/patch/log')) {
+        return jsonResponse({ detail: 'no chain' }, 404)
+      }
+      if (url.includes('/project/manifest/resolve')) {
+        return jsonResponse({ manifest: { video_path: 'x.mp4', pipeline: {} } })
+      }
+      if (url.includes('/speaker/diarization/load')) {
+        return jsonResponse({ inspector_data: {} })
+      }
+      return jsonResponse({})
+    })
+
+    await useAppStore.getState().loadWorkspace('test_ws')
+
+    expect(useAppStore.getState().error).toContain('补丁历史')
+  })
+
+  it('reloadEvents 失败 → error 设置 (旧行为: 静默, 用户看到旧数据)', async () => {
+    mockFetchByUrl(() => jsonResponse({ detail: 'boom' }, 500))
+
+    await useAppStore.getState().reloadEvents()
+
+    expect(useAppStore.getState().error).toContain('事件刷新失败')
+  })
+
+  it('loadReviewEntries 失败 → error 设置, 不本地合成条目 (旧行为: events 兜底假数据)', async () => {
+    mockFetchByUrl(() => jsonResponse({ detail: 'no srt' }, 404))
+    useAppStore.setState({ events: [{ id: 'evt_001', start: 0, end: 1 }] as any })
+
+    await useAppStore.getState().loadReviewEntries('test_ws')
+
+    expect(useAppStore.getState().error).toContain('评审条目加载失败')
+    expect(useAppStore.getState().reviewEntries).toHaveLength(0)
+  })
+
+  it('fetchWorkspaceList 失败 → error 设置 (旧行为: 静默, 列表显示为空)', async () => {
+    mockFetchByUrl(() => { throw new TypeError('fetch failed') })
+
+    await useAppStore.getState().fetchWorkspaceList()
+
+    expect(useAppStore.getState().error).toContain('工作区列表加载失败')
+  })
+})
+
 describe('saveReviewEntries 事件关联 (entry_N 修复)', () => {
   const entryFactory = (overrides = {}) => ({
     index: 1, start: '00:00:00,730', end: '00:00:02,490',
