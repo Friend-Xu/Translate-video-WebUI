@@ -196,6 +196,10 @@ class WhisperAdapter(AdapterProtocol):
                 if not seg.words:
                     continue
                 for w in seg.words:
+                    # adapter 边界清洗: whisper 尾部词 end 可能为 None,
+                    # 坏时间戳会经 segmentation 拆出 start>=end 的坏事件
+                    if w.start is None or w.end is None or w.end <= w.start:
+                        continue
                     all_words.append({
                         "word": w.word.strip(),
                         "start": w.start + seg_start,

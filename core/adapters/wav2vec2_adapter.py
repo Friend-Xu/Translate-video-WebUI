@@ -59,23 +59,33 @@ class Wav2Vec2Adapter:
         patches: list[Patch] = []
         for i, seg in enumerate(aligned_segments):
             words = seg.get("words", [])
+            # adapter 边界清洗: 只保留有效时间戳的词 — 兜底 0.0 会让
+            # segmentation 用词边界拆出 start>=end 的坏事件 (禁止兜底)
+            word_ts = []
+            for w in words:
+                start, end = w.get("start"), w.get("end")
+                if start is None or end is None or start >= end:
+                    continue
+                word_ts.append({
+                    "word": w.get("word", ""),
+                    "start": start, "end": end,
+                    "score": w.get("score", 0.0),
+                })
+            if not word_ts:
+                continue  # 无有效词时间戳 — 保留原事件边界, 跳过该段精修
             patches.append(Patch(
                 id=f"align_{i + 1:03d}",
                 target_id=f"evt_{i + 1:03d}",
                 op=OpCode.REFINE_ALIGNMENT,
                 value={
-                    "word_timestamps": [
-                        {"word": w.get("word", ""), "start": w.get("start", 0.0),
-                         "end": w.get("end", 0.0), "score": w.get("score", 0.0)}
-                        for w in words
-                    ],
+                    "word_timestamps": word_ts,
                     "confidence_delta": self._compute_delta(
                         segments[i].get("words", []) if i < len(segments) else [],
-                        words,
+                        word_ts,
                     ),
                 },
                 author="system",
-                confidence=self._avg_score(words),
+                confidence=self._avg_score(word_ts),
             ))
 
         return patches
@@ -246,7 +256,11 @@ with open(output_file, "w", encoding="utf-8") as f:
 
     @staticmethod
     def _merge_aligned(original: list[dict], aligned: list[dict]) -> list[dict]:
-        """对齐结果尾部丢失时，用 whisper 原始词补齐覆盖。"""
+        """对齐结果尾部丢失时，用 whisper 原始词补齐覆盖。
+
+        adapter 边界清洗: 无有效时间戳的词 (start/end 缺失或 start>=end)
+        不参与合成 — 坏时间戳会经 segmentation 拆出 start>=end 的坏事件。
+        """
         if not original or not aligned:
             return aligned or original
         orig_end = max(s["end"] for s in original)
@@ -257,7 +271,10 @@ with open(output_file, "w", encoding="utf-8") as f:
         tail_words = []
         for s in original:
             for w in s.get("words", []):
-                if w["start"] >= aligned_end:
+                start, end = w.get("start"), w.get("end")
+                if start is None or end is None or start >= end:
+                    continue
+                if start >= aligned_end:
                     tail_words.append(w)
         if not tail_words:
             return aligned
@@ -265,10 +282,17 @@ with open(output_file, "w", encoding="utf-8") as f:
             "对齐尾部丢失 %.1fs，用 whisper 原始时间戳补齐 %d 个词",
             truncation, len(tail_words),
         )
+        seg_start, seg_end = tail_words[0]["start"], tail_words[-1]["end"]
+        if seg_end <= seg_start:
+            logger.warning(
+                "对齐尾部补齐时间戳无效 (%.2f >= %.2f)，丢弃尾部词",
+                seg_start, seg_end,
+            )
+            return aligned
         result = list(aligned)
         result.append({
-            "start": tail_words[0]["start"],
-            "end": tail_words[-1]["end"],
+            "start": seg_start,
+            "end": seg_end,
             "text": " ".join(w["word"] for w in tail_words),
             "words": tail_words,
         })
