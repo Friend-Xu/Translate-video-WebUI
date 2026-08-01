@@ -5,6 +5,17 @@
 
 ---
 
+## 2026-08-01 — xCOMET-lite 设为默认质量策略
+
+- `GlobalConfig translation.gate.mode` 默认 logic_gate → **xcomet**; quality_check
+  无配置 fallback 同步; CLI gate_mode fallback 同步
+- 配置路径: config/translate.yaml `verification_mode` (xcomet|logic_gate) → gate.mode
+- 契约测试更新: 无配置默认 → xcomet
+- 模型缺失/加载失败 → 诚实降级 Gate B + 人工审核 (机制已锁定)
+- 遗留: xcomet 阈值 (accept 0.70/review 0.40) 对短语气句偏严, 待校准
+
+---
+
 ## 2026-08-01 — E2E 复验修复 + xCOMET-lite 质量策略真实集成
 
 ### E2E 复验暴露 (3 处)

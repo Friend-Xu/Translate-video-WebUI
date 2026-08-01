@@ -47,14 +47,14 @@ class TestStrategySelection:
         p.apply(_state_with_translation())
         assert calls == ["xcomet"]
 
-    def test_default_mode_is_logic_gate(self, monkeypatch):
-        """未配置 gate.mode → 默认 logic_gate。"""
+    def test_unconfigured_fallback_is_xcomet(self, monkeypatch):
+        """无 gate.mode 配置 → 默认 xcomet (2026-08-01 起 xcomet 为默认策略)。"""
         calls = []
         self._fake_factory(monkeypatch, calls)
         p = TranslationQualityPass()
         p.configure({"translation": {"gate": {}}})
         p.apply(_state_with_translation())
-        assert calls == ["logic_gate"]
+        assert calls == ["xcomet"]
 
 
 @pytest.mark.contract

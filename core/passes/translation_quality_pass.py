@@ -36,7 +36,7 @@ class TranslationQualityPass(TimelinePass):
         if strategy is None:
             # 配置接线: GlobalConfig translation.gate.mode 决定策略 (logic_gate|xcomet)
             gate_cfg = (self._slot_config.get("translation") or {}).get("gate") or {}
-            mode = gate_cfg.get("mode", "logic_gate")
+            mode = gate_cfg.get("mode", "xcomet")
             from core.quality.protocol import create_strategy
             strategy = create_strategy(mode)
 

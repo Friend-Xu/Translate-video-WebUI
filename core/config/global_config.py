@@ -57,7 +57,7 @@ class ProjectPolicy:
         "glossary": {"mode": "OFF"},
         "custom_prompt": "",
         "gate": {
-            "mode": "logic_gate",
+            "mode": "xcomet",
             "threshold_accept": 0.80,
             "threshold_reject": 0.60,
             "beta": 0.6,

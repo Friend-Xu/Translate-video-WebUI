@@ -491,7 +491,7 @@ def step_translate_core(video: str, force: bool = False) -> str:
     from core.config.global_config import GlobalConfig as _GC
     # from_legacy_yaml 默认路径为空串 (不读 yaml) — 显式传 config 路径
     global_config = _GC.from_legacy_yaml("config/translate.yaml", "config/tts.yaml")
-    gate_mode = global_config.project.translation.get("gate", {}).get("mode", "logic_gate")
+    gate_mode = global_config.project.translation.get("gate", {}).get("mode", "xcomet")
     factory = create_pass_factory(
         translate_fn=None,
         target_lang=target_lang,
