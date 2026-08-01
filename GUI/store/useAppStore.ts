@@ -913,6 +913,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     const { reviewEntries, reviewTranslatedSrtPath } = get()
     const modified = reviewEntries.filter(e => e.reviewStatus === 'modified')
     if (modified.length === 0) return
+    // 预解析事件 ID: 写 SRT 前验证全部条目可关联 timeline 事件 —
+    // 后端 review/load 已按时间匹配, 此处兜底 + 拒绝伪造 entry_N (禁止兜底)
+    const resolved: { entry: SubtitleEntry; eventId: string }[] = modified.map(entry => {
+      let eventId = entry.eventId
+      if (!eventId) {
+        const matched = get().events.find(ev =>
+          Math.abs(ev.start * 1000 - entry.startMs) <= 500
+        )
+        eventId = matched?.id
+      }
+      if (!eventId) {
+        throw new Error(`评审保存失败: 第 ${entry.index} 条无法关联 timeline 事件 (startMs=${entry.startMs})`)
+      }
+      return { entry, eventId }
+    })
     try {
       const res = await fetch('/api/subtitle/review/save', {
         method: 'POST',
@@ -931,8 +946,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ),
       }))
       // Record patches for each modified entry
-      for (const entry of modified) {
-        const eventId = entry.eventId || `entry_${entry.index}`
+      for (const { entry, eventId } of resolved) {
         const store = get()
         store.addDraft({
           eventId,

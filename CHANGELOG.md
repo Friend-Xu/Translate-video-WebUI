@@ -5,6 +5,24 @@
 
 ---
 
+## 2026-08-01 — entry_N 修复: review 条目关联真实事件 ID (字幕校验保存恢复可用)
+
+### 改动
+- `server.py /api/subtitle/review/load`: 从 timeline.json 构建事件 start→id 映射, entries 附 `eventId` (按开始时间匹配, ±500ms 容差) — SRT 是 timeline 派生物无 ID, 时间匹配是唯一可靠关联
+- `useAppStore.saveReviewEntries`: **预解析 eventId** (后端值 → store events 按时间兜底 → 都找不到响亮抛错), 删除 `entry_N` 伪 target 伪造; 解析在写 SRT 之前完成 — 无法关联的条目零写入, 禁止半完成
+- 契约测试 +3: 带 eventId 保存成功 / 无 eventId 按时间兜底匹配 / 无匹配抛错且 SRT 零写入 (vitest 33/33)
+
+### 决策
+- **时间匹配是关联语义**: SRT 由 timeline 派生 (core 引擎), 开始时间精确对齐; ±500ms 容差吸收 legacy 路径分段差异
+- **预解析先于写入**: 旧代码写 SRT 后才发现无法打 patch (半完成状态); 现在全部条目验证通过后才动任何写入
+- **禁止伪造 target**: `entry_N` 是静默假数据的变体 — patch 链里出现不存在的 target, 污染事件历史
+
+### 冒烟实测 (Playwright)
+- review 编辑 → 保存 → **toast 已保存 + patch 链 +1** (修复前必 422 "target not found: entry_N")
+- timeline 编辑草案 → 全部应用 回归通过 (patch 链 +1, 无错误 snackbar)
+
+---
+
 ## 2026-08-01 — P1 前端吞错修复: 编辑失败必须响亮
 
 ### 改动

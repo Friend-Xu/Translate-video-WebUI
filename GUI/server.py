@@ -2139,6 +2139,33 @@ async def review_load(req: ReviewLoadRequest) -> dict:
     entries: list[dict] = []
     low_similarity_count = 0
 
+    # core/ 工作区: SRT 是 timeline.json 的派生物, 本身无事件 ID —
+    # 按开始时间匹配关联 (review 保存时 patch 需要真实 target, 禁止伪造 entry_N)
+    event_id_by_start: list[tuple[float, str]] = []
+    if req.workspace:
+        tl_path = os.path.join(req.workspace, "01_extract", "timeline.json")
+        if os.path.isfile(tl_path):
+            try:
+                with open(tl_path, "r", encoding="utf-8") as f:
+                    tl = json.load(f)
+                event_id_by_start = sorted(
+                    (float(e.get("start", 0)) * 1000, str(e.get("id", "")))
+                    for e in tl.get("events", []) if e.get("id")
+                )
+            except Exception:
+                event_id_by_start = []
+
+    def _match_event_id(start_ms: float) -> str | None:
+        """按开始时间匹配事件, 容差 ±500ms, 无匹配返回 None (调用方显式处理)。"""
+        best_id, best_delta = None, 500.0
+        for s_ms, eid in event_id_by_start:
+            delta = abs(s_ms - start_ms)
+            if delta <= best_delta:
+                best_id, best_delta = eid, delta
+            elif s_ms > start_ms:
+                break
+        return best_id
+
     for src in src_subs:
         tr = tr_map.get(src.index)
         translated_text = tr.text if tr else ""
@@ -2187,6 +2214,7 @@ async def review_load(req: ReviewLoadRequest) -> dict:
             "quality": quality.get("scores") if quality else None,
             "tier": quality.get("tier") if quality else None,
             "tierReason": quality.get("tierReason") if quality else None,
+            "eventId": _match_event_id(start_ms),
         })
 
     _run_qa_checks(entries, lang)

@@ -59,6 +59,9 @@ const resetStore = () => useAppStore.setState({
   speakerLanes: [],
   voicePresets: [],
   error: null,
+  events: [],
+  reviewEntries: [],
+  reviewTranslatedSrtPath: '',
 })
 
 beforeEach(resetStore)
@@ -186,5 +189,79 @@ describe('fetchSpeakerLanes 禁止 mock 降级', () => {
     expect(useAppStore.getState().speakerLanes).toHaveLength(0)
     expect(useAppStore.getState().voicePresets).toHaveLength(0)
     expect(useAppStore.getState().error).toContain('说话人数据加载失败')
+  })
+})
+
+describe('saveReviewEntries 事件关联 (entry_N 修复)', () => {
+  const entryFactory = (overrides = {}) => ({
+    index: 1, start: '00:00:00,730', end: '00:00:02,490',
+    startMs: 730, endMs: 2490, sourceText: 'こんにちは', translatedText: '修改后译文',
+    reviewStatus: 'modified' as const, issues: [], eventId: 'evt_001',
+    ...overrides,
+  })
+  const eventFactory = (overrides = {}) => ({
+    id: 'evt_007', start: 7.0, end: 8.0, speaker: null, displayName: '', text: '',
+    translation: '', source: '', confidence: 1,
+    visualState: { hasPatches: false, hasAiSuggestion: false, isSelected: false, isMultiSelected: false },
+    patches: [], passTrace: [], ...overrides,
+  })
+
+  function mockReviewSaveFlow(applyBodies: unknown[]) {
+    mockFetchByUrl((url, init) => {
+      if (url.includes('/subtitle/review/save')) {
+        return jsonResponse({ ok: true, output_path: 'reviewed.srt', updated: 1 })
+      }
+      if (url.includes('/patch/apply')) {
+        applyBodies.push(JSON.parse(String((init as RequestInit).body)))
+        return jsonResponse({ status: 'applied' })
+      }
+      return okWorkspaceResponses()
+    })
+  }
+
+  it('entry 带 eventId → 保存成功, 状态转 approved, patch target 用真实 id', async () => {
+    const applyBodies: unknown[] = []
+    mockReviewSaveFlow(applyBodies)
+    useAppStore.setState({
+      reviewTranslatedSrtPath: '02_translate/machine.srt',
+      reviewEntries: [entryFactory()],
+    })
+
+    await useAppStore.getState().saveReviewEntries()
+
+    expect(useAppStore.getState().reviewEntries[0].reviewStatus).toBe('approved')
+    const body = applyBodies[0] as { patch: { targets: string[] } }
+    expect(body.patch.targets[0]).toBe('evt_001')
+  })
+
+  it('entry 无 eventId → 按开始时间匹配 store events 兜底', async () => {
+    const applyBodies: unknown[] = []
+    mockReviewSaveFlow(applyBodies)
+    useAppStore.setState({
+      events: [eventFactory()],
+      reviewTranslatedSrtPath: '02_translate/machine.srt',
+      reviewEntries: [entryFactory({ startMs: 7000, endMs: 8000, eventId: undefined })],
+    })
+
+    await useAppStore.getState().saveReviewEntries()
+
+    const body = applyBodies[0] as { patch: { targets: string[] } }
+    expect(body.patch.targets[0]).toBe('evt_007')
+  })
+
+  it('无 eventId 且无匹配 → 响亮抛错, 零写入 (SRT 未保存)', async () => {
+    const fetches: string[] = []
+    vi.stubGlobal('fetch', vi.fn((input: unknown) => {
+      fetches.push(String(input))
+      return Promise.resolve(jsonResponse({ ok: true }))
+    }))
+    useAppStore.setState({
+      events: [],
+      reviewTranslatedSrtPath: '02_translate/machine.srt',
+      reviewEntries: [entryFactory({ startMs: 999999, eventId: undefined })],
+    })
+
+    await expect(useAppStore.getState().saveReviewEntries()).rejects.toThrow('无法关联 timeline 事件')
+    expect(fetches).toHaveLength(0)
   })
 })
