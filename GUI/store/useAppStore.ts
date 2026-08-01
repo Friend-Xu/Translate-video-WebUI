@@ -8,6 +8,21 @@ import { DEFAULT_TRACKS, TRACK_VISIBILITY_MAP, SPEAKER_TRACK_PRESET } from '../t
 export type { Mode, PatchDraft, IssueFilter, JobState }
 export type TimelineFocus = 'default' | 'speaker' | 'patch'
 
+/** 前端可视化编辑操作审计条目 — 调试量化 (零请求, localStorage 持久化) */
+export interface UiOpEntry {
+  ts: number            // Date.now()
+  ms: number            // 操作耗时
+  op: string            // applyDraft / applyAllDrafts / undoLastPatch / discardAllDrafts / loadWorkspace
+  ok: boolean
+  opcode?: string
+  eventId?: string
+  extra?: string        // 附加量化: 快照事件数 / 成功数 / 失败数
+  error?: string
+}
+
+const UI_OPS_MAX = 300
+const UI_OPS_KEY = 'ui_ops'
+
 export interface AppState {
   mode: Mode
   timelineFocus: TimelineFocus
@@ -24,6 +39,9 @@ export interface AppState {
   pendingDrafts: Map<string, PatchDraft>
   appliedPatches: TimelinePatchData[]
   reviewFlags: IssueItem[]
+
+  /** 可视化编辑操作审计 (零请求, 环形 300 条 + localStorage 'ui_ops') — 调试量化 */
+  uiOps: UiOpEntry[]
 
   issueFilter: IssueFilter | null
   speakerFocus: SpeakerInfo | null
@@ -94,6 +112,7 @@ export interface AppState {
   toggleTrackMute: (id: string) => void
   setSnapEnabled: (v: boolean) => void
   setTrackScrollLeft: (px: number) => void
+  _logOp: (op: string, ok: boolean, ms: number, extra?: string, error?: string, opcode?: string, eventId?: string) => void
 
   // Actions — Drafts
   addDraft: (draft: PatchDraft) => void
@@ -117,6 +136,7 @@ export interface AppState {
 
   // Actions — Speaker Review
   setSpeakerLanes: (lanes: SpeakerLaneData[]) => void
+  syncSpeakerLanesFromEvents: (serverEvents: Record<string, EventViewModel>) => void
   fetchSpeakerLanes: (workspace?: string) => Promise<void>
   setSelectedSpeaker: (speakerId: string | null) => void
   toggleSpeakerSelection: (speakerId: string) => void
@@ -237,6 +257,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   crossModeContext: null,
   dockCollapsed: false,
   debugMode: false,
+
+  uiOps: [],
 
   speakerLanes: [],
   speakerQualities: {},
@@ -436,6 +458,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   setSnapEnabled: (v) => set({ snapEnabled: v }),
   setTrackScrollLeft: (px) => set({ trackScrollLeft: px }),
 
+  // ── 操作审计 (调试量化, 零请求) ──
+  _logOp: (op, ok, ms, extra = '', error = '', opcode = '', eventId = '') => {
+    const entry: UiOpEntry = { ts: Date.now(), ms: Math.round(ms), op, ok, opcode, eventId, extra, error }
+    set(state => {
+      const uiOps = [...state.uiOps, entry].slice(-UI_OPS_MAX)
+      try {
+        localStorage.setItem(UI_OPS_KEY, JSON.stringify(uiOps))
+      } catch { /* localStorage 失败不阻塞操作 (非核心缓存) */ }
+      return { uiOps }
+    })
+  },
+
   // ── Drafts ──
   addDraft: (draft) => {
     const next = new Map(get().pendingDrafts)
@@ -450,16 +484,25 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   applyDraft: async (eventId) => {
+    const t0 = performance.now()
     const draft = get().pendingDrafts.get(eventId)
-    if (!draft) return false
+    if (!draft) {
+      get()._logOp('applyDraft', false, performance.now() - t0, '', '无 draft', '', eventId)
+      return false
+    }
     // 本地状态 draft (AI_SUGGEST/DISMISS) 不是写操作, 不进 patch 链
-    if (LOCAL_ONLY_OPCODES.has(draft.opcode)) return true
+    if (LOCAL_ONLY_OPCODES.has(draft.opcode)) {
+      get()._logOp('applyDraft', true, performance.now() - t0, 'local-only', '', draft.opcode, eventId)
+      return true
+    }
 
     let patch: Record<string, unknown>
     try {
       patch = patchDraftToApiFormat(draft)
     } catch (e) {
-      set({ error: `补丁应用失败: ${e instanceof Error ? e.message : String(e)}` })
+      const msg = e instanceof Error ? e.message : String(e)
+      set({ error: `补丁应用失败: ${msg}` })
+      get()._logOp('applyDraft', false, performance.now() - t0, '', msg, draft.opcode, eventId)
       return false
     }
     const ws = get().workspace
@@ -473,13 +516,16 @@ export const useAppStore = create<AppState>((set, get) => ({
         body: JSON.stringify({ workspace: ws, patch }),
       })
     } catch (e) {
-      set({ error: `补丁应用失败: ${e instanceof Error ? e.message : String(e)}` })
+      const msg = e instanceof Error ? e.message : String(e)
+      set({ error: `补丁应用失败: ${msg}` })
+      get()._logOp('applyDraft', false, performance.now() - t0, '', msg, draft.opcode, eventId)
       return false
     }
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}))
       const msg = (detail as any).detail || (detail as any).error || `HTTP ${res.status}`
       set({ error: `补丁应用失败: ${msg}` })
+      get()._logOp('applyDraft', false, performance.now() - t0, '', msg, draft.opcode, eventId)
       return false
     }
 
@@ -507,9 +553,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     const serverEvents = (data.events || {}) as Record<string, EventViewModel>
     const newEvents = Object.values(serverEvents).sort((a, b) => a.start - b.start)
     set({ pendingDrafts: next, appliedPatches: patches, events: newEvents })
+    // 说话人 lane 本地同步 (零请求): 拖拽/resize/assign 改变事件边界与归属
+    get().syncSpeakerLanesFromEvents(serverEvents)
 
     // review flags 是唯一随编辑变化的派生数据 — 单独轻量刷新
     if (ws) await get().fetchReviewFlags(ws)
+    get()._logOp('applyDraft', true, performance.now() - t0,
+      `${Object.keys(serverEvents).length} events`, '', draft.opcode, eventId)
     return true
   },
 
@@ -520,6 +570,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   applyAllDrafts: async () => {
+    const t0 = performance.now()
     const drafts = get().pendingDrafts
     if (drafts.size === 0) return 0
     const ws = get().workspace
@@ -582,6 +633,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? { events: Object.values(latestEvents).sort((a, b) => a.start - b.start) }
         : {}),
     })
+    // 说话人 lane 本地同步 (零请求): 批量操作同样改变事件边界/归属
+    if (latestEvents) get().syncSpeakerLanesFromEvents(latestEvents)
     if (ws && newPatches.length > 0 && latestEvents) {
       await get().fetchReviewFlags(ws)
     }
@@ -590,16 +643,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (failedIds.length > 0) {
       set({ error: `批量应用失败 ${failedIds.length}/${submittedCount} 条 (${failedIds.join(', ')})，失败条目已保留` })
     }
+    get()._logOp('applyAllDrafts', failedIds.length === 0, performance.now() - t0,
+      `${newPatches.length}/${submittedCount} 成功${failedIds.length ? `, ${failedIds.length} 失败` : ''}`,
+      failedIds.length > 0 ? `失败: ${failedIds.join(', ')}` : '')
     return newPatches.length
   },
 
   discardAllDrafts: () => {
+    const n = get().pendingDrafts.size
     set({ pendingDrafts: new Map() })
+    get()._logOp('discardAllDrafts', true, 0, `${n} drafts 丢弃`)
   },
 
   undoLastPatch: async () => {
+    const t0 = performance.now()
     const patches = get().appliedPatches
-    if (patches.length === 0) return { ok: false, patch: null }
+    if (patches.length === 0) {
+      get()._logOp('undoLastPatch', false, performance.now() - t0, '', '无已应用补丁')
+      return { ok: false, patch: null }
+    }
     const removed = patches[patches.length - 1]
     const ws = get().workspace
 
@@ -612,13 +674,16 @@ export const useAppStore = create<AppState>((set, get) => ({
         body: JSON.stringify({ workspace: ws }),
       })
     } catch (e) {
-      set({ error: `撤销失败: ${e instanceof Error ? e.message : String(e)}` })
+      const msg = e instanceof Error ? e.message : String(e)
+      set({ error: `撤销失败: ${msg}` })
+      get()._logOp('undoLastPatch', false, performance.now() - t0, '', msg, removed.opcode, removed.targets?.[0])
       return { ok: false, patch: null }
     }
     if (!res.ok) {
       const detail = await res.json().catch(() => ({}))
       const msg = (detail as any).detail || (detail as any).error || `HTTP ${res.status}`
       set({ error: `撤销失败: ${msg}` })
+      get()._logOp('undoLastPatch', false, performance.now() - t0, '', msg, removed.opcode, removed.targets?.[0])
       return { ok: false, patch: null }
     }
 
@@ -634,6 +699,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     get().fetchSpeakerLanes(ws)
     get().fetchReviewFlags(ws)
 
+    get()._logOp('undoLastPatch', true, performance.now() - t0,
+      `${Object.keys(serverEvents).length} events`, '', removed.opcode, removed.targets?.[0])
     return { ok: true, patch: removed }
   },
 
@@ -721,6 +788,56 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // ── Speaker Review ──
   setSpeakerLanes: (lanes) => set({ speakerLanes: lanes }),
+  syncSpeakerLanesFromEvents: (serverEvents) => {
+    // P3-E2: apply 响应快照本地重建 lanes (零请求) — 拖拽/resize/assign 改变事件
+    // 边界与归属, 说话人界面以 speakerLanes 渲染, 不刷则"只有 patch 没有 UI 变化"
+    if (Object.keys(serverEvents).length === 0) return
+    set(state => {
+      const events = Object.values(serverEvents) as EventViewModel[]
+      const byId = new Map(events.map(e => [e.id, e]))
+      // 保留原 lane 顺序与元数据 (display_name/color/voice_id); segments 以快照为准
+      // 重建 — 快照是编辑后全量事件 (唯一事实源的投影)
+      const lanes = state.speakerLanes.map(lane => {
+        const segs = lane.segments.flatMap(seg => {
+          const ev = byId.get(seg.eventId || seg.id || '')
+          if (!ev) return []
+          if (ev.speaker && ev.speaker !== lane.speaker) return []  // 换 lane 的段移走
+          return [{
+            ...seg,
+            start: ev.start, end: ev.end,
+            text: ev.text, translation: ev.translation,
+            confidence: ev.confidence ?? seg.confidence,
+          }]
+        })
+        return { ...lane, segments: segs }
+      })
+      // 快照中出现在新 lane 的事件 (speaker 变更) 追加到目标 lane
+      const LANE_COLORS = ['#FF9800', '#2196F3', '#4CAF50', '#9C27B0', '#E91E63', '#00BCD4']
+      for (const ev of events) {
+        const spk = ev.speaker || 'UNKNOWN'
+        let lane = lanes.find(l => l.speaker === spk)
+        if (!lane) {
+          lane = {
+            speaker: spk, display_name: ev.displayName || spk,
+            voice_id: '', color: LANE_COLORS[lanes.length % LANE_COLORS.length],
+            segments: [], segment_count: 0, total_duration: 0,
+          }
+          lanes.push(lane)
+        }
+        if (lane.segments.some(s => (s.eventId || s.id) === ev.id)) continue
+        lane.segments.push({
+          id: ev.id, eventId: ev.id, start: ev.start, end: ev.end,
+          text: ev.text, translation: ev.translation,
+          confidence: ev.confidence ?? 0.9,
+        })
+      }
+      for (const lane of lanes) {
+        lane.segment_count = lane.segments.length
+        lane.total_duration = lane.segments.reduce((s, x) => s + (x.end - x.start), 0)
+      }
+      return { speakerLanes: lanes }
+    })
+  },
   setSelectedSpeaker: (speakerId) => set({ selectedSpeakerId: speakerId, selectedSpeakerIds: speakerId ? [speakerId] : [] }),
   toggleSpeakerSelection: (speakerId) => {
     const ids = get().selectedSpeakerIds
@@ -820,6 +937,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   // ── Workspace Actions (TRV-PLAN-2026-001 §8.2) ──
 
   loadWorkspace: async (workspacePath) => {
+    const t0 = performance.now()
     set({ loading: true, error: null, dataSource: 'workspace' })
 
     try {
@@ -923,11 +1041,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (loadErrors.length > 0) {
         set({ error: `部分数据加载失败: ${loadErrors.join('、')}` })
       }
+      get()._logOp('loadWorkspace', loadErrors.length === 0, performance.now() - t0,
+        `${events.length} events${loadErrors.length ? `, 部分失败: ${loadErrors.join('、')}` : ''}`,
+        loadErrors.length > 0 ? `部分数据加载失败: ${loadErrors.join('、')}` : '')
     } catch (err) {
       set({
         loading: false,
         error: err instanceof Error ? err.message : '未知错误',
       })
+      get()._logOp('loadWorkspace', false, performance.now() - t0, '',
+        err instanceof Error ? err.message : '未知错误')
     }
   },
 

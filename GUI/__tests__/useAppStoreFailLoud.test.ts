@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { useAppStore } from '../store/useAppStore'
 import type { PatchDraft } from '../types/modes'
+import type { EventViewModel } from '../types'
 
 function jsonResponse(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -62,9 +63,13 @@ const resetStore = () => useAppStore.setState({
   events: [],
   reviewEntries: [],
   reviewTranslatedSrtPath: '',
+  uiOps: [],
 })
 
-beforeEach(resetStore)
+beforeEach(() => {
+  resetStore()
+  localStorage.clear()
+})
 afterEach(() => vi.unstubAllGlobals())
 
 describe('applyDraft 失败必须响亮 (禁止兜底)', () => {
@@ -426,5 +431,200 @@ describe('saveReviewEntries 事件关联 (entry_N 修复)', () => {
 
     await expect(useAppStore.getState().saveReviewEntries()).rejects.toThrow('无法关联 timeline 事件')
     expect(fetches).toHaveLength(0)
+  })
+})
+
+describe('P3-E2 说话人 lane 随编辑本地同步 (拖拽后 UI 必须渲染)', () => {
+  const evtFactory = (overrides: Record<string, unknown> = {}): EventViewModel => ({
+    id: 'evt_001', start: 1, end: 2, speaker: 'S1', displayName: '说话人一',
+    text: 'Hello', translation: '你好', source: '', confidence: 0.9,
+    visualState: { hasPatches: false, hasAiSuggestion: false, isSelected: false, isMultiSelected: false },
+    patches: [], passTrace: [], ...overrides,
+  })
+  const laneFactory = (overrides: Record<string, unknown> = {}) => ({
+    speaker: 'S1', display_name: '说话人一', voice_id: 'v1', color: '#FF9800',
+    segments: [{ id: 'evt_001', eventId: 'evt_001', start: 1, end: 2, text: 'Hello', translation: '你好', confidence: 0.9 }],
+    segment_count: 1, total_duration: 1,
+    ...overrides,
+  })
+
+  it('sync: 事件边界变化 → lane 段位置/统计更新 (拖拽 resize 的 UI 渲染路径)', () => {
+    useAppStore.setState({ speakerLanes: [laneFactory()] })
+    useAppStore.getState().syncSpeakerLanesFromEvents({
+      evt_001: evtFactory({ start: 7.5, end: 9.0 }),
+    })
+    const lane = useAppStore.getState().speakerLanes[0]
+    expect(lane.segments[0].start).toBe(7.5)
+    expect(lane.segments[0].end).toBe(9.0)
+    expect(lane.segment_count).toBe(1)
+    expect(lane.total_duration).toBeCloseTo(1.5)
+    // lane 元数据保留 (显示名/声线/颜色不丢)
+    expect(lane.display_name).toBe('说话人一')
+    expect(lane.voice_id).toBe('v1')
+  })
+
+  it('sync: speaker 归属变化的段移入目标 lane, 原 lane 移除', () => {
+    useAppStore.setState({
+      speakerLanes: [
+        laneFactory(),
+        laneFactory({ speaker: 'S2', display_name: '说话人二', segments: [] }),
+      ],
+    })
+    useAppStore.getState().syncSpeakerLanesFromEvents({
+      evt_001: evtFactory({ speaker: 'S2' }),
+    })
+    const lanes = useAppStore.getState().speakerLanes
+    const s1 = lanes.find(l => l.speaker === 'S1')!
+    const s2 = lanes.find(l => l.speaker === 'S2')!
+    expect(s1.segments).toHaveLength(0)
+    expect(s2.segments).toHaveLength(1)
+    expect(s2.segments[0].eventId).toBe('evt_001')
+  })
+
+  it('sync: 快照缺失的段 (merge 删除) 从 lane 移除', () => {
+    useAppStore.setState({
+      speakerLanes: [
+        laneFactory(),
+        laneFactory({
+          speaker: 'S2', display_name: '说话人二',
+          segments: [{ id: 'evt_002', eventId: 'evt_002', start: 5, end: 6, text: 'bye', translation: '再见', confidence: 0.9 }],
+        }),
+      ],
+    })
+    useAppStore.getState().syncSpeakerLanesFromEvents({ evt_001: evtFactory() })
+    const lanes = useAppStore.getState().speakerLanes
+    expect(lanes.find(l => l.speaker === 'S1')!.segments).toHaveLength(1)
+    expect(lanes.find(l => l.speaker === 'S2')!.segments).toHaveLength(0)
+  })
+
+  it('applyDraft 成功后 lanes 本地更新, 无额外 fetchSpeakerLanes 请求 (2 请求保持)', async () => {
+    const urls: string[] = []
+    mockFetchByUrl((url) => {
+      urls.push(url)
+      if (url.includes('/patch/apply')) {
+        return jsonResponse({
+          status: 'applied',
+          events: { evt_001: evtFactory({ start: 0.5, end: 3.0 }) },
+        })
+      }
+      return jsonResponse({ flags: [] })
+    })
+    useAppStore.setState({ speakerLanes: [laneFactory()] })
+    useAppStore.getState().addDraft(draftFactory())
+
+    const ok = await useAppStore.getState().applyDraft('evt_001')
+
+    expect(ok).toBe(true)
+    expect(useAppStore.getState().speakerLanes[0].segments[0].start).toBe(0.5)
+    // 局部刷新不变: 1 apply + 1 flags, 不触发全量 diarization/load
+    expect(urls.some(u => u.includes('/speaker/diarization/load'))).toBe(false)
+    expect(urls.filter(u => u.includes('/patch/apply')).length).toBe(1)
+  })
+})
+
+describe('P3-F 操作审计 ui_ops (调试量化, localStorage 零请求)', () => {
+  const lastOp = () => {
+    const ops = useAppStore.getState().uiOps
+    return ops[ops.length - 1]
+  }
+
+  it('applyDraft 成功 → 记录 opcode/耗时/事件数 + localStorage 持久化', async () => {
+    mockFetchByUrl((url) => {
+      if (url.includes('/patch/apply')) {
+        return jsonResponse({ status: 'applied', events: { evt_001: { id: 'evt_001', start: 0.5, end: 3.0 } } })
+      }
+      return jsonResponse({ flags: [] })
+    })
+    useAppStore.getState().addDraft(draftFactory())
+
+    const ok = await useAppStore.getState().applyDraft('evt_001')
+
+    expect(ok).toBe(true)
+    const op = lastOp()
+    expect(op.op).toBe('applyDraft')
+    expect(op.ok).toBe(true)
+    expect(op.opcode).toBe('SET_TRANSLATION')
+    expect(op.eventId).toBe('evt_001')
+    expect(op.ms).toBeGreaterThanOrEqual(0)
+    expect(op.extra).toContain('1 events')
+    const stored = JSON.parse(localStorage.getItem('ui_ops')!)
+    expect(stored[stored.length - 1].op).toBe('applyDraft')
+  })
+
+  it('applyDraft 失败 → ok:false + error 记录 (失败路径可追溯)', async () => {
+    mockFetchByUrl(() => jsonResponse({ detail: 'evt_001 冲突' }, 409))
+    useAppStore.getState().addDraft(draftFactory())
+
+    await useAppStore.getState().applyDraft('evt_001')
+
+    const op = lastOp()
+    expect(op.ok).toBe(false)
+    expect(op.error).toContain('冲突')
+    expect(op.opcode).toBe('SET_TRANSLATION')
+  })
+
+  it('undoLastPatch 成功 → 记录撤销与事件数', async () => {
+    mockFetchByUrl((url) => {
+      if (url.includes('/patch/undo')) {
+        return jsonResponse({ status: 'undone', patch_id: 'p1', events: { evt_001: { id: 'evt_001', start: 7, end: 8 } } })
+      }
+      return jsonResponse({ patches: [], flags: [], speaker_lanes: [], voice_presets: [] })
+    })
+    useAppStore.setState({ appliedPatches: [{
+      patch_id: 'p1', opcode: 'SET_TRANSLATION', targets: ['evt_001'],
+      payload: {}, reason: [], score: 1, confidence: 1,
+      parent_version: '', idempotency_key: '', author: 'user', timestamp: '',
+    }] })
+
+    const result = await useAppStore.getState().undoLastPatch()
+
+    expect(result.ok).toBe(true)
+    const op = lastOp()
+    expect(op.op).toBe('undoLastPatch')
+    expect(op.ok).toBe(true)
+    expect(op.opcode).toBe('SET_TRANSLATION')
+    expect(op.extra).toContain('1 events')
+  })
+
+  it('discardAllDrafts → 记录丢弃数量', () => {
+    useAppStore.getState().addDraft(draftFactory())
+    useAppStore.getState().addDraft(draftFactory({ eventId: 'evt_002' }))
+
+    useAppStore.getState().discardAllDrafts()
+
+    const op = lastOp()
+    expect(op.op).toBe('discardAllDrafts')
+    expect(op.ok).toBe(true)
+    expect(op.extra).toContain('2')
+  })
+
+  it('loadWorkspace 部分失败 → ok:false + 失败原因 (首次加载耗时可量化)', async () => {
+    mockFetchByUrl((url) => {
+      if (url.includes('/project/manifest/resolve')) {
+        return jsonResponse({ manifest: { video_path: 'x.mp4', pipeline: {} } })
+      }
+      if (url.includes('/timeline/load')) {
+        return jsonResponse({ inspector_data: { evt_001: { id: 'evt_001', start: 0, end: 1 } } })
+      }
+      if (url.includes('/speaker/diarization/waveform')) {
+        return jsonResponse({ detail: 'boom' }, 500)
+      }
+      return jsonResponse({ patches: [], flags: [] })
+    })
+
+    await useAppStore.getState().loadWorkspace('test_ws')
+
+    const op = lastOp()
+    expect(op.op).toBe('loadWorkspace')
+    expect(op.ok).toBe(false)
+    expect(op.error).toContain('波形')
+    expect(op.extra).toContain('1 events')
+  })
+
+  it('ui_ops 环形上限 300 条 (内存不膨胀)', () => {
+    for (let i = 0; i < 320; i++) {
+      useAppStore.getState()._logOp('applyDraft', true, 1, '', '', 'X', 'e')
+    }
+    expect(useAppStore.getState().uiOps.length).toBe(300)
   })
 })

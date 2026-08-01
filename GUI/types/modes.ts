@@ -129,6 +129,7 @@ export interface SpeakerLaneData {
 }
 
 export interface SpeakerSegmentData {
+  id?: string
   start: number; end: number
   text: string
   translation?: string

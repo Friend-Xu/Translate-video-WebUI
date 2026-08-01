@@ -69,7 +69,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
   const [mergeTarget, setMergeTarget] = useState<string | null>(null)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [createName, setCreateName] = useState('')
-  const [sortBy, setSortBy] = useState<'duration' | 'confidence' | 'conflict'>('duration')
+  const [sortBy, setSortBy] = useState<'fixed' | 'duration' | 'confidence' | 'conflict'>('fixed')
   const [editingName, setEditingName] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null)
@@ -168,8 +168,10 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
     return result
   }, [speakerLanes])
 
-  // Sort speakers by chosen criteria
+  // Sort speakers by chosen criteria — 默认 fixed: 轨道固定 (store 顺序),
+  // 编辑操作 (拖拽/resize/assign) 只动色块, 轨道行永不重排
   const sortedSpeakers = useMemo(() => {
+    if (sortBy === 'fixed') return speakerLanes
     const arr = [...speakerLanes]
     const qs = speakerQualities
     switch (sortBy) {
@@ -560,6 +562,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
         <FormControl size="small" sx={{ minWidth: 100 }}>
           <Select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)}
             sx={{ fontSize: '0.7rem' }}>
+            <MenuItem value="fixed" sx={{ fontSize: '0.7rem' }}>轨道固定</MenuItem>
             <MenuItem value="duration" sx={{ fontSize: '0.7rem' }}>按时长</MenuItem>
             <MenuItem value="confidence" sx={{ fontSize: '0.7rem' }}>按置信度</MenuItem>
             <MenuItem value="conflict" sx={{ fontSize: '0.7rem' }}>按冲突率</MenuItem>
@@ -635,7 +638,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
             const isSelected = selectedSpeakerId === lane.speaker
             const isMulti = selectedSpeakerIds.includes(lane.speaker)
             return (
-              <Box key={lane.speaker} onClick={(e) => handleSelectSpeaker(lane.speaker, e)}
+              <Box key={lane.speaker} data-lane-id={lane.speaker} onClick={(e) => handleSelectSpeaker(lane.speaker, e)}
                 sx={{
                   p: 1, cursor: 'pointer', height: LANE_HEIGHT,
                   display: 'flex', flexDirection: 'column', justifyContent: 'center',
@@ -838,6 +841,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
                             handleSegmentClick(segId, seg.start)
                           }}
                           onContextMenu={(e) => handleSegmentRightClick(segId, e)}
+                          data-segment-id={segId}
                           draggable
                           onDragStart={(e) => {
                             console.log('🔵 DRAG_START', segId)
@@ -859,7 +863,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
                         '&:hover': { bgcolor: 'rgba(255,255,255,0.4)' },
                         zIndex: 8,
                       }} />
-                      <Box onMouseDown={(e) => handleResizeStart(segId, 'right', e, seg, lane.speaker)} sx={{
+                      <Box onMouseDown={(e) => handleResizeStart(segId, 'right', e, seg, lane.speaker)} data-resize-right={segId} sx={{
                         position: 'absolute', left: displayLeft + displayWidth - 12, top: 10, height: LANE_HEIGHT - 20, width: '12px',
                         cursor: 'col-resize',
                         bgcolor: 'rgba(0,0,0,0.18)',
