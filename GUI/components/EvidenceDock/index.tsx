@@ -28,8 +28,8 @@ interface Props {
 const TAB_LABELS: Record<DockView, string> = {
   log: '日志',
   aiTrace: 'AI 追踪',
-  patchDiff: '补丁差异',
-  taskOutput: '任务输出',
+  patchDiff: '补丁列表',
+  taskOutput: '任务状态',
   debug: '调试',
 }
 

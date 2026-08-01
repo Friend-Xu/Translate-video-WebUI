@@ -74,7 +74,7 @@ export default function GlobalBar({ projectName, workspace, cpuUsage, memUsage, 
             {cpuUsage == null && <Typography variant="caption">系统状态不可用</Typography>}
           </Box>
         } arrow>
-          <IconButton size="small" title="GPU Status"><MemoryIcon sx={{ fontSize: 18 }} /></IconButton>
+          <IconButton size="small"><MemoryIcon sx={{ fontSize: 18 }} /></IconButton>
         </Tooltip>
       </Box>
     </Box>

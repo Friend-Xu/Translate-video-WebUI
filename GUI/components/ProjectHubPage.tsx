@@ -258,7 +258,7 @@ export default function ProjectHubPage() {
   // ── Hub View ──
   if (phase === 'hub') {
     return (
-      <Box sx={{ height: '100%', overflow: 'auto', p: 4 }}>
+      <Box sx={{ height: '100%', overflow: 'auto', p: 4, maxWidth: 1360, mx: 'auto' }}>
         <Box sx={{ mb: 4, textAlign: 'center' }}>
           <Typography variant="h4" fontWeight={700} gutterBottom>Timeline Runtime System</Typography>
           <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 600, mx: 'auto', mb: 1.5 }}>

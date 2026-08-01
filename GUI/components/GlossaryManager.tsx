@@ -206,7 +206,7 @@ export default function GlossaryManager() {
       </Box>
 
       {/* Body */}
-      <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden', maxWidth: 1360, mx: 'auto', width: '100%' }}>
         {/* Left: dict list */}
         <Box sx={{ width: 220, flexShrink: 0, borderRight: 1, borderColor: 'divider', p: 2, overflow: 'auto' }}>
           <Typography variant="caption" color="text.secondary" fontWeight={600} gutterBottom>

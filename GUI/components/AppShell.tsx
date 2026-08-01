@@ -68,13 +68,25 @@ export default function AppShell({
 
   const railWidth = railOpen ? RAIL_WIDTH : 0
 
+  // 动态网格: inspector/dock 只在有内容时占列/行, 否则 arena 撑满 — 避免空占位把内容挤向左侧
+  const hasInspector = inspectorContent !== undefined && inspectorContent !== null
+  const hasDock = dockContent !== undefined && dockContent !== null
+
+  const gridAreas = hasInspector && hasDock
+    ? '"pulse pulse pulse" "rail arena inspector" "dock dock dock"'
+    : hasInspector
+      ? '"pulse pulse pulse" "rail arena inspector"'
+      : hasDock
+        ? '"pulse pulse" "rail arena" "dock dock"'
+        : '"pulse pulse" "rail arena"'
+
   return (
     <Box
       sx={{ height: '100vh', display: 'grid', overflow: 'hidden' }}
       style={{
-        gridTemplateAreas: '"pulse pulse pulse" "rail arena inspector" "dock dock dock"',
-        gridTemplateRows: `${PULSE_HEIGHT}px 1fr ${dockH}px`,
-        gridTemplateColumns: `${railWidth}px 1fr ${inspectorW}px`,
+        gridTemplateAreas: gridAreas,
+        gridTemplateRows: hasDock ? `${PULSE_HEIGHT}px 1fr ${dockH}px` : `${PULSE_HEIGHT}px 1fr`,
+        gridTemplateColumns: hasInspector ? `${railWidth}px 1fr ${inspectorW}px` : `${railWidth}px 1fr`,
       }}
     >
       {/* Pulse Bar */}
@@ -117,35 +129,39 @@ export default function AppShell({
         {arenaContent || <RegionPlaceholder name="Timeline Arena" role="main" />}
       </Box>
 
-      {/* Inspector */}
-      <Box gridArea="inspector" sx={{ position: 'relative' }}>
-        <Box
-          onMouseDown={onMouseDownInspector}
-          sx={{
-            position: 'absolute', left: 0, top: 0, bottom: 0, width: 5,
-            cursor: 'col-resize', zIndex: 10,
-            '&:hover': { bgcolor: 'primary.light', opacity: 0.5 },
-          }}
-        />
-        <Box role="complementary" sx={{ height: '100%', overflow: 'hidden auto', pl: 0.5 }}>
-          {inspectorContent !== undefined ? inspectorContent : <RegionPlaceholder name="Inspector" role="complementary" />}
+      {/* Inspector — 无内容时不渲染, arena 撑满 */}
+      {hasInspector && (
+        <Box gridArea="inspector" sx={{ position: 'relative' }}>
+          <Box
+            onMouseDown={onMouseDownInspector}
+            sx={{
+              position: 'absolute', left: 0, top: 0, bottom: 0, width: 5,
+              cursor: 'col-resize', zIndex: 10,
+              '&:hover': { bgcolor: 'primary.light', opacity: 0.5 },
+            }}
+          />
+          <Box role="complementary" sx={{ height: '100%', overflow: 'hidden auto', pl: 0.5 }}>
+            {inspectorContent}
+          </Box>
         </Box>
-      </Box>
+      )}
 
-      {/* Dock */}
-      <Box gridArea="dock" role="contentinfo" sx={{ position: 'relative', borderTop: 1, borderColor: 'divider' }}>
-        <Box
-          onMouseDown={onMouseDownDock}
-          sx={{
-            position: 'absolute', left: 0, right: 0, top: -3, height: 6,
-            cursor: 'row-resize', zIndex: 10,
-            '&:hover': { bgcolor: 'primary.light', opacity: 0.5 },
-          }}
-        />
-        <Box sx={{ height: '100%', overflow: 'hidden' }}>
-          {dockContent || <RegionPlaceholder name="Evidence Dock" role="contentinfo" />}
+      {/* Dock — 无内容时不渲染 */}
+      {hasDock && (
+        <Box gridArea="dock" role="contentinfo" sx={{ position: 'relative', borderTop: 1, borderColor: 'divider' }}>
+          <Box
+            onMouseDown={onMouseDownDock}
+            sx={{
+              position: 'absolute', left: 0, right: 0, top: -3, height: 6,
+              cursor: 'row-resize', zIndex: 10,
+              '&:hover': { bgcolor: 'primary.light', opacity: 0.5 },
+            }}
+          />
+          <Box sx={{ height: '100%', overflow: 'hidden' }}>
+            {dockContent}
+          </Box>
         </Box>
-      </Box>
+      )}
     </Box>
   )
 }

@@ -1483,7 +1483,6 @@ Select/Toggle 类型即时发送。
 | 端点 | 方法 | 功能 |
 |------|------|------|
 | `/api/timeline/config/apply` | POST | 应用单个 ConfigChange（OVERRIDE_CONFIG patch） |
-| `/api/timeline/config/batch` | POST | 批量应用多个配置变更 |
 | `/api/timeline/config/resolve` | GET | 获取事件的三级合并后最终配置 |
 | `/api/config/slots` | GET | 列出所有可配置槽位及其 Schema |
 

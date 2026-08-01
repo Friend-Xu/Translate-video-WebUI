@@ -87,7 +87,7 @@ export default function ExportView({ events }: Props) {
         <Button size="small" startIcon={<SettingsIcon />} onClick={() => setMode('settings')}>项目设置</Button>
       </Box>
 
-      <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
+      <Box sx={{ flex: 1, overflow: 'auto', p: 3, maxWidth: 1360, mx: 'auto', width: '100%' }}>
         {/* Readiness */}
         <Box sx={{ mb: 3 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>

@@ -1598,35 +1598,6 @@ async def post_config(payload: dict) -> dict:
     return {"status": "ok"}
 
 
-class PreviewPromptRequest(BaseModel):
-    system_prompt: str = ""
-    batch_prompt: str = ""
-    source_lang: str = "ja"
-    target_lang: str = "简体中文"
-    fmt: str = "numbered_list"
-
-
-@app.post("/api/translate/preview-prompt")
-async def preview_prompt(req: PreviewPromptRequest) -> dict:
-    """解析 prompt 变量并返回预览。"""
-    from core.compat import compat_resolve_prompt_variables, compat_get_lang_labels
-    variables = {
-        "source_lang": compat_get_lang_labels().get(req.source_lang, req.source_lang),
-        "target_lang": compat_get_lang_labels().get(req.target_lang, req.target_lang),
-        "fmt": req.fmt,
-        "retry": "false",
-        "items": "<1> 示例字幕 1\n<2> 示例字幕 2\n<3> 示例字幕 3",
-        "current_text": "示例字幕文本",
-        "context": "前文: 上下文示例\n当前: 示例字幕文本\n后文: 后续字幕",
-    }
-    result = {}
-    if req.system_prompt:
-        result["system_preview"] = resolve_prompt_variables(req.system_prompt, variables)
-    if req.batch_prompt:
-        result["batch_preview"] = resolve_prompt_variables(req.batch_prompt, variables)
-    return result
-
-
 # ---------------------------------------------------------------------------
 # Model Manager endpoints
 # ---------------------------------------------------------------------------
@@ -1785,25 +1756,31 @@ async def preview_chattts_voice(req: ChatTTSPreviewRequest) -> dict:
             _chattts_engine_config = None
 
 
+def _release_chattts_engine_if_loaded() -> None:
+    """释放 ChatTTS 预览引擎 — 流水线启动前归还 GPU 显存 (3060Ti 显存紧张)。"""
+    global _chattts_engine, _chattts_engine_config
+    if _chattts_engine is None:
+        return
+    try:
+        _chattts_engine.cleanup()
+    except Exception as e:
+        logger.warning("ChatTTS 预览引擎释放失败: %s", e)
+    _chattts_engine = None
+    _chattts_engine_config = None
+
+
 @app.post("/api/tts/release-chattts")
 async def release_chattts_engine() -> dict:
     """释放 ChatTTS 预览引擎，归还 GPU 显存给流水线使用。"""
-    global _chattts_engine, _chattts_engine_config
-    if _chattts_engine is not None:
-        try:
-            _chattts_engine.cleanup()
-        except Exception:
-            pass
-    _chattts_engine = None
-    _chattts_engine_config = None
+    _release_chattts_engine_if_loaded()
     import gc
     gc.collect()
     try:
         import torch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("torch 显存清理失败: %s", e)
     return {"status": "released"}
 
 
@@ -1848,29 +1825,6 @@ async def tts_preview(req: TTSPreviewRequest) -> dict:
             os.unlink(out_path)
         except Exception:
             pass
-
-
-class TTSResynthesizeRequest(BaseModel):
-    workspace: str = ""
-    event_ids: list[str] = []
-
-
-@app.post("/api/tts/resynthesize")
-async def tts_resynthesize(req: TTSResynthesizeRequest) -> dict:
-    """标记 segment 为 dirty，触发局部 TTS 重算 (T4.4)。"""
-    ws = req.workspace
-    if not ws or not os.path.isdir(ws):
-        raise HTTPException(status_code=400, detail="无效的 workspace")
-
-    dirty_events = []
-    for eid in req.event_ids:
-        dirty_path = os.path.join(ws, "05_tts", f"TTS_{eid}.dirty")
-        os.makedirs(os.path.dirname(dirty_path), exist_ok=True)
-        with open(dirty_path, "w") as f:
-            f.write(str(time.time()))
-        dirty_events.append(eid)
-
-    return {"dirty_count": len(dirty_events), "dirty_events": dirty_events}
 
 
 # ---------------------------------------------------------------------------
@@ -3807,12 +3761,6 @@ class ConfigApplyRequest(BaseModel):
     value: object = None
     op: str = "override"  # "override" | "set" | "reset"
 
-class ConfigBatchRequest(BaseModel):
-    workspace: str = ""
-    event_ids: list[str] = []
-    slot: str = "tts"
-    config_block: dict = {}
-
 @app.post("/api/timeline/config/apply")
 async def timeline_config_apply(req: ConfigApplyRequest):
     """Apply a config override to a single event."""
@@ -3846,24 +3794,6 @@ async def timeline_config_apply(req: ConfigApplyRequest):
                 "id": patch.id,
                 "op": patch.op.value,
                 "target_id": patch.target_id,
-                "value": patch.value,
-            }
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/timeline/config/batch")
-async def timeline_config_batch(req: ConfigBatchRequest):
-    """Batch apply config to multiple events."""
-    try:
-        from core.runtime.patch_factory import make_batch_set_config
-        patch = make_batch_set_config(req.event_ids, req.slot, req.config_block)
-        return {
-            "status": "batch_patch_created",
-            "patch": {
-                "id": patch.id,
-                "op": patch.op.value,
-                "targets": patch.targets,
                 "value": patch.value,
             }
         }
@@ -4333,6 +4263,9 @@ def _run_core_pipeline_sync(job: Job, req: CoreRunRequest, flags: dict | None = 
     """
     import subprocess as _sp
 
+    # 流水线需要 GPU 显存 — 先释放 ChatTTS 预览引擎 (抽卡试听后常驻 2.37GB)
+    _release_chattts_engine_if_loaded()
+
     sse_handler = SSELogHandler(job.append_log)
     root_logger = logging.getLogger()
     root_logger.addHandler(sse_handler)
@@ -4794,28 +4727,6 @@ async def start_export(req: ExportRunRequest) -> dict:
     asyncio.create_task(_run_core_job(job, export_req))
 
     return {"job_id": job_id, "workspace_path": workspace}
-
-
-# ---------------------------------------------------------------------------
-# Schema validation endpoint
-# ---------------------------------------------------------------------------
-
-class ValidateRequest(BaseModel):
-    workspace: str = ""
-
-@app.post("/api/validate")
-async def validate_workspace_artifacts(req: ValidateRequest):
-    """验证指定 workspace 下所有关键 JSON 工件是否符合 schema。"""
-    if not req.workspace or not Path(req.workspace).is_dir():
-        raise HTTPException(status_code=400, detail="工作目录不存在")
-    try:
-        from core.compat import compat_validate_workspace
-        results = compat_validate_workspace(req.workspace)
-        all_ok = all(results.values()) and len(results) > 0
-        return {"ok": all_ok, "results": results,
-                "message": "所有工件通过校验" if all_ok else "存在校验失败项，请查看 results"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"校验失败: {e}")
 
 
 # ---------------------------------------------------------------------------

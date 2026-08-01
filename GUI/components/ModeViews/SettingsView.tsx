@@ -13,6 +13,7 @@ import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOverRounded'
 import SubtitlesIcon from '@mui/icons-material/SubtitlesRounded'
 import FileDownloadIcon from '@mui/icons-material/FileDownloadRounded'
 import PlayArrowIcon from '@mui/icons-material/PlayArrowRounded'
+import MemoryIcon from '@mui/icons-material/MemoryRounded'
 import EditNoteIcon from '@mui/icons-material/EditNoteRounded'
 import { useAppStore } from '../../store/useAppStore'
 import { CustomPromptDialog } from '../CustomPromptDialog'
@@ -80,6 +81,7 @@ export default function SettingsView() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [auditionLoading, setAuditionLoading] = useState(false)
+  const [releaseMsg, setReleaseMsg] = useState<string | null>(null)
 
   const PREVIEW_DEFAULTS: Record<string, string> = {
     chattts: '这是一个ChatTTS语音合成测试案例。',
@@ -227,6 +229,21 @@ export default function SettingsView() {
     finally { setAuditionLoading(false) }
   }
 
+  const handleReleaseChatTTS = async () => {
+    setReleaseMsg(null)
+    try {
+      const res = await fetch('/api/tts/release-chattts', { method: 'POST' })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }))
+        setReleaseMsg(`释放失败: ${err.detail || res.statusText}`)
+        return
+      }
+      setReleaseMsg('已释放 — GPU 显存已归还给流水线')
+    } catch (e: any) {
+      setReleaseMsg(`释放失败: ${e.message}`)
+    }
+  }
+
   const handleEdgeAudition = async () => {
     setAuditionLoading(true)
     try {
@@ -323,7 +340,7 @@ export default function SettingsView() {
       </Box>
 
       {/* Card Grid */}
-      <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
+      <Box sx={{ flex: 1, overflow: 'auto', p: 3, maxWidth: 1360, mx: 'auto', width: '100%' }}>
         <Grid container spacing={2}>
           {/* 1. 音频预处理 */}
           <Grid size={{ xs: 12, sm: 6, md: 4 }}>
@@ -530,9 +547,22 @@ export default function SettingsView() {
                 <Button variant="outlined" size="small" fullWidth
                   startIcon={auditionLoading ? <CircularProgress size={14} /> : <PlayArrowIcon />}
                   onClick={handleAudition} disabled={auditionLoading}
-                  sx={{ mb: 2 }}>
+                  sx={{ mb: 1 }}>
                   {auditionLoading ? '合成中…' : '试听音色'}
                 </Button>
+
+                <Button size="small" color="inherit" fullWidth
+                  startIcon={<MemoryIcon />} onClick={handleReleaseChatTTS}
+                  sx={{ mb: 1, fontSize: '0.7rem' }}>
+                  释放显存 (归还给流水线)
+                </Button>
+                {releaseMsg && (
+                  <Typography variant="caption"
+                    color={releaseMsg.startsWith('释放失败') ? 'error' : 'success.main'}
+                    sx={{ display: 'block', mb: 1, fontSize: '0.65rem' }}>
+                    {releaseMsg}
+                  </Typography>
+                )}
 
                 <Typography variant="caption" color="text.secondary">
                   温度: {config.chattts_temperature ?? 0.3}

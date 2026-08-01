@@ -34,19 +34,6 @@ def compat_load_checkpoint(workspace_dir: str) -> dict | None:
         return None
 
 
-# ── Translation ─────────────────────────────────────────────────
-
-def compat_resolve_prompt_variables(video_path: str, target_lang: str) -> dict:
-    """解析翻译提示变量。"""
-    from SRT.SRT_Translator import resolve_prompt_variables
-    return resolve_prompt_variables(video_path, target_lang)
-
-
-def compat_get_lang_labels() -> dict:
-    from SRT.SRT_Translator import _LANG_LABELS
-    return dict(_LANG_LABELS)
-
-
 # ── Model Manager ───────────────────────────────────────────────
 
 def compat_model_manager():
@@ -93,13 +80,6 @@ def compat_optimize_external_srt(chinese_srt: str, source_srt: str, **kw):
 def compat_load_ext_subtitle_config():
     from pipeline.external_subtitle_optimizer import load_ext_subtitle_config
     return load_ext_subtitle_config()
-
-
-# ── Schema validation ───────────────────────────────────────────
-
-def compat_validate_workspace(workspace_dir: str) -> dict:
-    from pipeline.schema_validator import validate_workspace as _vw
-    return _vw(workspace_dir)
 
 
 # ── Process status ──────────────────────────────────────────────
