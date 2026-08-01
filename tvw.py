@@ -159,48 +159,12 @@ def _resolve_video_for_ws(ws_dir: str) -> str:
 
 
 def _build_pass_factory_for(args, video_path: str, ws_dir: str, lang: str, gcfg):
-    """构建 pass 工厂 — cmd_run / cmd_stage / cmd_validate / cmd_export 共用。"""
-    from core.engine.pass_factory import create_pass_factory
+    """构建 pass 工厂 — cmd_run / cmd_stage / cmd_validate / cmd_export 共用。
 
-    # 导入策略模块以触发装饰器注册
-    import core.quality.logic_gate_strategy  # noqa: F401 — 注册 logic_gate
-    import core.quality.xcomet_strategy      # noqa: F401 — 注册 xcomet
-    from core.quality.protocol import create_strategy as create_quality_strategy
-
-    stem = os.path.splitext(os.path.basename(video_path))[0]
-    extract_dir = os.path.join(ws_dir, "01_extract")
-    audio_path = os.path.join(extract_dir, f"{stem}_extracted.wav")
-    vocals_path = os.path.join(extract_dir, f"{stem}_vocals.wav")
-
-    quality_name = gcfg.project.translation.get("quality_strategy", "logic_gate")
-    quality_strategy = create_quality_strategy(quality_name, gcfg)
-
-    # 构建字幕配置（仅非 None 值传入）
-    caption_config = {}
-    for attr in ("caption_font", "caption_font_size", "caption_font_color",
-                 "caption_stroke_width", "caption_stroke_color", "caption_bg_color",
-                 "caption_alignment", "caption_position", "caption_max_lines",
-                 "caption_width_ratio"):
-        val = getattr(args, attr, None)
-        if val is not None:
-            caption_config[attr] = val
-
-    return create_pass_factory(
-        translate_fn=None,
-        target_lang=lang,
-        video_path=video_path,
-        audio_path=audio_path,
-        output_dir=ws_dir,
-        workspace_dir=ws_dir,
-        engine=getattr(args, "engine", None) or "edge",
-        quality_strategy=quality_strategy,
-        num_workers=getattr(args, "num_workers", 1),
-        enable_speaker_diarization=getattr(args, "enable_speaker_diarization", False),
-        num_speakers=getattr(args, "num_speakers", 0),
-        enable_emotion=getattr(args, "enable_emotion", False),
-        verification_mode=getattr(args, "verification_mode", None),
-        caption_config=caption_config if caption_config else None,
-    )
+    参数映射统一在 core/compat/cli_bridge.py (架构收束, 单一映射)。
+    """
+    from core.compat.cli_bridge import build_pass_factory
+    return build_pass_factory(args, video_path, ws_dir, lang, gcfg)
 
 
 def _run_core_pipeline(args) -> None:

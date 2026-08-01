@@ -2821,98 +2821,31 @@ class SpeakerLoadRequest(BaseModel):
 
 
 def _tl_has_empty_timeline(tl_path: str) -> bool:
-    """Check if timeline.json exists but has an empty 'events' (v2) or 'timeline' (v1) array."""
-    try:
-        tl = _load_timeline_v2(tl_path)
-        return len(tl.get("events", tl.get("timeline", []))) == 0
-    except Exception:
+    """Check if timeline.json is missing or has an empty events array."""
+    if not os.path.isfile(tl_path):
         return True
+    tl = _load_timeline_v2(tl_path)  # v1/损坏 → 显式 raise (禁止静默兜底)
+    return len(tl.get("events", [])) == 0
 
 
 def _load_timeline_v2(path: str) -> dict:
-    """统一读 timeline.json，自动检测并迁移旧格式到 v2 dict。
+    """统一读 v2 timeline.json (唯一事实源)。
 
-    返回 v2 格式 dict: { schema_version, project, events, speakers, metadata }
-    旧格式 ({ audio_id, version, timeline[], speaker_map{}, metadata }) 自动迁移。
+    仅接受 v2 格式 ({ schema_version: "2.0", events, speakers, metadata })。
+    v1 旧格式必须先用 tools/normalize_v1_timeline.py 一次性迁移 —
+    架构收束后运行时不再做静默迁移 (禁止兜底)。
     """
     import json as _json
     with open(path, "r", encoding="utf-8") as f:
         data = _json.load(f)
 
-    # 已是 v2 格式
-    if "schema_version" in data and data["schema_version"] == "2.0":
-        return data
-
-    # 旧格式迁移 → v2
-    old_timeline = data.get("timeline", [])
-    old_speaker_map = data.get("speaker_map", {})
-    old_metadata = data.get("metadata", {})
-
-    events = []
-    for seg in old_timeline:
-        translation = seg.get("translation", "")
-        if isinstance(translation, dict):
-            translation = translation.get("text", "") or ""
-
-        words = []
-        for w in seg.get("words", []):
-            words.append({
-                "word": w.get("word", ""),
-                "start": w.get("start", 0),
-                "end": w.get("end", 0),
-                "confidence": w.get("score") or w.get("confidence"),
-            })
-
-        events.append({
-            "id": seg.get("id", ""),
-            "start": seg.get("start", 0),
-            "end": seg.get("end", 0),
-            "text": seg.get("text", ""),
-            "translation": translation,
-            "speaker": seg.get("speaker"),
-            "tts_voice_id": None,
-            "confidence": 1.0,
-            "words": words,
-            "review_status": "pending",
-            "patch_ids": [],
-            "source": "asr",
-            "overlap": None,
-        })
-
-    speakers = {}
-    for sid, sm in old_speaker_map.items():
-        speakers[sid] = {
-            "id": sid,
-            "name": sm.get("alias") or sm.get("name"),
-            "voice_id": sm.get("voice_id"),
-            "color": None,
-            "is_locked": False,
-            "total_duration": None,
-            "segment_count": None,
-        }
-
-    total_dur = old_metadata.get("duration") or (
-        max((e["end"] for e in events), default=0) if events else 0
-    )
-    return {
-        "schema_version": "2.0",
-        "project": {
-            "id": "",
-            "source_video": "",
-            "source_lang": old_metadata.get("lang", ""),
-            "target_lang": "",
-            "created_at": None,
-            "updated_at": None,
-        },
-        "events": events,
-        "speakers": speakers,
-        "metadata": {
-            "total_duration": round(total_dur, 1),
-            "event_count": len(events),
-            "speaker_count": len(speakers),
-            "pipeline_version": "legacy",
-        },
-    }
+    if data.get("schema_version") != "2.0":
+        raise ValueError(
+            f"timeline.json 不是 v2 格式 (schema_version={data.get('schema_version')!r})。"
+            "旧 v1 工作区请先运行一次性迁移: "
+            "python tools/normalize_v1_timeline.py --root <workspace 所在目录>"
+        )
+    return data
 
 
 def _assign_speakers_by_time_overlap(segments, extract_dir):
