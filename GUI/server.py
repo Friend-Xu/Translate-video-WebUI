@@ -94,16 +94,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
 MAIN_SCRIPT = PROJECT_ROOT / "main.py"
 TVW_SCRIPT = PROJECT_ROOT / "tvw.py"
-
-
-def _rel_path(abs_path: str, root: Path = PROJECT_ROOT) -> str:
-    """将绝对路径转为相对于项目根目录的路径。"""
-    try:
-        p = Path(abs_path)
-        rp = p.relative_to(root)
-        return str(rp)
-    except (ValueError, TypeError):
-        return abs_path
 DIST_DIR = Path(__file__).resolve().parent / "dist"
 JOBS_DIR = Path(__file__).resolve().parent / "jobs"
 BATCHES_DIR = Path(__file__).resolve().parent / "batches"
@@ -133,6 +123,8 @@ _SKIP_LOG_PREFIXES = (
     "/api/system/info",
     "/api/pipeline/",  # status 轮询 + logs SSE
 )
+
+
 
 
 def _should_skip_log(path: str) -> bool:
@@ -609,150 +601,6 @@ def write_config_yaml(data: dict) -> None:
         yaml.dump(data, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
 
 
-def apply_subtitle_settings() -> None:
-    ensure_backup()
-    settings = load_settings()
-    overrides = settings.get("subtitle", {})
-    if not overrides:
-        return
-    presets = load_config_yaml()
-    for lang, params in overrides.items():
-        if lang in presets and isinstance(params, dict):
-            presets[lang].update(params)
-    write_config_yaml(presets)
-
-
-def reset_language(language: str) -> dict:
-    ensure_backup()
-    with open(CONFIG_BAK, "r", encoding="utf-8") as f:
-        defaults = yaml.safe_load(f) or {}
-    presets = load_config_yaml()
-    if language in defaults:
-        presets[language] = defaults[language]
-    write_config_yaml(presets)
-    settings = load_settings()
-    settings.get("subtitle", {}).pop(language, None)
-    save_settings(settings)
-    return presets.get(language, {})
-
-
-def _sync_translate_config(target_lang: str = "") -> None:
-    """Write pipeline settings from settings.json → translate.yaml.
-
-    target_lang from the live RunRequest takes priority over auto-saved
-    settings to eliminate the 2-second debounce race condition.
-    """
-    translate_path = PROJECT_ROOT / "config" / "translate.yaml"
-    if not translate_path.exists():
-        return
-    settings = load_settings()
-    pipeline_cfg = settings.get("pipeline", {})
-    if not pipeline_cfg and not target_lang:
-        return
-
-    with open(translate_path, "r", encoding="utf-8") as f:
-        trans = yaml.safe_load(f) or {}
-
-    if "translate" not in trans:
-        trans["translate"] = {}
-
-    # Sync source/target language
-    if pipeline_cfg.get("lang"):
-        trans["translate"]["source_lang"] = pipeline_cfg["lang"]
-    # RunRequest value takes priority (live) over settings.json (stale)
-    if target_lang:
-        trans["translate"]["target_lang"] = target_lang
-    elif pipeline_cfg.get("targetLang"):
-        trans["translate"]["target_lang"] = pipeline_cfg["targetLang"]
-
-    # Sync concurrency setting
-    if "concurrency" in pipeline_cfg:
-        conc = pipeline_cfg["concurrency"]
-        if "concurrency" not in trans["translate"]:
-            trans["translate"]["concurrency"] = {}
-        trans["translate"]["concurrency"]["enabled"] = conc > 1
-        trans["translate"]["concurrency"]["max_workers"] = conc
-
-    # Sync API key if provided
-    if pipeline_cfg.get("apiKey"):
-        trans["translate"]["api_key"] = pipeline_cfg["apiKey"]
-
-    # Sync multi-provider API config
-    if pipeline_cfg.get("apiProvider"):
-        trans["translate"]["api_type"] = pipeline_cfg["apiProvider"]
-    if pipeline_cfg.get("apiBaseUrl"):
-        trans["translate"]["api_base_url"] = pipeline_cfg["apiBaseUrl"]
-    if pipeline_cfg.get("apiModel"):
-        trans["translate"]["model"] = pipeline_cfg["apiModel"]
-    if pipeline_cfg.get("apiTemperature") is not None:
-        trans["translate"]["temperature"] = pipeline_cfg["apiTemperature"]
-    if pipeline_cfg.get("apiTopP") is not None:
-        trans["translate"]["top_p"] = pipeline_cfg["apiTopP"]
-    if pipeline_cfg.get("maxTokens"):
-        trans["translate"]["max_tokens"] = pipeline_cfg["maxTokens"]
-
-    # Sync custom prompt (multi-level)
-    if pipeline_cfg.get("customPromptEnabled"):
-        if "custom_prompt" not in trans["translate"]:
-            trans["translate"]["custom_prompt"] = {}
-        trans["translate"]["custom_prompt"]["enabled"] = True
-        trans["translate"]["custom_prompt"]["system_prompt"] = pipeline_cfg.get("customSystemPrompt", "")
-        trans["translate"]["custom_prompt"]["batch_prompt"] = pipeline_cfg.get("customBatchPrompt", "")
-        trans["translate"]["custom_prompt"]["single_prompt"] = pipeline_cfg.get("customSinglePrompt", "")
-        trans["translate"]["custom_prompt"]["semantic_retry_prompt"] = pipeline_cfg.get("customSemanticRetryPrompt", "")
-        trans["translate"]["custom_prompt"]["naturalness_retry_prompt"] = pipeline_cfg.get("customNaturalnessRetryPrompt", "")
-    else:
-        trans["translate"]["custom_prompt"] = {
-            "enabled": False, "system_prompt": "", "batch_prompt": "",
-            "single_prompt": "", "semantic_retry_prompt": "", "naturalness_retry_prompt": "",
-        }
-
-    # Sync split-brain
-    if "split_brain" not in trans["translate"]:
-        trans["translate"]["split_brain"] = {}
-    trans["translate"]["split_brain"]["enabled"] = pipeline_cfg.get("splitBrainEnabled", False)
-
-    # Sync multi-agent
-    if "multi_agent" not in trans["translate"]:
-        trans["translate"]["multi_agent"] = {}
-    trans["translate"]["multi_agent"]["enabled"] = pipeline_cfg.get("multiAgentEnabled", False)
-    trans["translate"]["multi_agent"]["mqm_threshold"] = pipeline_cfg.get("mqmThreshold", 0.6)
-
-    # Sync naturalness check
-    if pipeline_cfg.get("enableNaturalnessCheck") is not None:
-        if "quality_assessment" not in trans["translate"]:
-            trans["translate"]["quality_assessment"] = {"dimensions": {"naturalness": {}}}
-        trans["translate"]["quality_assessment"]["dimensions"]["naturalness"]["enabled"] = pipeline_cfg["enableNaturalnessCheck"]
-        trans["translate"]["quality_assessment"]["dimensions"]["naturalness"]["threshold"] = pipeline_cfg.get("naturalnessThreshold", 3.0)
-
-    # Sync joint verification
-    if pipeline_cfg.get("jointVerification") is not None:
-        trans["translate"]["joint_verification"] = pipeline_cfg["jointVerification"]
-
-    # Sync verification mode
-    if pipeline_cfg.get("verificationMode") is not None:
-        trans["translate"]["verification_mode"] = pipeline_cfg["verificationMode"]
-
-    # Sync sim_drop_limit
-    trans["translate"]["sim_drop_limit"] = pipeline_cfg.get("simDropLimit", 0.05)
-
-    # Sync terms_dict
-    if "terms_dict" not in trans["translate"]:
-        trans["translate"]["terms_dict"] = {}
-    trans["translate"]["terms_dict"]["enabled"] = pipeline_cfg.get("enableTermReplacement", True)
-    active_glossary = pipeline_cfg.get("activeGlossary")
-    if active_glossary:
-        trans["translate"]["terms_dict"]["default_dict"] = active_glossary  # list or string
-        trans["translate"]["terms_dict"]["dict_dir"] = "config/terms/"
-
-    with open(translate_path, "w", encoding="utf-8") as f:
-        yaml.dump(trans, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
-
-
-# ---------------------------------------------------------------------------
-# Request / response models
-# ---------------------------------------------------------------------------
-
 class RunRequest(BaseModel):
     video_path: str
     lang: str = "auto"
@@ -823,18 +671,6 @@ class RunRequest(BaseModel):
     enable_emotion: bool = False
     enable_speaker_diarization: bool = False
     use_core: bool = False  # 启用 core/ Adapter-Pass-Gate 新架构
-
-
-class RunResponse(BaseModel):
-    job_id: str
-
-
-class StatusResponse(BaseModel):
-    status: str
-    runtime_state: str = "uninitialized"
-    progress: int
-    current_step: str
-    detail: str = ""
 
 
 def _update_workspace_runtime_state(workspace_path: str, state: RuntimeState) -> None:
@@ -1016,521 +852,6 @@ def _write_tts_runtime_config(req: RunRequest) -> str:
     return str(config_path)
 
 
-def _build_cli_args(req: RunRequest) -> list[str]:
-    caption_config_path = _write_caption_config(req)
-    tts_config_path = _write_tts_runtime_config(req)
-    args: list[str] = [
-        str(VENV_PYTHON), str(MAIN_SCRIPT), str(req.video_path),
-        "--config", tts_config_path,
-        "--model", req.model,
-        "--device", req.device,
-        "--compute-type", req.compute_type,
-        "--engine", req.engine,
-        "--caption-config", caption_config_path,
-    ]
-    if req.lang and req.lang != "auto":
-        args.extend(["--lang", req.lang])
-    if req.skip_extract:
-        args.append("--skip-extract")
-    if req.skip_translate:
-        args.append("--skip-translate")
-    if req.skip_tts:
-        args.append("--skip-tts")
-    if req.skip_defect_check:
-        args.append("--skip-defect-check")
-    if req.skip_demucs:
-        args.append("--skip-demucs")
-    if req.skip_semantic_validation:
-        args.append("--skip-semantic-validation")
-    if req.skip_naturalness_check:
-        args.append("--skip-naturalness-check")
-    if req.voice_clone_engine and req.voice_clone_engine != "none":
-        args.extend(["--voice-clone-engine", req.voice_clone_engine])
-        if req.voice_clone_device and req.voice_clone_device != "auto":
-            args.extend(["--voice-clone-device", req.voice_clone_device])
-    # CosyVoice TTS args
-    if req.engine == "cosyvoice":
-        if req.cosyvoice_tts_model_version:
-            args.extend(["--cosyvoice-tts-model-version", req.cosyvoice_tts_model_version])
-        if req.cosyvoice_tts_model_path:
-            args.extend(["--cosyvoice-tts-model-path", req.cosyvoice_tts_model_path])
-        if req.cosyvoice_tts_prompt_audio:
-            args.extend(["--cosyvoice-tts-prompt-audio", req.cosyvoice_tts_prompt_audio])
-        if req.cosyvoice_tts_prompt_text:
-            args.extend(["--cosyvoice-tts-prompt-text", req.cosyvoice_tts_prompt_text])
-        if req.cosyvoice_tts_mode and req.cosyvoice_tts_mode != "auto":
-            args.extend(["--cosyvoice-tts-mode", req.cosyvoice_tts_mode])
-        if req.cosyvoice_tts_lang:
-            args.extend(["--cosyvoice-tts-lang", req.cosyvoice_tts_lang])
-    if req.force:
-        args.append("--force")
-    if req.num_workers > 1:
-        args.extend(["--num-workers", str(req.num_workers)])
-    if req.skip_align:
-        args.append("--skip-align")
-    if req.align_lang:
-        args.extend(["--align-lang", req.align_lang])
-    if req.enable_speaker_diarization:
-        args.append("--enable-speaker-diarization")
-    if req.use_core:
-        args.append("--use-core")
-    return args
-
-
-def _run_job_sync(job: Job, args: list[str]) -> None:
-    """Run a single job synchronously (called from thread executor).
-
-    On native crashes (STATUS_HEAP_CORRUPTION, STATUS_ACCESS_VIOLATION),
-    automatically retries up to 3 times with CUDA cleanup between attempts.
-    """
-    from core.compat import compat_decode_exit_code, compat_is_native_crash, compat_is_retryable
-
-    env = os.environ.copy()
-    env["PYTHONIOENCODING"] = "utf-8"
-    env["PYTHONUNBUFFERED"] = "1"
-    # 禁止 PyTorch CUDA 缓存分配器，防止与 CTranslate2/ChatTTS 的
-    # 裸 cudaMalloc 在同一 CUDA 上下文中冲突导致本机崩溃
-    env["PYTORCH_NO_CUDA_MEMORY_CACHING"] = "1"
-
-    sse_handler = SSELogHandler(job.append_log)
-    root_logger = logging.getLogger()
-    root_logger.addHandler(sse_handler)
-
-    # 打开 workspace 日志文件
-    stem = os.path.splitext(os.path.basename(job.video_path))[0]
-    ws_dir = os.path.join(os.path.dirname(job.video_path), f"{stem}_project")
-    job.open_log_file(ws_dir)
-
-    MAX_TRIES = 3
-    try:
-        for attempt in range(1, MAX_TRIES + 1):
-            if attempt > 1:
-                job.append_log(
-                    f"[INFO] 重试 ({attempt}/{MAX_TRIES}) — 清理 CUDA..."
-                )
-                try:
-                    import torch
-                    torch.cuda.empty_cache()
-                except Exception:
-                    pass
-                import gc
-                gc.collect()
-                import time
-                time.sleep(2.0)
-
-            logger.info("启动流水线: %s", " ".join(args))
-            job.process = subprocess.Popen(
-                args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                cwd=str(PROJECT_ROOT),
-                env=env,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
-            assert job.process.stdout is not None
-            for line in job.process.stdout:
-                line = line.rstrip()
-                if line:
-                    job.append_log(line)
-
-            job.process.wait()
-            if job.status == "cancelled":
-                _save_job(job)
-                return
-            if job.process.returncode == 0:
-                job.status = "completed"
-                job.runtime_state = "ready"
-                job.progress = 100
-                job.current_step = "处理完成"
-                job.append_log("[INFO] Timeline Runtime 就绪")
-                logger.info("流水线完成 (job=%s)", job.id)
-                _update_workspace_runtime_state(job.workspace_path, RuntimeState.READY)
-                _save_job(job)
-                return
-
-            # Non-zero exit code — check if retryable
-            status_name, status_desc = decode_exit_code(job.process.returncode)
-            if is_retryable(job.process.returncode) and attempt < MAX_TRIES:
-                job.append_log(
-                    f"[WARN] 本机崩溃 ({status_name}): "
-                    f"{status_desc.split('。')[0]}"
-                )
-                job.append_log(
-                    f"[INFO] 自动重试 ({attempt + 1}/{MAX_TRIES})..."
-                )
-                logger.warning(
-                    "本机崩溃 (job=%s rc=%d %s), 将重试",
-                    job.id, job.process.returncode, status_name,
-                )
-                continue
-
-            # Not retryable or retries exhausted
-            job.status = "failed"
-            job.runtime_state = "failed"
-            job.current_step = f"失败 ({status_name})"
-            job.append_log(
-                f"[ERROR] 流水线失败，退出码: {job.process.returncode}"
-                f" ({status_name})"
-            )
-            job.append_log(f"[ERROR] 原因: {status_desc}")
-            if is_native_crash(job.process.returncode) and attempt >= MAX_TRIES:
-                job.append_log(
-                    "[ERROR] 建议: 重启服务器以重置 GPU 上下文，"
-                    "或重启服务器后重试"
-                )
-            logger.error(
-                "流水线失败 (job=%s, rc=%d, %s)",
-                job.id, job.process.returncode, status_name,
-            )
-            _save_job(job)
-            _update_workspace_runtime_state(job.workspace_path, RuntimeState.FAILED)
-            return
-
-    except Exception as e:
-        job.status = "failed"
-        job.runtime_state = "failed"
-        job.current_step = "异常"
-        job.append_log(f"[ERROR] {e}")
-        logger.exception("流水线异常 (job=%s)", job.id)
-        _save_job(job)
-        _update_workspace_runtime_state(job.workspace_path, RuntimeState.FAILED)
-    finally:
-        root_logger.removeHandler(sse_handler)
-        job.close_log_file()
-
-
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
-
-@app.post("/api/pipeline/run", response_model=RunResponse)
-async def start_pipeline(req: RunRequest) -> RunResponse:
-    # 释放 ChatTTS 预览缓存，归还 GPU 显存给流水线
-    global _chattts_engine, _chattts_engine_config
-    if _chattts_engine is not None:
-        try:
-            _chattts_engine.cleanup()
-        except Exception:
-            pass
-        _chattts_engine = None
-        _chattts_engine_config = None
-
-    video = Path(req.video_path)
-    if not video.is_file():
-        raise HTTPException(status_code=400, detail=f"视频文件不存在: {req.video_path}")
-
-    job_id = uuid.uuid4().hex[:8]
-    # Derive workspace path
-    video_stem = video.stem
-    workspace_path = str(video.parent / f"{video_stem}_project")
-    job = Job(
-        id=job_id,
-        status="running",
-        runtime_state="bootstrapping",
-        current_step="启动中...",
-        video_path=req.video_path,
-        workspace_path=workspace_path,
-        created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    )
-    _jobs[job_id] = job
-    job._loop = asyncio.get_running_loop()
-    _save_job(job)
-    _update_workspace_runtime_state(workspace_path, RuntimeState.BOOTSTRAPPING)
-
-    apply_subtitle_settings()
-    _sync_translate_config(target_lang=req.target_lang)
-    args = _build_cli_args(req)
-
-    asyncio.create_task(_run_job(job, args))
-    return RunResponse(job_id=job_id)
-
-
-async def _run_job(job: Job, args: list[str]) -> None:
-    """Run a job in a thread pool to avoid blocking the event loop."""
-    await asyncio.to_thread(_run_job_sync, job, args)
-
-
-async def _batch_processor(batch_id: str) -> None:
-    """Process all videos in a batch sequentially."""
-    batch = _batches.get(batch_id)
-    if not batch:
-        return
-
-    try:
-        for i, video_path in enumerate(batch.video_paths):
-            if batch.status == "cancelled":
-                batch.append_log("[BATCH] 批次已取消，停止处理")
-                return
-
-            batch.current_video_index = i
-            video_name = os.path.basename(video_path)
-            batch.append_log(f"[BATCH] ({i+1}/{len(batch.video_paths)}) 开始: {video_name}")
-            _save_batch(batch)
-
-            video = Path(video_path)
-            if not video.is_file():
-                batch.append_log(f"[ERROR] 视频文件不存在，跳过: {video_path}")
-                continue
-
-            config_data = json.loads(batch.config_json)
-            config_data["video_path"] = video_path
-            req = RunRequest(**config_data)
-
-            job_id = uuid.uuid4().hex[:8]
-            job = Job(
-                id=job_id,
-                status="running",
-                current_step="启动中...",
-                video_path=video_path,
-                batch_id=batch_id,
-                created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            )
-            _jobs[job_id] = job
-            batch.video_job_ids[video_path] = job_id
-            _save_job(job)
-
-            apply_subtitle_settings()
-            _sync_translate_config()
-            args = _build_cli_args(req)
-
-            await asyncio.to_thread(_run_job_sync, job, args)
-
-            if job.status == "completed":
-                batch.append_log(f"[BATCH] [OK] ({i+1}/{len(batch.video_paths)}) {video_name}")
-            elif job.status == "failed":
-                batch.append_log(f"[ERROR] 视频处理失败: {video_name}")
-            elif job.status == "cancelled":
-                batch.append_log(f"[BATCH] 视频已跳过: {video_name}")
-
-        all_jobs = [j for j in _jobs.values() if j.batch_id == batch_id]
-        if batch.status == "cancelled":
-            return
-        if all(j.status == "completed" for j in all_jobs):
-            batch.status = "completed"
-            batch.append_log("[BATCH] 批次全部完成")
-        elif any(j.status == "completed" for j in all_jobs):
-            batch.status = "partial"
-            batch.append_log("[BATCH] 批次部分完成")
-        else:
-            batch.status = "failed"
-            batch.append_log("[BATCH] 批次失败")
-
-    except Exception as e:
-        batch.status = "failed"
-        batch.append_log(f"[BATCH] [ERROR] 批次异常: {e}")
-    finally:
-        _save_batch(batch)
-
-
-@app.get("/api/pipeline/{job_id}/status", response_model=StatusResponse)
-async def get_status(job_id: str) -> StatusResponse:
-    job = _jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    detail = ""
-    try:
-        from core.compat import compat_load_checkpoint
-        stem = os.path.splitext(os.path.basename(job.video_path))[0]
-        ws_dir = os.path.join(os.path.dirname(job.video_path), f"{stem}_project")
-        ck_data = compat_load_checkpoint(ws_dir)
-        detail = ck_data.get("detail", "") if ck_data else ""
-    except Exception:
-        pass
-
-    return StatusResponse(
-        status=job.status,
-        runtime_state=job.runtime_state,
-        progress=job.progress,
-        current_step=job.current_step,
-        detail=detail,
-    )
-
-
-@app.get("/api/pipeline/{job_id}/logs")
-async def stream_logs(job_id: str, request: Request) -> StreamingResponse:
-    """SSE 实时日志流 — 只推送新日志，不重放历史。
-
-    前端先通过 /logs/tail 加载初始显示，再用此 SSE 收增量。
-    """
-    job = _jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    queue: asyncio.Queue = job.subscribe()
-
-    async def event_stream() -> AsyncIterator[str]:
-        try:
-            # 立即发送 keepalive 注释，确认 SSE 连接建立
-            yield ": connected\n\n"
-
-            if job.log_file_path:
-                yield f"event: meta\ndata: {json.dumps({'log_file': job.log_file_path})}\n\n"
-
-            while True:
-                if job.status in ("completed", "failed", "cancelled"):
-                    yield f"event: done\ndata: {json.dumps({'status': job.status})}\n\n"
-                    return
-
-                try:
-                    payload = await asyncio.wait_for(queue.get(), timeout=15.0)
-                    # 检查断开
-                    if await request.is_disconnected():
-                        return
-                    data = json.dumps(payload, ensure_ascii=False)
-                    yield f"data: {data}\n\n"
-                except asyncio.TimeoutError:
-                    if await request.is_disconnected():
-                        return
-                    yield ": keepalive\n\n"
-        finally:
-            job.unsubscribe(queue)
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-@app.post("/api/pipeline/cancel-by-workspace")
-async def cancel_by_workspace(body: dict) -> dict:
-    """Cancel a running job by workspace path."""
-    ws = body.get("workspace_path", "")
-    if not ws:
-        raise HTTPException(status_code=400, detail="Missing workspace_path")
-    for job_id, job in _jobs.items():
-        if getattr(job, "workspace_path", "") == ws and job.status == "running":
-            if job.process and job.process.returncode is None:
-                job.process.terminate()
-                try:
-                    job.process.wait(timeout=5.0)
-                except subprocess.TimeoutExpired:
-                    job.process.kill()
-            job.status = "cancelled"
-            job.current_step = "已取消"
-            job.append_log("[WARN] 任务已取消")
-            _save_job(job)
-            _update_workspace_runtime_state(ws, RuntimeState.FAILED)
-            return {"ok": True}
-    raise HTTPException(status_code=404, detail="No running job for this workspace")
-
-
-@app.post("/api/pipeline/{job_id}/cancel")
-async def cancel_job(job_id: str) -> dict:
-    job = _jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    if job.process and job.process.returncode is None:
-        job.process.terminate()
-        try:
-            job.process.wait(timeout=5.0)
-        except subprocess.TimeoutExpired:
-            job.process.kill()
-        job.status = "cancelled"
-        job.current_step = "已取消"
-        job.append_log("[WARN] 任务已取消")
-        _save_job(job)
-        _update_workspace_runtime_state(job.workspace_path, RuntimeState.FAILED)
-    return {"ok": True}
-
-
-def _read_log_tail(file_path: str, limit: int = 200) -> list[str]:
-    """Read last N lines from a log file efficiently (seek from end)."""
-    if not os.path.isfile(file_path):
-        return []
-    with open(file_path, "rb") as f:
-        f.seek(0, 2)  # EOF
-        fsize = f.tell()
-        if fsize == 0:
-            return []
-        # Read last ~8KB or whole file, whichever is smaller
-        chunk_size = min(fsize, max(limit * 200, 8192))
-        f.seek(max(0, fsize - chunk_size))
-        raw = f.read().decode("utf-8", errors="replace")
-        lines = raw.split("\n")
-        # Strip empty trailing line from split
-        if lines and lines[-1] == "":
-            lines.pop()
-        # If we didn't read enough lines, re-read larger chunk
-        if len(lines) < limit and fsize > chunk_size:
-            chunk_size = min(fsize, chunk_size * 3)
-            f.seek(max(0, fsize - chunk_size))
-            raw = f.read().decode("utf-8", errors="replace")
-            lines = raw.split("\n")
-            if lines and lines[-1] == "":
-                lines.pop()
-        return lines[-limit:]
-
-
-def _read_log_range(file_path: str, before_line: int, limit: int = 200) -> tuple[list[str], int]:
-    """Read up to `limit` lines ending at `before_line` (0-indexed).
-
-    Returns (lines, first_line_index).
-    """
-    if not os.path.isfile(file_path):
-        return [], 0
-    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-        all_lines = f.read().split("\n")
-        if all_lines and all_lines[-1] == "":
-            all_lines.pop()
-    total = len(all_lines)
-    if before_line > total:
-        before_line = total
-    start = max(0, before_line - limit)
-    return all_lines[start:before_line], start
-
-
-@app.get("/api/pipeline/{job_id}/logs/tail")
-async def logs_tail(job_id: str, limit: int = 200) -> dict:
-    """Read last N lines from the workspace pipeline.log file."""
-    job = _jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    file_path = job.log_file_path
-    if not file_path:
-        # Fallback to in-memory logs
-        return {"lines": job.logs[-limit:], "total": len(job.logs), "source": "memory"}
-    lines = _read_log_tail(file_path, limit)
-    # Count total lines
-    total = len(job.logs)  # approximate; for accurate count use file size
-    return {"lines": lines, "total": total, "source": "file"}
-
-
-@app.get("/api/pipeline/{job_id}/logs/range")
-async def logs_range(job_id: str, before: int = 0, limit: int = 200) -> dict:
-    """Read a range of lines before `before` index from the workspace log file."""
-    job = _jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    file_path = job.log_file_path
-    if not file_path or not os.path.isfile(file_path):
-        return {"lines": [], "first": 0, "total": 0}
-    lines, first = _read_log_range(file_path, before, limit)
-    return {"lines": lines, "first": first, "total": len(job.logs)}
-
-
-@app.get("/api/jobs")
-async def list_jobs() -> list[dict]:
-    return [
-        {
-            "id": job.id,
-            "status": job.status,
-            "progress": job.progress,
-            "current_step": job.current_step,
-            "video_path": job.video_path,
-            "created_at": job.created_at,
-        }
-        for job in sorted(_jobs.values(), key=lambda j: j.created_at or "", reverse=True)
-    ]
-
-
-# ---------------------------------------------------------------------------
-# Batch processing endpoints
-# ---------------------------------------------------------------------------
-
 class BatchRunRequest(BaseModel):
     video_paths: list[str]
     config: dict
@@ -1619,33 +940,6 @@ def _build_batch_dict(batch: BatchSession) -> dict:
     }
 
 
-@app.get("/api/batch/list")
-async def list_batches() -> list[dict]:
-    return [
-        {
-            "batch_id": b.id,
-            "status": b.status,
-            "video_count": len(b.video_paths),
-            "completed_count": sum(
-                1 for p in b.video_paths
-                if (jid := b.video_job_ids.get(p))
-                and (j := _jobs.get(jid))
-                and j.status == "completed"
-            ),
-            "created_at": b.created_at,
-        }
-        for b in sorted(_batches.values(), key=lambda x: x.created_at or "", reverse=True)
-    ]
-
-
-@app.get("/api/batch/active")
-async def get_active_batch() -> dict | None:
-    for batch in _batches.values():
-        if batch.status == "running":
-            return _build_batch_dict(batch)
-    return None
-
-
 @app.get("/api/batch/{batch_id}")
 async def get_batch_status(batch_id: str) -> dict:
     batch = _batches.get(batch_id)
@@ -1686,40 +980,6 @@ async def cancel_batch(batch_id: str) -> dict:
 # ---------------------------------------------------------------------------
 # Settings & Subtitle presets
 # ---------------------------------------------------------------------------
-
-class SettingsPayload(BaseModel):
-    subtitle: dict[str, dict] | None = None
-
-
-class ResetPayload(BaseModel):
-    language: str
-
-
-@app.get("/api/settings")
-async def get_settings() -> dict:
-    return load_settings()
-
-
-@app.post("/api/settings")
-async def post_settings(payload: SettingsPayload) -> dict:
-    current = load_settings()
-    if payload.subtitle is not None:
-        current["subtitle"] = payload.subtitle
-    save_settings(current)
-    return current
-
-
-@app.post("/api/settings/reset")
-async def post_settings_reset(payload: ResetPayload) -> dict:
-    lang_preset = reset_language(payload.language)
-    return {"language": payload.language, "preset": lang_preset}
-
-
-@app.get("/api/subtitle/presets")
-async def get_subtitle_presets() -> dict:
-    ensure_backup()
-    return load_config_yaml()
-
 
 class SubtitleOptimizeRequest(BaseModel):
     target_srt: str
@@ -1799,16 +1059,6 @@ class ReviewLoadRequest(BaseModel):
     translated_srt: str | None = None
     translate_log: str | None = None
     workspace: str | None = None
-
-
-@app.get("/api/project/manifest")
-async def project_manifest(workspace: str) -> dict:
-    """返回工作目录的 project.json。"""
-    manifest_path = os.path.join(workspace, "project.json")
-    if not os.path.isfile(manifest_path):
-        raise HTTPException(status_code=404, detail="project.json 不存在")
-    with open(manifest_path, "r", encoding="utf-8") as f:
-        return json.load(f)
 
 
 @app.get("/api/project/manifest/resolve")
@@ -2278,49 +1528,6 @@ async def review_save(req: ReviewSaveRequest) -> dict:
     return {"ok": True, "output_path": output_path, "updated": updated}
 
 
-@app.get("/api/subtitle/review/qa-check")
-async def review_qa_check(srt_path: str, lang: str = "zh") -> dict:
-
-    path = Path(srt_path)
-    if not path.is_file():
-        raise HTTPException(status_code=400, detail=f"字幕文件不存在: {srt_path}")
-
-    subs = pysrt.open(str(path))
-    entries: list[dict] = []
-    for sub in subs:
-        entries.append({
-            "index": sub.index,
-            "start": str(sub.start),
-            "end": str(sub.end),
-            "startMs": _srt_time_to_ms(sub.start),
-            "endMs": _srt_time_to_ms(sub.end),
-            "sourceText": "",
-            "translatedText": sub.text,
-            "issues": [],
-        })
-
-    _run_qa_checks(entries, lang)
-
-    all_issues: list[dict] = []
-    for e in entries:
-        for issue in e["issues"]:
-            all_issues.append({"index": e["index"], **issue})
-
-    error_count = sum(1 for i in all_issues if i["severity"] == "error")
-    warning_count = sum(1 for i in all_issues if i["severity"] == "warning")
-
-    return {
-        "total": len(entries),
-        "errorCount": error_count,
-        "warningCount": warning_count,
-        "issues": all_issues,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Config — layered: YAML defaults → user overrides in settings.json
-# ---------------------------------------------------------------------------
-
 @app.get("/api/config")
 async def get_config() -> dict:
     settings = load_settings()
@@ -2338,27 +1545,6 @@ async def post_config(payload: dict) -> dict:
     save_settings(settings)
     return {"status": "ok"}
 
-
-@app.get("/api/glossary/list")
-async def list_glossaries() -> list[dict]:
-    """列出 config/terms/ 目录下的术语表文件。"""
-    terms_dir = PROJECT_ROOT / "config" / "terms"
-    if not terms_dir.is_dir():
-        return []
-    result = []
-    for p in sorted(terms_dir.glob("*.json")):
-        result.append({
-            "name": p.stem,
-            "file": p.name,
-            "path": str(p),
-            "size": p.stat().st_size,
-        })
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Prompt preview
-# ---------------------------------------------------------------------------
 
 class PreviewPromptRequest(BaseModel):
     system_prompt: str = ""
@@ -2391,143 +1577,6 @@ async def preview_prompt(req: PreviewPromptRequest) -> dict:
 
 # ---------------------------------------------------------------------------
 # Model Manager endpoints
-# ---------------------------------------------------------------------------
-
-@app.get("/api/models")
-async def list_models() -> dict:
-    """列出所有已知模型及其下载状态，含环境适配评估。"""
-    from core.compat import compat_model_manager
-    ModelManager = compat_model_manager()
-    from core.compat import compat_detect_env
-    detect_env, assess_model_fit = compat_detect_env()
-
-    env = detect_env()
-    models = []
-    for s in ModelManager.list_all():
-        fit = assess_model_fit(env, s.vram_gb)
-        # 相对路径
-        try:
-            rel = str(Path(s.path).relative_to(PROJECT_ROOT)) if s.path else ""
-        except (ValueError, TypeError):
-            rel = s.path
-        models.append({
-            "id": s.id, "name": s.name,
-            "function": s.function, "category": s.category,
-            "exists": s.exists, "partial": s.partial,
-            "path": s.path, "rel_path": rel,
-            "size_gb": s.size_gb, "size_mb": s.size_mb,
-            "vram_gb": s.vram_gb, "downloadable": s.downloadable,
-            "fit_level": fit["level"], "fit_label": fit["label"], "fit_color": fit["color"],
-        })
-    return {"models": models, "env": {
-        "gpu_name": env.gpu_name,
-        "vram_total_gb": env.vram_total_gb,
-        "vram_free_gb": env.vram_free_gb,
-        "cpu_cores": env.cpu_cores,
-        "ram_total_gb": env.ram_total_gb,
-        "ram_available_gb": env.ram_available_gb,
-        "cuda_version": env.cuda_version,
-        "pytorch_version": env.pytorch_version,
-        "python_version": env.python_version,
-        "os_name": env.os_name,
-        "has_gpu": env.has_gpu,
-    }}
-
-
-@app.get("/api/env")
-async def get_env_info() -> dict:
-    """返回当前运行环境信息。"""
-    from core.compat import compat_detect_env
-    detect_env, _ = compat_detect_env()
-    env = detect_env()
-    return {
-        "gpu_name": env.gpu_name,
-        "vram_total_gb": env.vram_total_gb,
-        "vram_free_gb": env.vram_free_gb,
-        "cpu_cores": env.cpu_cores,
-        "ram_total_gb": env.ram_total_gb,
-        "ram_available_gb": env.ram_available_gb,
-        "cuda_version": env.cuda_version,
-        "pytorch_version": env.pytorch_version,
-        "python_version": env.python_version,
-        "os_name": env.os_name,
-        "has_gpu": env.has_gpu,
-    }
-
-
-# 活跃下载的取消令牌
-_download_cancels: dict[str, "threading.Event"] = {}
-
-
-@app.get("/api/models/download/{model_id}")
-async def download_model_stream(model_id: str, req: Request):
-    """SSE 流式下载模型，推送实时进度。"""
-    from core.compat import compat_model_manager
-    ModelManager = compat_model_manager()
-
-    status = ModelManager.check(model_id)
-    if not status.downloadable:
-        raise HTTPException(400, f"模型 {model_id} 不支持在线下载，请手动安装")
-
-    # 如果已有同名下载在进行中，先取消旧的
-    old = _download_cancels.pop(model_id, None)
-    if old:
-        old.set()
-
-    import threading
-    cancel_evt = threading.Event()
-    _download_cancels[model_id] = cancel_evt
-
-    async def event_stream():
-        import json
-        from queue import Queue
-
-        q: Queue = Queue()
-
-        def on_progress(pct: int, downloaded_gb: float, total_gb: float):
-            q.put({"status": "downloading", "progress": pct,
-                    "downloaded_gb": downloaded_gb, "total_gb": total_gb})
-
-        def do_download():
-            try:
-                path = ModelManager.download_model(model_id, progress_callback=on_progress, cancel_event=cancel_evt)
-                q.put({"status": "completed", "path": path})
-            except ModelManager.CancelledError:
-                q.put({"status": "cancelled", "message": "下载已取消"})
-            except Exception as e:
-                q.put({"status": "error", "message": str(e)})
-            finally:
-                _download_cancels.pop(model_id, None)
-            q.put(None)
-
-        t = threading.Thread(target=do_download, daemon=True)
-        t.start()
-
-        try:
-            while True:
-                item = q.get()
-                if item is None:
-                    break
-                yield f"data: {json.dumps(item)}\n\n"
-        finally:
-            # 客户端断开连接 → 自动取消下载
-            cancel_evt.set()
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
-
-
-@app.post("/api/models/download/{model_id}/cancel")
-async def cancel_download(model_id: str) -> dict:
-    """取消正在进行的模型下载。"""
-    evt = _download_cancels.pop(model_id, None)
-    if evt is None:
-        raise HTTPException(404, f"没有正在进行的下载: {model_id}")
-    evt.set()
-    return {"ok": True, "message": f"已发送取消信号: {model_id}"}
-
-
-# ---------------------------------------------------------------------------
-# ChatTTS preset speakers
 # ---------------------------------------------------------------------------
 
 @app.get("/api/tts/speakers")
@@ -2706,19 +1755,6 @@ async def release_chattts_engine() -> dict:
     return {"status": "released"}
 
 
-@app.get("/api/tts/indextts-preset-audio")
-async def indextts_preset_audio(path: str) -> dict:
-    """Return base64 audio for an IndexTTS preset voice WAV file."""
-    import base64
-    if not path or not os.path.isfile(path):
-        raise HTTPException(404, f"preset not found: {path}")
-    with open(path, "rb") as f:
-        data = base64.b64encode(f.read()).decode()
-    return {"audio_base64": data, "path": path}
-
-
-# ── T4.4 TTS Preview + Local Re-synthesis ───────────────────────
-
 class TTSPreviewRequest(BaseModel):
     text: str = ""
     engine: str = "chattts"
@@ -2888,52 +1924,6 @@ async def delete_glossary_dict(name: str) -> dict:
 
 # Cached system info — GPU name/VRAM don't change at runtime
 _sys_info_cache: dict | None = None
-
-
-@app.get("/api/runtime/status")
-async def runtime_status() -> dict:
-    """Runtime Monitor: GPU VRAM, model residency, stage progress (T4.1)."""
-    gpu = {"vram_used_mb": 0, "vram_total_mb": 0, "gpu_name": ""}
-    models: list[dict] = []
-    stages: list[dict] = []
-
-    try:
-        import torch
-        if torch.cuda.is_available():
-            gpu["gpu_name"] = torch.cuda.get_device_name(0)
-            gpu["vram_total_mb"] = int(torch.cuda.get_device_properties(0).total_memory / (1024 * 1024))
-            free, total = torch.cuda.mem_get_info()
-            gpu["vram_used_mb"] = int((total - free) / (1024 * 1024))
-    except Exception:
-        pass
-
-    model_map = {
-        "faster-whisper": ("asr", "WhisperAdapter"),
-        "ChatTTS": ("tts", "ChatTTSAdapter"),
-        "CosyVoice": ("tts", "CosyVoiceAdapter"),
-        "pyannote": ("speaker", "PyannoteAdapter"),
-    }
-    for mod_name, (stage, adapter) in model_map.items():
-        loaded = mod_name in sys.modules
-        models.append({"name": mod_name, "stage": stage, "adapter": adapter, "loaded": loaded})
-
-    from core.engine.event_bus import EventBus
-    last = EventBus().last_event
-    current_stage = ""
-    if last:
-        current_stage = last.stage or ""
-        stages.append({"stage": current_stage, "label": last.stage_label or current_stage,
-                       "message": last.message or "", "percent": last.percent or 0})
-
-    # T6: include Capability Registry snapshot in runtime status
-    try:
-        from core.runtime.capability import CapabilityRegistry
-        caps = CapabilityRegistry().to_dict()
-    except Exception:
-        caps = {}
-
-    return {"gpu": gpu, "models": models, "stages": stages, "current_stage": current_stage,
-            "capabilities": caps}
 
 
 @app.get("/api/system/info")
@@ -3814,121 +2804,6 @@ async def search_videos_recursive(path: str = "") -> dict:
     }
 
 
-@app.get("/api/files/stream")
-async def stream_file(path: str, request: Request):
-    """Stream a file with HTTP Range support (for video seeking)."""
-    file_path = Path(path)
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail=f"文件不存在: {path}")
-
-    file_size = file_path.stat().st_size
-    range_header = request.headers.get("range")
-
-    if range_header:
-        range_match = re.match(r"bytes=(\d+)-(\d*)", range_header)
-        if range_match:
-            start = int(range_match.group(1))
-            end_str = range_match.group(2)
-            end = int(end_str) if end_str else file_size - 1
-            chunk_size = end - start + 1
-
-            from fastapi.responses import Response
-
-            with open(file_path, "rb") as f:
-                f.seek(start)
-                data = f.read(chunk_size)
-
-            return Response(
-                content=data,
-                status_code=206,
-                media_type="video/mp4",
-                headers={
-                    "Content-Range": f"bytes {start}-{end}/{file_size}",
-                    "Accept-Ranges": "bytes",
-                    "Content-Length": str(chunk_size),
-                },
-            )
-
-    from fastapi.responses import FileResponse
-    return FileResponse(path, media_type="video/mp4")
-
-
-# ---------------------------------------------------------------------------
-# Media preflight — DASH-separated video/audio merge
-# ---------------------------------------------------------------------------
-
-class PreflightRequest(BaseModel):
-    video_path: str
-    audio_path: str = ""
-
-
-class MuxRequest(BaseModel):
-    video_path: str
-    audio_path: str
-
-
-class PreflightResponse(BaseModel):
-    video_path: str
-    has_audio: bool
-    video_container_duration: float
-    video_decoded_duration: float
-    video_internal_drift: float = 0.0
-    audio_container_duration: float
-    audio_decoded_duration: float
-    audio_internal_drift: float = 0.0
-    duration_match: bool
-    duration_diff_sec: float
-    defects: list[dict] = []
-    companion_audio: str
-    suggested_action: str
-
-
-class MuxResponse(BaseModel):
-    output_path: str
-    output_name: str
-    size_mb: float
-    success: bool
-
-
-@app.post("/api/media/analyze")
-async def media_analyze(req: PreflightRequest):
-    """Analyze video: audio stream presence, duration, defects, companion audio."""
-    if not req.video_path or not Path(req.video_path).is_file():
-        raise HTTPException(status_code=400, detail="视频文件不存在")
-
-    from core.compat import compat_preflight_analyze
-    result = preflight_analyze(req.video_path, req.audio_path)
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
-    return PreflightResponse(**result)
-
-
-@app.post("/api/media/mux")
-async def media_mux(req: MuxRequest):
-    """Merge video-only MP4 with separate audio file using ffmpeg stream-copy."""
-    if not req.video_path or not Path(req.video_path).is_file():
-        raise HTTPException(status_code=400, detail="视频文件不存在")
-    if not req.audio_path or not Path(req.audio_path).is_file():
-        raise HTTPException(status_code=400, detail="音频文件不存在")
-
-    from core.compat import compat_mux_video_audio
-    try:
-        output = mux_video_audio(req.video_path, req.audio_path)
-        sz = os.path.getsize(output)
-        return MuxResponse(
-            output_path=output,
-            output_name=os.path.basename(output),
-            size_mb=round(sz / 1024 / 1024, 1),
-            success=True,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ---------------------------------------------------------------------------
-# Speaker Diarization API
-# ---------------------------------------------------------------------------
-
 class SpeakerLoadRequest(BaseModel):
     workspace: str = ""
 
@@ -4506,19 +3381,6 @@ async def _run_core_job_with_flags(job: Job, req, **flags) -> None:
     await asyncio.to_thread(_run_core_pipeline_sync, job, req, flags)
 
 
-def _seconds_to_srt(seconds: float) -> str:
-    """秒数 → SRT 时间格式 HH:MM:SS,mmm"""
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    ms = int((seconds % 1) * 1000)
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-
-
-# ---------------------------------------------------------------------------
-# Timeline Patch API (TASK 15)
-# ---------------------------------------------------------------------------
-
 class PatchApplyRequest(BaseModel):
     workspace: str = ""
     patch: dict = {}
@@ -4579,24 +3441,6 @@ def _apply_edit_patch(workspace: str, patch) -> dict:
     save_chain(chain, log_path)
     _persist_edited(state, extract_dir)
     return result
-
-
-@app.post("/api/timeline/patch/generate")
-async def timeline_patch_generate(req: SpeakerRegenerateRequest):
-    """AI 生成候选 patches。只读，不修改 timeline。"""
-    workspace = req.workspace
-    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
-    if not extract_dir or not os.path.isdir(extract_dir):
-        raise HTTPException(status_code=400, detail="无效的工作目录")
-    tl_path = os.path.join(extract_dir, "timeline.json")
-    if not os.path.isfile(tl_path):
-        raise HTTPException(status_code=404, detail="timeline.json 不存在")
-    try:
-        from timeline.api.timeline import generate_candidate_patches
-        result = generate_candidate_patches(tl_path)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/timeline/patch/apply")
@@ -4667,32 +3511,6 @@ async def timeline_patch_log(workspace: str = ""):
 
 
 # ── T4.2 Patch Debug — Git-log style patch history ──────────────
-
-@app.get("/api/timeline/patch/history")
-async def timeline_patch_history(workspace: str = "", limit: int = 20):
-    """Patch Debug 面板 — Git-log 风格的补丁历史 (T4.2)。Phase 4: 链读取。"""
-    from GUI.patch_adapter import load_chain
-    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
-    log_path = os.path.join(extract_dir, "timeline_patches.json") if extract_dir else ""
-    items: list[dict] = []
-    if log_path and os.path.isfile(log_path):
-        for p in load_chain(log_path)[-limit:]:
-            val = p.value or {}
-            items.append({
-                "id": p.id,
-                "op": p.op.value,
-                "targets": p.targets or [p.target_id],
-                "author": p.author,
-                "timestamp": p.timestamp,
-                "reason": p.reason or [],
-                "diff": {"slot": val.get("slot", ""),
-                         "before": {},
-                         "after": val.get("partial_config") or val.get("config_block") or val},
-            })
-    return {"items": items, "count": len(items)}
-
-
-# ── T4.3 Review Panel — auto-flag anomalies ─────────────────────
 
 @app.get("/api/timeline/review/flags")
 async def timeline_review_flags(workspace: str = ""):
@@ -4871,12 +3689,6 @@ class ConfigBatchRequest(BaseModel):
     slot: str = "tts"
     config_block: dict = {}
 
-class ConfigResolveResponse(BaseModel):
-    event_id: str = ""
-    slot: str = ""
-    resolved: dict = {}
-    inherited_from: str = "global"  # "event" | "speaker" | "global"
-
 @app.post("/api/timeline/config/apply")
 async def timeline_config_apply(req: ConfigApplyRequest):
     """Apply a config override to a single event."""
@@ -5013,24 +3825,6 @@ def _load_speaker_config_for_event(workspace: str, event_id: str, slot: str) -> 
 
     return {}
 
-@app.get("/api/config/slots")
-async def config_slots_list():
-    """List all configurable slots and their schema info."""
-    import os
-    from core.config.schema_loader import SchemaLoader
-    schema_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "schemas", "ir_v2")
-    loader = SchemaLoader(schema_dir)
-    slots = {}
-    for slot_name in loader.SLOT_TO_SCHEMA:
-        schema = loader.get_schema(slot_name)
-        if schema:
-            slots[slot_name] = {
-                "title": schema.get("title", slot_name),
-                "description": schema.get("description", ""),
-                "properties": list(schema.get("properties", {}).keys()),
-            }
-    return {"slots": slots}
-
 @app.get("/api/speaker/audio/preview")
 async def speaker_audio_preview(path: str = "", start: float = 0, end: float = 0):
     """返回指定时间范围的音频 base64（用于前端试听）。"""
@@ -5065,101 +3859,6 @@ async def speaker_overlaps(workspace: str = ""):
     from pipeline.speaker_fusion import detect_overlaps
     return {"overlaps": detect_overlaps(timeline), "strategy": "mark_for_review"}
 
-
-class EmotionToProsodyRequest(BaseModel):
-    emotion_vector: dict = {}  # {valence, arousal, dominance}
-    engine: str = "chattts"
-
-
-@app.post("/api/emotion/to-prosody")
-async def emotion_to_prosody(req: EmotionToProsodyRequest) -> dict:
-    """Emotion→Prosody 映射 (T5.3)。将 emotion vector 转为引擎相关的 prosody 参数。"""
-    from core.tts.emotion import EmotionModeler
-
-    vec = req.emotion_vector
-    emotion_label = vec.get("emotion_label", "neutral")
-    valence = vec.get("valence", 0.5)
-    arousal = vec.get("arousal", 0.5)
-
-    # Map to engine-specific prosody
-    if req.engine == "chattts":
-        prosody = {
-            "temperature": 0.3 + arousal * 0.5,
-            "top_k": 20 + int(valence * 40),
-            "top_p": 0.7 + (1 - arousal) * 0.2,
-        }
-    elif req.engine == "edge":
-        rate = 0.8 + arousal * 0.6
-        pitch = -5 + valence * 15
-        prosody = {"rate": f"{rate:+.1f}", "pitch": f"{pitch:+d}Hz"}
-    elif req.engine == "cosyvoice":
-        prosody = {"speed": 0.8 + (1 - arousal) * 0.6}
-    else:
-        prosody = {"emotion_label": emotion_label}
-
-    return {"engine": req.engine, "emotion": emotion_label, "prosody": prosody}
-
-
-# ── T5.4 TTS Cache Key ───────────────────────────────────────────
-
-@app.get("/api/tts/cache-key")
-async def tts_cache_key(text: str = "", speaker_id: str = "",
-                         emotion_state: str = "", engine: str = "chattts",
-                         target_lang: str = "zh") -> dict:
-    """TTS Cache Key (T5.4): (text_hash, speaker_id, emotion_state, engine, target_lang)。
-
-    同一 cache key 的 segment 不需要重新合成，直接复用已有音频。
-    """
-    import hashlib
-    key_parts = f"{text}:{speaker_id}:{emotion_state}:{engine}:{target_lang}"
-    key_hash = hashlib.sha256(key_parts.encode()).hexdigest()[:16]
-    return {"cache_key": key_hash, "components": {
-        "text_hash": hashlib.sha256(text.encode()).hexdigest()[:12],
-        "speaker_id": speaker_id,
-        "emotion_state": emotion_state,
-        "engine": engine,
-        "target_lang": target_lang,
-    }}
-
-
-# ── T5.5 增量导出 ─────────────────────────────────────────────────
-
-@app.post("/api/export/incremental")
-async def export_incremental(workspace: str = "") -> dict:
-    """增量导出 (T5.5): 仅导出 dirty segments。
-
-    检查 05_tts/*.dirty 标记文件，重新合成对应 segment，更新最终视频。
-    """
-    ws = workspace
-    if not ws or not os.path.isdir(ws):
-        raise HTTPException(status_code=400, detail="无效的 workspace")
-
-    dirty_dir = os.path.join(ws, "05_tts")
-    dirty_files = []
-    if os.path.isdir(dirty_dir):
-        for f in sorted(os.listdir(dirty_dir)):
-            if f.endswith(".dirty"):
-                dirty_files.append(f.replace(".dirty", ""))
-
-    if not dirty_files:
-        return {"status": "no_dirty_segments", "dirty_count": 0, "regenerated": []}
-
-    # Simulate: regenerate dirty segments via TTS
-    regenerated = []
-    for seg in dirty_files:
-        src = os.path.join(dirty_dir, f"{seg}.dirty")
-        try:
-            os.unlink(src)
-        except Exception:
-            pass
-        regenerated.append(seg)
-
-    return {"status": "regenerated", "dirty_count": len(regenerated), "regenerated": regenerated}
-
-
-# ---------------------------------------------------------------------------
-# Workflow Presets + Workspace CRUD + Timeline Runtime endpoints
-# ---------------------------------------------------------------------------
 
 @app.get("/api/workflow/presets")
 async def list_workflow_presets() -> dict:
@@ -5302,69 +4001,6 @@ async def delete_workspace(body: dict) -> dict:
     return {"ok": True}
 
 
-@app.get("/api/workspace/detail")
-async def get_workspace_detail(path: str = "") -> dict:
-    """Get detailed workspace status: manifest, disk usage, file listing."""
-    if not path:
-        raise HTTPException(status_code=400, detail="workspace path required")
-
-    ws_dir = Path(path)
-    if not ws_dir.is_dir():
-        raise HTTPException(status_code=404, detail=f"Workspace not found: {path}")
-
-    # Read manifest
-    manifest = {}
-    manifest_path = ws_dir / "project.json"
-    if manifest_path.is_file():
-        try:
-            with open(manifest_path, "r", encoding="utf-8") as f:
-                manifest = json.load(f)
-        except Exception:
-            pass
-
-    # File listing
-    files: list[dict] = []
-    total_size = 0
-    for item in sorted(ws_dir.rglob("*")):
-        if item.is_file() and item.name != "project.json":
-            sz = item.stat().st_size
-            total_size += sz
-            files.append({
-                "name": item.name,
-                "relativePath": str(item.relative_to(ws_dir)),
-                "size": sz,
-            })
-
-    # Failure reason extraction
-    failure_reason = ""
-    if manifest.get("runtime_state") == RuntimeState.FAILED.value:
-        log_path = ws_dir / "pipeline.log"
-        if log_path.is_file():
-            try:
-                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-                    lines = f.readlines()
-                for line in reversed(lines[-50:]):
-                    if "ERROR" in line or "error" in line.lower() or "Traceback" in line:
-                        failure_reason = line.strip()[-200:]
-                        break
-            except Exception:
-                pass
-
-    return {
-        "path": str(ws_dir),
-        "manifest": manifest,
-        "runtimeState": manifest.get("runtime_state", RuntimeState.UNINITIALIZED.value),
-        "diskUsageBytes": total_size,
-        "fileCount": len(files),
-        "files": files[:50],  # cap at 50 files
-        "failureReason": failure_reason,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Core Pipeline endpoints (批次11 §阶段B)
-# ---------------------------------------------------------------------------
-
 class CoreRunRequest(BaseModel):
     video_path: str
     workflow_preset: str = "quick_sub_single"
@@ -5398,16 +4034,6 @@ class CoreStatusResponse(BaseModel):
     metrics: dict = {}
 
 
-class CoreEventResponse(BaseModel):
-    event_id: str
-    start: float = 0.0
-    end: float = 0.0
-    source_text: str = ""
-    translation: str = ""
-    provenance: dict = {}
-    tts_audio: str = ""
-
-
 def _preset_to_policy(preset_id: str, target_lang: str) -> tuple:
     """将 WorkflowPreset ID 映射为 WorkflowPolicy 实例。(批次11 §阶段C)"""
     preset = get_preset(preset_id)
@@ -5425,34 +4051,6 @@ def _preset_to_policy(preset_id: str, target_lang: str) -> tuple:
 
     return policy, preset_passes, skip_tts
 
-
-def _load_core_transcript(video_path: str) -> tuple:
-    """加载 extract 阶段的 transcript + speaker_timeline 数据。"""
-    video = Path(video_path)
-    ws_dir = video.parent / f"{video.stem}_project"
-    transcript_path = ws_dir / "01_extract" / "transcript.json"
-    speaker_timeline_path = ws_dir / "01_extract" / "speaker_timeline.json"
-
-    segments = None
-    speaker_timeline = None
-
-    if transcript_path.is_file():
-        with open(transcript_path, "r", encoding="utf-8") as f:
-            transcript = json.load(f)
-        segments = transcript.get("segments", [])
-
-    if speaker_timeline_path.is_file():
-        with open(speaker_timeline_path, "r", encoding="utf-8") as f:
-            st_data = json.load(f)
-        speaker_timeline = [
-            (t["speaker"], t["start"], t["end"], t.get("confidence", 0.5))
-            for t in st_data.get("turns", [])
-        ]
-
-    return segments, speaker_timeline, str(ws_dir)
-
-
-# ── SRT 桥接: timeline.json → machine.srt ──
 
 def _timeline_to_srt(workspace: str) -> str | None:
     """从 workspace 的 timeline.json 导出翻译后的 SRT，供旧 TTS 管线使用。
@@ -5832,132 +4430,6 @@ async def get_core_status(job_id: str) -> CoreStatusResponse:
         metrics={},
     )
 
-
-@app.get("/api/core/pipeline/{job_id}/events")
-async def stream_core_events(job_id: str, request: Request) -> StreamingResponse:
-    """SSE 结构化事件流。(批次11 §4.1)"""
-    job = _jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    queue: asyncio.Queue = job.subscribe()
-
-    async def event_stream() -> AsyncIterator[str]:
-        try:
-            if job.log_file_path:
-                yield f"event: meta\ndata: {json.dumps({'log_file': job.log_file_path})}\n\n"
-
-            while True:
-                if await request.is_disconnected():
-                    return
-
-                if job.status in ("completed", "failed", "cancelled"):
-                    yield f"event: done\ndata: {json.dumps({'status': job.status})}\n\n"
-                    return
-
-                try:
-                    payload = await asyncio.wait_for(queue.get(), timeout=15.0)
-                    event_type = payload.get("event", "message")
-                    data = json.dumps(payload, ensure_ascii=False)
-                    yield f"event: {event_type}\ndata: {data}\n\n"
-                except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"
-        finally:
-            job.unsubscribe(queue)
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-@app.get("/api/core/pipeline/{job_id}/events/{event_id}", response_model=CoreEventResponse)
-async def get_core_event(job_id: str, event_id: str) -> CoreEventResponse:
-    """查询单个 event 的状态与 provenance。(批次11 §3.3)"""
-    job = _jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    state = job._core_state
-    if state is None:
-        raise HTTPException(status_code=404, detail="Pipeline state 不可用")
-
-    es = state.event_states.get(event_id)
-    if es is None:
-        raise HTTPException(status_code=404, detail=f"Event {event_id} 不存在")
-
-    evt = state.ir.events.get(event_id)
-    return CoreEventResponse(
-        event_id=event_id,
-        start=evt.start if evt else 0.0,
-        end=evt.end if evt else 0.0,
-        source_text=evt.text if evt else "",
-        translation=es.derivatives.get("translation", ""),
-        provenance={
-            "gate_decision": es.provenance.get("gate_decision", ""),
-            "gate_scores": es.provenance.get("gate_scores", {}),
-            "gate_reason": es.provenance.get("gate_reason", ""),
-            "needs_human_review": es.review.get("needs_human_review", False),
-        },
-        tts_audio=es.derivatives.get("tts_audio_path", ""),
-    )
-
-
-@app.get("/api/core/pipeline/{job_id}/gate/{event_id}")
-async def get_core_gate_detail(job_id: str, event_id: str) -> dict:
-    """返回单个 event 的 Gate 判定详情。(批次11 §3.4)"""
-    job = _jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    state = job._core_state
-    if state is None:
-        raise HTTPException(status_code=404, detail="Pipeline state 不可用")
-
-    es = state.event_states.get(event_id)
-    if es is None:
-        raise HTTPException(status_code=404, detail=f"Event {event_id} 不存在")
-
-    return {
-        "event_id": event_id,
-        "gate": es.provenance.get("gate_name", "text_gate"),
-        "decision": es.provenance.get("gate_decision", "N/A"),
-        "scores": es.provenance.get("gate_scores", {}),
-        "thresholds": es.provenance.get("gate_thresholds", {}),
-        "trace": es.provenance.get("gate_trace", {}),
-    }
-
-
-@app.get("/api/core/pipeline/{job_id}/audit")
-async def get_core_audit(job_id: str) -> dict:
-    """返回 PatchStore 审计摘要。(批次11 §3.5)"""
-    job = _jobs.get(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    state = job._core_state
-    if state is None:
-        raise HTTPException(status_code=404, detail="Pipeline state 不可用")
-
-    patches = getattr(state, "patch_log", []) or []
-    by_op: dict[str, int] = {}
-    rejected: list[dict] = []
-    for p in patches:
-        op = p.get("op", "UNKNOWN") if isinstance(p, dict) else getattr(p, "op", "UNKNOWN")
-        by_op[op] = by_op.get(op, 0) + 1
-        if isinstance(p, dict) and p.get("rejected"):
-            rejected.append({
-                "patch_id": p.get("id", ""),
-                "reason": p.get("reject_reason", ""),
-            })
-
-    return {
-        "job_id": job_id,
-        "total_patches": len(patches),
-        "patches_by_op": by_op,
-        "rejected_patches": rejected,
-    }
-
-
-# ── core/ Pipeline 日志和取消端点（委托到 /api/pipeline/ 对应端点）──
 
 @app.get("/api/core/pipeline/{job_id}/logs")
 async def get_core_logs(job_id: str, request: Request) -> StreamingResponse:

@@ -5,6 +5,21 @@
 
 ---
 
+## 2026-08-01 — P2-C2: 死端点 + 死依赖全面清理 (server.py -1530 行)
+
+### 改动
+- **删 37 个零引用端点**: 旧 `/api/pipeline/*` 全套 (7) / batch/list+active / config/slots / env / files/stream / glossary/list / jobs / models×3 / project/manifest (保留 resolve) / runtime/status / settings×3 / subtitle/presets+qa-check / patch/history+generate / tts/cache-key+indextts-preset-audio / workspace/detail / emotion/to-prosody / export/incremental / media×2 / core/pipeline 的 events×2+gate+audit
+- **删 11 个死 model** (RunResponse/StatusResponse/SettingsPayload/ResetPayload/Preflight×2/Mux×2/ConfigResolveResponse/EmotionToProsodyRequest/CoreEventResponse) + **10 个死 helper** (旧 pipeline 的 _run_job_sync/_build_cli_args/_read_log_tail/_read_log_range、settings 的 apply_subtitle_settings/reset_language/_sync_translate_config、_rel_path/_seconds_to_srt/_load_core_transcript)
+- **AST 审计方法论**: 顶层符号 (def/class/import) 做内部调用 + 外部引用 (GUI 非 server/core/tests/入口) 双零判定; **修正审计 bug** — `def` 语句不产生 ast.Name, 定义处减一逻辑会把"恰调用 1 次"误判为死 (首版误报 63 个, 修正后真死 10 个)
+- **事故记录**: helper 删除脚本块边界未包含顶层赋值语句, `_rel_path` 块吞掉 `app = FastAPI()` + CORS 中间件 + startup 钩子 + 7 个常量 + `_SKIP_LOG_PREFIXES` → HEAD/当前顶层语句对比脚本检出 5 项误删并恢复; 此后删除脚本一律加"活端点/关键符号存在断言"
+- 全量 1031 passed + 10 xfailed, uvicorn 启动 + 三端点响应验证
+
+### 决策
+- **端点验证必须先于测试**: pytest 不 import server.py, 路由加载错误只有 uvicorn 启动暴露 — C2 每次删除后都启动验证
+- **删除脚本的块边界必须是所有顶层语句类型**: 赋值/表达式/装饰器函数 (@app.on_event) 都是边界, 否则静默吞代码
+
+---
+
 ## 2026-08-01 — P2-C1: speaker 写路径双轨收敛 — 统一走 patch
 
 ### 改动
