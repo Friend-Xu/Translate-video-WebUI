@@ -128,6 +128,38 @@ class TestLegacyAdapter:
             legacy_to_core({"patch_id": "x", "opcode": "MERGE_SPEAKERS",
                             "targets": ["SPK_A"], "payload": {"source": "SPK_A"}})
 
+    def test_timeline_edit_ops_mapped_to_core(self):
+        """P3-A: timeline 编辑假 draft 补映射 — 不再降级 ANNOTATE 静默零写入。"""
+        cases = [
+            ("MOVE_EVENT", {"start": 1.0, "end": 3.0}, ["evt_001"],
+             OpCode.UPDATE_BOUNDS, {"start": 1.0, "end": 3.0}),
+            ("TRIM_START", {"start": 0.5}, ["evt_001"],
+             OpCode.UPDATE_BOUNDS, {"start": 0.5, "end": None}),
+            ("TRIM_END", {"end": 4.0}, ["evt_001"],
+             OpCode.UPDATE_BOUNDS, {"start": None, "end": 4.0}),
+            ("SPLIT_EVENT", {"splitTime": 1.5}, ["evt_001"],
+             OpCode.SEGMENT_SPLIT, {"at": 1.5}),
+            ("MERGE_PREV", {"mergeTarget": "evt_000"}, ["evt_001"],
+             OpCode.SEGMENT_MERGE, {"target_ids": ["evt_001", "evt_000"]}),
+            ("MERGE_NEXT", {"mergeTarget": "evt_002"}, ["evt_001"],
+             OpCode.SEGMENT_MERGE, {"target_ids": ["evt_001", "evt_002"]}),
+            ("APPLY_AI_SUGGESTION", {"translation": "AI 译文"}, ["evt_001"],
+             OpCode.UPDATE_TRANSLATION, {"translation": "AI 译文"}),
+            ("RETRIGGER", {}, ["evt_001"],
+             OpCode.ANNOTATE, {"review": {"flags": ["needs_retranslate"],
+                                          "needs_human_review": True}}),
+        ]
+        for opcode, payload, targets, expect_op, expect_value in cases:
+            p = legacy_to_core({"patch_id": "x", "opcode": opcode,
+                                "targets": targets, "payload": payload})
+            assert p.op == expect_op, opcode
+            assert p.value == expect_value, opcode
+
+    def test_merge_prev_missing_target_rejected(self):
+        with pytest.raises(UnsupportedPatchError):
+            legacy_to_core({"patch_id": "x", "opcode": "MERGE_PREV",
+                            "targets": ["evt_001"], "payload": {}})
+
     def test_unknown_opcode_rejected(self):
         with pytest.raises(UnsupportedPatchError):
             legacy_to_core({"patch_id": "x", "opcode": "RELINK_WORDS",
@@ -218,6 +250,101 @@ class TestUpdateBounds:
         persist_state(state, ws, "v.mp4", "en")
         reloaded = load_state(tl)
         assert reloaded.get_event("evt_001").end == 3.0
+
+
+@pytest.mark.contract
+class TestTimelineEditOps:
+    """P3-A: timeline 编辑 opcode (前端假 draft) 经 adapter 全链路应用。"""
+
+    def test_trim_start_partial_bounds(self):
+        """TRIM_START 只给 start — 部分边界更新, end 保持。"""
+        state = _state(2)
+        p = legacy_to_core({"patch_id": "t1", "opcode": "TRIM_START",
+                            "targets": ["evt_001"],
+                            "payload": {"start": 0.5}})
+        assert p.op == OpCode.UPDATE_BOUNDS
+        r = PatchEngine().apply(state, p)
+        assert r["status"] == "applied"
+        es = state.get_event("evt_001")
+        assert es.start == 0.5 and es.end == 3.5
+
+    def test_trim_end_partial_bounds(self):
+        """TRIM_END 只给 end — start 保持。"""
+        state = _state(2)
+        p = legacy_to_core({"patch_id": "t2", "opcode": "TRIM_END",
+                            "targets": ["evt_001"], "payload": {"end": 3.2}})
+        assert PatchEngine().apply(state, p)["status"] == "applied"
+        es = state.get_event("evt_001")
+        assert es.start == 2.0 and es.end == 3.2
+
+    def test_split_event_applied(self):
+        """SPLIT_EVENT → SEGMENT_SPLIT: 事件数 +1, 边界正确。"""
+        state = _state(2)
+        p = legacy_to_core({"patch_id": "s1", "opcode": "SPLIT_EVENT",
+                            "targets": ["evt_001"],
+                            "payload": {"splitTime": 2.5}})
+        r = PatchEngine().apply(state, p)
+        assert r["status"] == "applied"
+        assert len(state.ir.events) == 3
+        assert state.get_event("evt_001").end == 2.5
+        assert state.get_event("evt_001_b").start == 2.5
+
+    def test_merge_prev_applied(self):
+        """MERGE_PREV → SEGMENT_MERGE: 合并进前事件, 事件数 -1。"""
+        state = _state(3)
+        p = legacy_to_core({"patch_id": "m1", "opcode": "MERGE_PREV",
+                            "targets": ["evt_001"],
+                            "payload": {"mergeTarget": "evt_000"}})
+        assert p.op == OpCode.SEGMENT_MERGE
+        assert p.targets == ["evt_001", "evt_000"]
+        r = PatchEngine().apply(state, p)
+        assert r["status"] == "applied"
+        assert len(state.ir.events) == 2
+        assert state.get_event("evt_001").start == 0.0
+
+    def test_retrigger_marks_needs_retranslate(self):
+        """RETRIGGER → ANNOTATE review 槽: needs_retranslate 标记落盘。"""
+        state = _state(2)
+        p = legacy_to_core({"patch_id": "r1", "opcode": "RETRIGGER",
+                            "targets": ["evt_001"], "payload": {}})
+        r = PatchEngine().apply(state, p)
+        assert r["status"] == "applied"
+        es = state.get_event("evt_001")
+        assert "needs_retranslate" in es.review.flags
+        assert es.review.needs_human_review is True
+
+    def test_apply_ai_suggestion_updates_translation(self):
+        """APPLY_AI_SUGGESTION → UPDATE_TRANSLATION: 译文真实写入。"""
+        state = _state(2)
+        p = legacy_to_core({"patch_id": "a1", "opcode": "APPLY_AI_SUGGESTION",
+                            "targets": ["evt_001"],
+                            "payload": {"translation": "AI 建议译文"}})
+        r = PatchEngine().apply(state, p)
+        assert r["status"] == "applied"
+        assert state.get_event("evt_001").translation.text == "AI 建议译文"
+
+    def test_review_flags_survive_persist(self, tmp_path):
+        """RETRIGGER 的 needs_retranslate 标记必须落盘 (此前 persist 丢 review 槽)。"""
+        ws = str(tmp_path / "ws")
+        state = _state(2)
+        tl = persist_state(state, ws, "v.mp4", "en")
+        PatchEngine().apply(state, Patch(
+            id="r1", target_id="evt_001", op=OpCode.ANNOTATE,
+            value={"review": {"flags": ["needs_retranslate"],
+                              "needs_human_review": True}}))
+        persist_state(state, ws, "v.mp4", "en")
+        reloaded = load_state(tl)
+        es = reloaded.get_event("evt_001")
+        assert "needs_retranslate" in es.review.flags
+        assert es.review.needs_human_review is True
+        # 磁盘上也必须有 review 块 (不只内存)
+        with open(tl, "r", encoding="utf-8") as f:
+            import json
+            raw = json.load(f)
+        ev = next(e for e in raw["events"] if e["id"] == "evt_001")
+        assert "needs_retranslate" in (ev.get("review") or {}).get("flags", [])
+
+
 
 
 @pytest.mark.contract

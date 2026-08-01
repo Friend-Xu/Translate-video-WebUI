@@ -153,6 +153,7 @@ def apply_event_to_state(event: Event, state: TimelineProjectState) -> None:
         es.speaker.speaker_id = event.speaker
     es.provenance["confidence"] = event.confidence
     es.review.review_status = event.review.review_status
+    es.review.flags = list(event.review.flags)
     es.review.needs_human_review = event.review.needs_human_review
     if event.review.gate_decision:
         es.review.gate_decision = event.review.gate_decision
@@ -178,6 +179,9 @@ def _event_to_v2_dict(e: Event) -> dict:
         "confidence": e.confidence,
         "words": [w.to_dict() for w in e.words],
         "review_status": e.review.review_status,
+        # review 块完整落盘 (P3-A: RETRIGGER 的 needs_retranslate 标记此前
+        # 只写内存槽位, persist 丢 flags — review_status 扁平键保留兼容前端)
+        "review": e.review.to_dict() if e.review else None,
         "patch_ids": [],
         "source": e.source,
         "overlap": None,

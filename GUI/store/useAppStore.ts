@@ -164,16 +164,28 @@ const OPCODE_MAP: Record<string, string> = {
   RESIZE_SEGMENT: 'RESIZE',
   SET_TRANSLATION: 'SET_TRANSLATION',
   MERGE: 'MERGE',
+  // P3-A: timeline 编辑 opcode 补全 (此前降级 ANNOTATE 静默零写入)
+  MOVE_EVENT: 'MOVE_EVENT',
+  TRIM_START: 'TRIM_START',
+  TRIM_END: 'TRIM_END',
+  SPLIT_EVENT: 'SPLIT_EVENT',
+  MERGE_PREV: 'MERGE_PREV',
+  MERGE_NEXT: 'MERGE_NEXT',
+  APPLY_AI_SUGGESTION: 'APPLY_AI_SUGGESTION',
+  RETRIGGER: 'RETRIGGER',
+  ANNOTATE: 'ANNOTATE',
 }
 
+// 本地状态 draft: 不是写操作, 不进 patch 链 (预览/丢弃由前端处理)
+const LOCAL_ONLY_OPCODES = new Set(['AI_SUGGEST', 'DISMISS_AI_SUGGESTION'])
+
 function patchDraftToApiFormat(draft: PatchDraft): Record<string, unknown> {
-  const backendOpcode = OPCODE_MAP[draft.opcode] || 'ANNOTATE'
+  const backendOpcode = OPCODE_MAP[draft.opcode]
+  if (!backendOpcode) {
+    throw new Error(`未知 draft opcode: ${draft.opcode} (合法: ${Object.keys(OPCODE_MAP).join(', ')})`)
+  }
 
   let payload = { ...draft.payload }
-  if (backendOpcode === 'ANNOTATE') {
-    // Store original opcode + full payload as annotation
-    payload = { key: draft.opcode.toLowerCase(), value: draft.payload }
-  }
   if (backendOpcode === 'RETAG_SPEAKER' && !payload.new_speaker) {
     payload = { new_speaker: (draft.payload as any).target || (draft.payload as any).new_speaker || '' }
   }
@@ -439,8 +451,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   applyDraft: async (eventId) => {
     const draft = get().pendingDrafts.get(eventId)
     if (!draft) return false
+    // 本地状态 draft (AI_SUGGEST/DISMISS) 不是写操作, 不进 patch 链
+    if (LOCAL_ONLY_OPCODES.has(draft.opcode)) return true
 
-    const patch = patchDraftToApiFormat(draft)
+    let patch: Record<string, unknown>
+    try {
+      patch = patchDraftToApiFormat(draft)
+    } catch (e) {
+      set({ error: `补丁应用失败: ${e instanceof Error ? e.message : String(e)}` })
+      return false
+    }
     const ws = get().workspace
 
     // 后端失败必须响亮 — 不记录本地、保留 draft 供重试 (禁止兜底)
@@ -506,7 +526,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     const failedIds: string[] = []
 
     for (const [eventId, draft] of drafts) {
-      const patch = patchDraftToApiFormat(draft)
+      // 本地状态 draft 跳过: 预览/丢弃不是写操作, 不提交也不删
+      if (LOCAL_ONLY_OPCODES.has(draft.opcode)) continue
+      let patch: Record<string, unknown>
+      try {
+        patch = patchDraftToApiFormat(draft)
+      } catch (e) {
+        failedIds.push(eventId)
+        continue
+      }
       try {
         const res = await fetch('/api/timeline/patch/apply', {
           method: 'POST',
@@ -531,10 +559,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       })
     }
 
-    // 失败的草案保留供重试, 成功的移除 (禁止兜底: 部分失败必须响亮)
+    // 失败的草案保留供重试, 本地状态 draft 保留, 成功的移除 (禁止兜底: 部分失败必须响亮)
     const nextDrafts = new Map<string, PatchDraft>()
     for (const [id, draft] of drafts) {
-      if (failedIds.includes(id)) nextDrafts.set(id, draft)
+      if (LOCAL_ONLY_OPCODES.has(draft.opcode) || failedIds.includes(id)) {
+        nextDrafts.set(id, draft)
+      }
     }
 
     const history = [...get().appliedPatches, ...newPatches].slice(-50)
@@ -545,8 +575,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       await get().loadWorkspace(ws)
       await get().fetchSpeakerLanes(ws)
     }
+    const submittedCount = Array.from(drafts.values())
+      .filter(d => !LOCAL_ONLY_OPCODES.has(d.opcode)).length
     if (failedIds.length > 0) {
-      set({ error: `批量应用失败 ${failedIds.length}/${drafts.size} 条 (${failedIds.join(', ')})，失败条目已保留` })
+      set({ error: `批量应用失败 ${failedIds.length}/${submittedCount} 条 (${failedIds.join(', ')})，失败条目已保留` })
     }
     return newPatches.length
   },

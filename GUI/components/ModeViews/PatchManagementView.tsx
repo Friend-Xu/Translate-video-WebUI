@@ -167,44 +167,60 @@ export default function PatchManagementView({ events }: Props) {
     }
   }, [])
 
-  const handleApply = useCallback((item: PatchViewItem) => {
+  const handleApply = useCallback(async (item: PatchViewItem) => {
     if (item.type === 'draft') {
       const eventId = item.targets[0]
-      if (eventId) applyDraft(eventId)
+      if (eventId) await applyDraft(eventId)
     } else if (item.type === 'ai_suggestion') {
       const eventId = item.targets[0]
-      if (eventId) addDraft({
-        eventId, opcode: 'APPLY_AI_SUGGESTION',
-        payload: { translation: events.find(e => e.id === eventId)?.translation || '' },
-        before: item.before || {}, after: item.after || {},
-        timestamp: Date.now(),
-      })
+      if (eventId) {
+        // 应用 AI 建议: 从 pendingDrafts 拿最新 suggestion (此前写旧译文 + 不提交 = 点了不生效)
+        const aiDraft = Array.from(pendingDrafts.values())
+          .find(d => d.eventId === eventId && d.opcode === 'AI_SUGGEST')
+        const suggestion = (aiDraft?.payload as any)?.suggestion || ''
+        addDraft({
+          eventId, opcode: 'APPLY_AI_SUGGESTION',
+          payload: { translation: suggestion },
+          before: item.before || {}, after: { translation: suggestion },
+          timestamp: Date.now(),
+        })
+        await applyDraft(eventId)
+      }
     }
-  }, [applyDraft, addDraft, events])
+  }, [applyDraft, addDraft, pendingDrafts])
 
   const handleUndo = useCallback(() => undoLastPatch(), [undoLastPatch])
   const handleToggleLock = useCallback((id: string) => {
     setLockedIds(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
   }, [])
 
-  const handleMerge = useCallback(() => {
+  const handleMerge = useCallback(async () => {
     const targets = Array.from(selectedPatchIds)
     if (targets.length < 2) return
     const selected = allPatchItems.filter(p => targets.includes(p.id))
-    const allTargets = [...new Set(selected.flatMap(p => p.targets))]
-    const mergedBefore = { ...selected[0].before }
-    const mergedAfter = { ...selected[selected.length - 1].after }
-    for (const t of allTargets) {
-      addDraft({
-        eventId: t, opcode: 'MERGED_PATCH',
-        payload: { sources: targets, mergedTargets: allTargets },
-        before: mergedBefore, after: mergedAfter,
-        timestamp: Date.now(),
-      })
+    // 合并补丁是坏设计 (生成的 MERGED_PATCH draft 无真实写入内容) —
+    // 改为批量应用选中的 draft/AI 建议, 已入库的 applied 跳过
+    for (const item of selected) {
+      const eventId = item.targets[0]
+      if (!eventId) continue
+      if (item.type === 'draft') {
+        await applyDraft(eventId)
+      } else if (item.type === 'ai_suggestion') {
+        const aiDraft = Array.from(pendingDrafts.values())
+          .find(d => d.eventId === eventId && d.opcode === 'AI_SUGGEST')
+        const suggestion = (aiDraft?.payload as any)?.suggestion || ''
+        addDraft({
+          eventId, opcode: 'APPLY_AI_SUGGESTION',
+          payload: { translation: suggestion },
+          before: item.before || {}, after: { translation: suggestion },
+          timestamp: Date.now(),
+        })
+        await applyDraft(eventId)
+      }
     }
     setMergeDialogOpen(false)
     setSelectedPatchIds(new Set())
-  }, [selectedPatchIds, allPatchItems, addDraft])
+  }, [selectedPatchIds, allPatchItems, applyDraft, addDraft, pendingDrafts])
 
   // Dependency tree for selected item
   const depTree = useMemo(() => {

@@ -5,6 +5,28 @@
 
 ---
 
+## 2026-08-01 — P3-A: timeline 编辑假 draft 补映射 (RETRIGGER/SPLIT/MERGE/MOVE/TRIM/AI 建议)
+
+### 改动
+- **adapter 补 8 个 opcode 映射** (`GUI/patch_adapter.py`): MOVE_EVENT/TRIM_START/TRIM_END→UPDATE_BOUNDS (部分边界更新), SPLIT_EVENT→SEGMENT_SPLIT, MERGE_PREV/MERGE_NEXT→SEGMENT_MERGE (targets=[id, mergeTarget]), APPLY_AI_SUGGESTION→UPDATE_TRANSLATION, RETRIGGER→ANNOTATE review 槽 `{flags:[needs_retranslate], needs_human_review:true}` (core 无 LLM 重翻通道, 标记是唯一诚实落点, 与 _seg_merge 先例一致)
+- **前端 OPCODE_MAP 补 8 键** + `patchDraftToApiFormat` 删 `|| 'ANNOTATE'` 静默降级 → 未知 opcode 显式抛错 (关闭假成功后门)
+- **修 3 个前端真 bug**: APPLY_AI_SUGGESTION 写 `event.translation` 旧值 (应用 AI 建议却写原译文 = no-op 假数据) → 改取 AI_SUGGEST draft 的 suggestion; PatchManagementView 点"应用"AI 建议只 addDraft 不提交 → 补 applyDraft; MERGED_PATCH 是坏设计 (draft payload 无真实写入内容) → handleMerge 改批量应用选中 draft/AI 建议
+- **AI_SUGGEST/DISMISS_AI_SUGGESTION 明确为本地状态**: 不进 patch 链 (applyDraft/applyAllDrafts 跳过), DISMISS 改 addDraft 后立即 removeDraft
+- **修 review 槽持久化缺口** (`timeline_io.py` + `event_model.py`): v2 dict 此前只写扁平 `review_status`, flags/needs_human_review 只写内存槽位 persist 丢失 → `_event_to_v2_dict` 补 review 块完整落盘, `apply_event_to_state` 补 flags 回填, `Event.from_dict` 兼容旧 v2 扁平 review_status 归一进 Review — 这是 persist/reload 互逆缺口, SEGMENT_MERGE 的 needs_retranslate 标记同样受益
+- 契约测试 +9 (8 个 opcode 映射 case 表 + merge_prev 缺目标拒绝 + 部分边界更新×2 + split/merge/retrigger/ai 应用端到端 + review 落盘往返)
+
+### 决策
+- **core 无重翻通道, 不假装支持**: RETRIGGER 不映射 UPDATE_TRANSLATION (会写空译文), 标记 needs_retranslate 进人工审核闭环
+- **本地状态不进 patch 链**: AI_SUGGEST 是预览暂存, DISMISS 是本地丢弃 — 它们不是写操作, 硬映射会污染事件历史
+- **映射后发现的下沉 bug**: RETRIGGER 冒烟暴露 review.flags 不落盘 (v2 只写 review_status) — 先补 persist 缺口再谈功能, 否则"已保存"是假的
+
+### 冒烟实测 (Playwright, smoke_ws 副本)
+- 右键"局部重算" → 全部应用 → patch 链 +1 + timeline.json review.flags 含 needs_retranslate ✓
+- 右键"与上一事件合并" → 全部应用 → patch 链 +1 + 事件 33→32 ✓
+- 全量 1040 passed + 10 xfailed, vitest 33/33, tsc 0
+
+---
+
 ## 2026-08-01 — P2-C2: 死端点 + 死依赖全面清理 (server.py -1530 行)
 
 ### 改动

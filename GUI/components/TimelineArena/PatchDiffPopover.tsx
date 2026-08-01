@@ -26,26 +26,22 @@ export default function PatchDiffPopover({ event, anchorEl, onClose }: Props) {
   const hasError = (latestDraft?.payload as any)?.error
 
   const handleApply = () => {
+    // 应用 AI 建议: 写入最新 suggestion (此前误写 event.translation 旧值 = no-op 假数据)
+    const suggestion = (latestDraft?.payload as any)?.suggestion || event.translation
     addDraft({
       eventId: event.id,
       opcode: 'APPLY_AI_SUGGESTION',
-      payload: { translation: event.translation },
+      payload: { translation: suggestion },
       before: { translation: event.translation },
-      after: { translation: event.translation },
+      after: { translation: suggestion },
       timestamp: Date.now(),
     })
     onClose()
   }
 
   const handleDismiss = () => {
-    addDraft({
-      eventId: event.id,
-      opcode: 'DISMISS_AI_SUGGESTION',
-      payload: {},
-      before: {},
-      after: {},
-      timestamp: Date.now(),
-    })
+    // 丢弃建议是本地状态操作, 不发 patch — 直接移除该事件 draft
+    useAppStore.getState().removeDraft(event.id)
     onClose()
   }
 

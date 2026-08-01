@@ -33,6 +33,16 @@ _LEGACY_TO_OP: dict[str, OpCode] = {
     "CREATE_SPEAKER": OpCode.REGISTER_SPEAKER,
     "RENAME_SPEAKER": OpCode.UPDATE_SPEAKER,
     "LOCK_SPEAKER": OpCode.LOCK_SPEAKER,
+    # P3-A 收敛: timeline 编辑假 draft 补映射 (此前降级 ANNOTATE 静默零写入)
+    "MOVE_EVENT": OpCode.UPDATE_BOUNDS,
+    "TRIM_START": OpCode.UPDATE_BOUNDS,
+    "TRIM_END": OpCode.UPDATE_BOUNDS,
+    "SPLIT_EVENT": OpCode.SEGMENT_SPLIT,
+    "MERGE_PREV": OpCode.SEGMENT_MERGE,
+    "MERGE_NEXT": OpCode.SEGMENT_MERGE,
+    "APPLY_AI_SUGGESTION": OpCode.UPDATE_TRANSLATION,
+    # 局部重算: core 无 LLM 重翻通道, 唯一诚实落点是 needs_retranslate 标记
+    "RETRIGGER": OpCode.ANNOTATE,
 }
 
 # log 显示用: core op → 前端认识的旧词表 (pass_trace KNOWN_PASS_ORDER 大写匹配)
@@ -93,6 +103,24 @@ def legacy_to_core(d: dict) -> Patch:
         value = {"at": float(payload.get("split_point", 0.0))}
     elif op_raw == "RETAG_SPEAKER" or op_raw == "ASSIGN_SPEAKER":
         value = {"speaker_id": str(payload.get("new_speaker") or "")}
+    elif op_raw in ("MOVE_EVENT", "TRIM_START", "TRIM_END"):
+        value = {
+            "start": float(payload["start"]) if "start" in payload else None,
+            "end": float(payload["end"]) if "end" in payload else None,
+        }
+    elif op_raw == "SPLIT_EVENT":
+        value = {"at": float(payload.get("splitTime", 0.0))}
+    elif op_raw in ("MERGE_PREV", "MERGE_NEXT"):
+        merge_with = str(payload.get("mergeTarget") or "")
+        if not merge_with:
+            raise UnsupportedPatchError(f"{op_raw} 缺合并目标 (payload.mergeTarget)")
+        ids = [target_id, merge_with]
+        targets = ids
+        value = {"target_ids": ids}
+    elif op_raw == "APPLY_AI_SUGGESTION":
+        value = {"translation": payload.get("translation", "")}
+    elif op_raw == "RETRIGGER":
+        value = {"review": {"flags": ["needs_retranslate"], "needs_human_review": True}}
     elif op_raw == "SET_TRANSLATION":
         value = {"translation": payload.get("translation", payload.get("text", ""))}
     elif op_raw == "RESIZE":

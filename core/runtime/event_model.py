@@ -447,6 +447,10 @@ class Event:
         words = [Word.from_dict(w) for w in d.get("words", [])]
         trans_raw = d.get("translation")
         tts_raw = d.get("tts")
+        # v2 旧文件只有扁平 review_status, 无 review 块 — 归一进 Review (P3-A 往返)
+        review_raw = d.get("review")
+        if not isinstance(review_raw, dict) and d.get("review_status"):
+            review_raw = {"review_status": d["review_status"]}
         return cls(
             id=_require(d, "id", "Event"),
             start=float(_require(d, "start", "Event")),
@@ -460,7 +464,7 @@ class Event:
             semantic=Semantic.from_dict(d.get("semantic")),
             translation=Translation.from_dict(trans_raw) if isinstance(trans_raw, dict) else None,
             tts=TTSAudio.from_dict(tts_raw) if isinstance(tts_raw, dict) else None,
-            review=Review.from_dict(d.get("review")),
+            review=Review.from_dict(review_raw),
         )
 
     def derive_text(self, lang: str = "") -> str:
