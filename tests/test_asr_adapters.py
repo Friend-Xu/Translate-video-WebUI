@@ -181,6 +181,131 @@ class TestASRScorer:
         assert ASRScore("e5", composite=0.60).confidence_label == "medium"
 
 
+class TestLanguagePropagation:
+    """检测到的源语言必须传播给对齐 (缺失时误用 en 模型对齐日语, 对齐结果截断)"""
+
+    def test_detected_language_propagates_to_wav2vec2(self, monkeypatch):
+        import core.passes.asr_composite_pass as mod
+        from core.passes.asr_composite_pass import ASRCompositePass
+
+        calls = {}
+
+        class FakeWhisper:
+            def __init__(self, ctx, workspace_dir=""):
+                self.ctx = ctx
+
+            def run(self):
+                return [
+                    Patch(id="asr_evt_001", target_id="evt_001", op=OpCode.SEGMENT_INSERT,
+                          value={"start": 0.0, "end": 2.0, "text": "こんにちは",
+                                 "words": [{"word": "こんにちは", "start": 0.0, "end": 2.0}],
+                                 "language": "ja", "source": "faster-whisper"}),
+                    Patch(id="asr_meta", target_id="timeline", op=OpCode.ANNOTATE,
+                          value={"language": "ja"}, author="system"),
+                ]
+
+        class FakeWav2Vec2:
+            def __init__(self, audio_path, language):
+                calls["language"] = language
+
+            def refine_alignment(self, segments):
+                return []
+
+            def extract_semantic(self, segment_ids, output_dir=""):
+                return []
+
+        monkeypatch.setattr(mod, "WhisperAdapter", FakeWhisper)
+        monkeypatch.setattr(mod, "Wav2Vec2Adapter", FakeWav2Vec2)
+
+        pass_ = ASRCompositePass(audio_path="/tmp/test.wav")
+        pass_.apply()
+        assert calls["language"] == "ja"
+
+
+class TestMatchByOverlap:
+    """时间重叠匹配 — whisperx 拆分/截断下不把词错植到错误 event"""
+
+    @staticmethod
+    def _mk_words(*pairs):
+        return [{"word": f"w{i}", "start": s, "end": e, "score": 0.9}
+                for i, (s, e) in enumerate(pairs)]
+
+    def test_split_aligned_segments_union_onto_event(self):
+        """whisperx 拆分会改变输出数量 — 索引映射会错位, 重叠匹配必须按时间归位"""
+        adapter = Wav2Vec2Adapter(audio_path="/tmp/test.wav")
+        segments = [
+            {"start": 0.0, "end": 10.0, "text": "a b", "words": self._mk_words((0, 2), (3, 5))},
+            {"start": 12.0, "end": 20.0, "text": "c d", "words": self._mk_words((12, 14), (15, 18))},
+        ]
+        # whisperx 把 seg[0] 拆成两段, seg[1] 原样 — 3 个输出 vs 2 个输入
+        aligned = [
+            {"start": 0.0, "end": 4.0, "text": "a b", "words": self._mk_words((0.1, 2.0))},
+            {"start": 4.5, "end": 9.5, "text": "a b", "words": self._mk_words((5.0, 9.0))},
+            {"start": 12.0, "end": 20.0, "text": "c d", "words": self._mk_words((12.5, 18.0))},
+        ]
+        patches = adapter._match_by_overlap(segments, aligned)
+        by_target = {p.target_id: p for p in patches}
+        assert set(by_target) == {"evt_001", "evt_002"}
+        ev1 = by_target["evt_001"].value["word_timestamps"]
+        ev2 = by_target["evt_002"].value["word_timestamps"]
+        assert len(ev1) == 2 and len(ev2) == 1
+        assert ev1 == sorted(ev1, key=lambda w: w["start"])
+        assert ev2[0]["start"] == 12.5
+
+    def test_truncated_alignment_uncovered_events_get_no_patch(self):
+        """对齐截断时未覆盖的 event 不产出 patch — 保留 whisper 原始词"""
+        adapter = Wav2Vec2Adapter(audio_path="/tmp/test.wav")
+        segments = [
+            {"start": 0.0, "end": 10.0, "text": "a", "words": self._mk_words((0, 10))},
+            {"start": 12.0, "end": 20.0, "text": "b", "words": self._mk_words((12, 20))},
+            {"start": 30.0, "end": 40.0, "text": "c", "words": self._mk_words((30, 40))},
+        ]
+        aligned = [
+            {"start": 0.0, "end": 10.0, "text": "a", "words": self._mk_words((0.1, 9.9))},
+            {"start": 12.0, "end": 20.0, "text": "b", "words": self._mk_words((12.1, 19.9))},
+        ]  # 尾部截断 — evt_003 无 patch
+        patches = adapter._match_by_overlap(segments, aligned)
+        assert [p.target_id for p in patches] == ["evt_001", "evt_002"]
+
+    def test_bad_words_filtered(self):
+        """缺失/倒置/零长时间戳的词不进入 patch (adapter 边界清洗)"""
+        adapter = Wav2Vec2Adapter(audio_path="/tmp/test.wav")
+        segments = [{"start": 0.0, "end": 10.0, "text": "a", "words": []}]
+        aligned = [{
+            "start": 0.0, "end": 10.0, "text": "a",
+            "words": [
+                {"word": "ok", "start": 1.0, "end": 2.0},
+                {"word": "none_start", "start": None, "end": 3.0},
+                {"word": "none_end", "start": 4.0, "end": None},
+                {"word": "inverted", "start": 5.0, "end": 4.0},
+                {"word": "zero", "start": 0.0, "end": 0.0},
+            ],
+        }]
+        patches = adapter._match_by_overlap(segments, aligned)
+        assert len(patches) == 1
+        words = patches[0].value["word_timestamps"]
+        assert [w["word"] for w in words] == ["ok"]
+
+    def test_no_overlap_segment_skipped(self):
+        adapter = Wav2Vec2Adapter(audio_path="/tmp/test.wav")
+        segments = [{"start": 0.0, "end": 10.0, "text": "a", "words": []}]
+        aligned = [
+            {"start": 0.0, "end": 10.0, "text": "a", "words": self._mk_words((0.1, 9.9))},
+            {"start": 50.0, "end": 60.0, "text": "junk", "words": self._mk_words((50, 60))},
+        ]
+        patches = adapter._match_by_overlap(segments, aligned)
+        assert [p.target_id for p in patches] == ["evt_001"]
+
+    def test_invalid_aligned_boundary_skipped(self):
+        adapter = Wav2Vec2Adapter(audio_path="/tmp/test.wav")
+        segments = [{"start": 0.0, "end": 10.0, "text": "a", "words": []}]
+        aligned = [
+            {"start": None, "end": 10.0, "text": "a", "words": self._mk_words((0.1, 9.9))},
+        ]
+        patches = adapter._match_by_overlap(segments, aligned)
+        assert patches == []
+
+
 class TestPatchIdempotency:
     """Patch 幂等性验证"""
 

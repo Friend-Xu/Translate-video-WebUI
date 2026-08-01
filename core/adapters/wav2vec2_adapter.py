@@ -47,7 +47,8 @@ class Wav2Vec2Adapter:
     def refine_alignment(self, segments: list[dict]) -> list[Patch]:
         """对一组 segment 运行 wav2vec2 强制对齐，输出 REFINE_ALIGNMENT patch。
 
-        对齐失败时返回空列表，不阻断主流程。
+        对齐失败或部分覆盖时只产出对应 patch — 未覆盖的 event 保留
+        bootstrap 写入的 whisper 原始词，不虚构数据、不拼凑尾部。
         """
         if not segments:
             return []
@@ -56,31 +57,61 @@ class Wav2Vec2Adapter:
         if aligned_segments is None:
             return []
 
-        patches: list[Patch] = []
+        return self._match_by_overlap(segments, aligned_segments)
+
+    def _match_by_overlap(self, segments: list[dict], aligned_segments: list[dict]) -> list[Patch]:
+        """按时间重叠把 aligned segment 匹配到输入 event (索引对齐不可靠)。
+
+        whisperx 会拆分/合并/截断输入 segment，输出数量与顺序都可能与输入
+        不一致 — 按索引映射会把尾部词错植到前半段 event，经 segmentation
+        拆出 start>=end 的坏事件 (实测: 对齐尾部丢失 44.4s 后 evt_015 反转)。
+        同一 event 命中多个 aligned segment 时合并词列表 (whisperx 拆分);
+        无重叠的 aligned segment 响亮化警告后丢弃。
+        """
+        from collections import defaultdict
+
+        grouped: dict[int, list[dict]] = defaultdict(list)
         for i, seg in enumerate(aligned_segments):
-            words = seg.get("words", [])
-            # adapter 边界清洗: 只保留有效时间戳的词 — 兜底 0.0 会让
-            # segmentation 用词边界拆出 start>=end 的坏事件 (禁止兜底)
+            start, end = seg.get("start"), seg.get("end")
+            if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+                logger.warning(
+                    "对齐输出段[%d] 无有效时间戳 (start=%r end=%r)，丢弃", i, start, end,
+                )
+                continue
+            idx = self._best_overlap_index(segments, start, end)
+            if idx is None:
+                logger.warning(
+                    "对齐输出段[%d] (%.2f-%.2f) 与任何输入 event 无重叠，丢弃",
+                    i, start, end,
+                )
+                continue
+            grouped[idx].append(seg)
+
+        patches: list[Patch] = []
+        for idx, segs in sorted(grouped.items()):
             word_ts = []
-            for w in words:
-                start, end = w.get("start"), w.get("end")
-                if start is None or end is None or start >= end:
-                    continue
-                word_ts.append({
-                    "word": w.get("word", ""),
-                    "start": start, "end": end,
-                    "score": w.get("score", 0.0),
-                })
+            for seg in segs:
+                for w in seg.get("words", []):
+                    w_start, w_end = w.get("start"), w.get("end")
+                    # adapter 边界清洗: 坏时间戳 (缺失/倒置/零长) 不进入 IR
+                    if w_start is None or w_end is None or w_start >= w_end:
+                        continue
+                    word_ts.append({
+                        "word": w.get("word", ""),
+                        "start": w_start, "end": w_end,
+                        "score": w.get("score", 0.0),
+                    })
+            word_ts.sort(key=lambda w: w["start"])
             if not word_ts:
-                continue  # 无有效词时间戳 — 保留原事件边界, 跳过该段精修
+                continue  # 无有效词时间戳 — 保留原词, 跳过该段精修
             patches.append(Patch(
-                id=f"align_{i + 1:03d}",
-                target_id=f"evt_{i + 1:03d}",
+                id=f"align_{idx + 1:03d}",
+                target_id=f"evt_{idx + 1:03d}",
                 op=OpCode.REFINE_ALIGNMENT,
                 value={
                     "word_timestamps": word_ts,
                     "confidence_delta": self._compute_delta(
-                        segments[i].get("words", []) if i < len(segments) else [],
+                        segments[idx].get("words", []),
                         word_ts,
                     ),
                 },
@@ -89,6 +120,18 @@ class Wav2Vec2Adapter:
             ))
 
         return patches
+
+    @staticmethod
+    def _best_overlap_index(segments: list[dict], start: float, end: float) -> int | None:
+        """返回与 [start, end] 时间重叠最大的输入 segment 索引，无重叠返回 None。"""
+        best_idx: int | None = None
+        best_ov = 0.0
+        for i, s in enumerate(segments):
+            s_start, s_end = s.get("start", 0.0), s.get("end", 0.0)
+            overlap = min(end, s_end) - max(start, s_start)
+            if overlap > best_ov:
+                best_ov, best_idx = overlap, i
+        return best_idx if best_ov > 0 else None
 
     # ── semantic 模式 ─────────────────────────────────────
 
@@ -170,10 +213,8 @@ class Wav2Vec2Adapter:
                 with open(output_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 # align() 返回 {"segments": [...], "word_segments": [...]}
-                aligned = data.get("segments")
-                if aligned:
-                    return self._merge_aligned(segments, aligned)
-                return None
+                # 尾部截断不在此补 — 未覆盖的 event 保留 bootstrap 的 whisper 词
+                return data.get("segments") or None
             else:
                 logger.warning("wav2vec2 对齐子进程未生成输出文件")
                 return None
@@ -253,50 +294,6 @@ result = align(
 with open(output_file, "w", encoding="utf-8") as f:
     json.dump(result, f, ensure_ascii=False)
 """
-
-    @staticmethod
-    def _merge_aligned(original: list[dict], aligned: list[dict]) -> list[dict]:
-        """对齐结果尾部丢失时，用 whisper 原始词补齐覆盖。
-
-        adapter 边界清洗: 无有效时间戳的词 (start/end 缺失或 start>=end)
-        不参与合成 — 坏时间戳会经 segmentation 拆出 start>=end 的坏事件。
-        """
-        if not original or not aligned:
-            return aligned or original
-        orig_end = max(s["end"] for s in original)
-        aligned_end = max(s["end"] for s in aligned)
-        truncation = orig_end - aligned_end
-        if truncation <= 1.0:
-            return aligned
-        tail_words = []
-        for s in original:
-            for w in s.get("words", []):
-                start, end = w.get("start"), w.get("end")
-                if start is None or end is None or start >= end:
-                    continue
-                if start >= aligned_end:
-                    tail_words.append(w)
-        if not tail_words:
-            return aligned
-        logger.warning(
-            "对齐尾部丢失 %.1fs，用 whisper 原始时间戳补齐 %d 个词",
-            truncation, len(tail_words),
-        )
-        seg_start, seg_end = tail_words[0]["start"], tail_words[-1]["end"]
-        if seg_end <= seg_start:
-            logger.warning(
-                "对齐尾部补齐时间戳无效 (%.2f >= %.2f)，丢弃尾部词",
-                seg_start, seg_end,
-            )
-            return aligned
-        result = list(aligned)
-        result.append({
-            "start": seg_start,
-            "end": seg_end,
-            "text": " ".join(w["word"] for w in tail_words),
-            "words": tail_words,
-        })
-        return result
 
     @staticmethod
     def _avg_score(words: list[dict]) -> float:

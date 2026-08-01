@@ -58,6 +58,13 @@ class ASRCompositePass(TimelinePass):
         segment_patches = [p for p in asr_patches if p.op == OpCode.SEGMENT_INSERT]
         meta_patches = [p for p in asr_patches if p.op == OpCode.ANNOTATE]
 
+        # 检测到的源语言回写 ctx — 对齐/后续 pass 按语言选模型,
+        # 缺失时曾误用 en 模型对齐日语导致对齐结果截断 (坏数据进 IR)
+        detected_lang = next(
+            (p.value.get("language") for p in meta_patches if p.value.get("language")), "")
+        if detected_lang:
+            ctx.language = detected_lang
+
         new_state = self._bootstrap_state(segment_patches)
         # Preserve global_patches from previous stages (e.g. LOAD stage audio_ref/vocals_ref)
         new_state.global_patches = list(state.global_patches) if state is not None else []
@@ -137,13 +144,17 @@ class ASRCompositePass(TimelinePass):
         """收集 state 中的 segments 用于 wav2vec2 对齐。"""
         segments = []
         for es in state.sorted_events():
-            words = es.asr.words
+            words = []
+            for w in es.asr.words:
+                start, end = w.get("start"), w.get("end")
+                if start is None or end is None or start >= end:
+                    continue  # adapter 边界清洗: 坏词不进入对齐输入
+                words.append({"word": w.get("word", ""), "start": start, "end": end})
             segments.append({
                 "text": es.ir.text_ref,
                 "start": es.start,
                 "end": es.end,
-                "words": [{"word": w.get("word", ""), "start": w.get("start", 0),
-                           "end": w.get("end", 0)} for w in words],
+                "words": words,
             })
         return segments
 
