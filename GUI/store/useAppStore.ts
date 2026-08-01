@@ -4,7 +4,6 @@ import type { Mode, PatchDraft, IssueFilter, IssueItem, JobState, CrossModeConte
 import type { TrackDefinition } from '../types/timeline'
 import type { TrackWaveformData } from '../types'
 import { DEFAULT_TRACKS, TRACK_VISIBILITY_MAP, SPEAKER_TRACK_PRESET } from '../types/timeline'
-import { MOCK_SPEAKER_LOAD } from '../mocks/mockData'
 
 export type { Mode, PatchDraft, IssueFilter, JobState }
 export type TimelineFocus = 'default' | 'speaker' | 'patch'
@@ -99,11 +98,11 @@ export interface AppState {
   // Actions — Drafts
   addDraft: (draft: PatchDraft) => void
   removeDraft: (eventId: string) => void
-  applyDraft: (eventId: string) => Promise<void>
+  applyDraft: (eventId: string) => Promise<boolean>
   discardDraft: (eventId: string) => void
-  applyAllDrafts: () => Promise<void>
+  applyAllDrafts: () => Promise<number>
   discardAllDrafts: () => void
-  undoLastPatch: () => Promise<TimelinePatchData | null>
+  undoLastPatch: () => Promise<{ ok: boolean; patch: TimelinePatchData | null }>
 
   // Actions — Patches / Filters / Jobs
   setUnappliedPatches: (patches: PatchPreview[]) => void
@@ -438,20 +437,28 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   applyDraft: async (eventId) => {
     const draft = get().pendingDrafts.get(eventId)
-    if (!draft) return
+    if (!draft) return false
 
     const patch = patchDraftToApiFormat(draft)
     const ws = get().workspace
 
-    // Call backend API to persist the patch
+    // 后端失败必须响亮 — 不记录本地、保留 draft 供重试 (禁止兜底)
+    let res: Response
     try {
-      await fetch('/api/timeline/patch/apply', {
+      res = await fetch('/api/timeline/patch/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspace: ws, patch }),
       })
-    } catch {
-      // API unavailable — still record locally
+    } catch (e) {
+      set({ error: `补丁应用失败: ${e instanceof Error ? e.message : String(e)}` })
+      return false
+    }
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}))
+      const msg = (detail as any).detail || (detail as any).error || `HTTP ${res.status}`
+      set({ error: `补丁应用失败: ${msg}` })
+      return false
     }
 
     // Record as applied patch
@@ -475,11 +482,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     next.delete(eventId)
     set({ pendingDrafts: next, appliedPatches: patches })
 
-    // Reload data to reflect applied patch
+    // Reload data to reflect applied patch (失败由 loadWorkspace/fetchSpeakerLanes 内部设 error)
     if (ws) {
-      try { await get().loadWorkspace(ws) } catch {}
-      try { await get().fetchSpeakerLanes(ws) } catch {}
+      await get().loadWorkspace(ws)
+      await get().fetchSpeakerLanes(ws)
     }
+    return true
   },
 
   discardDraft: (eventId) => {
@@ -490,21 +498,22 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   applyAllDrafts: async () => {
     const drafts = get().pendingDrafts
-    if (drafts.size === 0) return
+    if (drafts.size === 0) return 0
     const ws = get().workspace
     const now = new Date().toISOString()
     const newPatches: TimelinePatchData[] = []
+    const failedIds: string[] = []
 
-    for (const [, draft] of drafts) {
+    for (const [eventId, draft] of drafts) {
       const patch = patchDraftToApiFormat(draft)
-      // Call backend API
       try {
-        await fetch('/api/timeline/patch/apply', {
+        const res = await fetch('/api/timeline/patch/apply', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ workspace: ws, patch }),
         })
-      } catch { /* continue */ }
+        if (!res.ok) { failedIds.push(eventId); continue }
+      } catch { failedIds.push(eventId); continue }
 
       newPatches.push({
         patch_id: patch.patch_id as string,
@@ -521,8 +530,24 @@ export const useAppStore = create<AppState>((set, get) => ({
       })
     }
 
+    // 失败的草案保留供重试, 成功的移除 (禁止兜底: 部分失败必须响亮)
+    const nextDrafts = new Map<string, PatchDraft>()
+    for (const [id, draft] of drafts) {
+      if (failedIds.includes(id)) nextDrafts.set(id, draft)
+    }
+
     const history = [...get().appliedPatches, ...newPatches].slice(-50)
-    set({ pendingDrafts: new Map(), appliedPatches: history })
+    set({ pendingDrafts: nextDrafts, appliedPatches: history })
+
+    // 先 reload (成功会清 error), 再设失败信息 — 避免成功刷新吞掉失败提示
+    if (ws && newPatches.length > 0) {
+      await get().loadWorkspace(ws)
+      await get().fetchSpeakerLanes(ws)
+    }
+    if (failedIds.length > 0) {
+      set({ error: `批量应用失败 ${failedIds.length}/${drafts.size} 条 (${failedIds.join(', ')})，失败条目已保留` })
+    }
+    return newPatches.length
   },
 
   discardAllDrafts: () => {
@@ -531,18 +556,28 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   undoLastPatch: async () => {
     const patches = get().appliedPatches
-    if (patches.length === 0) return null
+    if (patches.length === 0) return { ok: false, patch: null }
     const removed = patches[patches.length - 1]
     const ws = get().workspace
 
-    // Call backend API to undo
+    // 后端失败必须响亮 — 不删本地 appliedPatches, 保持与后端一致 (禁止兜底)
+    let res: Response
     try {
-      await fetch('/api/timeline/patch/undo', {
+      res = await fetch('/api/timeline/patch/undo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspace: ws }),
       })
-    } catch { /* API unavailable */ }
+    } catch (e) {
+      set({ error: `撤销失败: ${e instanceof Error ? e.message : String(e)}` })
+      return { ok: false, patch: null }
+    }
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}))
+      const msg = (detail as any).detail || (detail as any).error || `HTTP ${res.status}`
+      set({ error: `撤销失败: ${msg}` })
+      return { ok: false, patch: null }
+    }
 
     set({ appliedPatches: patches.slice(0, -1) })
 
@@ -550,7 +585,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     get().fetchPatchLog().catch(() => {})
     get().fetchSpeakerLanes(ws).catch(() => {})
 
-    return removed
+    return { ok: true, patch: removed }
   },
 
   // ── Patches ──
@@ -625,7 +660,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      if (!res.ok) throw new Error('API not available')
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
       const lanes: SpeakerLaneData[] = (data.speaker_lanes || []).map((l: any, i: number) => ({
         ...l,
@@ -644,31 +679,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       }))
       set({ speakerLanes: lanes })
       if (data.voice_presets) set({ voicePresets: data.voice_presets })
-    } catch {
-      // Fallback to mock data
-      const mock = MOCK_SPEAKER_LOAD
-      const lanes: SpeakerLaneData[] = mock.speaker_lanes.map((l: any, i: number) => ({
-        speaker: l.speaker,
-        display_name: mock.speakerNames[l.speaker] || l.speaker,
-        voice_id: '',
-        color: LANE_COLORS[i % LANE_COLORS.length],
-        segments: (l.segments || []).map((s: any, j: number) => ({
-          start: s.start, end: s.end,
-          text: s.text || '',
-          translation: s.translation,
-          confidence: s.confidence || 0.9,
-          eventId: s.eventId || `${l.speaker}_seg_${j}`,
-        })),
-        segment_count: l.segments?.length || 0,
-        total_duration: l.segments ? l.segments.reduce((sum: number, s: any) => sum + (s.end - s.start), 0) : 0,
-      }))
-      set({ speakerLanes: lanes })
-      set({ voicePresets: [
-        { id: 'vc_001', name: '晓晓 (女声)', language: 'zh-CN', sampleText: '你好，欢迎使用语音合成系统。', engine: 'edge', locked: false },
-        { id: 'vc_002', name: '云希 (男声)', language: 'zh-CN', sampleText: '这是来自微软的边缘语音合成。', engine: 'edge', locked: false },
-        { id: 'vc_004', name: 'ChatTTS Seed 2', language: 'zh-CN', sampleText: 'ChatTTS 多样本音色。', engine: 'chattts', locked: false },
-        { id: 'vc_005', name: 'CosyVoice v2 Default', language: 'zh-CN', sampleText: 'CosyVoice 跨语言合成。', engine: 'cosyvoice', locked: true },
-      ]})
+    } catch (err) {
+      // 禁止兜底: 失败清空并响亮报错, 绝不回退 mock 假数据
+      set({
+        speakerLanes: [],
+        voicePresets: [],
+        error: `说话人数据加载失败: ${err instanceof Error ? err.message : String(err)}`,
+      })
     }
   },
 
@@ -925,7 +942,10 @@ export const useAppStore = create<AppState>((set, get) => ({
           after: { translation: entry.translatedText },
           timestamp: Date.now(),
         })
-        await store.applyDraft(eventId)
+        const ok = await store.applyDraft(eventId)
+        if (!ok) {
+          throw new Error(`评审保存失败: 第 ${entry.index} 条补丁未应用 (${get().error || '未知错误'})`)
+        }
       }
       console.log(`Review saved: ${data.updated} entries → ${data.output_path}`)
     } catch (err) {

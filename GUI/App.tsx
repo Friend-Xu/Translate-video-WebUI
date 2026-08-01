@@ -94,6 +94,12 @@ export default function App() {
     setSnackbar({ open: true, msg, severity })
   }, [])
 
+  // 全局错误展示: store.error 变化 → snackbar (操作失败必须响亮, 禁止静默吞错)
+  const storeError = useAppStore(s => s.error)
+  useEffect(() => {
+    if (storeError) showMsg(storeError, 'error')
+  }, [storeError, showMsg])
+
   const handleFileDropped = useCallback(async (file: File) => {
     const q = `name=${encodeURIComponent(file.name)}&size=${file.size}`
     try {

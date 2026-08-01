@@ -5,6 +5,31 @@
 
 ---
 
+## 2026-08-01 — P1 前端吞错修复: 编辑失败必须响亮
+
+### 改动
+- `useAppStore.applyDraft`: 后端失败 (网络/4xx/5xx) → 设置 store.error + **保留 draft 供重试**, 不再"本地照常记录"(旧行为: 刷新后编辑静默丢失); 成功才删 draft + 记录 appliedPatches; reload 失败不再静默吞
+- `useAppStore.applyAllDrafts`: 逐条提交, 部分失败 → 失败草案保留 + error 显示失败数; 错误信息在 reload 之后设置 (避免成功刷新吞掉失败提示)
+- `useAppStore.undoLastPatch`: 后端失败 → 不删本地 appliedPatches + error 设置; 返回 `{ok, patch}` 显式区分"无补丁可撤"与"撤销失败"
+- `useAppStore.fetchSpeakerLanes`: **删 mock 降级** — 失败清空 lanes + 响亮报错, 绝不回退假数据 (MOCK_SPEAKER_LOAD 引用删除)
+- `App.tsx`: 订阅 store.error → 全局 snackbar 展示 (此前 error 只在 WorkspaceSelector Popover 红字可见, timeline 等模式编辑失败用户无感知)
+- `WordSplitDialog`: 仅 apply 成功才关闭对话框 (失败保留供重试)
+- `saveReviewEntries`: applyDraft 返回 false → 抛错中断 (不再静默部分完成)
+- 新增 `GUI/__tests__/useAppStoreFailLoud.test.ts` 契约测试 8 个: 网络失败/422/部分失败/全部失败/撤销失败/mock 降级删除
+- 新增 `test_trail/fail_loud_smoke.cjs` Playwright 冒烟 (6 步, 需后端+vite)
+
+### 决策
+- **失败是用户的错误不是日志的**: 旧 catch 静默 + 本地记录 = "成功的错误输出"(三条原则明令禁止); 现在失败 → snackbar + draft 保留
+- **加载失败不降级假数据**: fetchSpeakerLanes 失败回退 mock 是静默假数据, 与 mock 演示模式无关, 一律删
+- **undo 返回值语义化**: `Promise<{ok, patch}>` 消灭 null 双义 (无补丁 vs 失败)
+
+### 冒烟实测 (Playwright, smoke_ws 副本工作区)
+- 成功路径: timeline 编辑译文 → 保存草案 → 补丁模式全部应用 → patch 链 +1, 无错误 snackbar
+- 错误路径: review 保存 → snackbar "补丁应用失败: target not found: entry_1" t+1s 内出现; toast "已保存" 不出现
+- **顺带暴露既有 bug**: saveReviewEntries 用 `entry_N` 伪造 patch target (review/load 条目无 eventId) → 保存必然失败 — 响亮化让问题显形, 留待 P2/P3 处理
+
+---
+
 ## 2026-08-01 — xCOMET-lite 设为默认质量策略
 
 - `GlobalConfig translation.gate.mode` 默认 logic_gate → **xcomet**; quality_check

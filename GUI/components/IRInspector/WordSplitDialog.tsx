@@ -108,7 +108,7 @@ export default function WordSplitDialog({ event, open, onClose }: Props) {
       after: { split_point: splitPoint },
       timestamp: Date.now(),
     })
-    applyDraft(event.id).then(() => { onClose() })
+    applyDraft(event.id).then(ok => { if (ok) onClose() })
   }, [event, splitPoint, onClose, addDraft, applyDraft])
 
   // Intercept Space key to prevent SpeakerReviewView from toggling play
