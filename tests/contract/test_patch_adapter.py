@@ -101,11 +101,32 @@ class TestLegacyAdapter:
         assert p.op == OpCode.ANNOTATE
         assert p.value == {"review": {"flags": ["deleted"]}}
 
-    def test_speaker_encoded_ops_rejected(self):
-        for key in ("rename_speaker", "merge_speakers", "lock_speaker"):
-            with pytest.raises(UnsupportedPatchError):
-                legacy_to_core({"patch_id": "x", "opcode": "ANNOTATE",
-                                "targets": ["SPK"], "payload": {"key": key}})
+    def test_speaker_ops_mapped_to_core(self):
+        """P2 收敛: speaker 操作统一走 patch — 映射到注册表级 opcode。"""
+        cases = [
+            # (前端 opcode, payload, targets, 期望 core op, value 关键字段)
+            ("ASSIGN_SPEAKER", {"new_speaker": "SPK_B"}, ["evt_001"],
+             OpCode.ASSIGN_SPEAKER, {"speaker_id": "SPK_B"}),
+            ("MERGE_SPEAKERS", {"source": "SPK_A", "target": "SPK_B"}, ["SPK_A"],
+             OpCode.MERGE_SPEAKERS, {"from_ids": ["SPK_A"], "into_id": "SPK_B"}),
+            ("CREATE_SPEAKER", {"display_name": "新角色"}, ["SPK_NEW"],
+             OpCode.REGISTER_SPEAKER, {"speaker_id": "SPK_NEW", "display_name": "新角色"}),
+            ("RENAME_SPEAKER", {"newName": "主角", "color": "#FF0000"}, ["SPK_A"],
+             OpCode.UPDATE_SPEAKER, {"speaker_id": "SPK_A", "name": "主角", "color": "#FF0000"}),
+            ("LOCK_SPEAKER", {"speaker": "SPK_A"}, ["SPK_A"],
+             OpCode.LOCK_SPEAKER, {"speaker_id": "SPK_A", "locked": True}),
+        ]
+        for opcode, payload, targets, expect_op, expect_value in cases:
+            p = legacy_to_core({"patch_id": "x", "opcode": opcode,
+                                "targets": targets, "payload": payload})
+            assert p.op == expect_op, opcode
+            for k, v in expect_value.items():
+                assert p.value.get(k) == v, f"{opcode} value.{k}"
+
+    def test_merge_speakers_missing_target_rejected(self):
+        with pytest.raises(UnsupportedPatchError):
+            legacy_to_core({"patch_id": "x", "opcode": "MERGE_SPEAKERS",
+                            "targets": ["SPK_A"], "payload": {"source": "SPK_A"}})
 
     def test_unknown_opcode_rejected(self):
         with pytest.raises(UnsupportedPatchError):
@@ -122,9 +143,13 @@ class TestLegacyAdapter:
         for core_op, legacy_label in [
             (OpCode.SEGMENT_MERGE, "MERGE"),
             (OpCode.SEGMENT_SPLIT, "SPLIT"),
-            (OpCode.ASSIGN_SPEAKER, "RETAG_SPEAKER"),
+            (OpCode.ASSIGN_SPEAKER, "ASSIGN_SPEAKER"),
             (OpCode.UPDATE_TRANSLATION, "SET_TRANSLATION"),
             (OpCode.UPDATE_BOUNDS, "RESIZE"),
+            (OpCode.MERGE_SPEAKERS, "MERGE_SPEAKERS"),
+            (OpCode.REGISTER_SPEAKER, "CREATE_SPEAKER"),
+            (OpCode.UPDATE_SPEAKER, "RENAME_SPEAKER"),
+            (OpCode.LOCK_SPEAKER, "LOCK_SPEAKER"),
         ]:
             p = Patch(id="p", target_id="e", op=core_op, value={})
             assert core_to_legacy(p)["opcode"] == legacy_label

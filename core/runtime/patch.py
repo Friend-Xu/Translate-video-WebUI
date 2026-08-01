@@ -27,6 +27,10 @@ class OpCode(str, Enum):
     ASSIGN_SPEAKER = "assign_speaker"
     MERGE_SPEAKERS = "merge_speakers"
     SPLIT_SEGMENT_BY_SPEAKER = "split_segment_by_speaker"
+    # Speaker 注册表类 (P2 收敛: 注册表级操作统一走 patch)
+    REGISTER_SPEAKER = "register_speaker"
+    UPDATE_SPEAKER = "update_speaker"
+    LOCK_SPEAKER = "lock_speaker"
     # TTS 类
     UPDATE_TTS_AUDIO = "update_tts_audio"
     # Translation 类
@@ -44,7 +48,6 @@ class OpCode(str, Enum):
     MERGE = "merge"
     SPLIT = "split"
     REPLACE = "replace"
-    PROPAGATE = "propagate"
 
 
 @dataclass

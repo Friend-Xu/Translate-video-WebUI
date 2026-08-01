@@ -93,6 +93,47 @@ class TestPatchEngineV2:
                   value={"from_ids": ["SPK_01"], "into_id": "SPK_00"})
         assert engine.apply(state, p)["status"] == "applied"
 
+    def test_register_speaker(self, engine, state):
+        """注册表新增说话人 (P2 收敛: 注册表级操作统一走 patch)。"""
+        p = Patch(id="p1", target_id="SPEAKER_NEW", op=OpCode.REGISTER_SPEAKER,
+                  value={"speaker_id": "SPEAKER_NEW", "display_name": "新角色"})
+        assert engine.apply(state, p)["status"] == "applied"
+        node = state.ir.speakers.get("SPEAKER_NEW")
+        assert node is not None
+        assert node.name == "新角色"
+
+    def test_register_speaker_duplicate(self, engine, state):
+        """已存在 → 响亮报错, 不覆盖。"""
+        p = Patch(id="p1", target_id="SPEAKER_00", op=OpCode.REGISTER_SPEAKER,
+                  value={"speaker_id": "SPEAKER_00"})
+        result = engine.apply(state, p)
+        assert result["status"] == "error"
+        assert "已存在" in result["reason"]
+
+    def test_update_speaker_name_and_color(self, engine, state):
+        """改 name/color — 不可变节点重建, 其余字段保留。"""
+        p = Patch(id="p1", target_id="SPEAKER_00", op=OpCode.UPDATE_SPEAKER,
+                  value={"speaker_id": "SPEAKER_00", "name": "主角", "color": "#FF0000"})
+        assert engine.apply(state, p)["status"] == "applied"
+        node = state.ir.speakers["SPEAKER_00"]
+        assert node.name == "主角"
+        assert node.color == "#FF0000"
+
+    def test_lock_speaker(self, engine, state):
+        """锁定/解锁注册表说话人。"""
+        p = Patch(id="p1", target_id="SPEAKER_00", op=OpCode.LOCK_SPEAKER,
+                  value={"speaker_id": "SPEAKER_00", "locked": True})
+        assert engine.apply(state, p)["status"] == "applied"
+        assert state.ir.speakers["SPEAKER_00"].is_locked is True
+
+    def test_update_speaker_missing(self, engine, state):
+        """不存在的 speaker → 响亮报错。"""
+        p = Patch(id="p1", target_id="SPEAKER_GHOST", op=OpCode.UPDATE_SPEAKER,
+                  value={"speaker_id": "SPEAKER_GHOST", "name": "x"})
+        result = engine.apply(state, p)
+        assert result["status"] == "error"
+        assert "不存在" in result["reason"]
+
     def test_annotate_writes_slots(self, engine, state):
         p = Patch(id="p1", target_id="evt_001", op=OpCode.ANNOTATE,
                   value={"runtime": {"status": "done"}})

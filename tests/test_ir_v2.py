@@ -91,7 +91,6 @@ class TestOpCodeEnum:
         assert OpCode.MERGE == "merge"
         assert OpCode.SPLIT == "split"
         assert OpCode.REPLACE == "replace"
-        assert OpCode.PROPAGATE == "propagate"
 
     def test_new_opcodes(self):
         assert OpCode.SEGMENT_INSERT == "segment_insert"

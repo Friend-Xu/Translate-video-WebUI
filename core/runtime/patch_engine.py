@@ -62,6 +62,9 @@ class PatchEngine:
             OpCode.ASSIGN_SPEAKER: self._assign_speaker,
             OpCode.MERGE_SPEAKERS: self._merge_speakers,
             OpCode.SPLIT_SEGMENT_BY_SPEAKER: self._split_by_speaker,
+            OpCode.REGISTER_SPEAKER: self._register_speaker,
+            OpCode.UPDATE_SPEAKER: self._update_speaker,
+            OpCode.LOCK_SPEAKER: self._lock_speaker,
             OpCode.UPDATE_TTS_AUDIO: self._update_tts_audio,
             OpCode.UPDATE_TRANSLATION: self._update_translation,
             OpCode.UPDATE_EMOTION: self._update_emotion,
@@ -584,6 +587,69 @@ class PatchEngine:
             "into_id": into_id,
             "remapped_events": remapped,
         }
+
+    def _register_speaker(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """注册表新增说话人 (P2 收敛: 注册表级操作统一走 patch)。"""
+        speaker_id = patch.value.get("speaker_id", patch.target_id)
+        if not speaker_id:
+            return {"status": "error", "reason": "speaker_id 不能为空"}
+        if speaker_id in state.ir.speakers:
+            return {"status": "error", "reason": f"speaker 已存在: {speaker_id}"}
+        from core.ir.speaker import SpeakerNodeIR
+        state.ir.speakers[speaker_id] = SpeakerNodeIR(
+            id=speaker_id,
+            name=patch.value.get("display_name") or None,
+        )
+        state.add_global_patch(patch)
+        return {"status": "applied", "op": "register_speaker", "speaker_id": speaker_id}
+
+    def _update_speaker(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """注册表说话人字段更新 (name/color) — 不可变节点重建保留其余字段。"""
+        speaker_id = patch.value.get("speaker_id", patch.target_id)
+        node = state.ir.speakers.get(speaker_id)
+        if node is None:
+            return {"status": "error", "reason": f"speaker 不存在: {speaker_id}"}
+        from core.ir.speaker import SpeakerNodeIR
+        state.ir.speakers[speaker_id] = SpeakerNodeIR(
+            id=node.id,
+            name=patch.value.get("name", node.name),
+            voice_id=node.voice_id,
+            engine=node.engine,
+            voice_profile=node.voice_profile,
+            color=patch.value.get("color", node.color),
+            is_locked=node.is_locked,
+            embedding_ref=node.embedding_ref,
+            gender_prob=node.gender_prob,
+            voice_style=node.voice_style,
+            confidence=node.confidence,
+            config=node.config,
+        )
+        state.add_global_patch(patch)
+        return {"status": "applied", "op": "update_speaker", "speaker_id": speaker_id}
+
+    def _lock_speaker(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """注册表说话人锁定 (is_locked) — 禁止自动合并/拆分。"""
+        speaker_id = patch.value.get("speaker_id", patch.target_id)
+        node = state.ir.speakers.get(speaker_id)
+        if node is None:
+            return {"status": "error", "reason": f"speaker 不存在: {speaker_id}"}
+        from core.ir.speaker import SpeakerNodeIR
+        state.ir.speakers[speaker_id] = SpeakerNodeIR(
+            id=node.id,
+            name=node.name,
+            voice_id=node.voice_id,
+            engine=node.engine,
+            voice_profile=node.voice_profile,
+            color=node.color,
+            is_locked=bool(patch.value.get("locked", True)),
+            embedding_ref=node.embedding_ref,
+            gender_prob=node.gender_prob,
+            voice_style=node.voice_style,
+            confidence=node.confidence,
+            config=node.config,
+        )
+        state.add_global_patch(patch)
+        return {"status": "applied", "op": "lock_speaker", "speaker_id": speaker_id}
 
     def _split_by_speaker(self, state: TimelineProjectState, patch: Patch) -> dict:
         target = state.get_event(patch.target_id)

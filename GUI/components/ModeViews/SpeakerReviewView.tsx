@@ -242,20 +242,18 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
     if (!mergeTarget || selectedSpeakerIds.length < 2) return
     const source = selectedSpeakerIds.find(id => id !== mergeTarget)
     if (!source) return
-    // 真实合并：端点改 speaker_timeline + timeline，并写 RETAG 审计 patch
-    try {
-      await fetch('/api/speaker/diarization/merge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          workspace: useAppStore.getState().workspace,
-          source,
-          target: mergeTarget,
-        }),
-      })
-      const ws = useAppStore.getState().workspace || ''
-      await useAppStore.getState().fetchSpeakerLanes(ws)
-    } catch {}
+    // P2 收敛: 统一走 patch (MergeEngine MERGE_SPEAKERS) — 端点写路径退役
+    const store = useAppStore.getState()
+    store.addDraft({
+      eventId: source, opcode: 'MERGE_SPEAKERS',
+      payload: { source, target: mergeTarget },
+      before: {}, after: {}, timestamp: Date.now(),
+    })
+    const ok = await store.applyDraft(source)
+    if (ok) {
+      const ws = store.workspace || ''
+      await store.fetchSpeakerLanes(ws)
+    }
     setMergeDialogOpen(false)
     setMergeTarget(null)
   }, [mergeTarget, selectedSpeakerIds])
@@ -263,7 +261,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
   const handleCreateSpeaker = useCallback(async () => {
     if (!createName.trim()) return
     addDraft({
-      eventId: `speaker_${Date.now()}`, opcode: 'CREATE_SPEAKER',
+      eventId: `SPEAKER_${Date.now()}`, opcode: 'CREATE_SPEAKER',
       payload: { display_name: createName.trim() },
       before: {}, after: { display_name: createName.trim() }, timestamp: Date.now(),
     })
@@ -281,21 +279,18 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
   const handleRename = useCallback(async (speakerId: string) => {
     if (!editValue.trim()) { setEditingName(null); return }
     const newName = editValue.trim()
-    // Persist via backend API
-    try {
-      await fetch('/api/speaker/diarization/rename', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          workspace: useAppStore.getState().workspace,
-          speaker: speakerId,
-          display_name: newName,
-        }),
-      })
-      const ws = useAppStore.getState().workspace || ''
-      await useAppStore.getState().fetchSpeakerLanes(ws)
-    } catch {}
-    // 审计 patch 由 rename 端点统一记录，前端不再重复打草案
+    // P2 收敛: 统一走 patch (UPDATE_SPEAKER) — rename 端点写路径退役
+    const store = useAppStore.getState()
+    store.addDraft({
+      eventId: speakerId, opcode: 'RENAME_SPEAKER',
+      payload: { newName },
+      before: {}, after: { displayName: newName }, timestamp: Date.now(),
+    })
+    const ok = await store.applyDraft(speakerId)
+    if (ok) {
+      const ws = store.workspace || ''
+      await store.fetchSpeakerLanes(ws)
+    }
     setEditingName(null)
   }, [editValue])
 

@@ -27,18 +27,25 @@ _LEGACY_TO_OP: dict[str, OpCode] = {
     "UPDATE_TRANSCRIPTION": OpCode.UPDATE_TRANSCRIPTION,
     "UPDATE_TRANSLATION": OpCode.UPDATE_TRANSLATION,
     "UPDATE_BOUNDS": OpCode.UPDATE_BOUNDS,
+    # P2 收敛: speaker 操作统一走 patch (此前 ANNOTATE 承载/拒绝)
+    "ASSIGN_SPEAKER": OpCode.ASSIGN_SPEAKER,
+    "MERGE_SPEAKERS": OpCode.MERGE_SPEAKERS,
+    "CREATE_SPEAKER": OpCode.REGISTER_SPEAKER,
+    "RENAME_SPEAKER": OpCode.UPDATE_SPEAKER,
+    "LOCK_SPEAKER": OpCode.LOCK_SPEAKER,
 }
-
-# 前端把 speaker 级操作编码进 ANNOTATE (key=opcode 小写) — 无 core 对等, 显式拒绝
-_UNSUPPORTED_SPEAKER_OPS = ("rename_speaker", "merge_speakers", "lock_speaker")
 
 # log 显示用: core op → 前端认识的旧词表 (pass_trace KNOWN_PASS_ORDER 大写匹配)
 _OP_TO_LEGACY: dict[OpCode, str] = {
     OpCode.SEGMENT_MERGE: "MERGE",
     OpCode.SEGMENT_SPLIT: "SPLIT",
-    OpCode.ASSIGN_SPEAKER: "RETAG_SPEAKER",
+    OpCode.ASSIGN_SPEAKER: "ASSIGN_SPEAKER",
     OpCode.UPDATE_TRANSLATION: "SET_TRANSLATION",
     OpCode.UPDATE_BOUNDS: "RESIZE",
+    OpCode.MERGE_SPEAKERS: "MERGE_SPEAKERS",
+    OpCode.REGISTER_SPEAKER: "CREATE_SPEAKER",
+    OpCode.UPDATE_SPEAKER: "RENAME_SPEAKER",
+    OpCode.LOCK_SPEAKER: "LOCK_SPEAKER",
 }
 
 
@@ -74,10 +81,6 @@ def legacy_to_core(d: dict) -> Patch:
 
     if op_raw == "ANNOTATE":
         key = payload.get("key", "")
-        if key in _UNSUPPORTED_SPEAKER_OPS:
-            raise UnsupportedPatchError(
-                f"speaker 级操作 '{key}' 未迁移到 core 写路径, 请改用 /api/speaker/* 端点"
-            )
         if key == "deleted":
             value = payload.get("value")
             flags = ["deleted"] if value else []
@@ -88,7 +91,7 @@ def legacy_to_core(d: dict) -> Patch:
         value = {"target_ids": targets}
     elif op_raw == "SPLIT":
         value = {"at": float(payload.get("split_point", 0.0))}
-    elif op_raw == "RETAG_SPEAKER":
+    elif op_raw == "RETAG_SPEAKER" or op_raw == "ASSIGN_SPEAKER":
         value = {"speaker_id": str(payload.get("new_speaker") or "")}
     elif op_raw == "SET_TRANSLATION":
         value = {"translation": payload.get("translation", payload.get("text", ""))}
@@ -96,6 +99,31 @@ def legacy_to_core(d: dict) -> Patch:
         value = {
             "start": float(payload["new_start"]) if "new_start" in payload else None,
             "end": float(payload["new_end"]) if "new_end" in payload else None,
+        }
+    elif op_raw == "MERGE_SPEAKERS":
+        into = str(payload.get("target") or payload.get("new_speaker") or "")
+        if not into:
+            raise UnsupportedPatchError("MERGE_SPEAKERS 缺合并目标 (payload.target)")
+        value = {
+            "from_ids": [str(payload.get("source") or target_id)],
+            "into_id": into,
+        }
+    elif op_raw == "CREATE_SPEAKER":
+        # 前端 create 用伪 eventId 作占位 — 这里落注册表 speaker_id
+        value = {
+            "speaker_id": target_id,
+            "display_name": payload.get("display_name", payload.get("name", "")),
+        }
+    elif op_raw == "RENAME_SPEAKER":
+        value = {
+            "speaker_id": target_id,
+            "name": payload.get("newName", payload.get("name", "")),
+            "color": payload.get("color"),
+        }
+    elif op_raw == "LOCK_SPEAKER":
+        value = {
+            "speaker_id": target_id,
+            "locked": bool(payload.get("locked", True)),
         }
     else:
         value = payload

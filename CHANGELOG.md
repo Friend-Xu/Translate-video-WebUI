@@ -5,6 +5,42 @@
 
 ---
 
+## 2026-08-01 — P2-C1: speaker 写路径双轨收敛 — 统一走 patch
+
+### 改动
+- **core 注册表级 opcode +3** (`core/runtime/patch.py`): `REGISTER_SPEAKER` (create) / `UPDATE_SPEAKER` (name+color) / `LOCK_SPEAKER` (is_locked), 均带 PatchEngine handler (不可变 SpeakerNodeIR 重建保留其余字段); 删 PROPAGATE 枚举残留 (Phase 3B 已删 handler, 枚举是死成员)
+- **patch_adapter 映射补全**: ASSIGN_SPEAKER→ASSIGN_SPEAKER (此前漏映射走 ANNOTATE 静默落库)、MERGE_SPEAKERS→MERGE_SPEAKERS、CREATE_SPEAKER→REGISTER_SPEAKER、RENAME_SPEAKER→UPDATE_SPEAKER (name/color)、LOCK_SPEAKER→LOCK_SPEAKER; **删 `_UNSUPPORTED_SPEAKER_OPS` 拒绝表** (Phase 4 临时防御, 现在有对等语义); MERGE_SPEAKERS 缺 target 显式拒绝
+- **前端统一 patch**: `useAppStore` OPCODE_MAP 死映射清理 (MERGE_SPEAKERS/RENAME_SPEAKER→ANNOTATE 退役); SpeakerReviewView 的 handleMerge/handleRename 从 `/api/speaker/*` 端点改走 patch (addDraft+applyDraft); CREATE_SPEAKER 伪 eventId 规范化 (`SPEAKER_${Date.now()}`)
+- **删 13 个 speaker 专用端点** (server.py -384 行): save/inspect/split/reassign/resize/rename/regenerate-srt/merge/overlap-strategy/clustering-suggestions/drift-suggestions/bind/bindings + 8 个死 Request model + 零消费者 `_derive_pass_trace`; helper 保留 (patch/apply|undo 共用)
+- **颜色持久化落地**: UPDATE_SPEAKER 写注册表 color — 此前颜色选择器从没生效过 (adapter 拒绝 422 静默失败), 现在 lane 颜色稳定持久
+- 契约测试: patch_engine +5 (register/duplicate/update/lock/missing), adapter 映射表重写, patch_log schema 词表 +3; 全量 1031 passed + 10 xfailed
+
+### 决策
+- **patch 就是做这个的** (用户方向): 双轨的真相是同一 PatchEngine 的两个 HTTP 入口 — merge 端点内部就是构造 Patch 走 PatchEngine; 专用端点改注册表**不进 patch 链, undo/回滚覆盖不到**, 这才是双轨的真正代价
+- **注册表级操作语义**: speaker 级 (create/lock/rename/merge) 走 patch 注册表 handler, 事件级 (split/resize/reassign/delete) 走既有事件 handler — 词表各归其位
+- **颜色编辑不删而是修好**: 注册表 color 字段一直存在只缺写路径, UPDATE_SPEAKER 补上后 Phase 4 的 "显式 unsupported" 决策退役
+
+### 冒烟实测 (curl 端到端, smoke_ws 副本)
+- RENAME_SPEAKER: 注册表 name+color 持久化 ✓; LOCK_SPEAKER: is_locked=true ✓; CREATE_SPEAKER: 注册表新增 ✓; MERGE_SPEAKERS: 事件全部归并 ✓; undo 无 bak 显式 409 (诚实行为, 既有设计)
+
+---
+
+### 改动
+- `server.py /api/subtitle/review/load`: 从 timeline.json 构建事件 start→id 映射, entries 附 `eventId` (按开始时间匹配, ±500ms 容差) — SRT 是 timeline 派生物无 ID, 时间匹配是唯一可靠关联
+- `useAppStore.saveReviewEntries`: **预解析 eventId** (后端值 → store events 按时间兜底 → 都找不到响亮抛错), 删除 `entry_N` 伪 target 伪造; 解析在写 SRT 之前完成 — 无法关联的条目零写入, 禁止半完成
+- 契约测试 +3: 带 eventId 保存成功 / 无 eventId 按时间兜底匹配 / 无匹配抛错且 SRT 零写入 (vitest 33/33)
+
+### 决策
+- **时间匹配是关联语义**: SRT 由 timeline 派生 (core 引擎), 开始时间精确对齐; ±500ms 容差吸收 legacy 路径分段差异
+- **预解析先于写入**: 旧代码写 SRT 后才发现无法打 patch (半完成状态); 现在全部条目验证通过后才动任何写入
+- **禁止伪造 target**: `entry_N` 是静默假数据的变体 — patch 链里出现不存在的 target, 污染事件历史
+
+### 冒烟实测 (Playwright)
+- review 编辑 → 保存 → **toast 已保存 + patch 链 +1** (修复前必 422 "target not found: entry_N")
+- timeline 编辑草案 → 全部应用 回归通过 (patch 链 +1, 无错误 snackbar)
+
+---
+
 ## 2026-08-01 — entry_N 修复: review 条目关联真实事件 ID (字幕校验保存恢复可用)
 
 ### 改动
