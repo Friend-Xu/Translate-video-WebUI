@@ -404,6 +404,19 @@ def merge_manual_glossary(bible: TranslationBible, manual_terms: dict[str, str])
     return bible
 
 
+def with_manual_glossary(bible: TranslationBible) -> TranslationBible:
+    """渲染时注入 L0 人工词典 — manual 词条是配置级输入, 不随 bible 落盘。
+
+    全量词典 (如 minecraft_mod.json 20 万条) 只存 config 侧; timeline.json
+    只持久化 LLM 自动词条, 否则每次编辑 load/persist 全量重写 30MB+。
+    消费点 (LLMTranslationPass/RefineTranslationPass._bible_from_state) 调用。
+    """
+    manual = load_manual_glossary()
+    if not manual:
+        return bible
+    return merge_manual_glossary(bible, manual)
+
+
 # ── 说话人画像 (Step 3) ─────────────────────────────────────
 
 # 每个 speaker 喂给画像模型的台词样本上限 (控制 prompt 体量)

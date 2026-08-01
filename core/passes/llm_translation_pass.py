@@ -151,10 +151,15 @@ class LLMTranslationPass(TimelinePass):
 
     @staticmethod
     def _bible_from_state(state: TimelineProjectState) -> TranslationBible:
-        """读 PreprocessTranslationPass 写入的项目级 bible; 缺失 → 空默认。"""
-        return TranslationBible.from_dict(
+        """读 PreprocessTranslationPass 写入的项目级 bible; 缺失 → 空默认。
+
+        manual 词条不随 bible 落盘 (配置级输入), 渲染前经
+        with_manual_glossary 从 config 实时合并 (L0 人工永远赢)。
+        """
+        from pipeline.translation_bible import with_manual_glossary
+        return with_manual_glossary(TranslationBible.from_dict(
             getattr(state.ir, "translation_bible", None)
-        )
+        ))
 
     @staticmethod
     def _concurrency_from_config() -> int:

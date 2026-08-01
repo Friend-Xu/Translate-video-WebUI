@@ -152,10 +152,10 @@ class RefineTranslationPass(TimelinePass):
 
     @staticmethod
     def _bible_from_state(state: TimelineProjectState):
-        from pipeline.translation_bible import TranslationBible
-        return TranslationBible.from_dict(
+        from pipeline.translation_bible import TranslationBible, with_manual_glossary
+        return with_manual_glossary(TranslationBible.from_dict(
             getattr(state.ir, "translation_bible", None)
-        )
+        ))
 
     def _resolve_source_lang(self, state: TimelineProjectState) -> str:
         if state.ir.language:

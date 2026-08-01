@@ -25,7 +25,6 @@ from core.runtime import TimelineProjectState, SynthesisEngine
 from pipeline.translation_bible import (
     PREPROCESS_PROMPT, PREPROCESS_TOKEN_BUDGET,
     SPEAKER_PROFILE_PROMPT, build_speaker_blocks,
-    load_manual_glossary, merge_manual_glossary,
     parse_bible_response, parse_speaker_profiles, render_transcript,
 )
 
@@ -48,7 +47,6 @@ class PreprocessTranslationPass(TimelinePass):
         target_lang: str = "zh",
         source_lang: str = "",
         force: bool = False,
-        manual_terms: dict | None = None,
         enable_profiles: bool = True,
     ):
         """
@@ -57,7 +55,6 @@ class PreprocessTranslationPass(TimelinePass):
                 None → apply 时用 SentenceTranslator.call_json。
             profile_fn: 说话人画像调用, 签名同 preprocess_fn; None → 复用前者。
             force: True 时忽略已有 bible 重新生成。
-            manual_terms: 注入测试用人工词典; None → 从 config 加载。
             enable_profiles: 是否做说话人画像 (第二发独立调用)。
         """
         self._preprocess_fn = preprocess_fn
@@ -65,7 +62,6 @@ class PreprocessTranslationPass(TimelinePass):
         self.target_lang = target_lang
         self.source_lang = source_lang
         self.force = force
-        self._manual_terms = manual_terms
         self.enable_profiles = enable_profiles
         self._engine_name = "llm"
 
@@ -96,10 +92,9 @@ class PreprocessTranslationPass(TimelinePass):
         data = fn(prompt)          # TranslationError 响亮上抛, 不兜底
 
         bible = parse_bible_response(data, full_text, engine=self._engine_name)
-        manual = self._manual_terms
-        if manual is None:
-            manual = load_manual_glossary()
-        bible = merge_manual_glossary(bible, manual)
+        # manual 词条 (L0 人工词典, 可达 20 万条) 不落盘 — 配置级输入,
+        # 渲染时经 with_manual_glossary 实时合并, 否则撑大 timeline.json
+        # 拖慢每次编辑的 load/persist。
 
         # Step 3: 说话人画像 (独立第二发; 失败只降级不拖垮已生成的 bible)
         speakers_in_items = {it.get("speaker") for it in items if it.get("speaker")}
@@ -121,11 +116,10 @@ class PreprocessTranslationPass(TimelinePass):
             state.ir, translation_bible=bible.to_dict(),
         )
         logger.info(
-            "translation_bible 已生成: domain=%s, hotwords=%d (含人工 %d), "
-            "corrections=%d, speakers=%d",
+            "translation_bible 已生成: domain=%s, hotwords=%d, "
+            "corrections=%d, speakers=%d (manual 词典渲染时合并, 不落盘)",
             bible.domain or "?",
             len(bible.hotwords),
-            sum(1 for h in bible.hotwords if h.get("origin") == "manual"),
             len(bible.corrections),
             len(bible.speakers),
         )
