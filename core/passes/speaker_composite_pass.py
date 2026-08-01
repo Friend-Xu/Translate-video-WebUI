@@ -49,11 +49,12 @@ class SpeakerCompositePass(TimelinePass):
         self._resolved_config: dict | None = None
 
     def configure(self, resolved_config: dict | None = None) -> None:
-        """接收 ConfigResolver 解析后的 speaker 槽位配置。"""
+        """接收 ConfigResolver 解析后的全槽位配置, 取 speaker 子块 (P3 契约统一)。"""
         cfg = resolved_config or {}
         self._resolved_config = cfg
-        if "clustering_threshold" in cfg:
-            self.enable_clustering = cfg["clustering_threshold"] > 0
+        speaker_cfg = cfg.get("speaker") if isinstance(cfg.get("speaker"), dict) else cfg
+        if "clustering_threshold" in speaker_cfg:
+            self.enable_clustering = speaker_cfg["clustering_threshold"] > 0
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         engine = PatchEngine()

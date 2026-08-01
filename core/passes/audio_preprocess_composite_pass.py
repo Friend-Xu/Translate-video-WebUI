@@ -53,10 +53,12 @@ class AudioPreprocessCompositePass(TimelinePass):
         self._resolved_config: dict | None = None
 
     def configure(self, resolved_config: dict | None = None) -> None:
+        """接收 ConfigResolver 解析后的全槽位配置, 取 audio 子块 (P3 契约统一)。"""
         cfg = resolved_config or {}
         self._resolved_config = cfg
-        if "skip_demucs" in cfg:
-            self.skip_demucs = cfg["skip_demucs"]
+        audio_cfg = cfg.get("audio") if isinstance(cfg.get("audio"), dict) else cfg
+        if "skip_demucs" in audio_cfg:
+            self.skip_demucs = audio_cfg["skip_demucs"]
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         engine = PatchEngine()

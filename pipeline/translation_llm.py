@@ -110,14 +110,16 @@ class SentenceTranslator:
     @classmethod
     def from_config(cls, config_path: str | None = None) -> "SentenceTranslator":
         cfg = load_translate_config(config_path)
-        api_key = cfg.get("api_key", "") or os.environ.get("DEEPSEEK_API_KEY", "")
+        # P2 设置桥: 环境变量覆盖 yaml (WebUI 从 settings.json 注入)。
+        # 优先级: 环境变量 > yaml > 默认值。api_key 兼容既有 DEEPSEEK_API_KEY。
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "") or cfg.get("api_key", "")
         return cls(
             api_key=api_key,
-            model=cfg.get("model", DEFAULT_MODEL),
-            base_url=cfg.get("api_base_url", "") or DEFAULT_BASE_URL,
-            temperature=float(cfg.get("temperature", 0.2)),
+            model=os.environ.get("LLM_MODEL", "") or cfg.get("model", DEFAULT_MODEL),
+            base_url=os.environ.get("LLM_BASE_URL", "") or cfg.get("api_base_url", "") or DEFAULT_BASE_URL,
+            temperature=float(os.environ.get("LLM_TEMPERATURE", "") or cfg.get("temperature", 0.2)),
             timeout=float(cfg.get("timeout", 120)),
-            max_retries=int(cfg.get("max_retries", 2)),
+            max_retries=int(os.environ.get("LLM_MAX_RETRIES", "") or cfg.get("max_retries", 2)),
         )
 
     def translate(self, user: str, system: str) -> str:

@@ -251,6 +251,14 @@ def _run_core_pipeline(args) -> None:
         gcfg.tts_engine = args.engine
     if args.device:
         gcfg.device = args.device
+    if getattr(args, "config_overrides", None):
+        # P2: 前端设置差异层 → GlobalConfig 槽位覆盖 (新架构配置体系正门)
+        try:
+            overrides = _json.loads(args.config_overrides)
+        except (ValueError, TypeError):
+            _json_error(f"Invalid --config-overrides JSON: {args.config_overrides[:200]}")
+            sys.exit(1)
+        gcfg.apply_slot_overrides(overrides)
 
     # ── 构建 Pass 工厂（与 stage/validate/export 命令共用）────────
     pass_factory = _build_pass_factory_for(args, video_path, ws_dir, lang, gcfg)
@@ -878,6 +886,9 @@ def main():
                        help="指定说话人数 (0=自动, >0 精确聚类为该人数)")
     p_run.add_argument("--enable-emotion", action="store_true", help="启用情绪识别")
     p_run.add_argument("--verification-mode", default=None, help="翻译验证模式")
+    p_run.add_argument("--config-overrides", default=None,
+                       help="槽位级配置覆盖 JSON: {\"tts\": {\"speed_factor\": 1.2}, ...} "
+                            "(P2 前端设置桥, 加载进 GlobalConfig)")
     p_run.add_argument("--no-optimize-subtitles", action="store_true", help="跳过字幕拆分优化")
     p_run.add_argument("--export-external-srt", action="store_true", help="导出双语优化字幕")
     # ── 字幕配置 ──

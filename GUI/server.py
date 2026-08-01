@@ -1530,18 +1530,34 @@ async def review_save(req: ReviewSaveRequest) -> dict:
 
 @app.get("/api/config")
 async def get_config() -> dict:
+    """返回设置视图: config = 默认 + 用户差异合并, defaults = 系统默认, overridden = 被覆盖的键。
+
+    差异层语义 (P1): settings.json["pipeline"] 只存用户改过的键,
+    GET 时与 _snake_defaults() 合并后返回; 旧数据中的 null 残留自动过滤。
+    """
     settings = load_settings()
-    saved = settings.get("pipeline", {})
-    if saved:
-        return {"config": saved}
-    return {"config": _snake_defaults()}
+    saved = settings.get("pipeline", {}) or {}
+    defaults = _snake_defaults()
+    merged = dict(defaults)
+    from core.runtime.config_resolver import deep_merge
+    clean = {k: v for k, v in saved.items() if v is not None}
+    deep_merge(merged, clean)
+    return {"config": merged, "defaults": defaults, "overridden": list(clean.keys())}
 
 
 @app.post("/api/config")
 async def post_config(payload: dict) -> dict:
+    """差异层写入: 增量 deep_merge 到 settings.json["pipeline"], null = 删除键 (恢复默认)。
+
+    与 core/runtime/config_resolver.py 的 deep_merge 语义一致。
+    修 P1 数据丢失: 旧实现整体替换, GlossaryManager 单键 POST 会清掉其它设置。
+    """
+    from core.runtime.config_resolver import deep_merge
     cfg = payload.get("config", payload)
     settings = load_settings()
-    settings["pipeline"] = cfg
+    pipeline = settings.get("pipeline", {}) or {}
+    deep_merge(pipeline, cfg)
+    settings["pipeline"] = pipeline
     save_settings(settings)
     return {"status": "ok"}
 
@@ -4192,6 +4208,89 @@ def _to_srt_time(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
+# ── P2 设置桥: settings.json 差异层 → core GlobalConfig 槽位覆盖 ──────────
+
+# 前端 snake_case 键 → (槽位, 点路径)。路径支持嵌套 (如 "gate.mode")。
+_SLOT_OVERRIDE_MAP: dict[str, tuple[str, str]] = {
+    # audio
+    "demucs_model": ("audio", "demucs_model"),
+    "skip_demucs": ("audio", "skip_demucs"),
+    "loudness_norm": ("audio", "loudness_compensation"),
+    "loudness_target_lufs": ("audio", "target_loudness"),
+    # asr
+    "asr_model": ("asr", "model"),
+    "source_lang": ("asr", "language"),
+    # speaker
+    "max_speakers": ("speaker", "max_speakers"),
+    "clustering_threshold": ("speaker", "clustering_threshold"),
+    # translation
+    "translate_concurrency": ("translation", "concurrency"),
+    "temperature": ("translation", "temperature"),
+    "max_tokens": ("translation", "max_tokens"),
+    "top_p": ("translation", "top_p"),
+    "max_retries": ("translation", "max_retries"),
+    "enable_glossary": ("translation", "glossary.enabled"),
+    "quality_gate": ("translation", "gate.enabled"),
+    "semantic_threshold": ("translation", "gate.threshold_accept"),
+    "sim_drop_limit": ("translation", "gate.sim_drop_limit"),
+    "gate_beta": ("translation", "gate.beta"),
+    "gate_gamma": ("translation", "gate.gamma"),
+    # tts
+    "speed_factor": ("tts", "speed_factor"),
+    "tts_concurrency": ("tts", "concurrency"),
+    "chattts_speaker_seed": ("tts", "chattts_speaker_seed"),
+    "chattts_temperature": ("tts", "chattts_temperature"),
+    "chattts_top_k": ("tts", "chattts_top_k"),
+    "chattts_top_p": ("tts", "chattts_top_p"),
+    "chattts_workers": ("tts", "chattts_workers"),
+    "chattts_emotion_injection": ("tts", "chattts_emotion_injection"),
+    "edge_voice": ("tts", "edge_voice"),
+    "edge_rate": ("tts", "edge_rate"),
+    "edge_pitch": ("tts", "edge_pitch"),
+    "edge_volume": ("tts", "edge_volume"),
+    "base_speed": ("tts", "base_speed"),
+    "video_speed_min": ("tts", "video_speed_min"),
+    "video_speed_max": ("tts", "video_speed_max"),
+}
+
+# 字幕样式走 CLI 参数 (pass_factory caption_config 消费端已存在)
+_CAPTION_CLI_MAP: tuple[tuple[str, str], ...] = (
+    ("--caption-font", "caption_font"),
+    ("--caption-font-size", "caption_font_size"),
+    ("--caption-font-color", "caption_font_color"),
+    ("--caption-stroke-width", "caption_stroke_width"),
+    ("--caption-stroke-color", "caption_stroke_color"),
+    ("--caption-bg-color", "caption_bg_color"),
+    ("--caption-alignment", "caption_alignment"),
+    ("--caption-position", "caption_position"),
+    ("--caption-max-lines", "caption_max_lines"),
+    ("--caption-width-ratio", "caption_width_ratio"),
+)
+
+
+def _pipeline_cfg_to_slot_overrides(cfg: dict) -> dict:
+    """把前端差异层 (snake_case) 映射为槽位级覆盖 dict。
+
+    只映射用户改过的键 (差异层天然满足); 等于"自动/默认"语义的
+    值跳过 (source_lang=auto, max_speakers=0), 交由引擎自动检测。
+    """
+    overrides: dict = {}
+    for key, (slot, path) in _SLOT_OVERRIDE_MAP.items():
+        if key not in cfg or cfg[key] is None:
+            continue
+        val = cfg[key]
+        if key == "source_lang" and val in ("auto", ""):
+            continue
+        if key == "max_speakers" and val in (0, ""):
+            continue
+        target = overrides.setdefault(slot, {})
+        parts = path.split(".")
+        for p in parts[:-1]:
+            target = target.setdefault(p, {})
+        target[parts[-1]] = val
+    return overrides
+
+
 def _run_core_pipeline_sync(job: Job, req: CoreRunRequest, flags: dict | None = None) -> None:
     """在线程池中同步执行 core/ Pipeline（通过 tvw.py subprocess 统一入口）。
 
@@ -4221,6 +4320,20 @@ def _run_core_pipeline_sync(job: Job, req: CoreRunRequest, flags: dict | None = 
         tvw_args.extend(["--lang", target_lang])
     if engine:
         tvw_args.extend(["--engine", engine])
+    # P2 设置桥: 差异层 → GlobalConfig 槽位覆盖 (新架构配置体系正门)
+    slot_overrides = _pipeline_cfg_to_slot_overrides(pipeline_cfg)
+    if slot_overrides:
+        tvw_args.extend(["--config-overrides", json.dumps(slot_overrides, ensure_ascii=False)])
+    # P2 CLI 参数桥 (pass_factory 已有消费端: verification_mode / caption_config)
+    verification_mode = pipeline_cfg.get("verification_mode")
+    if verification_mode:
+        tvw_args.extend(["--verification-mode", str(verification_mode)])
+    for flag, key in _CAPTION_CLI_MAP:
+        if key in pipeline_cfg and pipeline_cfg[key] not in (None, ""):
+            tvw_args.extend([flag, str(pipeline_cfg[key])])
+    max_speakers = pipeline_cfg.get("max_speakers") or 0
+    if max_speakers > 0 and getattr(req, "num_speakers", 0) <= 0:
+        tvw_args.extend(["--num-speakers", str(max_speakers)])
     # Bootstrap if not explicit export and not full_pipeline
     preset = get_preset(req.workflow_preset) if req.workflow_preset else None
     full_pipeline = preset.config_defaults.get("full_pipeline", False) if preset else False
@@ -4245,6 +4358,14 @@ def _run_core_pipeline_sync(job: Job, req: CoreRunRequest, flags: dict | None = 
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTORCH_NO_CUDA_MEMORY_CACHING"] = "1"
+    # P2 LLM 参数桥: 环境变量注入 (SentenceTranslator.from_config 消费),
+    # 仅当外部环境未设置时注入 settings 值 — 环境变量优先级最高, 凭据不落日志
+    for env_key, cfg_key in (("DEEPSEEK_API_KEY", "api_key"), ("LLM_MODEL", "model"),
+                             ("LLM_BASE_URL", "api_base_url"), ("LLM_TEMPERATURE", "temperature"),
+                             ("LLM_MAX_RETRIES", "max_retries")):
+        val = pipeline_cfg.get(cfg_key)
+        if val not in (None, "") and not os.environ.get(env_key):
+            env[env_key] = str(val)
 
     try:
         job.status = "running"

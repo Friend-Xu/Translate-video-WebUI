@@ -1,8 +1,7 @@
 import { useState, useMemo, useCallback } from 'react'
 import {
   Box, Typography, Button, Chip, Dialog, DialogTitle, DialogContent,
-  DialogActions, FormControl, InputLabel, Select, MenuItem, Switch,
-  FormControlLabel, LinearProgress, Alert,
+  DialogActions, LinearProgress, Alert,
 } from '@mui/material'
 import FileDownloadIcon from '@mui/icons-material/FileDownloadRounded'
 import CheckCircleIcon from '@mui/icons-material/CheckCircleRounded'
@@ -45,9 +44,6 @@ export default function ExportView({ events }: Props) {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportResult, setExportResult] = useState<{ ok: boolean; message: string } | null>(null)
-  const [dialogFormat, setDialogFormat] = useState('mp4')
-  const [dialogResolution, setDialogResolution] = useState('original')
-  const [dialogPreserveAudio, setDialogPreserveAudio] = useState(false)
 
   const unboundSpeakers = useMemo(() =>
     (speakerLanes || []).filter((l: any) => !l.voice_id).map((l: any) => l.display_name || l.speaker),
@@ -140,27 +136,9 @@ export default function ExportView({ events }: Props) {
       <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle>确认导出</DialogTitle>
         <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            将使用项目设置中的参数进行导出。以下选项可快速覆盖：
+          <Typography variant="body2" color="text.secondary">
+            将使用项目设置中的参数进行导出（当前版本导出参数暂不可自定义）。
           </Typography>
-          <FormControl fullWidth size="small" sx={{ mb: 2 }}>
-            <InputLabel>输出格式</InputLabel>
-            <Select value={dialogFormat} onChange={e => setDialogFormat(e.target.value)} label="输出格式">
-              <MenuItem value="mp4">MP4</MenuItem>
-              <MenuItem value="mkv">MKV</MenuItem>
-              <MenuItem value="mov">MOV</MenuItem>
-            </Select>
-          </FormControl>
-          <FormControl fullWidth size="small" sx={{ mb: 2 }}>
-            <InputLabel>分辨率</InputLabel>
-            <Select value={dialogResolution} onChange={e => setDialogResolution(e.target.value)} label="分辨率">
-              <MenuItem value="original">原始</MenuItem>
-              <MenuItem value="1080p">1080p</MenuItem>
-              <MenuItem value="720p">720p</MenuItem>
-            </Select>
-          </FormControl>
-          <FormControlLabel control={<Switch checked={dialogPreserveAudio}
-            onChange={e => setDialogPreserveAudio(e.target.checked)} />} label="保留原声轨" />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfirmOpen(false)}>取消</Button>

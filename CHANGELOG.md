@@ -5,6 +5,138 @@
 
 ---
 
+## 2026-08-01 — P4-F: 前端设置体系接入 core 配置架构 — 消除"保存成功但无效"
+
+### 背景调研结论
+- 前端 SettingsView 70+ 参数 → settings.json (GUI/settings.json), 但 pipeline 子进程从不读它 — **只有 2 个键生效** (tts_engine/target_lang), 违反"禁止兜底"原则的静默假成功
+- 新架构 (core/) 已有完整配置体系: 四层域 (ProjectPolicy/WorkflowPolicy/EnginePolicy/Runtime) + ConfigResolver 三级解析 (Global > Speaker > Event) + deep_merge null 语义 + 差异序列化 — 前端设置游离在体系外
+
+### P1: settings.json 差异层 (数据丢失修复)
+- **根因**: POST /api/config 全量替换 `settings["pipeline"]` — GlossaryManager 单键 POST 清掉用户全部其它设置; useConfig GET 未解包 `{config}` 嵌套
+- **改动**: POST 改 deep_merge 增量语义 (null=删除键=恢复默认, 与 core ConfigResolver 一致); GET 返回 `{config: 默认+差异合并, defaults, overridden}`; useConfig 解包修复 + 差异提交; SettingsView 只发 dirty 键 (改回默认自动发 null)
+- **验证**: pytest 7 契约 + vitest 3 + 冒烟 (填 4 → overridden 含键; 填 0 → null 恢复)
+
+### P2: 全局设置桥 (settings → GlobalConfig → pipeline)
+- **改动**: tvw.py 新增 `--config-overrides <json>` → `GlobalConfig.apply_slot_overrides()` (槽位级 deep_merge, 新架构正门); server 桥 36 键映射 (snake_case → 槽位点路径, source_lang=auto/max_speakers=0 跳过); caption_* 全套 + verification_mode 走 CLI (pass_factory 消费端已存在); LLM 参数 (api_key/model/temperature/base_url) 环境变量注入 (DEEPSEEK_API_KEY 优先, 凭据不落日志)
+- **验证**: pytest 10 契约; `tvw run --help` 参数注册; API 冒烟 POST/GET/null 全通
+
+### P3: ConfigResolver 生产接线 (断点修复)
+- **根因**: ConfigResolver 三级解析只有测试调用; pass_manager 喂全槽位 dict 但 audio/speaker/tts 三个 pass 按平铺读取 → **配置注入静默失效** (skip_demucs/clustering_threshold/chattts_* 从未生效)
+- **改动**: 契约统一 = `configure({slot: {...}})`; 修 3 个 pass 读取; pass 注入 `_resolver`, TTS pass 逐事件 `resolve_event_config` (事件级覆盖生效)
+- **验证**: pytest 6 契约; 全量 1067 passed + 10 xfailed 无回归
+
+### P4: 界面联动
+- **改动**: ExportView 删除 3 个假选项 (format/resolution/preserveAudio — core 无消费端, 诚实化); font_size_mode 与 caption_font_size 单源 (不再独立存键); 设置页新增"恢复默认"按钮 (POST null 清差异层)
+- **验证**: tsc 0 错误; 冒烟全通
+
+### 遗留 (记录不掩盖)
+- 现有 settings.json 是全量旧快照 (差异层下显示"全部被覆盖", 无害; 可写一次性 normalize 收敛)
+- 导出参数 (output_format/codec/bitrate) core 无配置面 — VideoExportPass 走 VideoSegmenter 硬编码, 属后续工作
+- useConfig camelCase 键残留 settings.json (无消费者, 无害)
+
+---
+
+## 2026-08-01 — P3-E3: 说话人轨道固定 — 编辑操作只动色块不重排轨道
+
+### 根因
+- 说话人界面 `sortedSpeakers` 默认按 total_duration 排序轨道 (sortBy='duration')
+- 拖拽 resize 段改变时长 → lane 总时长变 → 轨道重排 → SPEAKER_05 等标签换位置 — 用户: "符合人类操作的逻辑是轨道固定, speaker色块进行移动"
+
+### 改动
+- **默认排序改为 'fixed' (轨道固定)**: `sortedSpeakers` 按 store 顺序 (fetchSpeakerLanes 后端顺序 / sync 保留顺序) 渲染, 编辑操作不再触发轨道重排
+- 排序 Select 保留但加 "轨道固定" 选项置顶 (主动排序仍可用 — 那是用户显式选择)
+- lane 行加 `data-lane-id` 测试锚点; 冒烟 STEP6b 断言: 拖拽前后轨道顺序逐位一致
+
+### 验证
+- 冒烟: 拖拽 +60px 后 `[SPEAKER_03, UNKNOWN, SPEAKER_04, ...]` 顺序不变, 段宽 440.8 → 500.8
+- tsc 0, vitest 52/52
+
+---
+
+## 2026-08-01 — P3-F: 前端可视化编辑操作量化 — ui_ops 审计日志 (调试可追溯)
+
+### 形态 (用户确认: localStorage + action 级 + 无面板)
+- 三层量化: **ui_ops (操作意图+耗时) → server.log (请求级) → patch 链 (结果级)** — 前两层此前缺失, 现在补全
+
+### 改动
+- 新 action `_logOp` (useAppStore.ts): 内存环形 300 条 + localStorage 'ui_ops' 持久化, **零请求** (不破坏 P3-D 的 2 请求模式)
+- 条目: `{ts, ms(耗时), op, ok, opcode, eventId, extra, error}` — 覆盖失败路径 (error 记录后端 detail)
+- 埋点 5 个 action: applyDraft (6 出口含失败/本地状态), applyAllDrafts (成功/失败数), undoLastPatch, discardAllDrafts (丢弃数), loadWorkspace (事件数/部分失败原因)
+- 调试读取: `localStorage.getItem('ui_ops')` (Playwright evaluate 或 devtools) — 用户报 bug 时直接看操作序列+耗时+成败
+
+### 决策
+- **localStorage 而非后端落盘**: 每次操作 +1 请求违背性能方向; localStorage 对 Playwright/开发者工具都可达
+- **action 级而非手势级**: 语义清晰噪音小; 手势轨迹 (mousemove 帧) 调试价值低
+- 失败路径同样埋点 (error 原文) — 用户报"操作没生效"时能区分: 后端拒绝 vs 前端没发请求
+
+### 验证
+- vitest 52/52 (+6: apply/undo/discard/loadWorkspace 记录 + localStorage 持久化 + 环形上限), tsc 0
+- 冒烟 STEP7: 真实拖拽后 `ui_ops` 含 `applyDraft RESIZE_SEGMENT ok=true ms=176 31 events` — 量化数据可直接读取
+
+---
+
+## 2026-08-01 — P3-E2: 说话人界面拖拽"只有 patch 不渲染" — P3-D 副作用的修复
+
+### 根因
+- P3-D 局部刷新把 apply 路径从"全量 loadWorkspace (含 fetchSpeakerLanes)"精简为"events 快照 + review flags" — 但 **speakerLanes 不是静态数据**: 拖拽/resize/assign 改变事件边界与归属, 说话人界面以 speakerLanes 渲染 → 拖拽后 patch 落库 (后端正确) 而 UI 纹丝不动
+- 同文件对照: SpeakerReviewView 的 merge/rename 操作 apply 后**手动 fetchSpeakerLanes** (全量刷新, 3 请求), 而段 resize 拖拽 (onUp) 没有 → 症状只在拖拽路径出现
+- 冒烟实测复现: patch 链 +1 落库, 段块宽度 981.8 → 981.8 不变
+
+### 改动
+- **新 action `syncSpeakerLanesFromEvents`** (useAppStore.ts): apply 响应 events 快照 (编辑后全量事件) 本地重建 lanes — 保留原 lane 顺序与元数据 (display_name/color/voice_id), segments 以快照为准重建: 事件边界更新 / speaker 归属变化的段移入目标 lane / 快照缺失的段 (merge 删除) 移除 / 统计重算。**零请求**, 保持 P3-D 的 2 请求模式
+- applyDraft / applyAllDrafts 成功路径接入; undoLastPatch 保持原有 fetchSpeakerLanes 全量刷新 (它还要回退 lane 元数据 — 快照不含 lane 级数据)
+- SpeakerReviewView 段块加 `data-segment-id` / 右 handle 加 `data-resize-right` (测试定位锚点, 不改行为)
+- 契约测试 +4 (边界更新/归属迁移/merge 删除/applyDraft 集成且无 diarization 请求); vitest 46/46, tsc 0
+- 新冒烟 `test_trail/drag_lane_smoke.cjs`: 说话人界面拖拽段右边缘 → 断言 patch 落库 + 段块宽度 +60px (UI 即时渲染)
+
+### 决策
+- **lanes 是编辑派生数据不是静态数据**: P3-D 的"静态数据不随编辑重刷"清单 (manifest/waveform/AI 建议) 正确, 但 speakerLanes 应归入"随编辑变化"类 — 事件边界/归属就是它的全部内容
+- **本地重建优于再请求**: 响应快照已含全量事件, 零请求重建 lanes (与 events 同一数据源), 不引入第三个数据源
+
+### 验证
+- Playwright 拖拽冒烟: 段宽 320.8 → 380.8 (+60px 与拖拽量吻合), patch 链 8→9, 后端快照 end 同步更新
+- 第一次冒烟失败是脚本断言了错误的段 (UI first 段 ≠ 拖拽目标), 按 data-segment-id 定位后 PASS — 非产品 bug
+
+---
+
+## 2026-08-01 — launcher 进程健康化: 关终端窗口不再留孤儿进程
+
+### 根因
+- launcher.py 的 Ctrl+C 路径有 cleanup (正常), 但**直接关终端窗口** (git-bash mintty 场景) 时 launcher 被杀, `subprocess.Popen` 的 uvicorn/npm→vite 子进程树成为孤儿继续挂载 — 用户反复观察到"终端关了服务还在"
+
+### 改动
+- launcher.py 挂 **Windows Job Object (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)**: launcher 入 job, 子进程自动继承 (Win8+), launcher 无论以何种方式死亡 (Ctrl+C/关窗/被杀), OS 杀整棵子进程树
+- ctypes 实现零新依赖; **显式声明 argtypes/restype 是坑** — 缺失时句柄按 32 位截断, AssignProcessToJobObject 报 ERROR_INVALID_HANDLE (实测踩到, job 形同虚设)
+- 非 Windows / launcher 已在别的 job 中 (Assign 失败) 时静默降级 — 清理是辅助能力, 失败只影响"关窗不留孤儿", 不影响启动
+
+### 验证
+- 强杀 launcher → netstat 确认 8000/5199 整树瞬间释放 (修复前: uvicorn/vite 孤儿存活)
+
+---
+
+## 2026-08-01 — P3-E: 编辑秒级延迟根因修复 — manual 词条不再撑大 timeline.json (30MB → 31KB)
+
+### 根因 (profile 实测)
+- 每次编辑 apply 的 HTTP 往返 **1418ms** — 不是拖拽渲染, 是后端 `_persist_edited` 占 1158ms + `load_state` 259ms
+- timeline.json 只有 32 事件却 **30.5MB**: `translation_bible.hotwords` 独占 17MB (207,319 条, 全为 origin="manual")
+- 链路: `PreprocessTranslationPass` 把 config/terms 全量词典 (minecraft_mod.json 10.6MB / 20 万条, 用户有意维护的资产) 经 `merge_manual_glossary` 全量合并进 bible → 随 `state.ir.translation_bible` 落盘 → 每次编辑 load ×2 + persist ×1 各 30MB IO
+
+### 改动
+- **manual 词条不落盘** (`preprocess_translation_pass.py`): 删除 merge_manual_glossary/load_manual_glossary 调用与 manual_terms 参数 — bible 只持久化 LLM 自动词条; 渲染实际只用 hotwords 前 50 条 (MAX_HOTWORDS), 20 万条中 99.98% 从未被消费
+- **消费点实时合并** (`translation_bible.py` 新增 `with_manual_glossary`): LLMTranslationPass/RefineTranslationPass 的 `_bible_from_state` 渲染前从 config 合并 manual (人工永远赢语义不变); 词典是配置级输入, 改动即时生效无需重跑预处理
+- **一次性迁移** (`tools/normalize_bible_manual.py`): 剥掉旧 timeline.json 的 manual 词条; **必须同时迁移 timeline.json.bak** — undo 从 bak 重放链后全量 persist, 只迁主文件会让下一次 undo 把旧 bible 写回 (30MB 复发)
+- 契约测试: preprocess 产物不含 manual 词条 / 消费点合并人工赢置前 / 空词典原样返回
+
+### 决策
+- **词典是配置级输入不是项目数据**: 20 万条术语是用户资产 (config/terms/), 不该复制进每个项目的 timeline.json; 事实源归位后项目文件与词典解耦
+- **渲染时合并而非运行时兜底**: 与"禁止兜底"不冲突 — 合并是翻译渲染的固定语义 (L0 人工永远赢), 不是失败降级
+
+### 验证
+- profile 实测: HTTP apply 1418ms → **36ms** (39×), undo 1467ms → **35ms** (42×); load_state 259ms → 0.9ms, persist 1158ms → 13ms
+- pytest 1044 passed + 10 xfailed (新增 3 契约测试), Playwright p3a_smoke 全链路 PASS
+
+---
+
 ## 2026-08-01 — P3-D: 局部刷新 — 编辑不再全量 loadWorkspace (借鉴时间轴编辑器本地状态模式)
 
 ### 改动

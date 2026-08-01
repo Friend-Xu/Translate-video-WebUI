@@ -113,6 +113,21 @@ class ProjectPolicy:
         "notes": "",
     })
 
+    def apply_slot_overrides(self, overrides: dict) -> None:
+        """槽位级覆盖 (P2): overrides = {slot: {field: value}}。
+
+        与 ConfigResolver 的 deep_merge 语义一致: 嵌套 dict 递归合并,
+        未知槽位/字段直接写入 (引擎专属参数由 SchemaLoader 负责校验)。
+        这是前端全局设置进入 core 配置体系的唯一正门。
+        """
+        from core.runtime.config_resolver import deep_merge
+        for slot, fields in overrides.items():
+            if not isinstance(fields, dict):
+                continue
+            target = getattr(self, slot, None)
+            if isinstance(target, dict):
+                deep_merge(target, fields)
+
     def get_slot_defaults(self, slot: str) -> dict:
         """获取指定槽位的全局默认配置（深拷贝）。"""
         from copy import deepcopy
@@ -155,6 +170,10 @@ class GlobalConfig:
     def get_slot_defaults(self, slot: str) -> dict:
         """获取指定槽位的全局默认配置（深拷贝）。"""
         return self.project.get_slot_defaults(slot)
+
+    def apply_slot_overrides(self, overrides: dict) -> None:
+        """槽位级覆盖入口 — 转发到 ProjectPolicy (P2 前端设置桥)。"""
+        self.project.apply_slot_overrides(overrides)
 
     @classmethod
     def load(cls, path: str) -> "GlobalConfig":

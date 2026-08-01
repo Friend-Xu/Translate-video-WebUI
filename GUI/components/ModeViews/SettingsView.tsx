@@ -98,7 +98,10 @@ export default function SettingsView() {
   useEffect(() => {
     fetch('/api/config')
       .then(r => r.json())
-      .then(data => setConfig(data.config || data))
+      .then(data => {
+        defaultsRef.current = data.defaults || {}
+        setConfig(data.config || data)
+      })
       .catch(() => {})
       .finally(() => setLoading(false))
     fetch('/api/tts/speakers')
@@ -120,34 +123,73 @@ export default function SettingsView() {
     setPreviewText(PREVIEW_DEFAULTS[engine] || '试听文本。')
   }, [engine])
 
+  // P1 差异层: 只持久化用户改过的键; 值=默认 → 发 null (恢复默认, 删除差异)
+  const dirtyRef = useRef<Set<string>>(new Set())
+  const defaultsRef = useRef<Record<string, any>>({})
+
+  const set = (key: string, value: any) => {
+    dirtyRef.current.add(key)
+    setConfig((prev: Record<string, any>) => ({ ...prev, [key]: value }))
+  }
+
+  const buildPatch = useCallback((): Record<string, any> | null => {
+    const dirty = [...dirtyRef.current]
+    if (dirty.length === 0) return null
+    const patch: Record<string, any> = {}
+    for (const k of dirty) {
+      if (config[k] === undefined) continue
+      patch[k] = config[k] === defaultsRef.current[k] ? null : config[k]
+    }
+    dirtyRef.current = new Set()
+    return Object.keys(patch).length > 0 ? patch : null
+  }, [config])
+
   const save = useCallback(async () => {
     setSaving(true)
+    try {
+      const patch = buildPatch()
+      if (patch) {
+        await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ config: patch, workspace }),
+        })
+      }
+    } catch {}
+    setSaving(false)
+  }, [buildPatch, workspace])
+
+  const handleResetAll = useCallback(async () => {
+    // P4: 恢复默认 = 清空差异层 (POST null 删除全部键, 后端回落到系统默认)
+    const reset: Record<string, any> = {}
+    for (const k of Object.keys(config)) reset[k] = null
+    dirtyRef.current = new Set()
+    setConfig(defaultsRef.current || {})
+    if (Object.keys(reset).length === 0) return
     try {
       await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config, workspace }),
+        body: JSON.stringify({ config: reset }),
       })
     } catch {}
-    setSaving(false)
-  }, [config, workspace])
+  }, [config])
 
-  const set = (key: string, value: any) =>
-    setConfig((prev: Record<string, any>) => ({ ...prev, [key]: value }))
-
-  // 自动保存：任何字段变化 800ms 后自动写 settings.json（跳过首次加载）
+  // 自动保存：任何字段变化 800ms 后差异提交（跳过首次加载）
   const initialLoad = useRef(true)
   useEffect(() => {
     if (initialLoad.current) { initialLoad.current = false; return }
     const timer = setTimeout(() => {
+      const patch = buildPatch()
+      if (!patch) return
       fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config, workspace }),
+        body: JSON.stringify({ config: patch, workspace }),
       }).catch(() => {})
     }, 800)
     return () => clearTimeout(timer)
-  }, [config, workspace])
+  }, [config, workspace, buildPatch])
 
   const handleAudition = async () => {
     setAuditionLoading(true)
@@ -269,6 +311,8 @@ export default function SettingsView() {
         </Box>
         <Box sx={{ display: 'flex', gap: 1 }}>
           <Button variant="outlined" size="small" onClick={() => setMode('hub')}>返回</Button>
+          <Button variant="outlined" size="small" color="warning"
+            onClick={handleResetAll} disabled={saving}>恢复默认</Button>
           <Button variant="contained" size="small"
             startIcon={saving ? <CircularProgress size={14} /> : <SaveIcon />}
             onClick={save} disabled={saving}>保存</Button>
@@ -711,13 +755,22 @@ export default function SettingsView() {
 
               <FormControl fullWidth size="small" sx={{ mb: 1.5 }}>
                 <InputLabel>字号模式</InputLabel>
-                <Select value={config.font_size_mode || 'adaptive'}
-                  onChange={e => set('font_size_mode', e.target.value)} label="字号模式">
+                <Select
+                  value={(config.caption_font_size ?? 0) > 0 ? 'fixed' : 'adaptive'}
+                  onChange={e => {
+                    // P4 单源: font_size_mode 派生自 caption_font_size, 不再独立存键
+                    if (e.target.value === 'fixed' && !(config.caption_font_size > 0)) {
+                      set('caption_font_size', 36)
+                    } else if (e.target.value === 'adaptive') {
+                      set('caption_font_size', 0)
+                    }
+                  }}
+                  label="字号模式">
                   <MenuItem value="adaptive">自适应 (按视频宽度)</MenuItem>
                   <MenuItem value="fixed">固定字号</MenuItem>
                 </Select>
               </FormControl>
-              {(config.font_size_mode || 'adaptive') === 'fixed' && (
+              {((config.caption_font_size ?? 0) > 0) && (
                 <TextField fullWidth size="small" label="最大字号 (px, 0=不限)" type="number"
                   value={config.max_font_size ?? 0}
                   onChange={e => set('max_font_size', parseInt(e.target.value) || 0)}
