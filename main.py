@@ -442,7 +442,7 @@ def step_translate_core(video: str, force: bool = False) -> str:
     """
     from core.engine import WorkflowOrchestrator
     from core.engine.pass_factory import create_pass_factory
-    from core.config import GlobalConfig, WorkflowPolicy
+    from core.config import WorkflowPolicy
     from core.engine.progress import ProgressReport
 
     ws_dir = _workspace_dir(video)
@@ -485,10 +485,13 @@ def step_translate_core(video: str, force: bool = False) -> str:
     machine_srt = os.path.join(ws_dir, "02_translate", "machine.srt")
     os.makedirs(os.path.dirname(machine_srt), exist_ok=True)
     audio_path = os.path.join(ws_dir, "01_extract", "audio.wav")
-    # 质量策略按配置选择 (GlobalConfig translation.gate.mode: logic_gate|xcomet);
-    # quality_check 与 refine_translation 共用, 保证重翻闭环判定一致
+    # 质量策略按配置选择 (translate.yaml verification_mode: logic_gate|xcomet →
+    # GlobalConfig gate.mode); quality_check 与 refine_translation 共用, 保证重翻闭环判定一致
     from core.quality.protocol import create_strategy
-    gate_mode = GlobalConfig().project.translation.get("gate", {}).get("mode", "logic_gate")
+    from core.config.global_config import GlobalConfig as _GC
+    # from_legacy_yaml 默认路径为空串 (不读 yaml) — 显式传 config 路径
+    global_config = _GC.from_legacy_yaml("config/translate.yaml", "config/tts.yaml")
+    gate_mode = global_config.project.translation.get("gate", {}).get("mode", "logic_gate")
     factory = create_pass_factory(
         translate_fn=None,
         target_lang=target_lang,
@@ -524,7 +527,7 @@ def step_translate_core(video: str, force: bool = False) -> str:
             _tl_data = json.load(f)
         if _tl_data.get("events"):
             policy.stages.pop(WorkflowStage.EXTRACT, None)
-    global_config = GlobalConfig()
+    global_config = _GC.from_legacy_yaml("config/translate.yaml", "config/tts.yaml")
     orchestrator = WorkflowOrchestrator(
         policy=policy,
         global_config=global_config,
