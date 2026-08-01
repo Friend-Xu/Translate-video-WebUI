@@ -428,10 +428,11 @@ export default function ProjectHubPage() {
                               body: JSON.stringify({ path: ws.path }),
                             }).catch(() => {})
                           }} />
-                        <Box sx={{ flexGrow: 1, minWidth: 0, cursor: isRunning ? 'pointer' : (ws.runtimeState === 'ready' || ws.runtimeState === 'complete') ? 'pointer' : 'default' }}
+                        <Box sx={{ flexGrow: 1, minWidth: 0, cursor: 'pointer' }}
                           onClick={() => {
                             if (ws.runtimeState === 'ready' || ws.runtimeState === 'complete') handleOpenWorkspace(ws)
                             else if (isRunning) { loadWorkspace(ws.path); setPhase('running') }
+                            else handleOpenWorkspace(ws)  // New/uninitialized: 可打开, 数据缺失时响亮报错 (禁止静默 no-op)
                           }}>
                           <Typography variant="body2" fontWeight={600} noWrap>{ws.name}</Typography>
                           <Typography variant="caption" color="text.secondary" noWrap>{ws.videoPath?.split(/[/\\]/).pop() || ws.path}</Typography>

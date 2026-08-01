@@ -3519,7 +3519,7 @@ async def timeline_load(req: TimelineLoadRequest):
     if views is None:
         raise HTTPException(
             status_code=400,
-            detail="timeline.json 缺失或为空 — 需先运行 CLI 提取/翻译 (唯一事实源)",
+            detail="该项目尚未运行流水线，无时间轴数据 — 请返回项目中心选择视频与预设启动 Bootstrap",
         )
     return {"inspector_data": views["inspector_data"], "pass_trace": views["pass_trace"]}
 
