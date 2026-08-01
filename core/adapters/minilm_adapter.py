@@ -42,7 +42,8 @@ class MiniLMAdapter:
             id=f"minilm_{ctx.segment_id}", target_id=ctx.segment_id,
             op=OpCode.ANNOTATE,
             value={
-                "translation": {"similarity": round(sim, 4), "flagged": flagged},
+                # flagged 只落 provenance (translation 类型化槽位无该字段)
+                "translation": {"similarity": round(sim, 4)},
                 "provenance": {
                     "gate_semantic": {
                         "model": "paraphrase-multilingual-MiniLM-L12-v2",
@@ -70,7 +71,7 @@ class MiniLMAdapter:
                 id=f"minilm_{seg_id}", target_id=seg_id,
                 op=OpCode.ANNOTATE,
                 value={
-                    "translation": {"similarity": round(sim, 4), "flagged": flagged},
+                    "translation": {"similarity": round(sim, 4)},
                     "provenance": {
                         "gate_semantic": {
                             "model": "paraphrase-multilingual-MiniLM-L12-v2",

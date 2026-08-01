@@ -212,7 +212,7 @@ describe('P3-B 残留静默失败响亮化', () => {
       if (url.includes('/project/manifest/resolve')) {
         return jsonResponse({ manifest: { video_path: 'x.mp4', pipeline: {} } })
       }
-      if (url.includes('/speaker/diarization/load')) {
+      if (url.includes('/timeline/load')) {
         return jsonResponse({ inspector_data: {} })
       }
       if (url.includes('/speaker/diarization/waveform')) {
@@ -238,7 +238,7 @@ describe('P3-B 残留静默失败响亮化', () => {
       if (url.includes('/project/manifest/resolve')) {
         return jsonResponse({ manifest: { video_path: 'x.mp4', pipeline: {} } })
       }
-      if (url.includes('/speaker/diarization/load')) {
+      if (url.includes('/timeline/load')) {
         return jsonResponse({ inspector_data: {} })
       }
       return jsonResponse({})
@@ -247,6 +247,26 @@ describe('P3-B 残留静默失败响亮化', () => {
     await useAppStore.getState().loadWorkspace('test_ws')
 
     expect(useAppStore.getState().error).toContain('补丁历史')
+  })
+
+  it('loadWorkspace 事件源走 /api/timeline/load (P3-C: 主数据源不挂 speaker 端点)', async () => {
+    const urls: string[] = []
+    mockFetchByUrl((url) => {
+      urls.push(url)
+      if (url.includes('/project/manifest/resolve')) {
+        return jsonResponse({ manifest: { video_path: 'x.mp4', pipeline: {} } })
+      }
+      if (url.includes('/timeline/load')) {
+        return jsonResponse({ inspector_data: {} })
+      }
+      return okWorkspaceResponses()
+    })
+
+    await useAppStore.getState().loadWorkspace('test_ws')
+
+    expect(urls.some(u => u.includes('/api/timeline/load'))).toBe(true)
+    expect(urls.some(u => u.includes('/speaker/diarization/load'))).toBe(false)
+    expect(useAppStore.getState().error).toBeNull()
   })
 
   it('reloadEvents 失败 → error 设置 (旧行为: 静默, 用户看到旧数据)', async () => {

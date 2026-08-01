@@ -141,16 +141,25 @@ class TestPatchEngineV2:
         assert state.get_event("evt_001").runtime.status == "done"
 
     def test_annotate_rejects_removed_audio_slot(self, engine, state):
-        """audio 槽已上移项目级 (Phase 3b), 不再接受 per-event ANNOTATE (Phase 2 契约对齐)。
+        """audio 槽已上移项目级 (Phase 3b), 不再接受 per-event ANNOTATE。
 
-        slot_map 从 field_contract 生成, 未知 slot 静默跳过 (兼容旧 patch 文件)。
+        P3-C: 未知槽位从"静默跳过"改为响亮拒绝 (禁止部分写入 + 假 applied)。
         """
         p = Patch(id="p1", target_id="evt_001", op=OpCode.ANNOTATE,
                   value={"audio": {"sample_rate": 16000}, "runtime": {"status": "done"}})
-        assert engine.apply(state, p)["status"] == "applied"
-        es = state.get_event("evt_001")
-        assert "audio" not in es._data          # audio key 被跳过, 不创建死槽
-        assert es.runtime.status == "done"   # 合法槽位正常写入
+        result = engine.apply(state, p)
+        assert result["status"] == "error"
+        assert "未知槽位" in result["reason"]
+        # 先校验后写入: 合法槽位也不产生部分写入
+        assert state.get_event("evt_001").runtime.status != "done"
+
+    def test_annotate_rejects_unknown_slot_field(self, engine, state):
+        """类型化槽位未知字段响亮拒绝 (此前 if hasattr 静默跳过)。"""
+        p = Patch(id="p1", target_id="evt_001", op=OpCode.ANNOTATE,
+                  value={"translation": {"flagged": True}})
+        result = engine.apply(state, p)
+        assert result["status"] == "error"
+        assert "无字段" in result["reason"]
 
     def test_annotate_global(self, engine, state):
         p = Patch(id="p1", target_id="__g__", op=OpCode.ANNOTATE,

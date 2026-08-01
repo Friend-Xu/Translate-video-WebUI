@@ -787,13 +787,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       const manifestData = await manifestRes.json()
 
-      // Step 2: Load events via speaker/diarization/load
-      const loadRes = await fetch('/api/speaker/diarization/load', {
+      // Step 2: Load events via timeline/load (P3-C: timeline.json 唯一事实源,
+      // 不再经 speaker/diarization/load 拿主数据)
+      const loadRes = await fetch('/api/timeline/load', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspace: workspacePath }),
       })
-      if (!loadRes.ok) throw new Error('无法加载时间轴数据')
+      if (!loadRes.ok) {
+        const errData = await loadRes.json().catch(() => ({}))
+        throw new Error((errData as any).detail || '无法加载时间轴数据')
+      }
       const loadData = await loadRes.json()
 
       const events = (Object.values(loadData.inspector_data || {}) as EventViewModel[])
@@ -887,7 +891,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // 编辑后刷新失败必须响亮 — 静默会让用户看到旧数据误以为编辑已生效
     let res: Response
     try {
-      res = await fetch('/api/speaker/diarization/load', {
+      res = await fetch('/api/timeline/load', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ workspace: ws }),
@@ -897,7 +901,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       return
     }
     if (!res.ok) {
-      set({ error: `事件刷新失败: HTTP ${res.status}` })
+      const detail = await res.json().catch(() => ({}))
+      set({ error: `事件刷新失败: ${(detail as any).detail || `HTTP ${res.status}`}` })
       return
     }
     const data = await res.json()

@@ -5,6 +5,27 @@
 
 ---
 
+## 2026-08-01 — P3-C: _annotate 响亮化 + 主数据源挂靠 timeline 端点
+
+### 改动
+- **_annotate 两阶段校验** (`core/runtime/patch_engine.py`): 先全量校验再写入 — 未知槽位 (此前静默跳过) / 类型化槽位未知字段 (此前 `if hasattr` 静默跳过) / 非 dict 值 → 响亮 error; 先校验杜绝部分写入残留内存 state + 假 applied
+- **删 adapter 死字段写入**: minilm 的 `translation.flagged` / ppl 的 `translation.ppl`+`naturalness_flagged` 是无字段静默丢失 (flagged 无任何读取端), 只落 provenance (dict 自由 key, 本就有对等值)
+- **新端点 `POST /api/timeline/load`**: 从 timeline.json 构建事件视图 (唯一事实源); timeline.json 缺失/空 → 响亮 400 "需先运行 CLI 提取/翻译" (不降级 transcript — 那是 diarization 的兼容路径)
+- **提取 `_build_timeline_views` helper**: speaker_load 与 timeline/load 共享 lanes/inspector_data/pass_trace/speakerNames/AI patches/patch_log 构建; diarization/load 主路径改用 helper (保留 transcript fallback); **顺带修复原顺序 bug**: AI patches 在 inspector 构建之后计算 → hasAiSuggestion 从未标记, helper 里修正
+- **前端 loadWorkspace Step2 / reloadEvents 迁移**: `/api/speaker/diarization/load` → `/api/timeline/load`; fetchSpeakerLanes 保留 diarization/load (lane 视图语义匹配)
+- 测试: _annotate 未知槽位/字段响亮 + 迁移契约 (vitest 40/40, pytest 1041 passed + 10 xfailed)
+
+### 决策
+- **timeline 读路径不假装**: 旧工作区只有 transcript 无 timeline.json → timeline/load 显式 400, 前端报错提示跑 CLI — 诚实失败优于 transcript 兼容 (兼容留在 diarization/load)
+- **先校验后写入是响亮化的前提**: _annotate 中途 error 会残留已写字段 (内存 state 污染, 无 add_patch 但 slot 已改) — 两阶段消灭
+- **死字段写入即静默假数据**: minilm/ppl 写类型化槽位不存在的字段, 数据从未落盘也未读取 — 删掉并归位 provenance
+
+### 验证
+- uvicorn: timeline/load 32 事件 ✓ / diarization/load 11 lanes 回归一致 ✓ / 无效工作区 400 ✓
+- vitest 40/40, tsc 0, Playwright p3a_smoke 全链路 PASS (loadWorkspace 迁移后)
+
+---
+
 ## 2026-08-01 — P3-B: 残留静默失败响亮化 (useAppStore 全量审计)
 
 ### 改动

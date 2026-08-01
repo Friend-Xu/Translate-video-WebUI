@@ -713,24 +713,46 @@ class PatchEngine:
             for slot in VALID_SLOTS if hasattr(target, slot)
         }
 
+        # 先全量校验再写入 — 未知槽位/未知字段响亮拒绝 (禁止兜底:
+        # 静默跳过 = 部分写入 + 假 applied, 类型化契约失效的后门)
+        for key, val in patch.value.items():
+            if key.startswith("_"):
+                continue
+            slot = slot_map.get(key)
+            if slot is None:
+                return {
+                    "status": "error",
+                    "reason": f"annotate: 未知槽位 '{key}' (合法: {sorted(VALID_SLOTS)})",
+                }
+            if not isinstance(slot, dict):
+                if not isinstance(val, dict):
+                    return {
+                        "status": "error",
+                        "reason": f"annotate: 槽位 '{key}' 需 dict 值 (类型化槽位)",
+                    }
+                unknown = [k for k in val if not hasattr(slot, k)]
+                if unknown:
+                    return {
+                        "status": "error",
+                        "reason": f"annotate: 槽位 '{key}' 无字段 {unknown} (合法: "
+                                  f"{[f for f in dir(slot) if not f.startswith('_')]})",
+                    }
+
         before_snap = {}
         for key, val in patch.value.items():
             if key.startswith("_"):
                 continue
             slot = slot_map.get(key)
-            if slot is not None:
-                try:
-                    before_snap[key] = slot.to_dict() if hasattr(slot, "to_dict") else dict(slot)
-                except (ValueError, TypeError):
-                    before_snap[key] = str(slot)
-                if isinstance(slot, dict):
-                    slot.update(val if isinstance(val, dict) else {"value": val})
-                else:
-                    # 类型化槽位 (Phase 3A): 只写已知字段, 未知 key 静默跳过
-                    if isinstance(val, dict):
-                        for k, v in val.items():
-                            if hasattr(slot, k):
-                                setattr(slot, k, v)
+            try:
+                before_snap[key] = slot.to_dict() if hasattr(slot, "to_dict") else dict(slot)
+            except (ValueError, TypeError):
+                before_snap[key] = str(slot)
+            if isinstance(slot, dict):
+                slot.update(val if isinstance(val, dict) else {"value": val})
+            else:
+                # 类型化槽位: 字段已预校验, 直接写入
+                for k, v in val.items():
+                    setattr(slot, k, v)
 
         target.add_patch(patch)
         return {

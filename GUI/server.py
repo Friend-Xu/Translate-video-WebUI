@@ -3036,6 +3036,111 @@ def _build_inspector_from_transcript(result: dict, segments: list,
     result["inspector_data"] = inspector_data
 
 
+SPEAKER_COLORS = ["#4CAF50", "#2196F3", "#FF9800", "#E91E63", "#9C27B0", "#00BCD4",
+                  "#F44336", "#795548", "#607D8B", "#CDDC39", "#03A9F4", "#FF5722"]
+
+
+def _build_timeline_views(extract_dir: str) -> dict | None:
+    """从 timeline.json 构建 GUI 视图 (唯一事实源) — speaker_load 与 timeline/load 共享。
+
+    返回 {audio_id, version, metadata, lanes, inspector_data, pass_trace,
+          speakerNames, ai_patches, patch_log}。timeline.json 缺失/为空 → None
+    (调用方决定: timeline/load 响亮 400, speaker_load 走 transcript 兼容路径)。
+    """
+    import json as _json
+    tl_path = os.path.join(extract_dir, "timeline.json")
+    if not os.path.isfile(tl_path) or _tl_has_empty_timeline(tl_path):
+        return None
+    tl = _load_timeline_v2(tl_path)
+
+    # 从 transcript.json 补全 word-level timestamps (timeline.json words 缺失时)
+    _tj_words = None
+    tj_path = os.path.join(extract_dir, "transcript.json")
+    if os.path.isfile(tj_path):
+        try:
+            with open(tj_path, "r", encoding="utf-8") as f:
+                _tj_segments = _json.load(f).get("segments", [])
+            _tj_words = {}
+            for seg in _tj_segments:
+                w = seg.get("words") or []
+                if w:
+                    key = (round(seg.get("start", 0), 2), round(seg.get("end", 0), 2))
+                    _tj_words[key] = w
+        except Exception:
+            pass
+
+    speakers_v2 = tl.get("speakers", {})
+    speaker_segments: dict[str, list] = {}
+    for evt in tl.get("events", []):
+        spk = evt.get("speaker") or "UNKNOWN"
+        speaker_segments.setdefault(spk, []).append(_canonical_segment(evt, _tj_words))
+
+    lanes = []
+    for i, (spk, segs) in enumerate(sorted(speaker_segments.items())):
+        spk_info = speakers_v2.get(spk, {})
+        lanes.append({
+            "speaker": spk,
+            "display_name": spk_info.get("name") or spk,
+            "voice_id": spk_info.get("voice_id", ""),
+            "color": spk_info.get("color") or SPEAKER_COLORS[i % len(SPEAKER_COLORS)],
+            "segments": segs,
+            "segment_count": len(segs),
+            "total_duration": round(sum(s["end"] - s["start"] for s in segs), 1),
+        })
+
+    # Patch 历史
+    patch_log: list = []
+    log_path = os.path.join(extract_dir, "timeline_patches.json")
+    if os.path.isfile(log_path):
+        with open(log_path, "r", encoding="utf-8") as f:
+            patch_log = _json.load(f)
+
+    # pass_trace (旧词表回显)
+    pass_names_seen: set = {p.get("opcode", "") for p in patch_log if p.get("opcode")}
+    KNOWN_PASS_ORDER = ["MERGE", "RETAG_SPEAKER", "SET_TRANSLATION", "SPLIT", "ANNOTATE"]
+    pass_trace = [pn for pn in KNOWN_PASS_ORDER if pn in pass_names_seen]
+
+    # AI Patch 建议 (失败静默降级为空 — 建议是辅助数据, 非编辑事实)
+    ai_patches: dict = {"high": [], "medium": [], "low": []}
+    try:
+        from timeline.api.timeline import generate_candidate_patches
+        ai = generate_candidate_patches(tl_path)
+        ai_patches = {"high": ai.get("high", []), "medium": ai.get("medium", []),
+                      "low": ai.get("low", [])}
+    except Exception:
+        pass
+
+    inspector_data: dict = {}
+    for lane in lanes:
+        for seg in lane["segments"]:
+            inspector_data[seg["id"]] = _segment_to_inspector(seg, lane, pass_trace)
+    for p in patch_log:
+        for tid in p.get("targets", []):
+            if tid in inspector_data:
+                inspector_data[tid]["visualState"]["hasPatches"] = True
+                inspector_data[tid]["patches"].append(p)
+    for cat in ("high", "medium"):
+        for p in ai_patches.get(cat, []):
+            for tid in p.get("targets", []):
+                if tid in inspector_data:
+                    inspector_data[tid]["visualState"]["hasAiSuggestion"] = True
+
+    return {
+        "audio_id": tl.get("project", {}).get("id", ""),
+        "version": tl.get("schema_version", "2.0"),
+        "metadata": tl.get("metadata", {}),
+        "lanes": lanes,
+        "inspector_data": inspector_data,
+        "pass_trace": pass_trace,
+        "speakerNames": {
+            sid: (s.get("name") or s.get("label") or sid)
+            for sid, s in (tl.get("speakers") or {}).items()
+        },
+        "ai_patches": ai_patches,
+        "patch_log": patch_log,
+    }
+
+
 @app.post("/api/speaker/diarization/load")
 async def speaker_load(req: SpeakerLoadRequest):
     """加载 Timeline IR (v2.0 schema) + AI Patch 建议。
@@ -3086,6 +3191,7 @@ async def speaker_load(req: SpeakerLoadRequest):
 
     tl_path = os.path.join(extract_dir, "timeline.json")
     has_timeline = os.path.isfile(tl_path)
+    views = _build_timeline_views(extract_dir) if has_timeline else None
 
     if not has_timeline:
         stl_path = os.path.join(extract_dir, "speaker_timeline.json")
@@ -3095,7 +3201,8 @@ async def speaker_load(req: SpeakerLoadRequest):
             result["timeline"] = stl.get("turns", [])
             result["speakers"] = stl.get("speakers", [])
 
-    if not has_timeline or (has_timeline and _tl_has_empty_timeline(tl_path)):
+    if views is None:
+        # timeline.json 缺失/空 — transcript fallback (兼容旧工作区)
         tj_path = os.path.join(extract_dir, "transcript.json")
         if os.path.isfile(tj_path):
             logger.info("speaker_load: timeline.json missing/empty, falling back to transcript.json")
@@ -3110,110 +3217,17 @@ async def speaker_load(req: SpeakerLoadRequest):
                 return result
         if not has_timeline:
             return result
-
-    if not has_timeline:
         return result
 
-    tl = _load_timeline_v2(tl_path)
-
-    # 从 transcript.json 补全 word-level timestamps（若 timeline.json 缺失）
-    _tj_words = None
-    tj_path = os.path.join(extract_dir, "transcript.json")
-    if os.path.isfile(tj_path):
-        try:
-            with open(tj_path, "r", encoding="utf-8") as f:
-                _tj_segments = _json.load(f).get("segments", [])
-            # 按 (start, end, text[:30]) 做索引
-            _tj_words = {}
-            for seg in _tj_segments:
-                w = seg.get("words") or []
-                if w:
-                    key = (round(seg.get("start", 0), 2), round(seg.get("end", 0), 2))
-                    _tj_words[key] = w
-        except Exception:
-            pass
-
-    result["audio_id"] = tl.get("project", {}).get("id", "")
-    result["version"] = tl.get("schema_version", "2.0")
-
-    # 构建 speaker_lanes (从 v2 events 按 speaker 分组)
-    SPEAKER_COLORS = ["#4CAF50","#2196F3","#FF9800","#E91E63","#9C27B0","#00BCD4",
-                       "#F44336","#795548","#607D8B","#CDDC39","#03A9F4","#FF5722"]
-    speakers_v2 = tl.get("speakers", {})
-    speaker_segments: dict[str, list] = {}
-    for evt in tl.get("events", []):
-        spk = evt.get("speaker") or "UNKNOWN"
-        if spk not in speaker_segments:
-            speaker_segments[spk] = []
-        # 核心序列化走 _canonical_segment; words 缺失时从 transcript 补全 (_tj_words)
-        speaker_segments[spk].append(_canonical_segment(evt, _tj_words))
-
-    lanes = []
-    sorted_speakers = sorted(speaker_segments.items())
-    for i, (spk, segs) in enumerate(sorted_speakers):
-        spk_info = speakers_v2.get(spk, {})
-        lanes.append({
-            "speaker": spk,
-            "display_name": spk_info.get("name") or spk,
-            "voice_id": spk_info.get("voice_id", ""),
-            "color": spk_info.get("color") or SPEAKER_COLORS[i % len(SPEAKER_COLORS)],
-            "segments": segs,
-            "segment_count": len(segs),
-            "total_duration": round(sum(s["end"] - s["start"] for s in segs), 1),
-        })
-
-    result["speaker_lanes"] = lanes
-    result["metadata"] = tl.get("metadata", {})
-
-    # ── pass_trace + inspector_data (从 v2 events 构建) ──
-    patch_log_data = result.get("patch_log", [])
-    pass_names_seen: set = set()
-    for p in patch_log_data:
-        op = p.get("opcode", "")
-        if op and op not in pass_names_seen:
-            pass_names_seen.add(op)
-    KNOWN_PASS_ORDER = ["MERGE", "RETAG_SPEAKER", "SET_TRANSLATION", "SPLIT", "ANNOTATE"]
-    result["pass_trace"] = [pn for pn in KNOWN_PASS_ORDER if pn in pass_names_seen]
-
-    inspector_data: dict = {}
-    for lane in lanes:
-        for seg in lane["segments"]:
-            inspector_data[seg["id"]] = _segment_to_inspector(seg, lane, result["pass_trace"])
-    for p in patch_log_data:
-        for tid in p.get("targets", []):
-            if tid in inspector_data:
-                inspector_data[tid]["visualState"]["hasPatches"] = True
-                inspector_data[tid]["patches"].append(p)
-    for cat in ("high", "medium"):
-        for p in result.get("patches", {}).get(cat, []):
-            for tid in p.get("targets", []):
-                if tid in inspector_data:
-                    inspector_data[tid]["visualState"]["hasAiSuggestion"] = True
-    result["inspector_data"] = inspector_data
-
-    # 加载 speaker names — Phase 4: 从 timeline.json speakers 注册表构建 (唯一事实源)
-    result["speakerNames"] = {
-        sid: (s.get("name") or s.get("label") or sid)
-        for sid, s in (tl.get("speakers") or {}).items()
-    }
-
-    # AI Patch 建议
-    try:
-        from timeline.api.timeline import generate_candidate_patches
-        ai = generate_candidate_patches(tl_path)
-        result["patches"] = {
-            "high": ai.get("high", []),
-            "medium": ai.get("medium", []),
-            "low": ai.get("low", []),
-        }
-    except Exception:
-        pass
-
-    # Patch 历史
-    log_path = os.path.join(extract_dir, "timeline_patches.json")
-    if os.path.isfile(log_path):
-        with open(log_path, "r", encoding="utf-8") as f:
-            result["patch_log"] = _json.load(f)
+    result["audio_id"] = views["audio_id"]
+    result["version"] = views["version"]
+    result["metadata"] = views["metadata"]
+    result["speaker_lanes"] = views["lanes"]
+    result["pass_trace"] = views["pass_trace"]
+    result["inspector_data"] = views["inspector_data"]
+    result["speakerNames"] = views["speakerNames"]
+    result["patches"] = views["ai_patches"]
+    result["patch_log"] = views["patch_log"]
 
     return result
 
@@ -3441,6 +3455,30 @@ def _apply_edit_patch(workspace: str, patch) -> dict:
     save_chain(chain, log_path)
     _persist_edited(state, extract_dir)
     return result
+
+
+class TimelineLoadRequest(BaseModel):
+    workspace: str = ""
+
+
+@app.post("/api/timeline/load")
+async def timeline_load(req: TimelineLoadRequest):
+    """加载事件视图 — timeline.json 是唯一事实源 (P3-C: 主数据源从 speaker 端点迁移)。
+
+    返回 {inspector_data, pass_trace}。timeline.json 缺失/为空 → 显式 400
+    (不降级 transcript — 那是 diarization/load 的兼容路径, timeline 读路径不假装)。
+    """
+    workspace = req.workspace
+    extract_dir = os.path.join(workspace, "01_extract") if workspace else ""
+    if not extract_dir or not os.path.isdir(extract_dir):
+        raise HTTPException(status_code=400, detail="无效的工作目录")
+    views = _build_timeline_views(extract_dir)
+    if views is None:
+        raise HTTPException(
+            status_code=400,
+            detail="timeline.json 缺失或为空 — 需先运行 CLI 提取/翻译 (唯一事实源)",
+        )
+    return {"inspector_data": views["inspector_data"], "pass_trace": views["pass_trace"]}
 
 
 @app.post("/api/timeline/patch/apply")
