@@ -480,7 +480,7 @@ export default function ProjectHubPage() {
   const activeStep = phase === 'config' ? 0 : phase === 'review' ? 1 : 2
 
   return (
-    <Box sx={{ height: '100%', overflow: 'auto', p: 3 }}>
+    <Box sx={{ height: '100%', overflow: 'auto', p: 3, maxWidth: 1360, mx: 'auto', width: '100%' }}>
       <Box sx={{ mb: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
           <Button size="medium" variant="outlined" color="primary" onClick={() => { setPhase('hub') }}>
