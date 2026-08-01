@@ -203,7 +203,7 @@ export default function SpeakerLane({
                 const conf = evt.confidence ?? 0.9
                 const alpha = conf >= 0.9 ? '99' : conf >= 0.7 ? '66' : '44'
                 return (
-                  <Tooltip key={evt.id}
+                  <Tooltip key={evt.id} disableInteractive
                     title={`${evt.text.slice(0, 40)}${evt.text.length > 40 ? '…' : ''}\n${evt.start.toFixed(1)}s-${evt.end.toFixed(1)}s | conf=${conf.toFixed(2)}`}>
                     <Box sx={{
                       position: 'absolute', left, top: 4, height: h - 8, width: w,

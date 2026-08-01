@@ -79,6 +79,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
   const [resizePreview, setResizePreview] = useState<{ segId: string; left: number; width: number } | null>(null)
   const [overlaps, setOverlaps] = useState<Array<{start: number, end: number, speakers: string[], duration: number}>>([])
   const [dragSegmentId, setDragSegmentId] = useState<string | null>(null)
+  const [hoveredSegId, setHoveredSegId] = useState<string | null>(null)
   const [dubLoading, setDubLoading] = useState(false)
   const [screeningResults, setScreeningResults] = useState<{
     issues: Array<{segment_id: string, rule: string, severity: string, start: number, end: number, message: string, detail: any}>
@@ -776,7 +777,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
                     backgroundImage: 'repeating-linear-gradient(-45deg, transparent, transparent 3px, rgba(239,68,68,0.15) 3px, rgba(239,68,68,0.15) 6px)',
                     zIndex: 5, pointerEvents: 'none',
                   }}>
-                    <Tooltip title={`重叠: ${ov.speakers.join(', ')}\n${ov.duration.toFixed(1)}s`}>
+                    <Tooltip title={`重叠: ${ov.speakers.join(', ')}\n${ov.duration.toFixed(1)}s`} disableInteractive>
                       <Box sx={{ width: '100%', height: '100%' }} />
                     </Tooltip>
                   </Box>
@@ -823,7 +824,10 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
                     const displayWidth = isResizing ? resizePreview!.width : width
                     return (<Fragment key={j}>
                       <Tooltip title={`${(seg.text || '').slice(0, 80)}\n${(seg.start ?? 0).toFixed(1)}s-${(seg.end ?? 0).toFixed(1)}s | conf=${(conf ?? 0).toFixed(2)}`}
-                        disableHoverListener={dragSegmentId !== null || resizePreview !== null}>
+                        disableInteractive
+                        open={hoveredSegId === segId && dragSegmentId === null && resizePreview === null}
+                        onOpen={() => setHoveredSegId(segId)}
+                        onClose={() => setHoveredSegId(prev => (prev === segId ? null : prev))}>
                         <Box sx={{
                           position: 'absolute', left: displayLeft, top: 10, height: LANE_HEIGHT - 20, width: displayWidth,
                           bgcolor: bgColor, borderRadius: 0.5,
@@ -846,6 +850,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
                           onDragStart={(e) => {
                             console.log('🔵 DRAG_START', segId)
                             setDragSegmentId(segId)
+                            setHoveredSegId(null)  // HTML5 拖拽期间 mouseleave 被抑制, 不清则拖后残留 tooltip
                             e.dataTransfer.effectAllowed = 'move'
                             e.dataTransfer.setData('text/plain', segId)
                           }}
