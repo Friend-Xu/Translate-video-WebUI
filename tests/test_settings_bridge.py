@@ -26,10 +26,11 @@ class TestSlotOverrideMap:
         }
 
     def test_nested_path_expands(self):
-        cfg = {"semantic_threshold": 0.75, "gate_beta": 0.5}
+        """P5-A: semantic_threshold → gate.semantic_threshold (策略真读的键)。"""
+        cfg = {"semantic_threshold": 0.75, "sim_drop_limit": 0.05}
         ov = server._pipeline_cfg_to_slot_overrides(cfg)
-        assert ov["translation"]["gate"]["threshold_accept"] == 0.75
-        assert ov["translation"]["gate"]["beta"] == 0.5
+        assert ov["translation"]["gate"]["semantic_threshold"] == 0.75
+        assert ov["translation"]["gate"]["sim_drop_limit"] == 0.05
 
     def test_skip_auto_semantics(self):
         """source_lang=auto / max_speakers=0 交给引擎自动检测, 不映射。"""

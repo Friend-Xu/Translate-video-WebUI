@@ -45,7 +45,7 @@ def _post(cfg: dict) -> dict:
 class TestConfigDiffLayer:
     def test_get_empty_returns_defaults(self, cfg_path):
         resp = _get()
-        assert set(resp) == {"config", "defaults", "overridden"}
+        assert set(resp) == {"config", "defaults", "overridden", "quality_strategies"}
         assert resp["config"] == resp["defaults"]
         assert resp["overridden"] == []
 

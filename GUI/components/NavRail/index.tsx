@@ -31,7 +31,6 @@ export default function NavRail() {
   const selectedEventIds = useAppStore(s => s.selectedEventIds)
   const pendingDrafts = useAppStore(s => s.pendingDrafts)
   const localJobStatus = useAppStore(s => s.localJobStatus)
-  const toggleDockCollapsed = useAppStore(s => s.toggleDockCollapsed)
   const debugMode = useAppStore(s => s.debugMode)
   const toggleDebugMode = useAppStore(s => s.toggleDebugMode)
 
@@ -101,7 +100,7 @@ export default function NavRail() {
           },
           {
             icon: <LogIcon sx={{ fontSize: 18 }} />, label: '日志',
-            action: toggleDockCollapsed, active: false,
+            action: () => setMode('logs'), active: mode === 'logs',
           },
           {
             icon: <BugReportIcon sx={{ fontSize: 18 }} />, label: '调试',

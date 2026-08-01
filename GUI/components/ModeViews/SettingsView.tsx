@@ -94,12 +94,15 @@ export default function SettingsView() {
   const [fonts, setFonts] = useState<any[]>([])
   const [previewImg, setPreviewImg] = useState<string | null>(null)
   const [promptOpen, setPromptOpen] = useState(false)
+  // P5-A: 质量策略选项来自 core 注册表 (GET /api/config quality_strategies)
+  const [qualityStrategies, setQualityStrategies] = useState<string[]>([])
 
   useEffect(() => {
     fetch('/api/config')
       .then(r => r.json())
       .then(data => {
         defaultsRef.current = data.defaults || {}
+        setQualityStrategies(data.quality_strategies || [])
         setConfig(data.config || data)
       })
       .catch(() => {})
@@ -423,51 +426,37 @@ export default function SettingsView() {
               <Slider size="small" value={config.top_p ?? 0.9} min={0} max={1} step={0.05}
                 onChange={(_, v) => set('top_p', v)} sx={{ mb: 1 }} />
 
-              {/* ── 质量门控 ── */}
-              <FormControlLabel control={<Switch size="small" checked={config.quality_gate !== false}
-                onChange={e => set('quality_gate', e.target.checked)} />} label="质量门禁" />
-              {config.quality_gate !== false && <>
-                <FormControl fullWidth size="small" sx={{ mt: 1, mb: 1.5 }}>
-                  <InputLabel>门控模式</InputLabel>
-                  <Select value={config.verification_mode || 'logic_gate'}
-                    onChange={e => set('verification_mode', e.target.value)} label="门控模式">
-                    <MenuItem value="logic_gate">三门逻辑 (Gate A→C→B)</MenuItem>
-                    <MenuItem value="joint_formula">联合公式 (Joint Formula)</MenuItem>
-                  </Select>
-                </FormControl>
+              {/* ── 质量门控 (P5-A: 选项来自 core 策略注册表, 单一事实源) ── */}
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                质量门控由翻译策略驱动（始终启用）
+              </Typography>
+              <FormControl fullWidth size="small" sx={{ mb: 1.5 }}>
+                <InputLabel>质量策略</InputLabel>
+                <Select value={config.verification_mode || 'logic_gate'}
+                  onChange={e => set('verification_mode', e.target.value)} label="质量策略">
+                  {(qualityStrategies.length > 0 ? qualityStrategies : ['logic_gate', 'xcomet']).map(s => (
+                    <MenuItem key={s} value={s}>
+                      {s === 'logic_gate' ? '三门逻辑 (MiniLM 语义 + PPL 自然度)'
+                        : s === 'xcomet' ? 'XCOMET 模型评分'
+                        : s}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
 
-                {(config.verification_mode || 'logic_gate') === 'logic_gate' ? <>
-                  <Typography variant="caption" color="text.secondary">
-                    Gate A 语义底线: {config.semantic_threshold ?? 0.70}
-                  </Typography>
-                  <Slider size="small" value={config.semantic_threshold ?? 0.70}
-                    min={0.50} max={0.95} step={0.05}
-                    onChange={(_, v) => set('semantic_threshold', v)} sx={{ mb: 1 }} />
-                  <Typography variant="caption" color="text.secondary">
-                    Gate C 退化容忍: {config.sim_drop_limit ?? 0.05}
-                  </Typography>
-                  <Slider size="small" value={config.sim_drop_limit ?? 0.05}
-                    min={0} max={0.20} step={0.01}
-                    onChange={(_, v) => set('sim_drop_limit', v)} sx={{ mb: 1 }} />
-                </> : <>
-                  <Typography variant="caption" color="text.secondary">
-                    PPL 权重 (β): {config.gate_beta ?? 0.6}
-                  </Typography>
-                  <Slider size="small" value={config.gate_beta ?? 0.6}
-                    min={0.1} max={0.9} step={0.1}
-                    onChange={(_, v) => set('gate_beta', v)} sx={{ mb: 1 }} />
-                  <Typography variant="caption" color="text.secondary">
-                    语义权重 (γ): {config.gate_gamma ?? 0.4}
-                  </Typography>
-                  <Slider size="small" value={config.gate_gamma ?? 0.4}
-                    min={0.1} max={0.9} step={0.1}
-                    onChange={(_, v) => set('gate_gamma', v)} sx={{ mb: 1 }} />
-                </>}
-
-                <FormControlLabel control={<Switch size="small"
-                  checked={config.joint_verification === true}
-                  onChange={e => set('joint_verification', e.target.checked)} />}
-                  label="闭环验证 (PPL 二次门控)" />
+              {(config.verification_mode || 'logic_gate') === 'logic_gate' && <>
+                <Typography variant="caption" color="text.secondary">
+                  Gate A 语义底线: {config.semantic_threshold ?? 0.70}
+                </Typography>
+                <Slider size="small" value={config.semantic_threshold ?? 0.70}
+                  min={0.50} max={0.95} step={0.05}
+                  onChange={(_, v) => set('semantic_threshold', v)} sx={{ mb: 1 }} />
+                <Typography variant="caption" color="text.secondary">
+                  Gate C 退化容忍: {config.sim_drop_limit ?? 0.05}
+                </Typography>
+                <Slider size="small" value={config.sim_drop_limit ?? 0.05}
+                  min={0} max={0.20} step={0.01}
+                  onChange={(_, v) => set('sim_drop_limit', v)} sx={{ mb: 1 }} />
               </>}
 
               {/* ── 提示词 ── */}

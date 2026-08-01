@@ -17,6 +17,7 @@ LLMTranslationPass — 逐句并发 LLM 翻译 (翻译引擎重构 Step 1)
 from __future__ import annotations
 
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 from core.engine.pass_base import TimelinePass
@@ -163,6 +164,12 @@ class LLMTranslationPass(TimelinePass):
 
     @staticmethod
     def _concurrency_from_config() -> int:
+        # P5-A: 前端 translate_concurrency 经 LLM_CONCURRENCY env 注入, 优先于 yaml
+        if os.environ.get("LLM_CONCURRENCY"):
+            try:
+                return max(1, int(os.environ["LLM_CONCURRENCY"]))
+            except (ValueError, TypeError):
+                pass
         try:
             from pipeline.translation_llm import load_translate_config
             cfg = load_translate_config()

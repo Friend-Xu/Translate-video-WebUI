@@ -94,6 +94,8 @@ class SentenceTranslator:
         temperature: float = 0.2,
         timeout: float = 120.0,
         max_retries: int = 2,
+        max_tokens: int | None = None,
+        top_p: float | None = None,
     ):
         if not api_key:
             raise TranslationError(
@@ -105,12 +107,14 @@ class SentenceTranslator:
         self.temperature = temperature
         self.timeout = timeout
         self.max_retries = max(1, max_retries)
+        self.max_tokens = max_tokens
+        self.top_p = top_p
         self._api_key = api_key
 
     @classmethod
     def from_config(cls, config_path: str | None = None) -> "SentenceTranslator":
         cfg = load_translate_config(config_path)
-        # P2 设置桥: 环境变量覆盖 yaml (WebUI 从 settings.json 注入)。
+        # P2/P5 设置桥: 环境变量覆盖 yaml (WebUI 从 settings.json 注入)。
         # 优先级: 环境变量 > yaml > 默认值。api_key 兼容既有 DEEPSEEK_API_KEY。
         api_key = os.environ.get("DEEPSEEK_API_KEY", "") or cfg.get("api_key", "")
         return cls(
@@ -120,6 +124,8 @@ class SentenceTranslator:
             temperature=float(os.environ.get("LLM_TEMPERATURE", "") or cfg.get("temperature", 0.2)),
             timeout=float(cfg.get("timeout", 120)),
             max_retries=int(os.environ.get("LLM_MAX_RETRIES", "") or cfg.get("max_retries", 2)),
+            max_tokens=int(os.environ["LLM_MAX_TOKENS"]) if os.environ.get("LLM_MAX_TOKENS") else cfg.get("max_tokens"),
+            top_p=float(os.environ["LLM_TOP_P"]) if os.environ.get("LLM_TOP_P") else cfg.get("top_p"),
         )
 
     def translate(self, user: str, system: str) -> str:
@@ -166,6 +172,10 @@ class SentenceTranslator:
             # json_object: 语法级合法 JSON; system prompt 须含 "json" 字样
             "response_format": {"type": "json_object"},
         }
+        if self.max_tokens is not None:
+            payload["max_tokens"] = self.max_tokens
+        if self.top_p is not None:
+            payload["top_p"] = self.top_p
         try:
             resp = requests.post(
                 f"{self.base_url}/v1/chat/completions",

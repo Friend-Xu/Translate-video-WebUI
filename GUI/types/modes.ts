@@ -2,7 +2,7 @@
  * modes.ts — 模式切换协议与布局预设类型
  */
 
-export type Mode = 'hub' | 'timeline' | 'speaker' | 'review' | 'patch' | 'batch' | 'export' | 'settings' | 'glossary'
+export type Mode = 'hub' | 'timeline' | 'speaker' | 'review' | 'patch' | 'batch' | 'export' | 'settings' | 'glossary' | 'logs'
 
 /** Timeline Runtime states — mirrors backend RuntimeState enum */
 export type RuntimeState = 'uninitialized' | 'bootstrapping' | 'ready' | 'computing' | 'failed' | 'complete'
@@ -84,6 +84,12 @@ export const MODE_META: Record<Mode, ModeMeta> = {
     defaultShortcuts: { 'Ctrl+K': '命令面板' },
     defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'log',
   },
+  logs: {
+    label: '日志', labelEn: 'Logs',
+    accentColor: 'var(--mode-ops)', hexColor: '#8B5CF6', icon: 'Article',
+    defaultShortcuts: { 'Ctrl+K': '命令面板' },
+    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'log',
+  },
 }
 
 export type InspectorTab = 'content' | 'timing' | 'speaker' | 'tts' | 'patch' | 'history' | 'config' | 'review'
@@ -105,6 +111,7 @@ export const LAYOUT_PRESETS: Record<Mode, LayoutPreset> = {
   settings: { railComponent: null, inspectorTabs: [], defaultDockView: 'log' },
   review: { railComponent: null, inspectorTabs: ['content', 'review', 'timing'], defaultDockView: 'log' },
   glossary: { railComponent: null, inspectorTabs: [], defaultDockView: 'log' },
+  logs: { railComponent: null, inspectorTabs: [], defaultDockView: 'log' },
 }
 
 export type IssueType = 'low_confidence' | 'misaligned' | 'cps_high' | 'duration_short' | 'duration_long' | 'term_conflict' | 'speaker_drift' | 'speaker_conflict' | 'emotion_jump' | 'length_exceeded'

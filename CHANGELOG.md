@@ -5,6 +5,45 @@
 
 ---
 
+## 2026-08-01 — P5-A/B: 翻译引擎卡片对齐 core 质量体系 + 日志按钮修复
+
+### 背景 (用户指出: 卡片与翻译引擎脱节 + 日志按钮形同虚设)
+- 翻译卡片 13 处脱节: joint_formula 选项 core 无此策略 (触发即崩); xcomet 无前端入口;
+  verification_mode 只进 pass_factory 死参数 (质量策略实际由 quality_strategy 键决定);
+  semantic_threshold 映射错位 (写 threshold_accept, 策略读 semantic_threshold);
+  gate_beta/gamma/quality_gate/enable_glossary 无消费端; 术语表控制面 (glossary_files)
+  与真实链路 (yaml terms_dict) 脱节; api_type/max_tokens/top_p/concurrency 无消费端
+- 日志按钮 action 是 toggleDockCollapsed (切换 dock 折叠) 而非打开日志; 无 job 时面板空白
+
+### P5-A: 翻译引擎卡片对齐 (单一事实源)
+- **策略选项动态化**: GET /api/config 返回 quality_strategies (core list_strategies);
+  前端 Select 动态渲染 (logic_gate + xcomet), 删除 joint_formula
+- **双键统一**: verification_mode 改映射 translation.quality_strategy (tvw.py 真实消费键),
+  删除死的 --verification-mode CLI 特判
+- **键错位修复**: semantic_threshold → gate.semantic_threshold (策略真读的键)
+- **参数打通**: SentenceTranslator 加 max_tokens/top_p (请求体 + LLM_MAX_TOKENS/LLM_TOP_P env);
+  _concurrency_from_config 优先 LLM_CONCURRENCY env
+- **术语表打通**: load_manual_glossary 读 GLOSSARY_FILES/GLOSSARY_ENABLED env 覆盖 yaml —
+  GlossaryManager 选词典真正生效; enable_glossary 开关不再死链
+- **诚实化**: 删除 gate_beta/gate_gamma 滑块 + joint_verification 开关 + quality_gate 开关
+  (core 无消费端); custom_prompt 键名统一 snake_case (camelCase 曾致"已启用"文案永不显示)
+- **懒加载 bug 修复**: 策略注册表幂等 import (只查空表时部分加载不补全, xcomet 缺失)
+
+### P5-B: 日志按钮
+- NavRail 日志 → mode='logs' 全屏日志视图 (LogsView: 自动刷新/错误高亮)
+- GET /api/logs/recent: 优先 workspace/pipeline.log, 否则 GUI/logs/ server 日志尾部 —
+  无 job 时也有内容
+
+### 验证
+- pytest 1077 + 10 xfailed (新增 10 契约: 映射/策略注册表/LLM 参数/术语 env/日志端点)
+- vitest 55/55, tsc 0; 冒烟 logs_smoke (策略菜单 = 三门逻辑+XCOMET, 日志页有内容)
+
+### 遗留
+- custom_prompt 模板真正接入 render_system_prompt (本期只统一键名+透传)
+- api_type (openai/anthropic) 协议未实现 — 前端选项保留但注明兼容 OpenAI 格式
+
+---
+
 ## 2026-08-01 — P4-F: 前端设置体系接入 core 配置架构 — 消除"保存成功但无效"
 
 ### 背景调研结论

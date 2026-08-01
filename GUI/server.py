@@ -1528,6 +1528,35 @@ async def review_save(req: ReviewSaveRequest) -> dict:
     return {"ok": True, "output_path": output_path, "updated": updated}
 
 
+@app.get("/api/logs/recent")
+async def logs_recent(limit: int = 200, workspace: str = ""):
+    """全局日志尾部 (P5-B): 优先当前 workspace 的 pipeline.log, 否则 GUI/logs/ 最新 server 日志。
+
+    日志按钮不再"形同虚设" — 无 job 运行时也能看到 server 进程日志。
+    """
+    lines: list[str] = []
+    source = "server"
+    if workspace:
+        ws_log = Path(workspace) / "pipeline.log"
+        if ws_log.is_file():
+            try:
+                with open(ws_log, "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+                source = "workspace"
+            except OSError:
+                lines = []
+    if not lines:
+        try:
+            logs_dir = Path(LOG_DIR)
+            candidates = sorted(logs_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if candidates:
+                with open(candidates[0], "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+        except OSError:
+            lines = []
+    return {"lines": lines[-limit:], "total": len(lines), "source": source}
+
+
 @app.get("/api/config")
 async def get_config() -> dict:
     """返回设置视图: config = 默认 + 用户差异合并, defaults = 系统默认, overridden = 被覆盖的键。
@@ -1542,7 +1571,14 @@ async def get_config() -> dict:
     from core.runtime.config_resolver import deep_merge
     clean = {k: v for k, v in saved.items() if v is not None}
     deep_merge(merged, clean)
-    return {"config": merged, "defaults": defaults, "overridden": list(clean.keys())}
+    # P5-A: 质量策略选项来自 core 注册表 (单一事实源, 前端动态渲染不再硬编码)
+    from core.quality.protocol import list_strategies
+    return {
+        "config": merged,
+        "defaults": defaults,
+        "overridden": list(clean.keys()),
+        "quality_strategies": list_strategies(),
+    }
 
 
 @app.post("/api/config")
@@ -4229,12 +4265,11 @@ _SLOT_OVERRIDE_MAP: dict[str, tuple[str, str]] = {
     "max_tokens": ("translation", "max_tokens"),
     "top_p": ("translation", "top_p"),
     "max_retries": ("translation", "max_retries"),
-    "enable_glossary": ("translation", "glossary.enabled"),
-    "quality_gate": ("translation", "gate.enabled"),
-    "semantic_threshold": ("translation", "gate.threshold_accept"),
+    # P5-A: verification_mode 是 core 策略选择键 (tvw.py quality_strategy 消费),
+    # 不再是旧 CLI 死参数; semantic_threshold 映射策略真读的 gate.semantic_threshold
+    "verification_mode": ("translation", "quality_strategy"),
+    "semantic_threshold": ("translation", "gate.semantic_threshold"),
     "sim_drop_limit": ("translation", "gate.sim_drop_limit"),
-    "gate_beta": ("translation", "gate.beta"),
-    "gate_gamma": ("translation", "gate.gamma"),
     # tts
     "speed_factor": ("tts", "speed_factor"),
     "tts_concurrency": ("tts", "concurrency"),
@@ -4324,10 +4359,7 @@ def _run_core_pipeline_sync(job: Job, req: CoreRunRequest, flags: dict | None = 
     slot_overrides = _pipeline_cfg_to_slot_overrides(pipeline_cfg)
     if slot_overrides:
         tvw_args.extend(["--config-overrides", json.dumps(slot_overrides, ensure_ascii=False)])
-    # P2 CLI 参数桥 (pass_factory 已有消费端: verification_mode / caption_config)
-    verification_mode = pipeline_cfg.get("verification_mode")
-    if verification_mode:
-        tvw_args.extend(["--verification-mode", str(verification_mode)])
+    # P2 CLI 参数桥 (pass_factory 已有消费端: caption_config)
     for flag, key in _CAPTION_CLI_MAP:
         if key in pipeline_cfg and pipeline_cfg[key] not in (None, ""):
             tvw_args.extend([flag, str(pipeline_cfg[key])])
@@ -4358,14 +4390,21 @@ def _run_core_pipeline_sync(job: Job, req: CoreRunRequest, flags: dict | None = 
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTORCH_NO_CUDA_MEMORY_CACHING"] = "1"
-    # P2 LLM 参数桥: 环境变量注入 (SentenceTranslator.from_config 消费),
+    # P2/P5 LLM 参数桥: 环境变量注入 (SentenceTranslator.from_config / pass 消费),
     # 仅当外部环境未设置时注入 settings 值 — 环境变量优先级最高, 凭据不落日志
     for env_key, cfg_key in (("DEEPSEEK_API_KEY", "api_key"), ("LLM_MODEL", "model"),
                              ("LLM_BASE_URL", "api_base_url"), ("LLM_TEMPERATURE", "temperature"),
-                             ("LLM_MAX_RETRIES", "max_retries")):
+                             ("LLM_MAX_RETRIES", "max_retries"), ("LLM_MAX_TOKENS", "max_tokens"),
+                             ("LLM_TOP_P", "top_p"), ("LLM_CONCURRENCY", "translate_concurrency")):
         val = pipeline_cfg.get(cfg_key)
         if val not in (None, "") and not os.environ.get(env_key):
             env[env_key] = str(val)
+    # P5-A 术语表桥: 前端术语页/设置开关 → load_manual_glossary (覆盖 yaml terms_dict)
+    if pipeline_cfg.get("enable_glossary") is False and not os.environ.get("GLOSSARY_ENABLED"):
+        env["GLOSSARY_ENABLED"] = "0"
+    glossary_files = pipeline_cfg.get("glossary_files")
+    if glossary_files and not os.environ.get("GLOSSARY_FILES"):
+        env["GLOSSARY_FILES"] = str(glossary_files)
 
     try:
         job.status = "running"

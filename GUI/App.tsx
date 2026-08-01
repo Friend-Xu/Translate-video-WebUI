@@ -17,6 +17,7 @@ import SettingsView from './components/ModeViews/SettingsView'
 import SpeakerReviewView from './components/ModeViews/SpeakerReviewView'
 import SpeakerInspector from './components/Inspector/SpeakerInspector'
 import GlossaryManager from './components/GlossaryManager'
+import LogsView from './components/ModeViews/LogsView'
 import ReviewTable from './components/TimelineArena/ReviewTable'
 import CommandPalette from './components/CommandPalette'
 import { useConfig } from './hooks/useConfig'
@@ -220,6 +221,9 @@ export default function App() {
       </Box>
       <Box sx={{ display: mode === 'glossary' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
         <GlossaryManager />
+      </Box>
+      <Box sx={{ display: mode === 'logs' ? 'flex' : 'none', flex: 1, overflow: 'hidden' }}>
+        <LogsView />
       </Box>
       <Box sx={{ display: mode === 'timeline' ? 'flex' : 'none', flex: 1, overflow: 'hidden', position: 'relative' }}>
         {!isWorkspace && (

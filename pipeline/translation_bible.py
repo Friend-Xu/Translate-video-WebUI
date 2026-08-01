@@ -355,11 +355,21 @@ def load_manual_glossary(cfg: dict | None = None, project_root: str = "") -> dic
         from pipeline.translation_llm import load_translate_config
         cfg = load_translate_config()
     terms_cfg = cfg.get("terms_dict", {}) if isinstance(cfg, dict) else {}
-    if not terms_cfg.get("enabled", True):
+    # P5-A 术语桥: 前端术语页/设置开关经 env 注入 (WebUI 从 settings.json), 优先于 yaml
+    if os.environ.get("GLOSSARY_ENABLED") in ("0", "false", "False"):
         return {}
-    names = terms_cfg.get("default_dict", []) or []
-    if isinstance(names, str):
-        names = [names]
+    enabled = terms_cfg.get("enabled", True)
+    if os.environ.get("GLOSSARY_ENABLED") in ("1", "true", "True"):
+        enabled = True
+    if not enabled:
+        return {}
+    names_env = os.environ.get("GLOSSARY_FILES", "")
+    if names_env:
+        names = [n.strip() for n in names_env.split(",") if n.strip()]
+    else:
+        names = terms_cfg.get("default_dict", []) or []
+        if isinstance(names, str):
+            names = [names]
     dict_dir = terms_cfg.get("dict_dir", "config/terms/")
     if project_root and not os.path.isabs(dict_dir):
         dict_dir = os.path.join(project_root, dict_dir)
