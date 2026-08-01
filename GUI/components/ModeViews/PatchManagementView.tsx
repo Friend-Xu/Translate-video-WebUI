@@ -300,10 +300,11 @@ export default function PatchManagementView({ events }: Props) {
                   key={item.id}
                   onClick={(e) => handleSelect(item.id, e)}
                   sx={{
-                    p: 1, cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)',
-                    bgcolor: isSelected ? 'action.selected' : isMulti ? 'action.hover' : 'transparent',
+                    p: 1.25, cursor: 'pointer', mb: 0.5, mx: 0.5, borderRadius: 1.5,
+                    border: '1px solid', borderColor: 'divider',
+                    bgcolor: isSelected ? 'action.selected' : isMulti ? 'action.hover' : 'background.paper',
                     opacity: item.isLocked ? 0.65 : 1,
-                    '&:hover': { bgcolor: 'action.hover' },
+                    '&:hover': { bgcolor: 'action.hover', borderColor: 'primary.light' },
                   }}
                 >
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
@@ -311,7 +312,7 @@ export default function PatchManagementView({ events }: Props) {
                     <Chip label={opcodeLabel(item.opcode)} size="small"
                       color={item.type === 'draft' ? 'default' : item.type === 'ai_suggestion' ? 'warning' : 'success'}
                       variant={item.type === 'applied' ? 'filled' : 'outlined'}
-                      sx={{ fontSize: '0.55rem', height: 18 }} />
+                      sx={{ fontSize: '0.65rem', height: 20 }} />
                     {item.isLocked && <LockIcon sx={{ fontSize: 12, color: 'text.disabled', ml: 'auto' }} />}
                     {item.conflicts.length > 0 && (
                       <Tooltip title={`与 ${item.conflicts.length} 个补丁冲突`}>
@@ -326,13 +327,13 @@ export default function PatchManagementView({ events }: Props) {
                     </Tooltip>
                   </Box>
                   <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', ml: 1.5 }}>
-                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.55rem' }}>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
                       {item.targets.join(', ')}
                     </Typography>
-                    <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.55rem' }}>
+                    <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.65rem' }}>
                       · {typeof item.timestamp === 'string' ? new Date(item.timestamp).toLocaleTimeString() : new Date(item.timestamp).toLocaleTimeString()}
                     </Typography>
-                    <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.55rem' }}>
+                    <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.65rem' }}>
                       · {item.author}
                     </Typography>
                   </Box>
