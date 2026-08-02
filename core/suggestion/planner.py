@@ -1,19 +1,13 @@
 """
-TASK 06 — Patch Planner (CRITICAL)
+suggestion.planner — 唯一决策点 (迁移自 timeline/patch/planner)
 
-The ONLY decision point in the system.
-Input: signals only (from Rule Feature Extractor + Scoring Engine)
-Output: Patch list
-
-Constraints:
-- deterministic (same input → same output)
-- no external state mutation
-- no UI dependency
+Input: signals + scores; Output: SuggestionPatch 列表。
+确定性: 相同输入 → 相同输出; 无外部状态变更。
 """
 from __future__ import annotations
 
-from timeline.patch.model import TimelinePatch
-from timeline.patch.opcode import OpCode
+from core.suggestion.model import SuggestionPatch
+from core.suggestion.opcode import SuggestionOpCode as OpCode
 
 
 def plan(
@@ -21,9 +15,9 @@ def plan(
     signals_list: list[dict],
     scores: list[float],
     min_confidence: float = 0.7,
-) -> list[TimelinePatch]:
+) -> list[SuggestionPatch]:
     """Generate patches from scored signals. Deterministic."""
-    patches: list[TimelinePatch] = []
+    patches: list[SuggestionPatch] = []
 
     if len(signals_list) != len(segments) - 1:
         return patches
@@ -47,7 +41,7 @@ def plan(
 
 def _signals_to_patch(
     seg_a: dict, seg_b: dict, signals: dict, score: float, idx: int,
-) -> TimelinePatch | None:
+) -> SuggestionPatch | None:
     """Convert scored signals to a single patch candidate."""
     same_spk = signals.get("same_speaker", False)
     gap = signals.get("gap", 999.0)
@@ -62,7 +56,7 @@ def _signals_to_patch(
             reasons.append("semantic_continuation")
         if signals.get("incomplete_ending"):
             reasons.append("incomplete_ending")
-        return TimelinePatch(
+        return SuggestionPatch(
             patch_id=f"patch_merge_{idx:04d}",
             opcode=OpCode.MERGE,
             targets=[seg_a["id"], seg_b["id"]],
@@ -78,7 +72,7 @@ def _signals_to_patch(
         words = seg_a.get("words", [])
         if len(words) >= 2:
             mid = words[len(words) // 2].get("start", mid) if isinstance(words[len(words) // 2], dict) else mid
-        return TimelinePatch(
+        return SuggestionPatch(
             patch_id=f"patch_split_{idx:04d}",
             opcode=OpCode.SPLIT,
             targets=[seg_a["id"]],

@@ -1,8 +1,7 @@
 """
-TASK 07 — Rule Feature Extractor
+suggestion.signal — 相邻段特征信号提取 (迁移自 timeline/rules/extractor)
 
-Extracts signals from adjacent segment pairs.
-Must NOT generate patches — only outputs feature dicts.
+只输出特征 dict, 不产生决策。
 """
 from __future__ import annotations
 

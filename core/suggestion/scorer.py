@@ -1,8 +1,7 @@
 """
-TASK 08 — Scoring Engine
+suggestion.scorer — 加权评分 (迁移自 timeline/scorer/scorer)
 
-Weighted formula:
-final = semantic_score * 0.4 + speaker_score * 0.2 + timing_score * 0.2 + subtitle_score * 0.2
+final = semantic*0.4 + speaker*0.2 + timing*0.2 + subtitle*0.2
 """
 from __future__ import annotations
 
@@ -24,6 +23,14 @@ def score_all(pair_signals_list: list[dict],
         seg_b = seg_signals_list[i + 1] if seg_signals_list and i + 1 < len(seg_signals_list) else None
         scores.append(score_signals(ps, seg_a, seg_b))
     return scores
+
+
+def confidence_label(score: float) -> str:
+    if score > 0.9:
+        return "high"
+    elif score >= 0.7:
+        return "medium"
+    return "low"
 
 
 def _semantic_score(pair: dict) -> float:
@@ -63,11 +70,3 @@ def _subtitle_score(pair: dict) -> float:
     elif merged_dur > 5:
         return 0.6
     return 0.8
-
-
-def confidence_label(score: float) -> str:
-    if score > 0.9:
-        return "high"
-    elif score >= 0.7:
-        return "medium"
-    return "low"

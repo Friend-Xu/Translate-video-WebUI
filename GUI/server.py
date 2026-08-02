@@ -3028,10 +3028,11 @@ def _build_timeline_views(extract_dir: str) -> dict | None:
     KNOWN_PASS_ORDER = ["MERGE", "RETAG_SPEAKER", "SET_TRANSLATION", "SPLIT", "ANNOTATE"]
     pass_trace = [pn for pn in KNOWN_PASS_ORDER if pn in pass_names_seen]
 
-    # AI Patch 建议 (失败静默降级为空 — 建议是辅助数据, 非编辑事实)
+    # AI Patch 建议 (失败静默降级为空 — 建议是辅助数据, 非编辑事实;
+    # timeline/ 旧系统已退役, 建议链在 core/suggestion)
     ai_patches: dict = {"high": [], "medium": [], "low": []}
     try:
-        from timeline.api.timeline import generate_candidate_patches
+        from core.suggestion.api import generate_candidate_patches
         ai = generate_candidate_patches(tl_path)
         ai_patches = {"high": ai.get("high", []), "medium": ai.get("medium", []),
                       "low": ai.get("low", [])}

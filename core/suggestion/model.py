@@ -1,35 +1,27 @@
 """
-TASK 03 — Patch Model
+suggestion.model — 建议 patch 数据模型 (迁移自 timeline/patch/model)
 
-Patch is the ONLY mutation mechanism for Timeline.
-All patches are: replayable, idempotent, serializable.
+to_dict 字段形状 = 旧 TimelinePatch 契约, 前端/适配层零改动。
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from .opcode import OpCode
+from core.suggestion.opcode import SuggestionOpCode as OpCode
 import hashlib
 
 
-def _hash_timeline(timeline_data: dict) -> str:
-    """SHA-256 of serialized timeline for parent_version tracking."""
-    import json
-    raw = json.dumps(timeline_data, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(raw.encode()).hexdigest()[:12]
-
-
 @dataclass
-class TimelinePatch:
-    """Patch — the only mutation primitive in the system."""
+class SuggestionPatch:
+    """Patch 建议 — 只读候选, 不直接修改任何状态。"""
     patch_id: str
     opcode: OpCode
-    targets: list[str]                          # segment ids
+    targets: list[str]
     payload: dict = field(default_factory=dict)
     reason: list[str] = field(default_factory=list)
     score: float = 0.0
-    confidence: float = 0.0                     # 0.0-1.0
-    parent_version: str = ""                    # hash of timeline before patch
+    confidence: float = 0.0
+    parent_version: str = ""
     idempotency_key: str = ""
     author: str = "system"
     timestamp: str = ""
@@ -64,20 +56,3 @@ class TimelinePatch:
             "author": self.author,
             "timestamp": self.timestamp,
         }
-
-    @classmethod
-    def from_dict(cls, d: dict) -> "TimelinePatch":
-        opcode = OpCode(d["opcode"]) if isinstance(d["opcode"], str) else d["opcode"]
-        return cls(
-            patch_id=d["patch_id"],
-            opcode=opcode,
-            targets=d.get("targets", []),
-            payload=d.get("payload", {}),
-            reason=d.get("reason", []),
-            score=d.get("score", 0.0),
-            confidence=d.get("confidence", 0.0),
-            parent_version=d.get("parent_version", ""),
-            idempotency_key=d.get("idempotency_key", ""),
-            author=d.get("author", "system"),
-            timestamp=d.get("timestamp", ""),
-        )

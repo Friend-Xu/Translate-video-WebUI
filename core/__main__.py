@@ -396,16 +396,8 @@ def _run_legacy_tests() -> int:
         check("SRT 含序号", "1\n" in c); check("SRT 含时间戳", "-->" in c)
         os.unlink(tmp)
 
-    # TEST 12
-    print("\n── TEST 12: UIMapper ──")
-    from timeline.ui_adapter import UIMapper
-    ui_ir = TimelineProjectIR(events={
-        "evt_001": TimelineEventIR(id="evt_001", start=0.0, end=1.0, speaker_ref="S1", text_ref="hello"),
-        "evt_002": TimelineEventIR(id="evt_002", start=1.0, end=2.0, speaker_ref="S2", text_ref="world"),
-    }, speakers={"S1": SpeakerNodeIR(id="S1", name="Alice"), "S2": SpeakerNodeIR(id="S2")})
-    lanes = UIMapper().to_speaker_lanes(TimelineProjectState(ui_ir))
-    check("2 lanes", len(lanes) == 2)
-    check("Alice name", any(l["display_name"] == "Alice" for l in lanes))
+    # TEST 12 (UIMapper) 已删 — timeline/ui_adapter 随旧系统退役 (架构收束 P5),
+    # speaker lanes 由 GUI/server._build_timeline_views 承担
 
     # TEST 13
     print("\n── TEST 13: WorkflowOrchestrator ──")
