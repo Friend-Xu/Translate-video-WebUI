@@ -428,6 +428,9 @@ def save_settings(data: dict) -> None:
 
 
 def _load_yaml(path: Path) -> dict:
+    # 可选配置文件 (translate.yaml gitignored, 新环境缺失) — 缺失返回默认, 与 GlobalConfig.load 一致
+    if not path.is_file():
+        return {}
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
