@@ -31,6 +31,10 @@ scikit-learn==1.7.2
 pandas==2.2.3
 nltk==3.9.4
 scipy==1.14.1
+jieba==0.42.1
+
+# Speaker diarization (pyannote) + embedding
+pyannote.audio==3.1.1
 
 # HTTP / async
 fastapi==0.136.1
@@ -40,6 +44,22 @@ requests==2.33.1
 httpx==0.28.1
 tqdm==4.67.3
 aiohttp==3.13.5
+# FastAPI 传递依赖但代码直接 import (server.py)
+pydantic==2.13.4
+starlette==1.0.0
+
+# Model management / HF downloads
+# 注: transformers 5.8.0 官方要求 hub>=1.5.0; 本环境为历史锁定 0.36.2 (可运行, 勿随意升级)
+huggingface_hub==0.36.2
+
+# Config schema validation (core/config/schema_loader.py)
+jsonschema==4.26.0
+
+# System status (server.py / env_detect.py)
+psutil==7.2.2
+
+# VAD / voice clone runtime (SRT/VAD_Segmenter.py, pipeline/openvoice_cli/)
+onnxruntime==1.20.1
 
 # ChatTTS local TTS engine
 ChatTTS==0.2.5
