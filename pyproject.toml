@@ -6,4 +6,5 @@ markers = [
     "schema: JSON Schema 契约验证测试",
     "integration: 需要真实文件的端到端测试",
     "unit: 纯逻辑单元测试 (无 I/O)",
+    "contract: 契约测试 (前后端接口/数据形状锁死)",
 ]
