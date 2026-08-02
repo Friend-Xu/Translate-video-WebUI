@@ -213,6 +213,28 @@ cd GUI && npm run dev
 
 Visit `http://localhost:5173`.
 
+**WebUI Screenshots:**
+
+![Project Center](GUI/screenshoot/项目中心.png)
+
+*Project Center — create / open / manage video workspaces*
+
+![Speaker Review](GUI/screenshoot/说话人.png)
+
+*Speaker Review — per-speaker segments with voice profile and re-review*
+
+![Subtitle Review](GUI/screenshoot/字幕校验.png)
+
+*Subtitle Review — proofread translations, mark entries, re-run TTS*
+
+![Glossary](GUI/screenshoot/术语表.png)
+
+*Glossary — term dictionary management*
+
+![Patch](GUI/screenshoot/补丁.png)
+
+*Patch — timeline edits & AI suggestions as patch list*
+
 **WebUI Panels:**
 
 | Panel | Purpose |

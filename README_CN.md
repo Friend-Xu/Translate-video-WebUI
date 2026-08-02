@@ -188,6 +188,28 @@ cd GUI && npm run dev
 
 启动后访问 `http://localhost:5173`。
 
+**WebUI 界面截图：**
+
+![项目中心](GUI/screenshoot/项目中心.png)
+
+*项目中心 — 创建 / 打开 / 管理工作区项目*
+
+![说话人](GUI/screenshoot/说话人.png)
+
+*说话人 — 按说话人查看分段、语音画像与复审*
+
+![字幕校验](GUI/screenshoot/字幕校验.png)
+
+*字幕校验 — 校对翻译、标记问题条目、保存后重新 TTS*
+
+![术语表](GUI/screenshoot/术语表.png)
+
+*术语表 — 术语词典管理*
+
+![补丁](GUI/screenshoot/补丁.png)
+
+*补丁 — 时间轴编辑与 AI 建议的补丁列表*
+
 **WebUI 功能面板：**
 
 | 面板 | 功能 |
