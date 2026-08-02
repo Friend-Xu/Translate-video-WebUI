@@ -476,6 +476,21 @@ export default function SettingsView() {
                   onChange={(_, v) => set('sim_drop_limit', v)} sx={{ mb: 1 }} />
               </>}
 
+              {(config.verification_mode || 'logic_gate') === 'xcomet' && <>
+                <Typography variant="caption" color="text.secondary">
+                  Gate A 自动通过线: {config.gate_threshold_accept ?? 0.52}
+                </Typography>
+                <Slider size="small" value={config.gate_threshold_accept ?? 0.52}
+                  min={0} max={1} step={0.05}
+                  onChange={(_, v) => set('gate_threshold_accept', v)} sx={{ mb: 1 }} />
+                <Typography variant="caption" color="text.secondary">
+                  Gate C 重翻线: {config.gate_threshold_reject ?? 0.24}
+                </Typography>
+                <Slider size="small" value={config.gate_threshold_reject ?? 0.24}
+                  min={0} max={1} step={0.05}
+                  onChange={(_, v) => set('gate_threshold_reject', v)} sx={{ mb: 1 }} />
+              </>}
+
               {/* ── 提示词 ── */}
               <Button variant="outlined" size="small" fullWidth
                 startIcon={<EditNoteIcon />}

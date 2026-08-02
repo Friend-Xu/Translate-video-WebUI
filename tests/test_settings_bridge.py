@@ -32,6 +32,13 @@ class TestSlotOverrideMap:
         assert ov["translation"]["gate"]["semantic_threshold"] == 0.75
         assert ov["translation"]["gate"]["sim_drop_limit"] == 0.05
 
+    def test_xcomet_thresholds_map_to_gate(self):
+        """P5-A3: xcomet 模式阈值滑块 → gate.threshold_accept/reject (xcomet_strategy 消费)。"""
+        cfg = {"gate_threshold_accept": 0.52, "gate_threshold_reject": 0.24}
+        ov = server._pipeline_cfg_to_slot_overrides(cfg)
+        assert ov["translation"]["gate"]["threshold_accept"] == 0.52
+        assert ov["translation"]["gate"]["threshold_reject"] == 0.24
+
     def test_skip_auto_semantics(self):
         """source_lang=auto / max_speakers=0 交给引擎自动检测, 不映射。"""
         cfg = {"source_lang": "auto", "max_speakers": 0, "clustering_threshold": 0.7}

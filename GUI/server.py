@@ -4124,6 +4124,9 @@ _SLOT_OVERRIDE_MAP: dict[str, tuple[str, str]] = {
     "verification_mode": ("translation", "quality_strategy"),
     "semantic_threshold": ("translation", "gate.semantic_threshold"),
     "sim_drop_limit": ("translation", "gate.sim_drop_limit"),
+    # P5-A3 补全: xcomet 模式阈值滑块 → gate.threshold_accept/reject (xcomet_strategy 消费)
+    "gate_threshold_accept": ("translation", "gate.threshold_accept"),
+    "gate_threshold_reject": ("translation", "gate.threshold_reject"),
     # tts
     "speed_factor": ("tts", "speed_factor"),
     "tts_concurrency": ("tts", "concurrency"),
