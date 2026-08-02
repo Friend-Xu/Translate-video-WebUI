@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """
-Translate Video — 一站式翻译管线
+Translate Video — 一站式翻译管线 (core/ WorkflowOrchestrator 统一驱动)
 
-基于项目现有成熟模块编排：
-  extract_subtitles.py  → 字幕提取 + 强制对齐（指定 --lang 时自动启用 wav2vec2）
-  SRT_Translator        → 翻译
-  TermReplacer          → 术语替换
-  TtsPipeline           → TTS 合成 + 视频合并（新管线）
+三个 stage 全部委托 core 编排器:
+  extract   → LOAD+EXTRACT passes (缺陷检测/音频/分离/VAD/ASR/对齐/说话人)
+  translate → TRANSLATE passes (bible + 逐句 + xCOMET 质量闭环)
+  TTS       → TTS+EXPORT passes (配音 + 字幕渲染 + 视频合并)
 
 用法:
     python main.py <视频路径> [--lang en] [--engine chattts] [--skip-tts]
-
-参数与 translate_video.py、extract_subtitles.py 保持一致。
 """
 
 from __future__ import annotations
@@ -543,142 +540,6 @@ def step_translate_core(video: str, force: bool = False) -> str:
     return machine_srt
 
 
-def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
-                   checkpoint: PipelineCheckpoint | None = None,
-                   skip_semantic_validation: bool = False,
-                   skip_naturalness_check: bool = False,
-                   verification_mode: str | None = None) -> str:
-    """步骤 2: 翻译 + 术语替换。
-
-    输出到工作目录 02_translate/machine.srt。
-    """
-    target = os.path.dirname(video)
-    name = os.path.splitext(os.path.basename(video))[0]
-    ws = workspace_paths(video)
-    output = ws["machine_srt"] if ws else os.path.join(target, f"{name}_project", "02_translate", "machine.srt")
-
-    ws_dir = _workspace_dir(video)
-    ck = checkpoint or PipelineCheckpoint.load(ws_dir)
-
-    # 验证输出文件是否存在（用户可能删了部分文件希望重跑）
-    ck.verify_files({"machine_srt": output})
-
-    if ck.is_step_done("translate") and not force:
-        print(f"  [OK] 翻译已完成 (checkpoint)，跳过")
-        _manifest_set_step(video, "translate", "completed")
-        _manifest_set_files(video, {"machine_srt": "02_translate/machine.srt"})
-        return output
-
-    # Fallback: old file-existence check (backward compat, no checkpoint yet)
-    if os.path.isfile(output) and not force and not ck.is_step_done("translate"):
-        print(f"  [OK] 翻译文件已存在: {output}")
-        _manifest_set_step(video, "translate", "completed")
-        _manifest_set_files(video, {"machine_srt": "02_translate/machine.srt"})
-        return output
-
-    logger.info("[STAGE] [2/4] 字幕翻译 + 术语替换开始")
-    print("\n[2/3] 字幕翻译 + 术语替换...")
-    ck.start_step("translate")
-    ck.save()
-
-    sys.path.insert(0, PROJECT_ROOT)
-
-    from SRT.SRT_Translator import SRTTranslator
-
-    translator = SRTTranslator()
-    if skip_semantic_validation:
-        translator.semantic_check = False
-    if skip_naturalness_check:
-        translator.naturalness_check = False
-    if verification_mode:
-        translator.verification_mode = verification_mode
-    auto_srt, pending = translator.translate(
-        srt_path,
-        timeline_path=ws["timeline"] if ws and os.path.isfile(ws.get("timeline", "")) else None,
-    )
-
-    if pending:
-        ck.fail_step("translate", "manual review pending", error_type="USER")
-        ck.save()
-        print(f"\n[!] 有 {getattr(translator.log, 'manual_pending', '?')} 组需人工翻译")
-        print(f"  待翻文件: {pending}")
-        print("  请完成人工翻译后重新运行")
-        sys.exit(0)
-
-    # 将翻译结果移到工作目录
-    if os.path.isfile(auto_srt) and auto_srt != output:
-        import shutil
-        os.makedirs(os.path.dirname(output), exist_ok=True)
-        shutil.move(auto_srt, output)
-
-    if os.path.isfile(output):
-
-        from pipeline.checkpoint import _file_sha256
-        ck.complete_step("translate", output_hashes={"machine_srt": _file_sha256(output)})
-        ck.save()
-    else:
-        ck.fail_step("translate", "no output file produced", error_type="APPLICATION")
-        ck.save()
-        print(f"  [OK] 翻译完成: {auto_srt}")
-        return auto_srt
-
-    print(f"  [OK] 翻译 + 术语替换完成: {output}")
-
-    # 将翻译日志统一移到 02_translate/ 目录
-    _translate_dir = os.path.dirname(output)
-    _src_base = os.path.splitext(srt_path)[0]
-    for _log_suffix in ["-translate-log.json", "-translate-io-log.json",
-                        "-translate-semantic-flagged.json", "-prompt-manifest.json"]:
-        _log_src = _src_base + _log_suffix
-        _log_dst = os.path.join(_translate_dir, os.path.basename(_log_src))
-        if os.path.isfile(_log_src) and _log_src != _log_dst:
-            import shutil as _shutil
-            _shutil.move(_log_src, _log_dst)
-
-    _manifest_set_step(video, "translate", "completed")
-    _manifest_set_files(video, {
-        "machine_srt": "02_translate/machine.srt",
-        "translate_log": "02_translate/source-translate-log.json",
-        "translate_io_log": "02_translate/source-translate-io-log.json",
-        "translate_semantic_flagged": "02_translate/source-translate-semantic-flagged.json",
-        "prompt_manifest": "02_translate/source-prompt-manifest.json",
-    })
-    if backup_dir:
-        backup_step("02_translate", [output], backup_dir)
-
-    # 多维翻译质量评估 (step 2.5)
-    try:
-        from pipeline.quality_assessor import QualityAssessor
-        ws = workspace_paths(video)
-        if ws:
-            qa_cfg = _load_translate_cfg_field("quality_assessment", {})
-            if qa_cfg.get("enabled", True) and not (skip_semantic_validation and skip_naturalness_check):
-                assessor = QualityAssessor(
-                    ws_dir=ws["workspace"],
-                    semantic_threshold=qa_cfg.get("dimensions", {}).get("semantic", {}).get("threshold", 0.70),
-                    naturalness_threshold=qa_cfg.get("dimensions", {}).get("naturalness", {}).get("threshold", 3.0),
-                    source_lang=_load_translate_cfg_field("source_lang", "auto"),
-                )
-                assessor.run()
-                _manifest_set_files(video, {
-                    "quality_report": "02_translate/quality_report.json",
-                })
-    except Exception as e:
-        print(f"  [WARN] QualityAssessor 运行失败 (non-fatal): {e}")
-
-    return output
-
-
-def _load_translate_cfg_field(field: str, default=None):
-    """从 translate.yaml 读取单个配置字段"""
-    import yaml as _yaml
-    cfg_path = os.path.join(os.path.dirname(__file__), "config", "translate.yaml")
-    try:
-        with open(cfg_path, "r", encoding="utf-8") as f:
-            cfg = _yaml.safe_load(f)
-        return cfg.get("translate", {}).get(field, default)
-    except Exception:
-        return default
 
 
 def step_tts(
@@ -1041,17 +902,11 @@ def main():
                         help="whisper 并发 worker 数 (1=串行, 2~4=并行)")
     parser.add_argument("--enable-speaker-diarization", action="store_true",
                         help="启用说话人分离 (pyannote, 默认关闭)")
-    parser.add_argument("--skip-semantic-validation", action="store_true",
-                        help="翻译完成后跳过语义校验")
-    parser.add_argument("--skip-naturalness-check", action="store_true",
-                        help="翻译完成后跳过自然度检查 (PPL)")
     parser.add_argument("--verification-mode", default=None,
                         choices=["joint_formula", "logic_gate"],
                         help="闭环验证模式: joint_formula (联合公式) | logic_gate (逻辑门控)")
     parser.add_argument("--skip-translate", action="store_true",
                         help="跳过翻译")
-    parser.add_argument("--legacy-translate", action="store_true",
-                        help="使用旧 SRT_Translator 翻译 (默认 core 新引擎, 兼容回退)")
     parser.add_argument("--skip-tts", action="store_true",
                         help="跳过 TTS 合成")
     parser.add_argument("--force", action="store_true",
@@ -1163,17 +1018,10 @@ def main():
             sys.exit(1)
 
         # ── 步骤 2: 翻译 ──
-        # 默认 core 新引擎 (bible + 逐句 + 质量闭环); --legacy-translate 回退旧 SRT_Translator
+        # core 新引擎 (bible + 逐句 + 质量闭环) — SRT_Translator 已退役 (架构收束 P3)
         srt_translated = srt_source
         if not args.skip_translate:
-            if args.legacy_translate:
-                srt_translated = step_translate(video, srt_source, force=args.force, backup_dir=args.backup_dir,
-                                                  checkpoint=ck,
-                                                  skip_semantic_validation=args.skip_semantic_validation,
-                                                  skip_naturalness_check=args.skip_naturalness_check,
-                                                  verification_mode=args.verification_mode)
-            else:
-                srt_translated = step_translate_core(video, force=args.force)
+            srt_translated = step_translate_core(video, force=args.force)
         else:
             print("[2/3] 翻译 — 已跳过 (--skip-translate)")
             existing = guess_translated_srt(video)
@@ -1182,7 +1030,7 @@ def main():
                 print(f"  使用已有翻译: {os.path.basename(existing)}")
 
         # ── 步骤 3: TTS ──
-        # 翻译阶段全部 CPU（MiniLM + QualityAssessor），
+        # 翻译阶段全部 CPU（质量门控 + xCOMET），
         # ChatTTS 运行在独立子进程中，无需主进程 CUDA 清理。
 
         if args.bootstrap:

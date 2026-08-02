@@ -46,17 +46,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Run with CosyVoice TTS (offline, zero-shot)
 .venv/Scripts/python main.py source_file/video.mp4 --lang zh --engine cosyvoice
 
-# Extract subtitles only (GPU + turbo defaults)
-.venv/Scripts/python extract_subtitles.py source_file/video.mp4 --lang ja
+# Extract subtitles only (speaker review 后暂停, GPU + turbo 默认)
+.venv/Scripts/python main.py source_file/video.mp4 --lang ja --skip-translate --skip-tts
 
 # CPU fallback (if CUDA unavailable)
-.venv/Scripts/python extract_subtitles.py source_file/video.mp4 --device cpu --compute-type int8
+.venv/Scripts/python main.py source_file/video.mp4 --lang ja --skip-translate --skip-tts --device cpu --compute-type int8
 
 # Skip Demucs vocal separation (faster for clean audio)
 .venv/Scripts/python main.py source_file/video.mp4 --lang en --skip-demucs
-
-# Translate an existing SRT file
-.venv/Scripts/python -m SRT.SRT_Translator path/to/file.srt
 
 # ---- WebUI ----
 # Backend (port 8000)
@@ -77,30 +74,31 @@ cd GUI && npx tsc -p tsconfig.json --noEmit
 Video translation pipeline: **extract subtitles → translate → TTS synthesize → merge** into dubbed video with bilingual captions.
 
 ```
-main.py → subprocess: extract_subtitles.py → subprocess: Demucs (NODE 2.5)
+main.py / tvw.py → WorkflowOrchestrator (core/engine) → passes → adapters → pipeline/SRT 执行层
 ```
 
-extract_subtitles.py dataflow (modules communicate via filesystem, defaults: `--model turbo --device cuda --compute-type float16`):
+core orchestrator stage 结构 (default_preset, timeline.json v2 为唯一事实源):
 
 ```
-NODE 1   video_info.py       → ffmpeg -i metadata
-NODE 1.5 MediaValidator      → C2 defect diagnosis
-NODE 2   audio.py            → audio extraction + aresample fix
-NODE 2.5 demucs_instr.py     → Demucs vocal/instrumental separation
-NODE 3   transcriber.py      → Silero VAD (ONNX) + faster-whisper (CTranslate2)
-NODE 3.5 whisperx_local/     → wav2vec2 CTC forced alignment
-NODE 4   Json_Convert_Srt    → JSON → SRT
+LOAD     AudioPreprocessCompositePass → 缺陷检测 + 音频提取 + Demucs + VAD 边界
+EXTRACT  ASRCompositePass (whisper + wav2vec2 对齐) → SpeakerCompositePass (pyannote)
+         → SegmentationPass → SemanticMergePass
+TRANSLATE PreprocessTranslationPass (bible) → LLMTranslationPass (逐句)
+         → TranslationQualityPass (xCOMET/logic_gate) → RefineTranslationPass
+TTS      TTSCompositePass (引擎路由) → EmotionCompositePass
+EXPORT   SRTExportPass → VideoExportPass (配音合并)
 ```
 
 | Directory | Purpose |
 |-----------|---------|
-| `pipeline/` | VAD, transcription, TTS engines (edge/chattts/cosyvoice), RubberBand stretch, speed strategy, loudness, voice cloning (vc_*), caption rendering, video merging, checkpoint resume, model management, quality assessment |
-| `SRT/` | Translation (DeepSeek/OpenAI API, 3-tier fallback, multi-agent Conductor pattern), semantic verification, on-demand glossary injection, term replacement, MQM scoring, language presets |
-| `whisperx_local/` | wav2vec2 forced alignment (~20ms precision) |
+| `core/` | 编排层 (WorkflowOrchestrator, passes, adapters, PatchEngine, timeline_io, quality 策略) |
+| `pipeline/` | 执行层 — TTS engines (edge/chattts/cosyvoice), RubberBand stretch, speed strategy, loudness, voice cloning (vc_*), caption rendering, video merging, checkpoint resume, model management (被 core adapters 薄包装) |
+| `SRT/` | 执行层 — MediaValidator / VAD_Segmenter / TranslationVerifier (被 core adapters 包装) |
+| `whisperx_local/` | wav2vec2 forced alignment (~20ms precision), core/adapters/whisperx_local/ 是权威副本 |
 | `GUI/` | FastAPI + React/TypeScript WebUI, Vite dev proxy to uvicorn |
 | `config/` | YAML configs: `translate.yaml` (gitignored), `tts.yaml`, `caption.yaml`, `cosyvoice.yaml`, `external_subtitle.yaml`, `runtime_tts.yaml` |
 
-Full architecture details → `ARCHITECTURE.md`. Entry points: `main.py` (recommended) or `translate_video.py` (legacy).
+Full architecture details → `ARCHITECTURE.md`. Entry points: `main.py` (CLI) / `tvw.py` (统一 CLI + WebUI 通道).
 
 ### CosyVoice TTS Subprocess Isolation
 
