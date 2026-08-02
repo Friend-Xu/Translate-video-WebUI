@@ -67,10 +67,10 @@ class TestPassIO:
         assert es.ir.speaker_ref == "S1"
 
     def test_semantic_merge_no_merge_across_speakers(self):
-        """不同 speaker 不合并 (即使间隔小于阈值)。"""
+        """不同 speaker 不合并 (即使间隔小于阈值; 段长均 >= min_duration, 阶段二不触发)。"""
         evts = {
-            "evt_001": TimelineEventIR(id="evt_001", start=0.0, end=1.0, speaker_ref="S1", text_ref="hello"),
-            "evt_002": TimelineEventIR(id="evt_002", start=1.2, end=2.0, speaker_ref="S2", text_ref="world"),
+            "evt_001": TimelineEventIR(id="evt_001", start=0.0, end=2.5, speaker_ref="S1", text_ref="hello"),
+            "evt_002": TimelineEventIR(id="evt_002", start=2.7, end=4.5, speaker_ref="S2", text_ref="world"),
         }
         state = TimelineProjectState(TimelineProjectIR(events=evts))
         SemanticMergePass(gap_threshold=0.3).apply(state)
