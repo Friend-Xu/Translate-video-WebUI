@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from dataclasses import dataclass
 from pipeline.utils import safe_replace
 from typing import Optional, Tuple, Callable
@@ -402,12 +403,21 @@ class VideoSegmenter:
                     slow_down_clip, tts_audio.duration, text, text_eng
                 )
 
+        # 视频轨补足音频时长: TTS 音频长于 (减速钳制后) 视频时, moviepy 只写视频真实帧,
+        # 容器时长却取音频轨 → concat 后视频轨总和 < 音频轨总和, 成品容器时长虚高
+        # (播放器按容器显示, 结尾定格)。用尾帧定格扩展视频轨 (moviepy 越界读帧
+        # 返回最后一帧), 让两轨等长、容器时长真实。
+        if slow_down_clip.audio is not None and slow_down_clip.audio.duration > slow_down_clip.duration:
+            slow_down_clip = slow_down_clip.with_duration(slow_down_clip.audio.duration)
+
         os.makedirs(self.video_output_dir, exist_ok=True)
         output_path = os.path.join(self.video_output_dir, f"TTS_{start}_{end}.mp4")
-        slow_down_clip.write_videofile(
-            output_path,
-            **self._write_videofile_kwargs(),
-        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=".*Using the last valid frame instead.*")
+            slow_down_clip.write_videofile(
+                output_path,
+                **self._write_videofile_kwargs(),
+            )
 
         # 清理：关闭所有中间 clip（防 Windows ffmpeg 句柄泄漏 / 僵尸进程）
         # MoviePy 的 __del__ 在 Windows 上不可靠，必须显式 close。
