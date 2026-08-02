@@ -295,7 +295,7 @@ export interface SubtitleEntry {
   endMs: number
   sourceText: string
   translatedText: string
-  reviewStatus: 'pending' | 'approved' | 'modified'
+  reviewStatus: 'pending' | 'approved' | 'modified' | 'flagged'
   issues: SubtitleIssue[]
   similarity?: number
   semanticFlagged?: {
@@ -312,6 +312,8 @@ export interface SubtitleEntry {
   tierReason?: string
   /** 说话人 ID（多说话人视频） */
   speakerId?: string
+  /** 关联的 timeline event ID */
+  eventId?: string
 }
 
 export interface ReviewSession {
@@ -547,6 +549,7 @@ export interface EventViewModel {
   }
   patches: TimelinePatchData[]
   passTrace: string[]
+  words?: { word: string; start: number; end: number; confidence?: number }[]
 }
 
 /** 磁盘 timeline.json v2.0 的结构（对应 schemas/timeline.schema.json） */

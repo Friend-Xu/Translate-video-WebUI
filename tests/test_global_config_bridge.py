@@ -45,6 +45,38 @@ class TestGlobalConfigBridge:
         gate = t.get("gate", {})
         assert isinstance(gate.get("threshold_accept", 0.8), (int, float))
 
+    def test_from_legacy_yaml_explicit_gate_section(self, tmp_path):
+        """translate.yaml 显式 gate 段 → 阈值直接映射, 覆盖 semantic_threshold 映射"""
+        from core.config import GlobalConfig
+        p = tmp_path / "translate.yaml"
+        p.write_text(
+            "translate:\n"
+            "  semantic_threshold: 0.7\n"
+            "  gate:\n"
+            "    mode: xcomet\n"
+            "    threshold_accept: 0.52\n"
+            "    threshold_reject: 0.24\n",
+            encoding="utf-8",
+        )
+        gc = GlobalConfig.from_legacy_yaml(str(p))
+        gate = gc.project.translation["gate"]
+        assert gate["threshold_accept"] == 0.52
+        assert gate["threshold_reject"] == 0.24
+        assert gate["mode"] == "xcomet"
+
+    def test_from_legacy_yaml_gate_without_section_keeps_mapping(self, tmp_path):
+        """无显式 gate 段时, semantic_threshold 仍映射 threshold_accept (legacy 契约)"""
+        from core.config import GlobalConfig
+        p = tmp_path / "translate.yaml"
+        p.write_text(
+            "translate:\n"
+            "  semantic_threshold: 0.65\n",
+            encoding="utf-8",
+        )
+        gc = GlobalConfig.from_legacy_yaml(str(p))
+        gate = gc.project.translation["gate"]
+        assert gate["threshold_accept"] == 0.65
+
 
 class TestPassManagerConfigure:
     def test_configure_called_before_apply(self):

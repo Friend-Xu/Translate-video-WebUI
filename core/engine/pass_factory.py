@@ -18,8 +18,11 @@ from core.passes.asr_to_ir_pass import ASRToIRPass
 from core.passes.asr_composite_pass import ASRCompositePass
 from core.passes.audio_preprocess_composite_pass import AudioPreprocessCompositePass
 from core.passes.semantic_merge_pass import SemanticMergePass
+from core.passes.segmentation_pass import SegmentationPass
 from core.passes.speaker_composite_pass import SpeakerCompositePass
 from core.passes.llm_translation_pass import LLMTranslationPass
+from core.passes.preprocess_translation_pass import PreprocessTranslationPass
+from core.passes.refine_translation_pass import RefineTranslationPass
 from core.passes.translation_quality_pass import TranslationQualityPass
 from core.passes.emotion_composite_pass import EmotionCompositePass
 from core.passes.srt_export_pass import SRTExportPass
@@ -43,11 +46,14 @@ _PASS_REGISTRY: dict[str, type] = {
     "speaker": SpeakerCompositePass,
     "speaker_composite": SpeakerCompositePass,
     "semantic_merge": SemanticMergePass,
+    "segmentation": SegmentationPass,
     # TRANSLATE stage
+    "preprocess_translation": PreprocessTranslationPass,
     "translate": LLMTranslationPass,
     "llm_translation": LLMTranslationPass,
     "quality_check": TranslationQualityPass,
     "translation_quality": TranslationQualityPass,
+    "refine_translation": RefineTranslationPass,
     # TTS stage
     "tts": TTSCompositePass,
     "tts_composite": TTSCompositePass,
@@ -69,13 +75,16 @@ _RUNTIME_ARGS: dict[str, list[str]] = {
     "demucs": ["video_path", "output_dir", "skip_demucs"],
     "audio_preprocess": ["video_path", "output_dir"],
     "asr_to_ir": ["segments", "speaker_timeline"],
+    "segmentation": ["language"],
     "asr": ["audio_path", "workspace_dir"],
     "speaker": ["vocals_path", "output_dir", "num_speakers"],
     "speaker_composite": ["vocals_path", "output_dir", "num_speakers"],
-    "translate": ["translate_fn"],
-    "llm_translation": ["translate_fn"],
+    "preprocess_translation": ["target_lang"],
+    "translate": ["translate_fn", "target_lang"],
+    "llm_translation": ["translate_fn", "target_lang"],
     "quality_check": ["quality_strategy"],
     "translation_quality": ["quality_strategy"],
+    "refine_translation": ["translate_fn", "quality_strategy", "target_lang"],
     "srt_export": ["output_path"],
     "video_export": ["video_path", "output_dir", "workspace_dir", "caption_config"],
     "tts": ["output_dir"],
@@ -90,7 +99,8 @@ AVAILABLE_PASS_NAMES = sorted(_PASS_REGISTRY.keys())
 
 
 def create_pass_factory(
-    translate_fn: Callable[[str], str] | None = None,
+    translate_fn: Callable[[str, str], str] | None = None,
+    target_lang: str = "zh",
     segments: list | None = None,
     speaker_timeline: list | None = None,
     output_path: str = "",
@@ -114,6 +124,7 @@ def create_pass_factory(
         "segments": segments,
         "speaker_timeline": speaker_timeline,
         "translate_fn": translate_fn,
+        "target_lang": target_lang,
         "output_path": output_path,
         "engine": engine,
         "video_path": video_path,

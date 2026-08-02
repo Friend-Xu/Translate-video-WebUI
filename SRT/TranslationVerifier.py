@@ -64,6 +64,11 @@ class CrossLingualScorer:
                 model_path = self.model_name
             t0 = time.time()
             logger.info(f"加载跨语言语义模型: {model_path}")
+            # torch 2.6 + Windows: transformers 4.57 首次 import/from_pretrained
+            # 时设备上下文未初始化 → 原生 access violation (E2E 复验暴露)。
+            # 显式预热 torch 设备上下文 — 必须在 transformers import 之前。
+            import torch
+            _ = torch.tensor([])
             from transformers import AutoModel, AutoTokenizer
             self._tokenizer = AutoTokenizer.from_pretrained(model_path)
             self.model = AutoModel.from_pretrained(model_path)

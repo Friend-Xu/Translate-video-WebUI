@@ -2,7 +2,7 @@
  * modes.ts — 模式切换协议与布局预设类型
  */
 
-export type Mode = 'hub' | 'timeline' | 'speaker' | 'review' | 'patch' | 'batch' | 'export' | 'settings' | 'glossary'
+export type Mode = 'hub' | 'timeline' | 'speaker' | 'review' | 'patch' | 'batch' | 'export' | 'settings' | 'glossary' | 'logs'
 
 /** Timeline Runtime states — mirrors backend RuntimeState enum */
 export type RuntimeState = 'uninitialized' | 'bootstrapping' | 'ready' | 'computing' | 'failed' | 'complete'
@@ -25,7 +25,7 @@ export interface ModeMeta {
   icon: string
   defaultShortcuts: Record<string, string>
   defaultIssueFilter: IssueFilter
-  defaultDockView: 'log' | 'aiTrace' | 'patchDiff' | 'taskOutput' | 'debug'
+  defaultDockView: 'aiTrace' | 'patchDiff' | 'taskOutput' | 'debug'
 }
 
 export const MODE_META: Record<Mode, ModeMeta> = {
@@ -33,20 +33,20 @@ export const MODE_META: Record<Mode, ModeMeta> = {
     label: '项目中心', labelEn: 'Project Hub',
     accentColor: 'var(--mode-hub)', hexColor: '#6366f1', icon: 'Home',
     defaultShortcuts: { 'Ctrl+N': '新建项目', 'Ctrl+O': '打开项目', 'Ctrl+K': '命令面板' },
-    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'log',
+    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'patchDiff',
   },
   timeline: {
     label: '时间轴', labelEn: 'Timeline Studio',
     accentColor: 'var(--mode-timeline)', hexColor: '#2196F3', icon: 'Timeline',
     defaultShortcuts: { 'Space': '播放 / 暂停', 'Ctrl+Z': '撤销', 'Ctrl+K': '命令面板' },
-    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'log',
+    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'patchDiff',
   },
   speaker: {
     label: '说话人', labelEn: 'Speaker Review',
     accentColor: 'var(--mode-speaker)', hexColor: '#FF9800', icon: 'RecordVoiceOver',
     defaultShortcuts: { 'Tab': '切换说话人焦点', 'N': '下一问题', 'R': '重命名说话人', 'Ctrl+K': '命令面板' },
     defaultIssueFilter: { types: ['low_confidence', 'misaligned', 'cps_high', 'term_conflict', 'speaker_drift'], severity: 'all' },
-    defaultDockView: 'log',
+    defaultDockView: 'patchDiff',
   },
   patch: {
     label: '补丁', labelEn: 'Patch Management',
@@ -64,25 +64,31 @@ export const MODE_META: Record<Mode, ModeMeta> = {
     label: '导出', labelEn: 'Export',
     accentColor: 'var(--mode-export)', hexColor: '#00BCD4', icon: 'IosShare',
     defaultShortcuts: { 'Ctrl+E': '导出视频', 'Ctrl+K': '命令面板' },
-    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'log',
+    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'patchDiff',
   },
   settings: {
     label: '项目设置', labelEn: 'Settings',
     accentColor: 'var(--mode-settings)', hexColor: '#6366F1', icon: 'Settings',
     defaultShortcuts: { 'Ctrl+,': '打开设置', 'Ctrl+K': '命令面板' },
-    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'log',
+    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'patchDiff',
   },
   review: {
     label: '字幕校验', labelEn: 'Review',
     accentColor: 'var(--mode-review)', hexColor: '#10B981', icon: 'RateReview',
     defaultShortcuts: { 'Tab': '下一段', 'Enter': '确认', 'Ctrl+K': '命令面板' },
-    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'log',
+    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'patchDiff',
   },
   glossary: {
     label: '术语', labelEn: 'Glossary',
     accentColor: 'var(--mode-glossary)', hexColor: '#F59E0B', icon: 'Book',
     defaultShortcuts: { 'Ctrl+K': '命令面板' },
-    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'log',
+    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'patchDiff',
+  },
+  logs: {
+    label: '日志', labelEn: 'Logs',
+    accentColor: 'var(--mode-ops)', hexColor: '#8B5CF6', icon: 'Article',
+    defaultShortcuts: { 'Ctrl+K': '命令面板' },
+    defaultIssueFilter: { types: [], severity: 'all' }, defaultDockView: 'patchDiff',
   },
 }
 
@@ -92,22 +98,23 @@ export const ALL_INSPECTOR_TABS: InspectorTab[] = ['content', 'timing', 'speaker
 export interface LayoutPreset {
   railComponent: string | null
   inspectorTabs: InspectorTab[]
-  defaultDockView: 'log' | 'aiTrace' | 'patchDiff' | 'taskOutput' | 'debug'
+  defaultDockView: 'aiTrace' | 'patchDiff' | 'taskOutput' | 'debug'
 }
 
 export const LAYOUT_PRESETS: Record<Mode, LayoutPreset> = {
-  hub: { railComponent: null, inspectorTabs: [], defaultDockView: 'log' },
-  timeline: { railComponent: null, inspectorTabs: ALL_INSPECTOR_TABS, defaultDockView: 'log' },
-  speaker: { railComponent: null, inspectorTabs: ['speaker', 'content', 'timing'], defaultDockView: 'log' },
+  hub: { railComponent: null, inspectorTabs: [], defaultDockView: 'patchDiff' },
+  timeline: { railComponent: null, inspectorTabs: ALL_INSPECTOR_TABS, defaultDockView: 'patchDiff' },
+  speaker: { railComponent: null, inspectorTabs: ['speaker', 'content', 'timing'], defaultDockView: 'patchDiff' },
   patch: { railComponent: null, inspectorTabs: ['patch', 'content', 'timing', 'history'], defaultDockView: 'patchDiff' },
   batch: { railComponent: null, inspectorTabs: ['content', 'timing', 'history'], defaultDockView: 'taskOutput' },
-  export: { railComponent: null, inspectorTabs: ['content', 'timing'], defaultDockView: 'log' },
-  settings: { railComponent: null, inspectorTabs: [], defaultDockView: 'log' },
-  review: { railComponent: null, inspectorTabs: ['content', 'review', 'timing'], defaultDockView: 'log' },
-  glossary: { railComponent: null, inspectorTabs: [], defaultDockView: 'log' },
+  export: { railComponent: null, inspectorTabs: ['content', 'timing'], defaultDockView: 'patchDiff' },
+  settings: { railComponent: null, inspectorTabs: [], defaultDockView: 'patchDiff' },
+  review: { railComponent: null, inspectorTabs: ['content', 'review', 'timing'], defaultDockView: 'patchDiff' },
+  glossary: { railComponent: null, inspectorTabs: [], defaultDockView: 'patchDiff' },
+  logs: { railComponent: null, inspectorTabs: [], defaultDockView: 'patchDiff' },
 }
 
-export type IssueType = 'low_confidence' | 'misaligned' | 'cps_high' | 'duration_short' | 'duration_long' | 'term_conflict' | 'speaker_drift'
+export type IssueType = 'low_confidence' | 'misaligned' | 'cps_high' | 'duration_short' | 'duration_long' | 'term_conflict' | 'speaker_drift' | 'speaker_conflict' | 'emotion_jump' | 'length_exceeded'
 
 export interface IssueFilter { types: IssueType[]; severity: 'warning' | 'error' | 'all' }
 export interface IssueItem { eventId: string; type: IssueType; severity: 'warning' | 'error'; message: string; detail: Record<string, unknown>; start: number; end: number }
@@ -129,6 +136,7 @@ export interface SpeakerLaneData {
 }
 
 export interface SpeakerSegmentData {
+  id?: string
   start: number; end: number
   text: string
   translation?: string
@@ -177,18 +185,5 @@ export interface PatchViewItem {
 
 export type ReviewFilterMode = 'all' | 'pending' | 'flagged' | 'semantic' | 'naturalness' | 'review_critical'
 
-export interface SubtitleEntry {
-  index: number
-  start: string
-  end: string
-  startMs: number
-  endMs: number
-  sourceText: string
-  translatedText: string
-  reviewStatus: 'pending' | 'approved' | 'modified' | 'flagged'
-  issues: { type: string; message: string; severity: string }[]
-  similarity?: number
-  speakerId?: string
-  semanticFlagged?: any
-  quality?: any
-}
+// SubtitleEntry 已统一至 GUI/types.ts (Phase 3c 类型统一), 此处不再重复定义。
+export type { SubtitleEntry } from '../types'

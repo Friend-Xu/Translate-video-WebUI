@@ -68,6 +68,7 @@ class WorkflowOrchestrator:
         self._stage_progress: dict[str, StageProgress] = {}
         self._on_progress: Callable[[ProgressReport], None] | None = None
         self._pending_review: list[str] = []
+        self._retry_count: int = 0   # Gate C 重试计数 (执行期状态, run/resume 重置)
         self._video_path: str = ""
         self._started_at: float = 0.0
         self._completed_at: float = 0.0
@@ -89,6 +90,10 @@ class WorkflowOrchestrator:
         return list(self._pending_review)
 
     @property
+    def retry_count(self) -> int:
+        return self._retry_count
+
+    @property
     def elapsed(self) -> float:
         if self._started_at == 0:
             return 0.0
@@ -101,7 +106,7 @@ class WorkflowOrchestrator:
     def set_pass_factory(self, factory: Callable[[str], TimelinePass | None]) -> None:
         """设置 Pass 工厂 — 将 Pass 名称映射为实例。
 
-        外部（main_core.py 或 GUI/server.py）负责理解 Pass 名称
+        外部（tvw.py 或 GUI/server.py）负责理解 Pass 名称
         并返回配置好的实例。这保持核心引擎的依赖反转。
         """
         self._pass_factory = factory
@@ -114,6 +119,7 @@ class WorkflowOrchestrator:
         self._status = WorkflowStatus.RUNNING
         self._started_at = time.time()
         self._pending_review = []
+        self._retry_count = 0
 
         self._emit_workflow("开始执行工作流", {"video": video_path})
         EventBus().emit_now(RuntimeEvent(
@@ -123,41 +129,27 @@ class WorkflowOrchestrator:
 
         try:
             # 尝试从 workspace 加载已有 timeline 状态（用于 dub-after-review / export 等续跑场景）
+            # 数据结构重设计 Phase 2: 统一走 timeline_io.load_state, 全字段回填
+            # (translation/words/speaker), 修复 reload 丢译文导致 export 产出英文的 bug。
+            import os as _os
+            from core.runtime.timeline_io import load_state
+            ws = _os.path.join(_os.path.dirname(video_path),
+                               _os.path.basename(video_path).rsplit(".", 1)[0] + "_project")
+            tl_path = _os.path.join(ws, "01_extract", "timeline.json")
             state = None
-            try:
-                import json as _json, os as _os
-                ws = _os.path.join(_os.path.dirname(video_path),
-                                   _os.path.basename(video_path).rsplit(".", 1)[0] + "_project")
-                tl_path = _os.path.join(ws, "01_extract", "timeline.json")
-                if _os.path.isfile(tl_path):
-                    with open(tl_path, "r", encoding="utf-8") as f:
-                        tl_data = _json.load(f)
-                    events_data = tl_data if isinstance(tl_data, list) else tl_data.get("events", [])
-                    from core.ir import TimelineEventIR, SpeakerNodeIR
-                    ir_events = {}
-                    ir_speakers = {}
-                    for ev in (events_data if isinstance(events_data, list) else events_data.values()):
-                        if not isinstance(ev, dict):
-                            continue
-                        eid = ev.get("id", ev.get("event_id", ""))
-                        spk = ev.get("speaker", ev.get("speaker_id", ""))
-                        text = ev.get("text", ev.get("translation", "")) or ev.get("source_text", "") or ""
-                        start = ev.get("start", 0.0)
-                        end = ev.get("end", 0.0)
-                        if not eid or start >= end:
-                            continue
-                        ir_events[eid] = TimelineEventIR(
-                            id=eid, start=start, end=end,
-                            speaker_ref=spk or None, text_ref=text,
-                            source=ev.get("source", "asr"),
-                        )
-                        if spk and spk not in ir_speakers:
-                            ir_speakers[spk] = SpeakerNodeIR(id=spk)
-                    if ir_events:
-                        ir = TimelineProjectIR(events=ir_events, speakers=ir_speakers)
-                        state = TimelineProjectState(ir)
-            except Exception:
-                pass
+            if _os.path.isfile(tl_path):
+                try:
+                    # 禁止兜底: 文件损坏/缺字段时 load_state 显式 raise,
+                    # 由外层 except 标记 FAILED, 不再 except:pass 静默产出错误输出。
+                    state = load_state(tl_path)
+                except ValueError as e:
+                    # v1 提取格式 (timeline.ir) 无译文可复用: 显式跳过加载,
+                    # 由注入的 ASR 产物 (segments) 重建事件 (CLI 翻译路径)。
+                    self._emit_workflow(
+                        f"跳过 v1 timeline 加载: {e}",
+                        {"reason": "v1_format", "path": tl_path},
+                    )
+                    state = None
 
             if state is not None:
                 self._state = state
@@ -165,10 +157,12 @@ class WorkflowOrchestrator:
                 empty_ir = TimelineProjectIR(events={}, speakers={})
                 self._state = TimelineProjectState(empty_ir)
             stage_order = self._policy.stage_order()
-
-            for stage in stage_order:
+            idx = 0
+            while idx < len(stage_order):
+                stage = stage_order[idx]
                 stage_config = self._policy.get_stage(stage)
                 if stage_config is None:
+                    idx += 1
                     continue
 
                 self._current_stage = stage
@@ -185,7 +179,15 @@ class WorkflowOrchestrator:
                     )
                     return self._state
                 elif route == "retry":
-                    self._handle_retry(stage_config)
+                    if self._handle_retry(stage_config) == "pause":
+                        self._emit_workflow(
+                            f"工作流暂停于 {stage_config.stage.display_name}",
+                            {"reason": "retry_exhausted", "retry_count": self._retry_count},
+                        )
+                        return self._state
+                    # 未超限: 重跑当前 stage (idx 不变)
+                    continue
+                idx += 1
 
             self._status = WorkflowStatus.COMPLETED
             self._completed_at = time.time()
@@ -219,14 +221,15 @@ class WorkflowOrchestrator:
             raise RuntimeError("无可用状态")
 
         self._status = WorkflowStatus.RUNNING
+        self._retry_count = 0  # 用户介入后重新计数
         self._emit_workflow("恢复执行", {"decisions": decisions})
 
         for event_id, decision in decisions.items():
             event = self._state.get_event(event_id)
             if event is not None:
-                event.review["gate_decision"] = decision
+                event.review.gate_decision = decision
                 if decision == "reject":
-                    event.review["flags"] = event.review.get("flags", []) + ["rejected"]
+                    event.review.flags = event.review.flags + ["rejected"]
                     self._pending_review.remove(event_id)
 
         remaining = [
@@ -234,9 +237,12 @@ class WorkflowOrchestrator:
             if s.index >= self._current_stage.index
         ]
         try:
-            for stage in remaining:
+            idx = 0
+            while idx < len(remaining):
+                stage = remaining[idx]
                 stage_config = self._policy.get_stage(stage)
                 if stage_config is None:
+                    idx += 1
                     continue
                 self._current_stage = stage
                 executor = self._get_executor(stage_config)
@@ -248,7 +254,11 @@ class WorkflowOrchestrator:
                     self._status = WorkflowStatus.PAUSED
                     return self._state
                 elif route == "retry":
-                    self._handle_retry(stage_config)
+                    if self._handle_retry(stage_config) == "pause":
+                        self._status = WorkflowStatus.PAUSED
+                        return self._state
+                    continue  # 重跑当前 stage
+                idx += 1
 
             self._status = WorkflowStatus.COMPLETED
             self._completed_at = time.time()
@@ -288,49 +298,64 @@ class WorkflowOrchestrator:
     ) -> str:
         """评估 Gate 结果并返回路由指令。
 
-        Returns: "continue" | "pause" | "retry"
+        读取源按 gate 类型区分 (Phase1 跨域修复):
+          text_gate/validate_gate → review 槽 (A/B/C)
+          emotion_gate            → emotion 槽 (E1/E2/E3)
+        旧实现一律读 review.gate_decision, emotion pass 写 E1/E2/E3 到同键
+        覆盖文本门控结果; 且 routing 的 E3 key 永远匹配不到 (检查只认 C/B)。
+
+        Returns: "continue" | "pause" | "retry" (routing 中的动作值)
         """
         if not stage_config.gate:
             return "continue"
 
         routing = stage_config.gate_routing or {}
+        gate = stage_config.gate
         any_b = False
         any_c = False
 
         for es in state.event_states.values():
-            gate_result = es.provenance.get("gate_decision", "")
+            if gate == "emotion_gate":
+                gate_result = es.emotion.gate_decision
+            else:
+                gate_result = es.review.gate_decision
 
             if gate_result in ("C", "E3"):
                 any_c = True
-                es.review["needs_human_review"] = True
+                es.review.needs_human_review = True
             elif gate_result in ("B", "E2"):
                 any_b = True
-                es.review["needs_human_review"] = True
+                es.review.needs_human_review = True
                 if es.id not in self._pending_review:
                     self._pending_review.append(es.id)
 
-        if any_c and "C" in routing:
-            return routing["C"]
-        if any_b and "B" in routing:
-            return routing["B"]
+        if any_c:
+            for key in ("C", "E3"):
+                if key in routing:
+                    return routing[key]
+        if any_b:
+            for key in ("B", "E2"):
+                if key in routing:
+                    return routing[key]
         return routing.get("A", "continue")
 
-    def _handle_retry(self, stage_config: StageConfig) -> None:
-        retry_count = 0
-        gc = self._state.global_config
-        if isinstance(gc, dict):
-            retry_count = gc.get("_retry_count", 0)
+    def _handle_retry(self, stage_config: StageConfig) -> str:
+        """Gate C 重试 — 计数在 orchestrator 实例上 (执行期状态, run/resume 重置)。
 
-        if retry_count < stage_config.max_retries:
+        修复: 旧实现读 state.global_config (恒 None) 且 isinstance(gc, dict)
+        对 GlobalConfig 实例恒 False → retry_count 恒 0 → 无限重试。
+        返回 "retry" (未超限, 调用方重跑当前 stage) 或 "pause" (超限, 需人工)。
+        """
+        if self._retry_count < stage_config.max_retries:
+            self._retry_count += 1
             self._emit_workflow(
-                f"触发重试 ({retry_count + 1}/{stage_config.max_retries})",
-                {"retry_count": retry_count + 1},
+                f"触发重试 ({self._retry_count}/{stage_config.max_retries})",
+                {"retry_count": self._retry_count},
             )
-            if isinstance(gc, dict):
-                gc["_retry_count"] = retry_count + 1
-        else:
-            self._emit_workflow("超过最大重试次数，标记为需人工审核")
-            self._status = WorkflowStatus.PAUSED
+            return "retry"
+        self._emit_workflow("超过最大重试次数，标记为需人工审核")
+        self._status = WorkflowStatus.PAUSED
+        return "pause"
 
     def _on_stage_progress(self, report: ProgressReport) -> None:
         self._stage_progress[report.stage] = StageProgress(

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Box, TextField, List, ListItemButton, ListItemText, Typography, Chip, Paper } from '@mui/material'
+import { Box, TextField, List, ListItem, ListItemButton, ListItemText, Typography, Chip, Paper } from '@mui/material'
 import SearchIcon from '@mui/icons-material/SearchRounded'
 import { useAppStore } from '../store/useAppStore'
 import { MODE_META, ALL_MODES } from '../types/modes'
@@ -10,6 +10,8 @@ interface Command {
   shortcut: string
   category: string
   action: () => void
+  /** 快捷键提示条目 — 展示型，不可执行 */
+  hint?: boolean
 }
 
 export default function CommandPalette() {
@@ -38,6 +40,7 @@ export default function CommandPalette() {
       shortcut: key,
       category: `${MODE_META[mode].label} 模式`,
       action: () => {},
+      hint: true,
     })),
     { id: 'apply-all', label: '应用全部草案', shortcut: 'Ctrl+Enter', category: '补丁', action: applyAllDrafts },
     { id: 'discard-all', label: '放弃全部草案', shortcut: '', category: '补丁', action: discardAllDrafts },
@@ -76,7 +79,7 @@ export default function CommandPalette() {
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIdx(i => Math.min(i + 1, filtered.length - 1)) }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIdx(i => Math.max(i - 1, 0)) }
-    else if (e.key === 'Enter' && filtered[selectedIdx]) { e.preventDefault(); handleSelect(filtered[selectedIdx]) }
+    else if (e.key === 'Enter' && filtered[selectedIdx] && !filtered[selectedIdx].hint) { e.preventDefault(); handleSelect(filtered[selectedIdx]) }
     else if (e.key === 'Escape') setOpen(false)
   }, [filtered, selectedIdx, handleSelect])
 
@@ -104,7 +107,18 @@ export default function CommandPalette() {
             <Box sx={{ p: 3, textAlign: 'center' }}>
               <Typography variant="body2" color="text.secondary">无匹配命令</Typography>
             </Box>
-          ) : filtered.map((cmd, idx) => (
+          ) : filtered.map((cmd, idx) => cmd.hint ? (
+            <ListItem key={cmd.id} dense sx={{ py: 0.5, opacity: 0.75 }}>
+              <ListItemText primary={
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Typography variant="body2" sx={{ fontSize: '0.8rem', color: 'text.secondary' }}>{cmd.label}</Typography>
+                  <Chip label={cmd.category} size="small" sx={{ fontSize: '0.6rem', height: 18 }} />
+                </Box>
+              } />
+              {cmd.shortcut && <Chip label={cmd.shortcut} size="small" variant="outlined"
+                sx={{ fontSize: '0.6rem', height: 20, fontFamily: 'monospace' }} />}
+            </ListItem>
+          ) : (
             <ListItemButton key={cmd.id} selected={idx === selectedIdx}
               onClick={() => handleSelect(cmd)} sx={{ py: 1 }}>
               <ListItemText primary={

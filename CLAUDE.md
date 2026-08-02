@@ -2,6 +2,23 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## 开发原则（不可协商，2026-07-27 确立）
+
+**1. 禁止兜底（Fail Loud）**
+- 缺数据必须显式报错或进入人工审核，禁止静默默认值：`or text_ref`、`except: pass`、固定 1.0 评分、无警告的 mock 降级，一律禁止
+- 兜底让原则性数据错误变成"成功的错误输出"（英文配音视频、`{"config": {}}` 空译文），病因不可发现
+- 兼容旧数据用**显式一次性迁移**（normalize 脚本），不用永久运行时兜底
+
+**2. 高内聚，低耦合**
+- 每个模块一个职责；pass 只读写自己的 slot，不重建其他 pass 的数据结构
+- 字段级数据契约显式声明——禁止"只保留我认识的字段"式重建（semantic_merge 丢 words 的教训）
+- 系统必须对 AI 维护友好：契约不明确的地方，先补契约再改代码
+
+**3. 单向依赖**
+- 依赖方向唯一：`core/`（编排）→ `pipeline/`（执行层）→ 引擎。禁止反向引用、环形依赖、双入口（main_core.py 之死）
+- `timeline.json` 是唯一事实源：所有派生物（SRT、波形、预览）由它单向生成，派生物永不回写、永不成为别的环节的数据源
+- persist / reload 必须互逆，往返一致性由测试锁死
+
 ## Commands
 
 ```bash
@@ -29,17 +46,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Run with CosyVoice TTS (offline, zero-shot)
 .venv/Scripts/python main.py source_file/video.mp4 --lang zh --engine cosyvoice
 
-# Extract subtitles only (GPU + turbo defaults)
-.venv/Scripts/python extract_subtitles.py source_file/video.mp4 --lang ja
+# Extract subtitles only (speaker review 后暂停, GPU + turbo 默认)
+.venv/Scripts/python main.py source_file/video.mp4 --lang ja --skip-translate --skip-tts
 
 # CPU fallback (if CUDA unavailable)
-.venv/Scripts/python extract_subtitles.py source_file/video.mp4 --device cpu --compute-type int8
+.venv/Scripts/python main.py source_file/video.mp4 --lang ja --skip-translate --skip-tts --device cpu --compute-type int8
 
 # Skip Demucs vocal separation (faster for clean audio)
 .venv/Scripts/python main.py source_file/video.mp4 --lang en --skip-demucs
-
-# Translate an existing SRT file
-.venv/Scripts/python -m SRT.SRT_Translator path/to/file.srt
 
 # ---- WebUI ----
 # Backend (port 8000)
@@ -60,30 +74,31 @@ cd GUI && npx tsc -p tsconfig.json --noEmit
 Video translation pipeline: **extract subtitles → translate → TTS synthesize → merge** into dubbed video with bilingual captions.
 
 ```
-main.py → subprocess: extract_subtitles.py → subprocess: Demucs (NODE 2.5)
+main.py / tvw.py → WorkflowOrchestrator (core/engine) → passes → adapters → pipeline/SRT 执行层
 ```
 
-extract_subtitles.py dataflow (modules communicate via filesystem, defaults: `--model turbo --device cuda --compute-type float16`):
+core orchestrator stage 结构 (default_preset, timeline.json v2 为唯一事实源):
 
 ```
-NODE 1   video_info.py       → ffmpeg -i metadata
-NODE 1.5 MediaValidator      → C2 defect diagnosis
-NODE 2   audio.py            → audio extraction + aresample fix
-NODE 2.5 demucs_instr.py     → Demucs vocal/instrumental separation
-NODE 3   transcriber.py      → Silero VAD (ONNX) + faster-whisper (CTranslate2)
-NODE 3.5 whisperx_local/     → wav2vec2 CTC forced alignment
-NODE 4   Json_Convert_Srt    → JSON → SRT
+LOAD     AudioPreprocessCompositePass → 缺陷检测 + 音频提取 + Demucs + VAD 边界
+EXTRACT  ASRCompositePass (whisper + wav2vec2 对齐) → SpeakerCompositePass (pyannote)
+         → SegmentationPass → SemanticMergePass
+TRANSLATE PreprocessTranslationPass (bible) → LLMTranslationPass (逐句)
+         → TranslationQualityPass (xCOMET/logic_gate) → RefineTranslationPass
+TTS      TTSCompositePass (引擎路由) → EmotionCompositePass
+EXPORT   SRTExportPass → VideoExportPass (配音合并)
 ```
 
 | Directory | Purpose |
 |-----------|---------|
-| `pipeline/` | VAD, transcription, TTS engines (edge/chattts/cosyvoice), RubberBand stretch, speed strategy, loudness, voice cloning (vc_*), caption rendering, video merging, checkpoint resume, model management, quality assessment |
-| `SRT/` | Translation (DeepSeek/OpenAI API, 3-tier fallback, multi-agent Conductor pattern), semantic verification, on-demand glossary injection, term replacement, MQM scoring, language presets |
-| `whisperx_local/` | wav2vec2 forced alignment (~20ms precision) |
+| `core/` | 编排层 (WorkflowOrchestrator, passes, adapters, PatchEngine, timeline_io, quality 策略) |
+| `pipeline/` | 执行层 — TTS engines (edge/chattts/cosyvoice), RubberBand stretch, speed strategy, loudness, voice cloning (vc_*), caption rendering, video merging, checkpoint resume, model management (被 core adapters 薄包装) |
+| `SRT/` | 执行层 — MediaValidator / VAD_Segmenter / TranslationVerifier (被 core adapters 包装) |
+| `core/adapters/whisperx_local/` | wav2vec2 forced alignment (~20ms precision) — 对齐子进程经 sys.path 插入 core/adapters 直接 import, 根目录无 shim |
 | `GUI/` | FastAPI + React/TypeScript WebUI, Vite dev proxy to uvicorn |
 | `config/` | YAML configs: `translate.yaml` (gitignored), `tts.yaml`, `caption.yaml`, `cosyvoice.yaml`, `external_subtitle.yaml`, `runtime_tts.yaml` |
 
-Full architecture details → `ARCHITECTURE.md`. Entry points: `main.py` (recommended) or `translate_video.py` (legacy).
+Full architecture details → `ARCHITECTURE.md`. Entry points: `main.py` (CLI) / `tvw.py` (统一 CLI + WebUI 通道).
 
 ### CosyVoice TTS Subprocess Isolation
 
@@ -207,9 +222,9 @@ Browser (localhost:5173) → Vite dev server → proxy /api/* → uvicorn (local
 - **CosyVoice v3 `<|endofprompt|>`** — v3 requires this token separator between conditioning prefix and speech text. v2 does not. Placed as: `"You are a helpful assistant.<|zh|><|endofprompt|>{text}"`.
 - **CosyVoice modes** — only `cross_lingual` is supported (validated in `TTSConfig.__post_init__`). `zero_shot` was inferior quality and removed. `text_frontend=False` is mandatory during inference to prevent tag parsing as text.
 - **Model storage** — all models cached in `models/` (gitignored), managed by `pipeline/model_manager.py`. HF endpoint: `hf-mirror.com`.
-- **Resume** — `ResumeManager` checks for existing `TTS_{start}_{end}.mp4`; no separate state file.
+- **Resume** — TTS 断点续传由 core TTS stage 的 `es.tts.audio_ref` skip 承担（旧 ResumeManager 已退役）
 - **Checkpoint** — `PipelineCheckpoint` at workspace root (`project.json` variant). SHA256-based change detection. `verify_files()` auto-detects manually deleted outputs.
-- **Vendored but inactive** — `spleeter/`, `OpenVoice/`, `SwinIR/`, `Minecraft_dict/` are vendored copies. Only `pipeline/`, `SRT/`, `whisperx_local/`, `openvoice_cli/` are active.
+- **Vendored but inactive** — `Minecraft_dict/` is a vendored copy (inactive, user data). `SwinIR/` removed. Active: `core/`, `pipeline/`, `SRT/`, `core/adapters/whisperx_local/`, `pipeline/openvoice_cli/` (voice-clone 引擎包, 被 pipeline/vc_openvoice.py 消费).
 - **Skip flags** — `--skip-demucs`, `--skip-defect-check`, `--skip-extract/translate/tts`, `--skip-align`, `--skip-semantic-validation`, `--skip-naturalness-check`. Backup: `--backup-dir <dir>`.
 - **python-multipart** — required by FastAPI `UploadFile`; installed in venv but not declared in requirements.
 - **Vite HMR** — frontend changes auto-reload at `localhost:5173`, but backend changes may need uvicorn restart (new endpoints are sometimes missed by `--reload`).

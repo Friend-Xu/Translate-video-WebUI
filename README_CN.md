@@ -129,14 +129,14 @@ graph LR
 ### 仅字幕提取
 
 ```bash
-.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --lang zh
-.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --lang zh --num-workers 2  # 并发加速
+.venv\Scripts\python main.py source_file/test.mp4 --lang zh --skip-translate --skip-tts
+.venv\Scripts\python main.py source_file/test.mp4 --lang zh --skip-translate --skip-tts --num-workers 2  # 并发加速
 ```
 
-### 仅翻译
+### 仅翻译 (core 新引擎, 需已提取的工作区)
 
 ```bash
-.venv\Scripts\python -m SRT.SRT_Translator path/to/file.srt
+.venv\Scripts\python main.py source_file/test.mp4 --skip-tts
 ```
 
 ### VAD 性能测试
@@ -187,6 +187,28 @@ cd GUI && npm run dev
 ```
 
 启动后访问 `http://localhost:5173`。
+
+**WebUI 界面截图：**
+
+![项目中心](GUI/screenshoot/项目中心.png)
+
+*项目中心 — 创建 / 打开 / 管理工作区项目*
+
+![说话人](GUI/screenshoot/说话人.png)
+
+*说话人 — 按说话人查看分段、语音画像与复审*
+
+![字幕校验](GUI/screenshoot/字幕校验.png)
+
+*字幕校验 — 校对翻译、标记问题条目、保存后重新 TTS*
+
+![术语表](GUI/screenshoot/术语表.png)
+
+*术语表 — 术语词典管理*
+
+![补丁](GUI/screenshoot/补丁.png)
+
+*补丁 — 时间轴编辑与 AI 建议的补丁列表*
 
 **WebUI 功能面板：**
 
@@ -284,21 +306,29 @@ test_project/
 
 ```
 Translate_video/
-├── main.py                  # 推荐入口：3 步流水线
-├── extract_subtitles.py     # 字幕提取入口（独立运行）
-├── pipeline/                # 核心模块
-│   ├── audio.py             # 音频提取 + C2 缺陷修复
-│   ├── transcriber.py       # Silero VAD + faster-whisper + wav2vec2 对齐
+├── main.py                  # CLI 入口：3 stage 全走 WorkflowOrchestrator
+├── tvw.py                   # 统一 CLI + WebUI 子进程通道 (core 管线)
+├── core/                    # 编排层
+│   ├── engine/              # WorkflowOrchestrator + PassManager + pass_factory
+│   ├── ir/                  # Timeline IR v2 (frozen dataclasses)
+│   ├── adapters/            # 外部引擎薄包装 (whisper/wav2vec2/pyannote/tts…)
+│   ├── passes/              # 编排 passes (LOAD/EXTRACT/TRANSLATE/TTS/EXPORT)
+│   ├── gates/               # 质量门控 (TextGate, EmotionGate)
+│   ├── runtime/             # PatchEngine + timeline_io (唯一写路径)
+│   ├── config/              # GlobalConfig + 槽位默认 + workflow policy
+│   ├── quality/             # 质量策略 (xCOMET-lite / logic_gate)
+│   └── compat/              # cli_bridge (CLI 参数 → 槽位单一映射)
+├── timeline/                # AI 建议只读链 (待退役 → core/suggestion)
+├── pipeline/                # 执行层 (被 core adapters 薄包装)
 │   ├── video_info.py        # 视频元数据
 │   ├── gpu_detect.py        # GPU/编码器自动检测
 │   ├── demucs_instr.py      # Demucs 人声/背景分离
 │   ├── tts_*.py             # TTS 引擎/时序/视频/字幕/编排/续传
 │   ├── subtitle_optimizer.py # 字幕质量优化
 │   └── utils.py             # 通用工具
-├── SRT/                     # 字幕处理
-│   ├── SRT_Translator.py    # DeepSeek 翻译（三级降级）
+├── SRT/                     # 执行层 (被 core adapters 包装)
+│   ├── MediaValidator.py    # C2 缺陷检测 + aresample 修复
 │   ├── TranslationVerifier.py # 跨语言语义核对
-│   ├── TermReplacer.py      # 术语词典替换
 │   └── VAD_Segmenter.py     # Silero VAD (ONNX ~9x 加速)
 ├── whisperx_local/          # wav2vec2 强制对齐
 ├── GUI/                     # React WebUI

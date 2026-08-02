@@ -1,7 +1,7 @@
 """批次12 §4: SRT 门控委托一致性回归测试。
 
-验证 SRT_Translator._verify_naturalness_result() 委托到 TextGate.decide()
-后，对固定输入矩阵产生一致结果。
+SRT_Translator 已退役 (架构收束 P3) — 门控逻辑归 core TextGate,
+本测试锁定 TextGate.decide() 对固定输入矩阵的一致性结果。
 """
 import sys
 import os

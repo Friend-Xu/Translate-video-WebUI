@@ -87,7 +87,7 @@ class SlotLevelDependencyGraph:
         if not cascade:
             es = state.get_event(event_id)
             if es is not None:
-                es.runtime.setdefault("dirty_flags", {})[changed_slot] = True
+                es.runtime.dirty_flags[changed_slot] = True
             visited.add((event_id, changed_slot))
             return visited
 
@@ -99,7 +99,7 @@ class SlotLevelDependencyGraph:
             visited.add((eid, slot))
             es = state.get_event(eid)
             if es is not None:
-                es.runtime.setdefault("dirty_flags", {})[slot] = True
+                es.runtime.dirty_flags[slot] = True
             for downstream_slot in self.SLOT_DOWNSTREAM.get(slot, set()):
                 if (eid, downstream_slot) not in visited:
                     queue.append((eid, downstream_slot))

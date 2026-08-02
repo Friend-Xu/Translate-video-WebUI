@@ -17,11 +17,35 @@ from core.runtime.config_resolver import deep_merge
 from core.runtime.slot_dependency import SlotLevelDependencyGraph
 
 
+def _join_word_dicts(words: list[dict], lang: str) -> str:
+    """从词 dict 切片派生 text — CJK 无空格, 拉丁单空格。"""
+    cjk = (lang or "").lower().split("-")[0] in ("zh", "ja", "ko", "yue", "cn")
+    sep = "" if cjk else " "
+    return sep.join(w.get("word", "") for w in words).strip()
+
+
+def _slot_config(slot_dict) -> dict:
+    """类型化槽位的 config 子块 (Phase 3A) — dict 槽位 (provenance) 无 config → {}。"""
+    cfg = getattr(slot_dict, "config", None)
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def _set_slot_config(slot_dict, value: dict) -> None:
+    """写槽位 config 子块 — 类型化属性或 dict 兼容。"""
+    if hasattr(slot_dict, "config"):
+        slot_dict.config = dict(value)
+    else:
+        slot_dict["config"] = dict(value)
+
+
 class PatchEngine:
     """Patch 执行器 — 只作用 runtime state，不改 IR。
 
     apply() 接收 state + patch，修改 state 并返回 diff dict。
     通过 _OP_DISPATCH dict 分发到各 handler。
+
+    结构性 handler (_seg_* / speaker 操作) 会创建新的 TimelineEventIR 节点,
+    末尾统一调用 _sync_ir_events 保证 state.ir.events 注册表与 event_states 一致。
     """
 
     def __init__(self):
@@ -29,18 +53,21 @@ class PatchEngine:
             OpCode.REPLACE: self._replace,
             OpCode.MERGE: self._merge,
             OpCode.SPLIT: self._split,
-            OpCode.PROPAGATE: self._propagate,
             OpCode.SEGMENT_INSERT: self._seg_insert,
             OpCode.SEGMENT_SPLIT: self._seg_split,
             OpCode.SEGMENT_MERGE: self._seg_merge,
             OpCode.UPDATE_TRANSCRIPTION: self._replace,
             OpCode.REFINE_ALIGNMENT: self._refine_alignment,
+            OpCode.UPDATE_BOUNDS: self._update_bounds,
             OpCode.ASSIGN_SPEAKER: self._assign_speaker,
             OpCode.MERGE_SPEAKERS: self._merge_speakers,
             OpCode.SPLIT_SEGMENT_BY_SPEAKER: self._split_by_speaker,
-            OpCode.UPDATE_TTS_AUDIO: self._replace,
-            OpCode.UPDATE_TRANSLATION: self._replace,
-            OpCode.UPDATE_EMOTION: self._replace,
+            OpCode.REGISTER_SPEAKER: self._register_speaker,
+            OpCode.UPDATE_SPEAKER: self._update_speaker,
+            OpCode.LOCK_SPEAKER: self._lock_speaker,
+            OpCode.UPDATE_TTS_AUDIO: self._update_tts_audio,
+            OpCode.UPDATE_TRANSLATION: self._update_translation,
+            OpCode.UPDATE_EMOTION: self._update_emotion,
             OpCode.ANNOTATE: self._annotate,
             # v3.0: 配置 OpCode (定稿 §10.5, §12.3)
             OpCode.SET_CONFIG: self._set_config,
@@ -49,6 +76,18 @@ class PatchEngine:
             OpCode.BATCH_SET_CONFIG: self._batch_set_config,
         }
         self._slot_dep_graph = SlotLevelDependencyGraph()
+
+    @staticmethod
+    def _sync_ir_events(state: TimelineProjectState) -> None:
+        """从 event_states 重建 state.ir.events — 结构性 handler 后注册表同步。
+
+        修复: _assign_speaker/_seg_split 等造新 IR 节点但不同步注册表,
+        ir.events 与 event_states 键集/内容漂移 (IR 引用只读, 直接复用节点)。
+        """
+        state.ir.events.clear()
+        state.ir.events.update(
+            {eid: es.ir for eid, es in state.event_states.items()}
+        )
 
     # ── public API ──────────────────────────────────────
 
@@ -104,18 +143,110 @@ class PatchEngine:
     # ── legacy ops ──────────────────────────────────────
 
     def _replace(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """REPLACE — 收窄为槽位路由 (Phase 3B 关闭自由后门)。
+
+        value 的 key 必须是合法槽位名, 未知 key 响亮报错。
+        旧实现自由写 _data 任意 key, 是类型契约失效的后门。
+        """
+        from core.runtime.field_contract import VALID_SLOTS
         target = state.get_event(patch.target_id)
         if target is None:
             return {"status": "error", "reason": f"target not found: {patch.target_id}"}
-        before = dict(target.derivatives)
-        target.derivatives.update(patch.value)
+        before = {}
+        for key, val in patch.value.items():
+            if key not in VALID_SLOTS:
+                return {"status": "error",
+                        "reason": f"replace 未知槽位 '{key}' (合法: {sorted(VALID_SLOTS)})"}
+            slot = getattr(target, key, None)
+            if slot is None:
+                return {"status": "error", "reason": f"unknown slot: {key}"}
+            before[key] = slot.to_dict() if hasattr(slot, "to_dict") else dict(slot)
+            if hasattr(slot, "to_dict"):
+                if isinstance(val, dict):
+                    for k, v in val.items():
+                        if hasattr(slot, k):
+                            setattr(slot, k, v)
+                else:
+                    # 裸值写第一个字段 (text 类槽位兼容)
+                    first = next(iter(slot.__dataclass_fields__), None)
+                    if first and hasattr(slot, first):
+                        setattr(slot, first, val)
+            else:
+                slot.update(val if isinstance(val, dict) else {"value": val})
         target.add_patch(patch)
         return {
             "status": "applied",
             "op": "replace",
             "target": patch.target_id,
             "before": before,
-            "after": dict(target.derivatives),
+        }
+
+    def _update_translation(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """UPDATE_TRANSLATION — 写入 translation slot (dict 态), 不用 _replace 顶层塞字符串。
+
+        修复三态根因: 旧 _replace 把 _data["translation"] 覆盖成裸字符串,
+        丢失 engine/similarity 等字段, 与 slot dict 形态不一致。
+        """
+        target = state.get_event(patch.target_id)
+        if target is None:
+            return {"status": "error", "reason": f"target not found: {patch.target_id}"}
+        slot = target.translation  # 类型化对象 (Phase 3A)
+        val = patch.value.get("translation", "")
+        if isinstance(val, dict):
+            for k in ("text", "engine", "quality_score", "similarity", "ppl_ratio"):
+                if k in val:
+                    setattr(slot, k, val[k])
+        else:
+            slot.text = val
+        target.add_patch(patch)
+        return {
+            "status": "applied",
+            "op": "update_translation",
+            "target": patch.target_id,
+            "after": slot.to_dict(),
+        }
+
+    def _update_tts_audio(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """UPDATE_TTS_AUDIO — 写入 tts slot (类型化对象, Phase 3A 后无 dict update)。
+
+        修复: 旧实现 slot.update(patch.value) 对 TTSAudio dataclass 崩溃
+        (实测 TTS E2E 'TTSAudio' object has no attribute 'update')。
+        """
+        target = state.get_event(patch.target_id)
+        if target is None:
+            return {"status": "error", "reason": f"target not found: {patch.target_id}"}
+        slot = target.tts
+        for k, v in patch.value.items():
+            if hasattr(slot, k):
+                setattr(slot, k, v)
+        target.add_patch(patch)
+        return {
+            "status": "applied",
+            "op": "update_tts_audio",
+            "target": patch.target_id,
+            "after": slot.to_dict(),
+        }
+
+    def _update_emotion(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """UPDATE_EMOTION — 写 emotion 槽 (类型化, Phase 3B)。
+
+        旧实现经 _replace 自由写 _data["emotion"] = dict。
+        """
+        target = state.get_event(patch.target_id)
+        if target is None:
+            return {"status": "error", "reason": f"target not found: {patch.target_id}"}
+        val = patch.value.get("emotion", {})
+        if isinstance(val, dict):
+            emo = target.emotion
+            for k, v in val.items():
+                if hasattr(emo, k):
+                    setattr(emo, k, v)
+        target.add_patch(patch)
+        return {
+            "status": "applied",
+            "op": "update_emotion",
+            "target": patch.target_id,
+            "after": target.emotion.to_dict(),
         }
 
     def _merge(self, state: TimelineProjectState, patch: Patch) -> dict:
@@ -126,8 +257,8 @@ class PatchEngine:
         if primary is None:
             return {"status": "error", "reason": f"primary not found: {ids[0]}"}
         merged_ids = ids[1:]
-        primary.derivatives["_merged_from"] = merged_ids
-        primary.derivatives["_merged_end"] = max(
+        primary.meta["merged_from"] = merged_ids
+        primary.meta["merged_end"] = max(
             primary.end,
             max(
                 (state.get_event(mid).end if state.get_event(mid) else 0)
@@ -147,31 +278,13 @@ class PatchEngine:
         target = state.get_event(patch.target_id)
         if target is None:
             return {"status": "error", "reason": f"target not found: {patch.target_id}"}
-        target.derivatives["_split_at"] = split_at
+        target.meta["split_at"] = split_at
         target.add_patch(patch)
         return {
             "status": "applied",
             "op": "split",
             "target": patch.target_id,
             "split_at": split_at,
-        }
-
-    def _propagate(self, state: TimelineProjectState, patch: Patch) -> dict:
-        propagated_to = patch.value.get("to_ids", [])
-        key = patch.value.get("key", "")
-        val = patch.value.get("val")
-        for eid in propagated_to:
-            es = state.get_event(eid)
-            if es:
-                es.derivatives[key] = val
-        target = state.get_event(patch.target_id)
-        if target:
-            target.add_patch(patch)
-        return {
-            "status": "applied",
-            "op": "propagate",
-            "from": patch.target_id,
-            "to": propagated_to,
         }
 
     # ── structural ops ──────────────────────────────────
@@ -197,6 +310,7 @@ class PatchEngine:
         es = TimelineEventState(ir)
         es.add_patch(patch)
         state.event_states[patch.target_id] = es
+        self._sync_ir_events(state)
         return {
             "status": "applied",
             "op": "segment_insert",
@@ -227,9 +341,9 @@ class PatchEngine:
             source=target.ir.source,
         )
         es_b = TimelineEventState(ir_b)
-        es_b.derivatives.update(target.derivatives)
+        es_b._data.update(target._data)
         es_b.patches = list(target.patches)
-        es_b.derivatives["_split_from"] = patch.target_id
+        es_b.meta["split_from"] = patch.target_id
 
         ir_a = TimelineEventIR(
             id=patch.target_id,
@@ -240,13 +354,14 @@ class PatchEngine:
             source=target.ir.source,
         )
         es_a = TimelineEventState(ir_a)
-        es_a.derivatives.update(target.derivatives)
-        es_a.derivatives["_split_at"] = split_at
+        es_a._data.update(target._data)
+        es_a.meta["split_at"] = split_at
         es_a.patches = list(target.patches)
         es_a.add_patch(patch)
 
         state.event_states[patch.target_id] = es_a
         state.event_states[new_id] = es_b
+        self._sync_ir_events(state)
         return {
             "status": "applied",
             "op": "segment_split",
@@ -271,25 +386,52 @@ class PatchEngine:
             evt = state.get_event(mid)
             if evt:
                 all_events.append(evt)
+        all_events.sort(key=lambda e: e.start)
+
+        lang = primary.asr.language or "en"
+        words = []
+        for e in all_events:
+            words.extend(e.asr.words)
+        words.sort(key=lambda w: w.get("start", 0.0))
+
+        if words:
+            text = _join_word_dicts(words, lang)
+        else:
+            # 无词级数据: 拼接各段真实文本 (非虚构, 是各 event 原有 text_ref)
+            text = " ".join(e.ir.text_ref for e in all_events if e.ir.text_ref).strip()
 
         max_end = max(e.end for e in all_events)
-        primary.derivatives["_merged_from"] = merged_ids
-        primary.derivatives["_merged_end"] = max_end
+        min_start = min(e.start for e in all_events)
+        had_translation = any(e.translation.text for e in all_events)
 
         ir_merged = TimelineEventIR(
             id=primary_id,
-            start=primary.start,
+            start=min_start,
             end=max_end,
             speaker_ref=primary.speaker_ref,
-            text_ref=primary.ir.text_ref,
+            text_ref=text,
             source=primary.ir.source,
         )
         es_merged = TimelineEventState(ir_merged)
-        es_merged.derivatives.update(primary.derivatives)
         es_merged.patches = list(primary.patches)
         es_merged.add_patch(patch)
+        es_merged.meta["merged_from"] = merged_ids  # 合并血缘
+        if words:
+            es_merged.asr.words = words
+            es_merged.asr.language = lang
+        spk = primary.speaker.speaker_id or primary.speaker_ref
+        if spk:
+            es_merged.speaker.speaker_id = spk
+        # 合并改变了源文本, 旧译文失效: 不带过来, 置标记触发重译 (禁止兜底下保留陈旧译文)
+        if had_translation:
+            es_merged.review.flags = ["needs_retranslate"]
+            es_merged.review.needs_human_review = True
 
         state.event_states[primary_id] = es_merged
+        # 删除被合并事件, 避免孤儿残留 (IR + state 同步)
+        for mid in merged_ids:
+            state.event_states.pop(mid, None)
+        self._sync_ir_events(state)
         return {
             "status": "applied",
             "op": "segment_merge",
@@ -300,21 +442,75 @@ class PatchEngine:
 
     # ── ASR ops ─────────────────────────────────────────
 
-    def _refine_alignment(self, state: TimelineProjectState, patch: Patch) -> dict:
+    def _update_bounds(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """UPDATE_BOUNDS — 调整事件时间边界 (Phase 4: 旧 RESIZE 对等物)。
+
+        时间在 IR (frozen), 重建 TimelineEventIR + 复制槽位, 注册表同步。
+        """
         target = state.get_event(patch.target_id)
         if target is None:
             return {"status": "error", "reason": f"target not found: {patch.target_id}"}
-        before = dict(target.derivatives.get("alignment", {}))
-        current = target.derivatives.get("alignment", {})
-        current.update(patch.value)
-        target.derivatives["alignment"] = current
+        new_start = patch.value.get("start")
+        new_end = patch.value.get("end")
+        if new_start is not None:
+            new_start = float(new_start)
+        if new_end is not None:
+            new_end = float(new_end)
+        if new_start is None and new_end is None:
+            return {"status": "error", "reason": "update_bounds requires start or end"}
+        if new_start is not None and new_start >= (new_end if new_end is not None else target.end):
+            return {"status": "error", "reason": f"invalid range: start {new_start} >= end {new_end or target.end}"}
+        if new_end is not None and new_end <= (new_start if new_start is not None else target.start):
+            return {"status": "error", "reason": f"invalid range: end {new_end} <= start {new_start or target.start}"}
+
+        ir_new = TimelineEventIR(
+            id=target.ir.id,
+            start=new_start if new_start is not None else target.start,
+            end=new_end if new_end is not None else target.end,
+            speaker_ref=target.ir.speaker_ref,
+            text_ref=target.ir.text_ref,
+            source=target.ir.source,
+        )
+        es_new = TimelineEventState(ir_new)
+        es_new._data.update(target._data)
+        es_new.patches = list(target.patches)
+        es_new.add_patch(patch)
+        state.event_states[target.ir.id] = es_new
+        self._sync_ir_events(state)
+        return {
+            "status": "applied",
+            "op": "update_bounds",
+            "target": patch.target_id,
+            "start": ir_new.start,
+            "end": ir_new.end,
+            "before_start": target.start,
+            "before_end": target.end,
+        }
+
+    def _refine_alignment(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """REFINE_ALIGNMENT — 词级对齐精修写 asr 槽 (Phase 3B 归位)。
+
+        旧实现写自由 key derivatives["alignment"] (无生产读取端)。
+        word_timestamps → asr.words; confidence_delta → asr.confidence 精修。
+        """
+        target = state.get_event(patch.target_id)
+        if target is None:
+            return {"status": "error", "reason": f"target not found: {patch.target_id}"}
+        before_words = list(target.asr.words)
+        if "word_timestamps" in patch.value:
+            target.asr.words = list(patch.value["word_timestamps"])
+        if "confidence_delta" in patch.value:
+            delta = float(patch.value["confidence_delta"])
+            cur = target.asr.confidence
+            target.asr.confidence = max(
+                0.0, min(1.0, (cur if cur is not None else 1.0) + delta))
         target.add_patch(patch)
         return {
             "status": "applied",
             "op": "refine_alignment",
             "target": patch.target_id,
-            "before": before,
-            "after": dict(current),
+            "before": before_words,
+            "after": list(target.asr.words),
         }
 
     # ── Speaker ops ─────────────────────────────────────
@@ -328,13 +524,13 @@ class PatchEngine:
         confidence = patch.value.get("confidence", 1.0)
         embedding_ref = patch.value.get("embedding_ref")
 
-        before_speaker = dict(target.speaker)
+        before_speaker = target.speaker.to_dict()
         before_ref = target.ir.speaker_ref
 
-        target.speaker["speaker_id"] = speaker_id
-        target.speaker["confidence"] = confidence
+        target.speaker.speaker_id = speaker_id
+        target.speaker.confidence = confidence
         if embedding_ref:
-            target.speaker["embedding_ref"] = embedding_ref
+            target.speaker.embedding_ref = embedding_ref
 
         ir_new = TimelineEventIR(
             id=target.ir.id,
@@ -345,10 +541,11 @@ class PatchEngine:
             source=target.ir.source,
         )
         es_new = TimelineEventState(ir_new)
-        es_new.derivatives.update(target.derivatives)
+        es_new._data.update(target._data)
         es_new.patches = list(target.patches)
         es_new.add_patch(patch)
         state.event_states[target.ir.id] = es_new
+        self._sync_ir_events(state)
 
         return {
             "status": "applied",
@@ -375,15 +572,50 @@ class PatchEngine:
                     source=es.ir.source,
                 )
                 es_new = TimelineEventState(ir_new)
-                es_new.derivatives.update(es.derivatives)
+                es_new._data.update(es._data)
                 es_new.patches = list(es.patches)
                 state.event_states[es.ir.id] = es_new
                 remapped += 1
                 es = es_new
-            if es.speaker.get("speaker_id") in from_ids:
-                es.speaker["speaker_id"] = into_id
+            if es.speaker.speaker_id in from_ids:
+                es.speaker.speaker_id = into_id
+
+        # 注册表: from 节点的绑定元数据 (voice_id/engine/voice_profile/锁定态)
+        # 转移到 into (绑定不丢), 再清理被合并节点 — 残留注册表会让
+        # speakerNames/color 重建时出现幽灵说话人
+        from core.ir.speaker import SpeakerNodeIR
+        into_node = state.ir.speakers.get(into_id)
+        transfer: dict = {}
+        for fid in from_ids:
+            node = state.ir.speakers.get(fid)
+            if node is None:
+                continue
+            if not transfer:
+                transfer = {
+                    "voice_id": node.voice_id,
+                    "engine": node.engine,
+                    "voice_profile": node.voice_profile,
+                    "is_locked": node.is_locked,
+                }
+            state.ir.speakers.pop(fid, None)
+        if into_node is not None and transfer:
+            state.ir.speakers[into_id] = SpeakerNodeIR(
+                id=into_node.id,
+                name=into_node.name,
+                voice_id=into_node.voice_id or transfer["voice_id"],
+                engine=into_node.engine or transfer["engine"],
+                voice_profile=into_node.voice_profile or transfer["voice_profile"],
+                color=into_node.color,
+                is_locked=into_node.is_locked or transfer["is_locked"],
+                embedding_ref=into_node.embedding_ref,
+                gender_prob=into_node.gender_prob,
+                voice_style=into_node.voice_style,
+                confidence=into_node.confidence,
+                config=into_node.config,
+            )
 
         state.add_global_patch(patch)
+        self._sync_ir_events(state)
         return {
             "status": "applied",
             "op": "merge_speakers",
@@ -391,6 +623,69 @@ class PatchEngine:
             "into_id": into_id,
             "remapped_events": remapped,
         }
+
+    def _register_speaker(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """注册表新增说话人 (P2 收敛: 注册表级操作统一走 patch)。"""
+        speaker_id = patch.value.get("speaker_id", patch.target_id)
+        if not speaker_id:
+            return {"status": "error", "reason": "speaker_id 不能为空"}
+        if speaker_id in state.ir.speakers:
+            return {"status": "error", "reason": f"speaker 已存在: {speaker_id}"}
+        from core.ir.speaker import SpeakerNodeIR
+        state.ir.speakers[speaker_id] = SpeakerNodeIR(
+            id=speaker_id,
+            name=patch.value.get("display_name") or None,
+        )
+        state.add_global_patch(patch)
+        return {"status": "applied", "op": "register_speaker", "speaker_id": speaker_id}
+
+    def _update_speaker(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """注册表说话人字段更新 (name/color/voice_id) — 不可变节点重建保留其余字段。"""
+        speaker_id = patch.value.get("speaker_id", patch.target_id)
+        node = state.ir.speakers.get(speaker_id)
+        if node is None:
+            return {"status": "error", "reason": f"speaker 不存在: {speaker_id}"}
+        from core.ir.speaker import SpeakerNodeIR
+        state.ir.speakers[speaker_id] = SpeakerNodeIR(
+            id=node.id,
+            name=patch.value.get("name", node.name),
+            voice_id=patch.value.get("voice_id", node.voice_id),
+            engine=node.engine,
+            voice_profile=node.voice_profile,
+            color=patch.value.get("color", node.color),
+            is_locked=node.is_locked,
+            embedding_ref=node.embedding_ref,
+            gender_prob=node.gender_prob,
+            voice_style=node.voice_style,
+            confidence=node.confidence,
+            config=node.config,
+        )
+        state.add_global_patch(patch)
+        return {"status": "applied", "op": "update_speaker", "speaker_id": speaker_id}
+
+    def _lock_speaker(self, state: TimelineProjectState, patch: Patch) -> dict:
+        """注册表说话人锁定 (is_locked) — 禁止自动合并/拆分。"""
+        speaker_id = patch.value.get("speaker_id", patch.target_id)
+        node = state.ir.speakers.get(speaker_id)
+        if node is None:
+            return {"status": "error", "reason": f"speaker 不存在: {speaker_id}"}
+        from core.ir.speaker import SpeakerNodeIR
+        state.ir.speakers[speaker_id] = SpeakerNodeIR(
+            id=node.id,
+            name=node.name,
+            voice_id=node.voice_id,
+            engine=node.engine,
+            voice_profile=node.voice_profile,
+            color=node.color,
+            is_locked=bool(patch.value.get("locked", True)),
+            embedding_ref=node.embedding_ref,
+            gender_prob=node.gender_prob,
+            voice_style=node.voice_style,
+            confidence=node.confidence,
+            config=node.config,
+        )
+        state.add_global_patch(patch)
+        return {"status": "applied", "op": "lock_speaker", "speaker_id": speaker_id}
 
     def _split_by_speaker(self, state: TimelineProjectState, patch: Patch) -> dict:
         target = state.get_event(patch.target_id)
@@ -407,6 +702,8 @@ class PatchEngine:
             spk = bnd.get("speaker", "")
             t_start = bnd.get("time", target.start)
             t_end = boundaries[i + 1]["time"] if i + 1 < len(boundaries) else target.end
+            if t_end <= t_start:
+                continue  # 边界清洗: 零时长段不进 IR (adapter 侧已去重, 防御 GUI 侧)
 
             ir = TimelineEventIR(
                 id=seg_id,
@@ -417,12 +714,13 @@ class PatchEngine:
                 source=target.ir.source,
             )
             es = TimelineEventState(ir)
-            es.speaker["speaker_id"] = spk
-            es.derivatives["_split_from"] = patch.target_id
+            es.speaker.speaker_id = spk
+            es.meta["split_from"] = patch.target_id
             es.add_patch(patch)
             state.event_states[seg_id] = es
             created.append(seg_id)
 
+        self._sync_ir_events(state)
         return {
             "status": "applied",
             "op": "split_segment_by_speaker",
@@ -446,30 +744,53 @@ class PatchEngine:
                 }
             return {"status": "error", "reason": f"target not found: {patch.target_id}"}
 
+        # slot_map 从 field_contract 生成 (Phase 2: 消灭硬编码清单漂移)
+        from core.runtime.field_contract import VALID_SLOTS
         slot_map = {
-            "audio": target.audio,
-            "asr": target.asr,
-            "speaker": target.speaker,
-            "semantic": target.semantic,
-            "translation": target.translation,
-            "tts": target.tts,
-            "review": target.review,
-            "runtime": target.runtime,
-            "provenance": target.provenance,
+            slot: getattr(target, slot)
+            for slot in VALID_SLOTS if hasattr(target, slot)
         }
+
+        # 先全量校验再写入 — 未知槽位/未知字段响亮拒绝 (禁止兜底:
+        # 静默跳过 = 部分写入 + 假 applied, 类型化契约失效的后门)
+        for key, val in patch.value.items():
+            if key.startswith("_"):
+                continue
+            slot = slot_map.get(key)
+            if slot is None:
+                return {
+                    "status": "error",
+                    "reason": f"annotate: 未知槽位 '{key}' (合法: {sorted(VALID_SLOTS)})",
+                }
+            if not isinstance(slot, dict):
+                if not isinstance(val, dict):
+                    return {
+                        "status": "error",
+                        "reason": f"annotate: 槽位 '{key}' 需 dict 值 (类型化槽位)",
+                    }
+                unknown = [k for k in val if not hasattr(slot, k)]
+                if unknown:
+                    return {
+                        "status": "error",
+                        "reason": f"annotate: 槽位 '{key}' 无字段 {unknown} (合法: "
+                                  f"{[f for f in dir(slot) if not f.startswith('_')]})",
+                    }
 
         before_snap = {}
         for key, val in patch.value.items():
             if key.startswith("_"):
                 continue
             slot = slot_map.get(key)
-            if slot is not None:
-                try:
-                    before_snap[key] = dict(slot) if not isinstance(slot, str) else str(slot)
-                except (ValueError, TypeError):
-                    before_snap[key] = str(slot)
-                if isinstance(slot, dict):
-                    slot.update(val if isinstance(val, dict) else {"value": val})
+            try:
+                before_snap[key] = slot.to_dict() if hasattr(slot, "to_dict") else dict(slot)
+            except (ValueError, TypeError):
+                before_snap[key] = str(slot)
+            if isinstance(slot, dict):
+                slot.update(val if isinstance(val, dict) else {"value": val})
+            else:
+                # 类型化槽位: 字段已预校验, 直接写入
+                for k, v in val.items():
+                    setattr(slot, k, v)
 
         target.add_patch(patch)
         return {
@@ -496,38 +817,27 @@ class PatchEngine:
         if es is None:
             return {"status": "error", "reason": "target not found: %s" % event_id}
 
-        # v3.0: 乐观锁版本检查 (定稿 §12.4.2)
-        base_version = patch.value.get("base_version", -1)
-        current_version = es.runtime.get("config_versions", {}).get(slot, 0)
-        if current_version != base_version and base_version >= 0:
-            # 检测是否可自动合并 (修改不同字段)
-            partial_keys = set((patch.value.get("partial_config") or {}).keys())
-            # 简单策略: 若版本不匹配，仍允许应用但标记 auto_merged
-            pass  # 当前版本: 乐观策略，不阻塞，依赖用户意图优先
-
         slot_dict = getattr(es, slot, None)
         if slot_dict is None:
             return {"status": "error", "reason": "unknown slot: %s" % slot}
 
-        if "config" not in slot_dict:
-            slot_dict["config"] = {}
-
+        config = _slot_config(slot_dict)
         # 增量快照：仅记录被修改字段的路径和旧值
         previous_state = {}
         for key, new_value in partial.items():
-            old_value = slot_dict["config"].get(key)
+            old_value = config.get(key)
             if old_value != new_value:
                 previous_state[key] = old_value
 
         # 深度合并
-        deep_merge(slot_dict["config"], partial)
+        deep_merge(config, partial)
         es.add_patch(patch)
 
         # 标记脏并传播
         dirty_slots = self._slot_dep_graph.propagate_dirty(event_id, slot, state)
 
         # 更新槽位版本号
-        vers = es.runtime.setdefault("config_versions", {})
+        vers = es.runtime.config_versions
         vers[slot] = vers.get(slot, 0) + 1
 
         return {
@@ -553,22 +863,13 @@ class PatchEngine:
         if es is None:
             return {"status": "error", "reason": "target not found: %s" % event_id}
 
-        # v3.0: 乐观锁版本检查 (定稿 §12.4.2)
-        base_version = patch.value.get("base_version", -1)
-        current_version = es.runtime.get("config_versions", {}).get(slot, 0)
-        if current_version != base_version and base_version >= 0:
-            # 检测是否可自动合并 (修改不同字段)
-            partial_keys = set((patch.value.get("partial_config") or {}).keys())
-            # 简单策略: 若版本不匹配，仍允许应用但标记 auto_merged
-            pass  # 当前版本: 乐观策略，不阻塞，依赖用户意图优先
-
         slot_dict = getattr(es, slot, None)
         if slot_dict is None:
             return {"status": "error", "reason": "unknown slot: %s" % slot}
 
         # 完整快照旧 config
-        old_config = dict(slot_dict.get("config", {}))
-        slot_dict["config"] = dict(config_block)  # 全量替换
+        old_config = dict(_slot_config(slot_dict))
+        _set_slot_config(slot_dict, config_block)  # 全量替换
         es.add_patch(patch)
 
         dirty_slots = self._slot_dep_graph.propagate_dirty(event_id, slot, state)
@@ -597,31 +898,20 @@ class PatchEngine:
         if es is None:
             return {"status": "error", "reason": "target not found: %s" % event_id}
 
-        # v3.0: 乐观锁版本检查 (定稿 §12.4.2)
-        base_version = patch.value.get("base_version", -1)
-        current_version = es.runtime.get("config_versions", {}).get(slot, 0)
-        if current_version != base_version and base_version >= 0:
-            # 检测是否可自动合并 (修改不同字段)
-            partial_keys = set((patch.value.get("partial_config") or {}).keys())
-            # 简单策略: 若版本不匹配，仍允许应用但标记 auto_merged
-            pass  # 当前版本: 乐观策略，不阻塞，依赖用户意图优先
-
         slot_dict = getattr(es, slot, None)
         if slot_dict is None:
             return {"status": "error", "reason": "unknown slot: %s" % slot}
 
-        config = slot_dict.get("config", {})
+        config = _slot_config(slot_dict)
         previous_state = {}
 
         if fields is None:
             previous_state = {"_full_config": dict(config)}
-            slot_dict["config"] = {}
+            _set_slot_config(slot_dict, {})
         else:
             for field in fields:
                 if field in config:
                     previous_state[field] = config.pop(field)
-            if not slot_dict["config"]:
-                slot_dict["config"] = {}
 
         es.add_patch(patch)
         dirty_slots = self._slot_dep_graph.propagate_dirty(event_id, slot, state)
@@ -660,8 +950,8 @@ class PatchEngine:
                 results.append({"target": eid, "status": "error", "reason": "unknown slot"})
                 continue
 
-            old_config = dict(slot_dict.get("config", {}))
-            slot_dict["config"] = dict(config_block)
+            old_config = dict(_slot_config(slot_dict))
+            _set_slot_config(slot_dict, config_block)
             es.add_patch(patch)
 
             dirty = self._slot_dep_graph.propagate_dirty(eid, slot, state)

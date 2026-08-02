@@ -18,6 +18,8 @@ class SpeakerNodeIR:
     name: str | None = None         # 显示名，None 表示未命名
     # v2.0 (speaker_map.schema.json §SpeakerMapping)
     voice_id: str | None = None     # 绑定的 TTS 声线 ID
+    engine: str | None = None       # 绑定的 TTS 引擎 (speaker/bind, T5.2)
+    voice_profile: dict | None = None  # 说话人级 voice profile (speaker/bind, T5.2)
     color: str | None = None        # UI 轨道颜色 (#RRGGBB)
     is_locked: bool = False         # 禁止自动合并/拆分
     # v2.1: speaker identity 字段 (Chapter 4 §4.4)

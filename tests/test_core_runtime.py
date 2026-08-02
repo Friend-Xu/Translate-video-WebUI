@@ -69,7 +69,7 @@ class TestTimelineEventState:
     def test_derivatives_initially_empty(self):
         ir = TimelineEventIR(id="e1", start=0.0, end=1.0, speaker_ref=None, text_ref="x")
         es = TimelineEventState(ir)
-        assert es.derivatives == {}
+        assert es._data == {}
 
     def test_patches_initially_empty(self):
         ir = TimelineEventIR(id="e1", start=0.0, end=1.0, speaker_ref=None, text_ref="x")
@@ -148,7 +148,7 @@ class TestPatchEngine:
         assert diff["status"] == "applied"
         assert diff["op"] == "replace"
         es = state.get_event("evt_001")
-        assert es.derivatives["translation"] == "hello"
+        assert es.translation.text == "hello"
 
     def test_replace_target_not_found(self, engine, state):
         p = Patch(id="p1", target_id="evt_999", op="replace", value={})
@@ -158,13 +158,12 @@ class TestPatchEngine:
 
     def test_replace_records_before_after(self, engine, state):
         es = state.get_event("evt_001")
-        es.derivatives["existing"] = "old"
+        es.translation.text = "old"
         p = Patch(id="p1", target_id="evt_001", op="replace",
-                  value={"new_key": "new_val"})
+                  value={"translation": {"text": "new"}})
         diff = engine.apply(state, p)
-        assert diff["before"] == {"existing": "old"}
-        assert diff["after"]["existing"] == "old"
-        assert diff["after"]["new_key"] == "new_val"
+        assert diff["before"]["translation"]["text"] == "old"
+        assert es.translation.text == "new"
 
     # ── merge ──
 
@@ -175,7 +174,7 @@ class TestPatchEngine:
         assert diff["status"] == "applied"
         assert diff["op"] == "merge"
         es = state.get_event("evt_001")
-        assert es.derivatives["_merged_from"] == ["evt_002"]
+        assert es.meta["merged_from"] == ["evt_002"]
 
     def test_merge_requires_2_targets(self, engine, state):
         p = Patch(id="p1", target_id="evt_001", op="merge",
@@ -195,7 +194,7 @@ class TestPatchEngine:
                   value={"target_ids": ["evt_001", "evt_003"]})
         engine.apply(state, p)
         es = state.get_event("evt_001")
-        assert es.derivatives["_merged_end"] == 8.0
+        assert es.meta["merged_end"] == 8.0
 
     # ── split ──
 
@@ -207,7 +206,7 @@ class TestPatchEngine:
         assert diff["op"] == "split"
         assert diff["split_at"] == 1.0
         es = state.get_event("evt_001")
-        assert es.derivatives["_split_at"] == 1.0
+        assert es.meta["split_at"] == 1.0
 
     def test_split_target_not_found(self, engine, state):
         p = Patch(id="p1", target_id="evt_999", op="split",
@@ -215,23 +214,14 @@ class TestPatchEngine:
         diff = engine.apply(state, p)
         assert diff["status"] == "error"
 
-    # ── propagate ──
+    # ── propagate (op 已删, Phase 3B 无生产调用方) ──
 
-    def test_propagate_to_other_events(self, engine, state):
+    def test_propagate_op_rejected(self, engine, state):
+        """PROPAGATE 已从 dispatch 移除 — 未知 op 响亮报错。"""
         p = Patch(id="p1", target_id="evt_001", op="propagate",
-                  value={"to_ids": ["evt_002", "evt_003"], "key": "mood", "val": "happy"})
+                  value={"to_ids": ["evt_002"], "key": "mood", "val": "happy"})
         diff = engine.apply(state, p)
-        assert diff["status"] == "applied"
-        assert diff["op"] == "propagate"
-        assert diff["to"] == ["evt_002", "evt_003"]
-        assert state.get_event("evt_002").derivatives["mood"] == "happy"
-        assert state.get_event("evt_003").derivatives["mood"] == "happy"
-
-    def test_propagate_skips_missing_ids(self, engine, state):
-        p = Patch(id="p1", target_id="evt_001", op="propagate",
-                  value={"to_ids": ["evt_999"], "key": "x", "val": 1})
-        diff = engine.apply(state, p)
-        assert diff["status"] == "applied"
+        assert diff["status"] == "error"
 
     # ── unknown op ──
 
@@ -244,13 +234,15 @@ class TestPatchEngine:
     # ── apply_many ──
 
     def test_apply_many(self, engine, state):
-        p1 = Patch(id="p1", target_id="evt_001", op="replace", value={"a": 1})
-        p2 = Patch(id="p2", target_id="evt_002", op="replace", value={"b": 2})
+        p1 = Patch(id="p1", target_id="evt_001", op="replace",
+                   value={"review": {"notes": "a"}})
+        p2 = Patch(id="p2", target_id="evt_002", op="replace",
+                   value={"review": {"notes": "b"}})
         diffs = engine.apply_many(state, [p1, p2])
         assert len(diffs) == 2
         assert all(d["status"] == "applied" for d in diffs)
-        assert state.get_event("evt_001").derivatives["a"] == 1
-        assert state.get_event("evt_002").derivatives["b"] == 2
+        assert state.get_event("evt_001").review.notes == "a"
+        assert state.get_event("evt_002").review.notes == "b"
 
     def test_apply_many_empty(self, engine, state):
         diffs = engine.apply_many(state, [])
@@ -284,36 +276,36 @@ class TestSynthesisEngine:
 
     def test_render_merges_derivatives(self, engine, state):
         es = state.get_event("evt_001")
-        es.derivatives["translation"] = "hello"
-        es.derivatives["emotion"] = "neutral"
+        es.translation.text = "hello"
+        es.emotion.emotion = "neutral"
         result = engine.render(es)
-        assert result["translation"] == "hello"
-        assert result["emotion"] == "neutral"
+        assert result["translation"]["text"] == "hello"
+        assert result["emotion"]["emotion"] == "neutral"
 
     def test_render_derivatives_override_ir(self, engine, state):
         """derivatives 覆盖同名字段"""
         es = state.get_event("evt_001")
-        es.derivatives["text"] = "Modified text"
+        es.translation.text = "Modified text"
         result = engine.render(es)
-        assert result["text"] == "Modified text"
+        assert result["translation"]["text"] == "Modified text"
 
     def test_render_applies_replace_patches(self, engine, state):
         es = state.get_event("evt_001")
         p = Patch(id="p1", target_id="evt_001", op="replace",
-                  value={"speaker": "SPEAKER_99"})
+                  value={"translation": {"text": "patched"}})
         es.add_patch(p)
         result = engine.render(es)
-        assert result["speaker"] == "SPEAKER_99"
+        assert result["translation"]["text"] == "patched"
 
     def test_render_patches_override_derivatives(self, engine, state):
         """patches 在 derivatives 之后叠加，后者覆盖前者"""
         es = state.get_event("evt_001")
-        es.derivatives["tag"] = "from_deriv"
+        es.translation.text = "from_deriv"
         p = Patch(id="p1", target_id="evt_001", op="replace",
-                  value={"tag": "from_patch"})
+                  value={"translation": {"text": "from_patch"}})
         es.add_patch(p)
         result = engine.render(es)
-        assert result["tag"] == "from_patch"
+        assert result["translation"]["text"] == "from_patch"
 
     def test_render_non_replace_patches_not_applied(self, engine, state):
         """非 replace 的 patches 不叠加到渲染输出"""
@@ -321,13 +313,25 @@ class TestSynthesisEngine:
         p = Patch(id="p1", target_id="evt_001", op="split", value={"at": 1.0})
         es.add_patch(p)
         result = engine.render(es)
-        assert "_split_at" not in result
+        assert "meta" not in result
 
     def test_render_all(self, engine, state):
         results = engine.render_all(state)
         assert len(results) == 3
         ids = [r["id"] for r in results]
         assert ids == ["evt_001", "evt_002", "evt_003"]
+
+    def test_render_speaker_stays_str_when_slot_set(self, engine, state):
+        """E2E 修复: speaker 槽位 (dict) 不得覆盖基础字段 (ir.speaker_ref, str)。
+
+        preprocess/llm_translation 用 {r["speaker"]} 集合 + dict key,
+        speaker 变 dict 会 unhashable 崩溃。
+        """
+        es = state.get_event("evt_001")
+        es.speaker.speaker_id = "SPEAKER_00"
+        result = engine.render(es)
+        assert isinstance(result["speaker"], str)
+        assert result["speaker"] == "SPEAKER_00"
 
     def test_render_all_empty_state(self, engine):
         ir = TimelineProjectIR()
@@ -349,13 +353,13 @@ class TestSynthesisEngine:
         """多 patch 按 timestamp 顺序叠加"""
         es = state.get_event("evt_001")
         p_early = Patch(id="p1", target_id="evt_001", op="replace",
-                        value={"color": "red"}, timestamp=100.0)
+                        value={"translation": {"text": "red"}}, timestamp=100.0)
         p_late = Patch(id="p2", target_id="evt_001", op="replace",
-                       value={"color": "blue"}, timestamp=200.0)
+                       value={"translation": {"text": "blue"}}, timestamp=200.0)
         es.add_patch(p_late)
         es.add_patch(p_early)
         result = engine.render(es)
-        assert result["color"] == "blue"
+        assert result["translation"]["text"] == "blue"
 
     def test_speaker_ref_none_in_render(self, engine):
         """speaker_ref 为 None 时，render 的 speaker 为 None"""

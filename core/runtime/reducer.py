@@ -98,9 +98,9 @@ class TimelineReducer:
                 continue
             patches_delta = len(a_es.patches) - len(b_es.patches)
             deriv_changed = [
-                k for k in a_es.derivatives
-                if k not in b_es.derivatives
-                or b_es.derivatives.get(k) != a_es.derivatives.get(k)
+                k for k in a_es._data
+                if k not in b_es._data
+                or b_es._data.get(k) != a_es._data.get(k)
             ]
             if patches_delta != 0 or deriv_changed:
                 modified[eid] = {

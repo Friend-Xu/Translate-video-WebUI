@@ -21,7 +21,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-cov pydantic jsonschema numpy PyYAML imageio-ffmpeg
+          # GUI/server.py 顶层 import 需要 fastapi/pysrt; python-multipart 供 FastAPI 运行时;
+          # requests: pipeline/translation_llm 的 DeepSeek API 调用
+          pip install pytest pytest-cov pydantic jsonschema numpy PyYAML imageio-ffmpeg fastapi pysrt python-multipart requests
       - name: Run core tests (excl TTS integration)
         env:
           PYTHONPATH: ${{ github.workspace }}

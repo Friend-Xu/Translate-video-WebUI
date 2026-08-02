@@ -80,24 +80,128 @@ class TestPatchEngineV2:
         p = Patch(id="p1", target_id="evt_001", op=OpCode.REFINE_ALIGNMENT,
                   value={"word_timestamps": [{"word": "hi", "start": 0.0, "end": 0.5}]})
         assert engine.apply(state, p)["status"] == "applied"
-        assert "word_timestamps" in state.get_event("evt_001").derivatives["alignment"]
+        assert state.get_event("evt_001").asr.words != []
 
     def test_assign_speaker(self, engine, state):
         p = Patch(id="p1", target_id="evt_001", op=OpCode.ASSIGN_SPEAKER,
                   value={"speaker_id": "SPK_X", "confidence": 0.95})
         assert engine.apply(state, p)["status"] == "applied"
-        assert state.get_event("evt_001").speaker["speaker_id"] == "SPK_X"
+        assert state.get_event("evt_001").speaker.speaker_id == "SPK_X"
 
     def test_merge_speakers(self, engine, state):
-        p = Patch(id="p1", target_id="SPK_00", op=OpCode.MERGE_SPEAKERS,
-                  value={"from_ids": ["SPK_01"], "into_id": "SPK_00"})
+        p = Patch(id="p1", target_id="SPEAKER_00", op=OpCode.MERGE_SPEAKERS,
+                  value={"from_ids": ["SPEAKER_01"], "into_id": "SPEAKER_00"})
         assert engine.apply(state, p)["status"] == "applied"
+        # 事件重映射到 into (IR speaker_ref 是事实源; 槽位由 load_state 填充, 真实路径测试覆盖)
+        assert state.get_event("evt_002").speaker_ref == "SPEAKER_00"
+        # 注册表清理 (P3: 残留注册表 → 幽灵说话人)
+        assert "SPEAKER_01" not in state.ir.speakers
+        assert "SPEAKER_00" in state.ir.speakers
+
+    def test_merge_speakers_transfers_voice_binding(self, engine, state):
+        """from 节点的声线绑定/引擎/锁定态转移到 into — 绑定不丢。"""
+        from dataclasses import replace
+        state.ir.speakers["SPEAKER_01"] = replace(
+            state.ir.speakers["SPEAKER_01"],
+            voice_id="voice_chattts_01", engine="chattts",
+            voice_profile={"seed": 42}, is_locked=True,
+        )
+        p = Patch(id="p1", target_id="SPEAKER_00", op=OpCode.MERGE_SPEAKERS,
+                  value={"from_ids": ["SPEAKER_01"], "into_id": "SPEAKER_00"})
+        assert engine.apply(state, p)["status"] == "applied"
+        into = state.ir.speakers["SPEAKER_00"]
+        assert into.voice_id == "voice_chattts_01"
+        assert into.engine == "chattts"
+        assert into.voice_profile == {"seed": 42}
+        assert into.is_locked is True
+        assert "SPEAKER_01" not in state.ir.speakers
+
+    def test_merge_speakers_undo_replay_consistent(self, engine, state):
+        """undo (pristine 还原 + 重放链) 后注册表一致 — 重放 MERGE 再次清理 from 节点。"""
+        from copy import deepcopy
+        pristine = deepcopy(state)
+        p = Patch(id="p1", target_id="SPEAKER_00", op=OpCode.MERGE_SPEAKERS,
+                  value={"from_ids": ["SPEAKER_01"], "into_id": "SPEAKER_00"})
+        engine.apply(state, p)
+
+        # GUI undo 语义: pristine 还原 → 注册表恢复, 事件 speaker 还原
+        undone = deepcopy(pristine)
+        assert "SPEAKER_01" in undone.ir.speakers
+        assert undone.get_event("evt_002").speaker_ref == "SPEAKER_01"
+
+        # 重做 (pristine + 重放 MERGE) → 注册表再次清理, 无幽灵残留
+        replayed = deepcopy(pristine)
+        PatchEngine().apply(replayed, p)
+        assert "SPEAKER_01" not in replayed.ir.speakers
+        assert replayed.get_event("evt_002").speaker_ref == "SPEAKER_00"
+
+    def test_register_speaker(self, engine, state):
+        """注册表新增说话人 (P2 收敛: 注册表级操作统一走 patch)。"""
+        p = Patch(id="p1", target_id="SPEAKER_NEW", op=OpCode.REGISTER_SPEAKER,
+                  value={"speaker_id": "SPEAKER_NEW", "display_name": "新角色"})
+        assert engine.apply(state, p)["status"] == "applied"
+        node = state.ir.speakers.get("SPEAKER_NEW")
+        assert node is not None
+        assert node.name == "新角色"
+
+    def test_register_speaker_duplicate(self, engine, state):
+        """已存在 → 响亮报错, 不覆盖。"""
+        p = Patch(id="p1", target_id="SPEAKER_00", op=OpCode.REGISTER_SPEAKER,
+                  value={"speaker_id": "SPEAKER_00"})
+        result = engine.apply(state, p)
+        assert result["status"] == "error"
+        assert "已存在" in result["reason"]
+
+    def test_update_speaker_name_and_color(self, engine, state):
+        """改 name/color — 不可变节点重建, 其余字段保留。"""
+        p = Patch(id="p1", target_id="SPEAKER_00", op=OpCode.UPDATE_SPEAKER,
+                  value={"speaker_id": "SPEAKER_00", "name": "主角", "color": "#FF0000"})
+        assert engine.apply(state, p)["status"] == "applied"
+        node = state.ir.speakers["SPEAKER_00"]
+        assert node.name == "主角"
+        assert node.color == "#FF0000"
+
+    def test_lock_speaker(self, engine, state):
+        """锁定/解锁注册表说话人。"""
+        p = Patch(id="p1", target_id="SPEAKER_00", op=OpCode.LOCK_SPEAKER,
+                  value={"speaker_id": "SPEAKER_00", "locked": True})
+        assert engine.apply(state, p)["status"] == "applied"
+        assert state.ir.speakers["SPEAKER_00"].is_locked is True
+
+    def test_update_speaker_missing(self, engine, state):
+        """不存在的 speaker → 响亮报错。"""
+        p = Patch(id="p1", target_id="SPEAKER_GHOST", op=OpCode.UPDATE_SPEAKER,
+                  value={"speaker_id": "SPEAKER_GHOST", "name": "x"})
+        result = engine.apply(state, p)
+        assert result["status"] == "error"
+        assert "不存在" in result["reason"]
 
     def test_annotate_writes_slots(self, engine, state):
         p = Patch(id="p1", target_id="evt_001", op=OpCode.ANNOTATE,
-                  value={"audio": {"sample_rate": 16000}, "runtime": {"status": "done"}})
+                  value={"runtime": {"status": "done"}})
         assert engine.apply(state, p)["status"] == "applied"
-        assert state.get_event("evt_001").audio["sample_rate"] == 16000
+        assert state.get_event("evt_001").runtime.status == "done"
+
+    def test_annotate_rejects_removed_audio_slot(self, engine, state):
+        """audio 槽已上移项目级 (Phase 3b), 不再接受 per-event ANNOTATE。
+
+        P3-C: 未知槽位从"静默跳过"改为响亮拒绝 (禁止部分写入 + 假 applied)。
+        """
+        p = Patch(id="p1", target_id="evt_001", op=OpCode.ANNOTATE,
+                  value={"audio": {"sample_rate": 16000}, "runtime": {"status": "done"}})
+        result = engine.apply(state, p)
+        assert result["status"] == "error"
+        assert "未知槽位" in result["reason"]
+        # 先校验后写入: 合法槽位也不产生部分写入
+        assert state.get_event("evt_001").runtime.status != "done"
+
+    def test_annotate_rejects_unknown_slot_field(self, engine, state):
+        """类型化槽位未知字段响亮拒绝 (此前 if hasattr 静默跳过)。"""
+        p = Patch(id="p1", target_id="evt_001", op=OpCode.ANNOTATE,
+                  value={"translation": {"flagged": True}})
+        result = engine.apply(state, p)
+        assert result["status"] == "error"
+        assert "无字段" in result["reason"]
 
     def test_annotate_global(self, engine, state):
         p = Patch(id="p1", target_id="__g__", op=OpCode.ANNOTATE,
@@ -120,23 +224,26 @@ class TestReducer:
         return TimelineProjectState(sample_project)
 
     def test_reduce_deterministic(self, reducer, state):
-        p1 = Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE, value={"x": 1}, timestamp=100)
-        p2 = Patch(id="p2", target_id="evt_001", op=OpCode.REPLACE, value={"y": 2}, timestamp=200)
+        p1 = Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE,
+                   value={"review": {"notes": "first"}}, timestamp=100)
+        p2 = Patch(id="p2", target_id="evt_001", op=OpCode.REPLACE,
+                   value={"review": {"notes": "second"}}, timestamp=200)
         reducer.reduce(state, [p1, p2])
-        assert state.get_event("evt_001").derivatives["x"] == 1
-        assert state.get_event("evt_001").derivatives["y"] == 2
+        assert state.get_event("evt_001").review.notes == "second"
 
     def test_replay_to_timestamp(self, reducer, state):
-        p1 = Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE, value={"x": 1}, timestamp=100)
-        p2 = Patch(id="p2", target_id="evt_001", op=OpCode.REPLACE, value={"y": 2}, timestamp=200)
+        p1 = Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE,
+                   value={"review": {"notes": "first"}}, timestamp=100)
+        p2 = Patch(id="p2", target_id="evt_001", op=OpCode.REPLACE,
+                   value={"review": {"notes": "second"}}, timestamp=200)
         reducer.replay(state, [p1, p2], target_timestamp=150)
-        assert state.get_event("evt_001").derivatives.get("x") == 1
-        assert "y" not in state.get_event("evt_001").derivatives
+        assert state.get_event("evt_001").review.notes == "first"
 
     def test_compute_diff(self, reducer, state):
         before = TimelineProjectState(state.ir)
         after = TimelineProjectState(state.ir)
-        PatchEngine().apply(after, Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE, value={"z": 99}))
+        PatchEngine().apply(after, Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE,
+                                         value={"review": {"notes": "changed"}}))
         diff = reducer.compute_diff(before, after)
         assert "evt_001" in diff["modified_events"]
 
@@ -144,15 +251,19 @@ class TestReducer:
         assert reducer.reduce(state, []) is state
 
     def test_sorts_by_timestamp(self, reducer, state):
-        p2 = Patch(id="p2", target_id="evt_001", op=OpCode.REPLACE, value={"last": True}, timestamp=200)
-        p1 = Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE, value={"first": True}, timestamp=100)
+        p2 = Patch(id="p2", target_id="evt_001", op=OpCode.REPLACE,
+                   value={"review": {"notes": "last"}}, timestamp=200)
+        p1 = Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE,
+                   value={"review": {"notes": "first"}}, timestamp=100)
         reducer.reduce(state, [p2, p1])
-        assert state.get_event("evt_001").derivatives["first"] is True
+        # 按 timestamp 排序应用 → p1(100) 先, p2(200) 后 → 最终 "last"
+        assert state.get_event("evt_001").review.notes == "last"
 
     def test_replay_from_snapshot(self, reducer, sample_project):
-        p = Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE, value={"s": True}, timestamp=100)
+        p = Patch(id="p1", target_id="evt_001", op=OpCode.REPLACE,
+                  value={"review": {"notes": "snap"}}, timestamp=100)
         st = reducer.replay_from_snapshot(sample_project, [p])
-        assert st.get_event("evt_001").derivatives["s"] is True
+        assert st.get_event("evt_001").review.notes == "snap"
 
 
 # ═══════════ DependencyGraph ═══════════
@@ -295,13 +406,14 @@ class TestConflictResolver:
         assert kept[0].author == "whisper"
 
     def test_confidence(self, r):
-        p1 = Patch("p_a", "e1", OpCode.REPLACE, {"x": 1}, confidence=0.9)
-        p2 = Patch("p_b", "e1", OpCode.REPLACE, {"x": 2}, confidence=0.3)
+        p1 = Patch("p_a", "e1", OpCode.REPLACE, {"review": {"notes": "x"}}, confidence=0.9)
+        p2 = Patch("p_b", "e1", OpCode.REPLACE, {"review": {"notes": "x2"}}, confidence=0.3)
         c = Conflict(ConflictType.OVERWRITE, p1, p2, "e1", "test")
         kept = r.resolve([c], "confidence")
         assert kept[0].id == "p_a"
 
     def test_range_union(self, r):
+        # conflict 解析不经过 PatchEngine, value 可为任意范围字段
         p1 = Patch("p_a", "e1", OpCode.REPLACE, {"start": 0.0, "end": 5.0})
         p2 = Patch("p_b", "e1", OpCode.REPLACE, {"start": 3.0, "end": 8.0})
         c = Conflict(ConflictType.TEMPORAL, p1, p2, "", "overlap")
@@ -322,11 +434,11 @@ class TestSnapshotManager:
         return TimelineProjectState(sample_project)
 
     def test_roundtrip(self, mgr, state):
-        state.get_event("evt_001").derivatives["k"] = "before"
+        state.get_event("evt_001").meta["k"] = "before"
         snap = mgr.create(state, "test")
-        state.get_event("evt_001").derivatives["k"] = "after"
+        state.get_event("evt_001").meta["k"] = "after"
         mgr.restore(state, snap)
-        assert state.get_event("evt_001").derivatives["k"] == "before"
+        assert state.get_event("evt_001").meta["k"] == "before"
 
     def test_latest(self, mgr, state):
         assert mgr.latest() is None
@@ -352,10 +464,10 @@ class TestRollbackManager:
 
     def test_rollback_segment(self, mgr, state):
         eng = PatchEngine()
-        eng.apply(state, Patch("p1", "evt_001", OpCode.REPLACE, {"v": 1}, timestamp=100))
-        eng.apply(state, Patch("p2", "evt_001", OpCode.REPLACE, {"v": 2}, timestamp=200))
+        eng.apply(state, Patch("p1", "evt_001", OpCode.REPLACE, {"review": {"notes": "v1"}}, timestamp=100))
+        eng.apply(state, Patch("p2", "evt_001", OpCode.REPLACE, {"review": {"notes": "v2"}}, timestamp=200))
         mgr.rollback_segment(state, "evt_001", 0)
-        assert state.get_event("evt_001").derivatives.get("v") == 1
+        assert state.get_event("evt_001").review.notes == "v1"
         assert len(state.get_event("evt_001").patches) == 1
 
     def test_get_versions(self, mgr, state):
@@ -369,15 +481,15 @@ class TestRollbackManager:
 
     def test_reverse_patch(self, mgr, state):
         eng = PatchEngine()
-        eng.apply(state, Patch("p1", "evt_001", OpCode.REPLACE, {"a": 1}, timestamp=100))
-        eng.apply(state, Patch("p2", "evt_001", OpCode.REPLACE, {"a": 2}, timestamp=200))
+        eng.apply(state, Patch("p1", "evt_001", OpCode.REPLACE, {"review": {"notes": "a1"}}, timestamp=100))
+        eng.apply(state, Patch("p2", "evt_001", OpCode.REPLACE, {"review": {"notes": "a2"}}, timestamp=200))
         rev = mgr.compute_reverse_patch(state.get_event("evt_001").patches[1], state)
         assert rev is not None
-        assert rev.value["a"] == 1
+        assert rev.value["review"]["notes"] == "a1"
 
     def test_reverse_patch_first_returns_undo(self, mgr, state):
         eng = PatchEngine()
-        eng.apply(state, Patch("p1", "evt_001", OpCode.REPLACE, {"a": 1}, timestamp=100))
+        eng.apply(state, Patch("p1", "evt_001", OpCode.REPLACE, {"review": {"notes": "a1"}}, timestamp=100))
         rev = mgr.compute_reverse_patch(state.get_event("evt_001").patches[0], state)
         assert rev is not None
         assert rev.op == OpCode.REPLACE

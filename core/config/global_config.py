@@ -57,9 +57,9 @@ class ProjectPolicy:
         "glossary": {"mode": "OFF"},
         "custom_prompt": "",
         "gate": {
-            "mode": "logic_gate",
-            "threshold_accept": 0.80,
-            "threshold_reject": 0.60,
+            "mode": "xcomet",
+            "threshold_accept": 0.86,
+            "threshold_reject": 0.64,
             "beta": 0.6,
             "gamma": 0.4,
             "sim_drop_limit": 0.05,
@@ -113,6 +113,21 @@ class ProjectPolicy:
         "notes": "",
     })
 
+    def apply_slot_overrides(self, overrides: dict) -> None:
+        """槽位级覆盖 (P2): overrides = {slot: {field: value}}。
+
+        与 ConfigResolver 的 deep_merge 语义一致: 嵌套 dict 递归合并,
+        未知槽位/字段直接写入 (引擎专属参数由 SchemaLoader 负责校验)。
+        这是前端全局设置进入 core 配置体系的唯一正门。
+        """
+        from core.runtime.config_resolver import deep_merge
+        for slot, fields in overrides.items():
+            if not isinstance(fields, dict):
+                continue
+            target = getattr(self, slot, None)
+            if isinstance(target, dict):
+                deep_merge(target, fields)
+
     def get_slot_defaults(self, slot: str) -> dict:
         """获取指定槽位的全局默认配置（深拷贝）。"""
         from copy import deepcopy
@@ -155,6 +170,10 @@ class GlobalConfig:
     def get_slot_defaults(self, slot: str) -> dict:
         """获取指定槽位的全局默认配置（深拷贝）。"""
         return self.project.get_slot_defaults(slot)
+
+    def apply_slot_overrides(self, overrides: dict) -> None:
+        """槽位级覆盖入口 — 转发到 ProjectPolicy (P2 前端设置桥)。"""
+        self.project.apply_slot_overrides(overrides)
 
     @classmethod
     def load(cls, path: str) -> "GlobalConfig":
@@ -215,6 +234,19 @@ class GlobalConfig:
                     "semantic_threshold": "threshold_accept",
                     "sim_drop_limit": "sim_drop_limit",
                 })
+                # 显式 gate 段 (threshold_accept/reject 等) 直接映射,
+                # 覆盖 legacy semantic_threshold 映射 — translate.yaml 的
+                # semantic_threshold 仍保留给 logic_gate 语义检查使用
+                explicit_gate = translate_cfg.get("gate")
+                if isinstance(explicit_gate, dict):
+                    _map_leaf(explicit_gate, gate_cfg, {
+                        "mode": "mode",
+                        "threshold_accept": "threshold_accept",
+                        "threshold_reject": "threshold_reject",
+                        "beta": "beta",
+                        "gamma": "gamma",
+                        "sim_drop_limit": "sim_drop_limit",
+                    })
 
         if tts_cfg_path and os.path.exists(tts_cfg_path):
             with open(tts_cfg_path, "r", encoding="utf-8") as f:

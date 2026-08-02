@@ -124,12 +124,13 @@ class WorkflowPolicy:
             ),
             WorkflowStage.EXTRACT: StageConfig(
                 stage=WorkflowStage.EXTRACT,
-                passes=["asr", "speaker", "semantic_merge"],
+                passes=["asr", "speaker", "segmentation", "semantic_merge"],
                 auto_advance=True,
             ),
             WorkflowStage.TRANSLATE: StageConfig(
                 stage=WorkflowStage.TRANSLATE,
-                passes=["translate", "quality_check"],
+                passes=["preprocess_translation", "translate", "quality_check",
+                        "refine_translation"],
                 auto_advance=False,
                 gate="text_gate",
                 gate_routing={"A": "validate", "B": "pause", "C": "retry"},
@@ -173,11 +174,11 @@ class WorkflowPolicy:
             ),
             WorkflowStage.EXTRACT: StageConfig(
                 stage=WorkflowStage.EXTRACT,
-                passes=["asr", "speaker", "semantic_merge"],
+                passes=["asr", "speaker", "segmentation", "semantic_merge"],
             ),
             WorkflowStage.TRANSLATE: StageConfig(
                 stage=WorkflowStage.TRANSLATE,
-                passes=["translate"],
+                passes=["preprocess_translation", "translate"],
             ),
             WorkflowStage.VALIDATE: StageConfig(
                 stage=WorkflowStage.VALIDATE,
@@ -238,6 +239,15 @@ class WorkflowPolicy:
         full = cls.default_preset(target_lang)
         for s in (WorkflowStage.LOAD, WorkflowStage.EXTRACT, WorkflowStage.VALIDATE):
             full.stages.pop(s, None)
+        return full
+
+    @classmethod
+    def single_stage(cls, stage: "WorkflowStage", target_lang: str = "zh") -> "WorkflowPolicy":
+        """单阶段预设 — 只执行指定阶段（tvw stage/validate/export 命令用）。"""
+        full = cls.default_preset(target_lang)
+        for s in list(full.stages.keys()):
+            if s != stage:
+                del full.stages[s]
         return full
 
     def get_stage(self, stage: WorkflowStage) -> StageConfig | None:

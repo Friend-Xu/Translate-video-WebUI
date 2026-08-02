@@ -11,7 +11,7 @@
 
 基于浏览器的可视化界面，运行 Translate_video 流水线 — **拖拽、配置、一键启动**。无需命令行。
 
-![主面板](主面板.png)
+![项目中心](GUI/screenshoot/项目中心.png)
 
 ---
 
@@ -67,7 +67,7 @@ Edge TTS（云端，快速）、ChatTTS（本地，离线）和 CosyVoice（本�
 ### 字幕校验
 逐条审核翻译结果。编辑文本，标记问题条目。修改写入 `reviewed.srt` 并重新触发 TTS。
 
-![字幕校验](字幕校验.png)
+![字幕校验](GUI/screenshoot/字幕校验.png)
 
 ### ChatTTS 语音抽卡
 即时预览 ChatTTS 语音。随机种子 → 试听 → 锁定满意的音色。预览间无需重载 GPU 模型。

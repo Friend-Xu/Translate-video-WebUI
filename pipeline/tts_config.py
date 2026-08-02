@@ -302,9 +302,6 @@ class TTSConfig:
     merge_strategy: str = "ffmpeg"
     """合并策略: "ffmpeg" | "moviepy"（ffmpeg 更快，推荐）"""
 
-    final_output_path: str = "output/final_video.mp4"
-    """最终合并输出路径"""
-
     # ── 编码参数（保留原值） ─────────────────────────────
     audio_codec: str = "aac"
     """音频编码器"""

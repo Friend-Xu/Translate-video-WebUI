@@ -4,7 +4,6 @@ import {
   Button, TextField, Box, Typography, Chip, Paper, Divider,
   FormControlLabel, Switch, Tabs, Tab, Tooltip,
 } from '@mui/material'
-import type { PipelineConfig } from '../types'
 
 const LANG_LABELS: Record<string, string> = {
   auto: '自动检测', ja: '日文', en: 'English', zh: '中文',
@@ -31,8 +30,9 @@ const TONE_PRESETS = [
 interface Props {
   open: boolean
   onClose: () => void
-  config: PipelineConfig
-  onConfigChange: <K extends keyof PipelineConfig>(key: K, value: PipelineConfig[K]) => void
+  // P5-A: 宽松类型 — SettingsView 的 config 是 snake_case 差异层, 非 PipelineConfig
+  config: Record<string, any>
+  onConfigChange: (key: string, value: any) => void
   jointVerification?: boolean
 }
 
@@ -43,22 +43,23 @@ const PROMPT_LEVELS = [
 ] as const
 
 export function CustomPromptDialog({ open, onClose, config, onConfigChange, jointVerification }: Props) {
-  const [localEnabled, setLocalEnabled] = useState(config.customPromptEnabled)
+  const [localEnabled, setLocalEnabled] = useState(config.custom_prompt_enabled)
   const [tabIndex, setTabIndex] = useState(0)
   const textFieldRef = useRef<HTMLTextAreaElement>(null)
 
-  const configKeyMap: Record<string, keyof PipelineConfig> = {
-    'system': 'customSystemPrompt',
-    'semantic_retry': 'customSemanticRetryPrompt',
-    'naturalness_retry': 'customNaturalnessRetryPrompt',
+  // P5-A: 键名统一为 snake_case (与 SettingsView/_snake_defaults 一致)
+  const configKeyMap: Record<string, string> = {
+    'system': 'custom_prompt_system',
+    'semantic_retry': 'custom_prompt_semantic_retry',
+    'naturalness_retry': 'custom_prompt_naturalness_retry',
   }
   const level = PROMPT_LEVELS[tabIndex]
   const configKey = configKeyMap[level.key]
-  const localPrompt = config[configKey] as string
+  const localPrompt = (config as any)[configKey] as string
 
   useEffect(() => {
     if (open) {
-      setLocalEnabled(config.customPromptEnabled)
+      setLocalEnabled(config.custom_prompt_enabled)
       setTabIndex(0)
     }
   }, [open])
@@ -70,12 +71,12 @@ export function CustomPromptDialog({ open, onClose, config, onConfigChange, join
   }
 
   const handleSave = () => {
-    onConfigChange('customPromptEnabled', localEnabled)
+    onConfigChange('custom_prompt_enabled', localEnabled)
     onClose()
   }
 
   const handleClose = () => {
-    setLocalEnabled(config.customPromptEnabled)
+    setLocalEnabled(config.custom_prompt_enabled)
     onClose()
   }
 

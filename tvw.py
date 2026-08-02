@@ -53,7 +53,7 @@ def _json_out(obj: dict) -> None:
     """输出一行 RS 分隔的 JSON 到 stdout。仅在 --json-output 模式激活。"""
     if not _JSON_OUTPUT:
         return
-    line = _json.dumps(obj, ensure_ascii=False)
+    line = _json.dumps(obj, ensure_ascii=False, default=str)
     sys.stdout.write(f"\x1e{line}\n")
     sys.stdout.flush()
 
@@ -88,8 +88,8 @@ def _find_workspace(video_or_ws: str) -> str:
 def cmd_run(args) -> None:
     """完整管线执行。
 
-    无 --use-core: 委托 main.py
-    有 --use-core: 直接调用 WorkflowOrchestrator (计划书 §10 统一 Runtime 入口)
+    无 --use-core: 委托 main.py (翻译已是 core 新引擎, CLI 切默认)
+    有 --use-core: 直接调用 WorkflowOrchestrator 全流程 (计划书 §10 统一 Runtime 入口)
     """
     if args.use_core:
         _run_core_pipeline(args)
@@ -137,6 +137,34 @@ def _run_legacy_pipeline(args) -> None:
         _json_error(f"Legacy pipeline failed: {e}")
     finally:
         sys.argv = _orig
+
+
+def _resolve_video_for_ws(ws_dir: str) -> str:
+    """从 workspace 解析源视频路径：session.json 优先，按目录名推断兜底。"""
+    try:
+        from core.runtime.session import SessionStore
+        sess = SessionStore.load(ws_dir)
+        if sess and sess.video_path and os.path.isfile(sess.video_path):
+            return sess.video_path
+    except Exception:
+        pass
+    stem = os.path.basename(ws_dir.rstrip("/\\"))
+    if stem.endswith("_project"):
+        stem = stem[:-len("_project")]
+    for ext in (".mp4", ".mkv", ".avi", ".mov"):
+        cand = os.path.join(os.path.dirname(ws_dir), stem + ext)
+        if os.path.isfile(cand):
+            return cand
+    return ""
+
+
+def _build_pass_factory_for(args, video_path: str, ws_dir: str, lang: str, gcfg):
+    """构建 pass 工厂 — cmd_run / cmd_stage / cmd_validate / cmd_export 共用。
+
+    参数映射统一在 core/compat/cli_bridge.py (架构收束, 单一映射)。
+    """
+    from core.compat.cli_bridge import build_pass_factory
+    return build_pass_factory(args, video_path, ws_dir, lang, gcfg)
 
 
 def _run_core_pipeline(args) -> None:
@@ -187,103 +215,17 @@ def _run_core_pipeline(args) -> None:
         gcfg.tts_engine = args.engine
     if args.device:
         gcfg.device = args.device
-
-    # ── 构建 translate_fn ─────────────────────────────────────
-    # 新架构直接调用 LLM API，不通过 SRT 文件桥接。
-    # LLMTranslationPass 已将事件渲染为标签化文本、解析 LLM 回复、
-    # 通过 PatchEngine 写入 runtime state。
-    def _translate_fn(tagged_text: str) -> str:
-        """直接调 LLM API 翻译标签化文本。
-
-        输入: "[evt_001] 今天天气真好\n[evt_002] 一起去散步吧"
-        输出: "[evt_001] 今日は本当にいい天気ですね\n[evt_002] 一緒に散歩しましょう"
-        """
-        import yaml
-
-        config_path = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
+    if getattr(args, "config_overrides", None):
+        # P2: 前端设置差异层 → GlobalConfig 槽位覆盖 (新架构配置体系正门)
         try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
-        except Exception:
-            cfg = {}
+            overrides = _json.loads(args.config_overrides)
+        except (ValueError, TypeError):
+            _json_error(f"Invalid --config-overrides JSON: {args.config_overrides[:200]}")
+            sys.exit(1)
+        gcfg.apply_slot_overrides(overrides)
 
-        api_key = cfg.get("api_key", "") or os.environ.get("DEEPSEEK_API_KEY", "")
-        if not api_key:
-            # 无 API key → mock translation
-            from core.passes.llm_translation_pass import LLMTranslationPass
-            return LLMTranslationPass._mock_translate(tagged_text)
-
-        base_url = cfg.get("api_base_url", "") or "https://api.deepseek.com"
-        model = cfg.get("model", "deepseek-chat")
-
-        import requests as _requests
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": (
-                    "You are a subtitle translator. "
-                    "Translate the following tagged text from the source language "
-                    f"to {lang}. Preserve ALL [evt_NNN] tags exactly as-is. "
-                    "Return ONLY the translated text with tags, no explanations."
-                )},
-                {"role": "user", "content": tagged_text},
-            ],
-            "temperature": 0.1,
-            "max_tokens": 4000,
-        }
-        try:
-            resp = _requests.post(
-                f"{base_url.rstrip('/')}/v1/chat/completions",
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=120,
-            )
-            resp.raise_for_status()
-            return resp.json()["choices"][0]["message"]["content"].strip()
-        except Exception:
-            from core.passes.llm_translation_pass import LLMTranslationPass
-            return LLMTranslationPass._mock_translate(tagged_text)
-
-    # ── 构建 Pass 工厂 ─────────────────────────────────────
-    audio_path = os.path.join(extract_dir, f"{stem}_extracted.wav")
-    vocals_path = os.path.join(extract_dir, f"{stem}_vocals.wav")
-
-    # 选择质量把控策略 (用户可在 config/quality.yaml 中选择)
-    # 导入策略模块以触发装饰器注册
-    import core.quality.logic_gate_strategy  # noqa: F401 — 注册 logic_gate
-    import core.quality.xcomet_strategy     # noqa: F401 — 注册 xcomet
-    quality_name = gcfg.project.translation.get("quality_strategy", "logic_gate")
-    from core.quality.protocol import create_strategy as create_quality_strategy
-    quality_strategy = create_quality_strategy(quality_name, gcfg)
-
-    # 构建字幕配置（仅非 None 值传入）
-    caption_config = {}
-    for attr in ("caption_font", "caption_font_size", "caption_font_color",
-                 "caption_stroke_width", "caption_stroke_color", "caption_bg_color",
-                 "caption_alignment", "caption_position", "caption_max_lines",
-                 "caption_width_ratio"):
-        val = getattr(args, attr, None)
-        if val is not None:
-            caption_config[attr] = val
-
-    pass_factory = create_pass_factory(
-        translate_fn=_translate_fn,
-        video_path=video_path,
-        audio_path=audio_path,
-        output_dir=ws_dir,
-        workspace_dir=ws_dir,
-        engine=args.engine or "edge",
-        quality_strategy=quality_strategy,
-        num_workers=getattr(args, "num_workers", 1),
-        enable_speaker_diarization=getattr(args, "enable_speaker_diarization", False),
-        num_speakers=getattr(args, "num_speakers", 0),
-        enable_emotion=getattr(args, "enable_emotion", False),
-        verification_mode=getattr(args, "verification_mode", None),
-        caption_config=caption_config if caption_config else None,
-    )
+    # ── 构建 Pass 工厂（与 stage/validate/export 命令共用）────────
+    pass_factory = _build_pass_factory_for(args, video_path, ws_dir, lang, gcfg)
 
     orchestrator = WorkflowOrchestrator(
         policy=policy,
@@ -334,10 +276,42 @@ def _run_core_pipeline(args) -> None:
 
     # 初始化 session
     try:
-        SessionStore.transition(ws_dir, SessionState.BOOTSTRAPPING)
-        SessionStore.save(ws_dir, video_path=video_path, current_stage="load")
-    except Exception:
-        pass
+        env = SessionStore.transition(ws_dir, SessionState.BOOTSTRAPPING)
+        env.video_path = video_path
+        env.current_stage = "load"
+        SessionStore.save(ws_dir, env)
+    except Exception as exc:
+        print(f"[WARN] session 初始化失败: {exc}", file=sys.stderr)
+
+    # 确保 project.json 存在 — WebUI 的 manifest/resolve 和 /api/workspaces 依赖它
+    try:
+        manifest_path = os.path.join(ws_dir, "project.json")
+        if not os.path.isfile(manifest_path):
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                _json.dump({
+                    "video_path": os.path.abspath(video_path),
+                    "runtime_state": "bootstrapping",
+                    "created_at": _now_iso(),
+                    "updated_at": _now_iso(),
+                    "files": {},
+                }, f, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        print(f"[WARN] project.json 初始化失败: {exc}", file=sys.stderr)
+
+    def _update_manifest_state(state: str) -> None:
+        """运行结束时同步 project.json 的 runtime_state（WebUI 项目卡片依赖）。"""
+        try:
+            manifest_path = os.path.join(ws_dir, "project.json")
+            m = {}
+            if os.path.isfile(manifest_path):
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    m = _json.load(f)
+            m["runtime_state"] = state
+            m["updated_at"] = _now_iso()
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                _json.dump(m, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
     try:
         state = orchestrator.run(video_path)
@@ -346,8 +320,10 @@ def _run_core_pipeline(args) -> None:
         if orchestrator.status == WorkflowStatus.PAUSED:
             _persist_timeline(state, ws_dir, video_path, lang)
             SessionStore.transition(ws_dir, SessionState.REVIEWABLE)
+            _update_manifest_state("ready")
             _json_out({"type": "workflow_paused", "status": "paused",
-                        "stage": orchestrator.current_stage, "events": events_count, "ts": _now_iso()})
+                        "stage": getattr(orchestrator.current_stage, "value", orchestrator.current_stage) or "",
+                        "events": events_count, "ts": _now_iso()})
             if not _JSON_OUTPUT:
                 print(f"  [PAUSED] Core Pipeline paused at {orchestrator.current_stage} ({events_count} events)")
         else:
@@ -355,6 +331,7 @@ def _run_core_pipeline(args) -> None:
             _persist_timeline(state, ws_dir, video_path, lang)
 
             SessionStore.transition(ws_dir, SessionState.REVIEWABLE)
+            _update_manifest_state("complete" if args.export_stage else "ready")
             _json_out({"type": "workflow_completed", "status": "completed", "events": events_count, "ts": _now_iso()})
             if not _JSON_OUTPUT:
                 print(f"  [OK] Core Pipeline 完成 ({events_count} events)")
@@ -363,6 +340,7 @@ def _run_core_pipeline(args) -> None:
             SessionStore.transition(ws_dir, SessionState.FAILED)
         except Exception:
             pass
+        _update_manifest_state("failed")
         _json_error(f"Core pipeline failed: {e}")
         if not _JSON_OUTPUT:
             print(f"  [X] Core Pipeline 失败: {e}", file=sys.stderr)
@@ -463,7 +441,10 @@ def cmd_stage(args) -> None:
 
     stage = WorkflowStage(args.stage_name)
     policy = WorkflowPolicy.single_stage(stage)
-    orchestrator = WorkflowOrchestrator(policy=policy, global_config=GlobalConfig())
+    gcfg = GlobalConfig()
+    orchestrator = WorkflowOrchestrator(policy=policy, global_config=gcfg)
+    orchestrator.set_pass_factory(_build_pass_factory_for(
+        args, _resolve_video_for_ws(ws_dir), ws_dir, "zh", gcfg))
 
     _json_out({"type": "stage_started", "stage": args.stage_name, "ts": _now_iso()})
 
@@ -505,7 +486,10 @@ def cmd_validate(args) -> None:
     from core.config.global_config import GlobalConfig
 
     policy = WorkflowPolicy.single_stage(WorkflowStage.VALIDATE)
-    orchestrator = WorkflowOrchestrator(policy=policy, global_config=GlobalConfig())
+    gcfg = GlobalConfig()
+    orchestrator = WorkflowOrchestrator(policy=policy, global_config=gcfg)
+    orchestrator.set_pass_factory(_build_pass_factory_for(
+        args, _resolve_video_for_ws(ws_dir), ws_dir, "zh", gcfg))
 
     def _progress(report: ProgressReport) -> None:
         print(f"  [{report.stage_label}] {report.message}")
@@ -538,7 +522,10 @@ def cmd_export(args) -> None:
     from core.config.global_config import GlobalConfig
 
     policy = WorkflowPolicy.single_stage(WorkflowStage.EXPORT)
-    orchestrator = WorkflowOrchestrator(policy=policy, global_config=GlobalConfig())
+    gcfg = GlobalConfig()
+    orchestrator = WorkflowOrchestrator(policy=policy, global_config=gcfg)
+    orchestrator.set_pass_factory(_build_pass_factory_for(
+        args, _resolve_video_for_ws(ws_dir), ws_dir, "zh", gcfg))
 
     def _progress(report: ProgressReport) -> None:
         print(f"  [{report.stage_label}] {report.message}")
@@ -809,85 +796,13 @@ def cmd_rollback(args) -> None:
 
 
 def _persist_timeline(state, ws_dir: str, video_path: str, lang: str) -> str:
-    """将 TimelineProjectState 持久化为 timeline.json，供 WebUI 读取。"""
-    import json as _json_mod
-    extract_dir = os.path.join(ws_dir, "01_extract")
-    os.makedirs(extract_dir, exist_ok=True)
-    tl_path = os.path.join(extract_dir, "timeline.json")
+    """将 TimelineProjectState 持久化为 timeline.json，供 WebUI 读取。
 
-    events = []
-    speakers = {}
-    for es in state.event_states.values():
-        evt = {
-            "id": es.id,
-            "start": es.start,
-            "end": es.end,
-            "text": es.ir.text_ref,
-            "source": es.ir.source,
-        }
-        # translation
-        trans = es.translation
-        if isinstance(trans, dict):
-            evt["translation"] = trans
-        elif isinstance(trans, str) and trans:
-            evt["translation"] = {"text": trans}
-        else:
-            evt["translation"] = {}
-        # speaker
-        spk = es.speaker
-        if isinstance(spk, dict) and spk.get("speaker_id"):
-            evt["speaker"] = spk["speaker_id"]
-            sid = spk["speaker_id"]
-            if sid not in speakers:
-                speakers[sid] = {"id": sid, "label": sid, "confidence": None, "embedding_ref": None}
-        # confidence
-        evt["confidence"] = es.provenance.get("confidence", 1.0)
-
-    # 从 _embeddings/ 目录直接读取 embedding 数据（不依赖 state.ir.speakers）
-    import glob as _glob
-    emb_dir = os.path.join(ws_dir, "_embeddings")
-    if os.path.isdir(emb_dir):
-        for npy_path in _glob.glob(os.path.join(emb_dir, "speaker_*.npy")):
-            fname = os.path.basename(npy_path)
-            sid = fname.replace("speaker_", "").replace(".npy", "")
-            if sid in speakers:
-                speakers[sid]["embedding_ref"] = npy_path
-                import numpy as _np
-                try:
-                    centroid = _np.load(npy_path)
-                    speakers[sid]["centroid_norm"] = float(_np.linalg.norm(centroid))
-                except Exception:
-                    pass
-    # 也尝试从 state.ir.speakers 补充（如果有的话）
-    for sid, spk_node in state.ir.speakers.items():
-        conf = getattr(spk_node, "confidence", None)
-        emb_ref = getattr(spk_node, "embedding_ref", None)
-        if sid not in speakers:
-            speakers[sid] = {"id": sid, "label": sid, "confidence": conf, "embedding_ref": emb_ref}
-        else:
-            if conf is not None:
-                speakers[sid]["confidence"] = conf
-            if emb_ref is not None:
-                speakers[sid]["embedding_ref"] = emb_ref
-        # review status
-        evt["review_status"] = es.review.get("review_status", "pending")
-        events.append(evt)
-
-    timeline = {
-        "schema_version": "2.0",
-        "metadata": {
-            "event_count": len(events),
-            "speaker_count": len(speakers),
-            "source_video": video_path,
-            "language": lang,
-            "generated_at": _now_iso(),
-        },
-        "events": events,
-        "speakers": speakers,
-    }
-    with open(tl_path, "w", encoding="utf-8") as f:
-        _json_mod.dump(timeline, f, ensure_ascii=False, indent=2)
-    return tl_path
+    数据结构重设计 Phase 2: 委托 canonical timeline_io.persist_state,
+    统一 v3.0 格式 (translation dict / words 一等字段), 与 reload 互逆。
+    """
+    from core.runtime.timeline_io import persist_state
+    return persist_state(state, ws_dir, video_path, lang)
 
 
 def main():
@@ -907,7 +822,7 @@ def main():
     p_run.add_argument("--model", default="turbo", help="Whisper 模型")
     p_run.add_argument("--device", default="cuda", help="计算设备")
     p_run.add_argument("--compute-type", default="float16", help="计算精度")
-    p_run.add_argument("--use-core", action="store_true", help="使用 core/ WorkflowOrchestrator 执行")
+    p_run.add_argument("--use-core", action="store_true", help="完整管线用 core/ WorkflowOrchestrator 执行 (默认委托 main.py, 翻译已走 core 新引擎)")
     p_run.add_argument("--bootstrap", action="store_true",
                        help="仅执行 Bootstrap (LOAD→EXTRACT→TRANSLATE→VALIDATE), TTS/Export 推迟")
     p_run.add_argument("--extract-only", action="store_true",
@@ -935,6 +850,9 @@ def main():
                        help="指定说话人数 (0=自动, >0 精确聚类为该人数)")
     p_run.add_argument("--enable-emotion", action="store_true", help="启用情绪识别")
     p_run.add_argument("--verification-mode", default=None, help="翻译验证模式")
+    p_run.add_argument("--config-overrides", default=None,
+                       help="槽位级配置覆盖 JSON: {\"tts\": {\"speed_factor\": 1.2}, ...} "
+                            "(P2 前端设置桥, 加载进 GlobalConfig)")
     p_run.add_argument("--no-optimize-subtitles", action="store_true", help="跳过字幕拆分优化")
     p_run.add_argument("--export-external-srt", action="store_true", help="导出双语优化字幕")
     # ── 字幕配置 ──

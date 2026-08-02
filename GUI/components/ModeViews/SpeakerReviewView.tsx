@@ -4,7 +4,6 @@ import {
   MenuItem, Select, FormControl,
   Dialog, DialogTitle, DialogContent, DialogActions, CircularProgress, Menu,
 } from '@mui/material'
-import PersonIcon from '@mui/icons-material/PersonRounded'
 import PersonAddIcon from '@mui/icons-material/PersonAddRounded'
 import PlayArrowIcon from '@mui/icons-material/PlayArrowRounded'
 import ZoomInIcon from '@mui/icons-material/ZoomInRounded'
@@ -17,10 +16,11 @@ import VoiceIcon from '@mui/icons-material/RecordVoiceOverRounded'
 import { useAppStore } from '../../store/useAppStore'
 import { useTimelineCoordinates } from '../../hooks/useTimelineCoordinates'
 import SpeakerWaveform from './SpeakerWaveform'
-import type { EventViewModel, SpeakerVerification, SpeakerVerificationIssue } from '../../types'
+import type { EventViewModel } from '../../types'
 import type { SpeakerQuality } from '../../types/modes'
 
-const LANE_COLORS = ['#FF9800', '#2196F3', '#4CAF50', '#9C27B0', '#E91E63', '#00BCD4']
+const LANE_COLORS = ['#FF9800', '#2196F3', '#4CAF50', '#9C27B0', '#E91E63', '#00BCD4',
+  '#F44336', '#795548', '#607D8B', '#CDDC39', '#03A9F4', '#FF5722']
 const LANE_HEIGHT = 64
 const TIME_RULER_H = 20
 
@@ -56,9 +56,6 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
   const selectedSpeakerIds = useAppStore(s => s.selectedSpeakerIds)
   const setSelectedSpeaker = useAppStore(s => s.setSelectedSpeaker)
   const toggleSpeakerSelection = useAppStore(s => s.toggleSpeakerSelection)
-  const voicePresets = useAppStore(s => s.voicePresets)
-  const bindVoice = useAppStore(s => s.bindVoice)
-  const addDraft = useAppStore(s => s.addDraft)
   const setMode = useAppStore(s => s.setMode)
   const workspace = useAppStore(s => s.workspace)
   const playheadPosition = useAppStore(s => s.playheadPosition)
@@ -67,24 +64,21 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
   const trackScrollLeft = useAppStore(s => s.trackScrollLeft)
   const setTrackScrollLeft = useAppStore(s => s.setTrackScrollLeft)
 
-  const [auditionLoading, setAuditionLoading] = useState<string | null>(null)
   const [mergeDialogOpen, setMergeDialogOpen] = useState(false)
   const [mergeTarget, setMergeTarget] = useState<string | null>(null)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [createName, setCreateName] = useState('')
-  const [sortBy, setSortBy] = useState<'duration' | 'confidence' | 'conflict'>('duration')
+  const [sortBy, setSortBy] = useState<'fixed' | 'duration' | 'confidence' | 'conflict'>('fixed')
   const [editingName, setEditingName] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{x: number, y: number, segmentId: string} | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
-  const [verification, setVerification] = useState<SpeakerVerification | null>(null)
-  const [reviewMode, setReviewMode] = useState(false)
-  const [reviewedSegments, setReviewedSegments] = useState<Set<string>>(new Set())
+  const resizeRef = useRef<{ segId: string; edge: 'left' | 'right'; startX: number; origStart: number; origEnd: number; lane: string } | null>(null)
+  const [resizePreview, setResizePreview] = useState<{ segId: string; left: number; width: number } | null>(null)
   const [overlaps, setOverlaps] = useState<Array<{start: number, end: number, speakers: string[], duration: number}>>([])
-  const [clusterSuggestions, setClusterSuggestions] = useState<Array<{speaker_a: string, speaker_b: string, similarity: number, reason: string}>>([])
-  const [driftSuggestions, setDriftSuggestions] = useState<Array<{speaker_id: string, score: number, signals: Record<string, number>, suggestion: string}>>([])
   const [dragSegmentId, setDragSegmentId] = useState<string | null>(null)
+  const [hoveredSegId, setHoveredSegId] = useState<string | null>(null)
   const [dubLoading, setDubLoading] = useState(false)
   const [screeningResults, setScreeningResults] = useState<{
     issues: Array<{segment_id: string, rule: string, severity: string, start: number, end: number, message: string, detail: any}>
@@ -97,10 +91,17 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
   const rulerRef = useRef<HTMLDivElement | null>(null)
   const centerRef = useRef<HTMLDivElement | null>(null)
   const justSeekedRef = useRef(false)
+  const speakerColorMap = useRef<Record<string, string>>({})
 
   const speakerLanes: SpeakerLane[] = useMemo(() => {
     if (externalSpeakers && externalSpeakers.length > 0) return externalSpeakers
-    if (storeSpeakerLanes.length > 0) return storeSpeakerLanes as unknown as SpeakerLane[]
+    if (storeSpeakerLanes.length > 0) {
+      // Sync colors from store into stable map
+      for (const l of storeSpeakerLanes) {
+        if ((l as any).color) speakerColorMap.current[l.speaker] = (l as any).color
+      }
+      return storeSpeakerLanes as unknown as SpeakerLane[]
+    }
     const spkMap: Record<string, SpeakerSegment[]> = {}
     for (const evt of events) {
       const spk = (evt as any).speaker || 'UNKNOWN'
@@ -113,12 +114,25 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
         eventId: evt.id,
       })
     }
-    return Object.entries(spkMap).map(([spk, segs], i) => ({
-      speaker: spk, display_name: spk, voice_id: '',
-      color: LANE_COLORS[i % LANE_COLORS.length],
-      segments: segs, segment_count: segs.length,
-      total_duration: segs.reduce((sum, s) => sum + (s.end - s.start), 0),
-    }))
+    // Assign stable colors: reuse known speakers, assign new colors for new ones
+    const usedColors = new Set(Object.values(speakerColorMap.current))
+    const available = LANE_COLORS.filter(c => !usedColors.has(c))
+    let availIdx = 0
+    return Object.entries(spkMap).map(([spk, segs]) => {
+      let color = speakerColorMap.current[spk]
+      if (!color) {
+        color = available[availIdx % available.length] || LANE_COLORS[Object.keys(speakerColorMap.current).length % LANE_COLORS.length]
+        speakerColorMap.current[spk] = color
+        usedColors.add(color)
+        availIdx++
+      }
+      return {
+        speaker: spk, display_name: spk, voice_id: '',
+        color,
+        segments: segs, segment_count: segs.length,
+        total_duration: segs.reduce((sum, s) => sum + (s.end - s.start), 0),
+      }
+    })
   }, [events, externalSpeakers, storeSpeakerLanes])
 
   const speakerQualities = useMemo(() => {
@@ -154,8 +168,10 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
     return result
   }, [speakerLanes])
 
-  // Sort speakers by chosen criteria
+  // Sort speakers by chosen criteria — 默认 fixed: 轨道固定 (store 顺序),
+  // 编辑操作 (拖拽/resize/assign) 只动色块, 轨道行永不重排
   const sortedSpeakers = useMemo(() => {
+    if (sortBy === 'fixed') return speakerLanes
     const arr = [...speakerLanes]
     const qs = speakerQualities
     switch (sortBy) {
@@ -168,7 +184,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
 
   const totalDuration = useMemo(() => Math.max(...events.map(e => e.end), 80), [events])
   const canvasW = typeof window !== 'undefined' ? window.innerWidth - 520 : 600
-  const coord = useTimelineCoordinates(totalDuration, canvasW, trackScrollLeft)
+  const coord = useTimelineCoordinates(totalDuration, canvasW, trackScrollLeft, setTrackScrollLeft)
 
   // Find active segment at playhead position for playback-following highlight
   const activeSegmentRef = useMemo(() => {
@@ -198,32 +214,14 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
     }
   }, [activeSegmentRef, autoScroll, coord.pixelsPerSec, trackScrollLeft, setTrackScrollLeft])
 
-  // Load verification data
+  // Load overlap + screening data
   useEffect(() => {
     if (!workspace) return
-    fetch('/api/speaker/diarization/load', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ workspace }),
-    }).then(r => r.json()).then(data => {
-      if (data.verification) setVerification(data.verification)
-    }).catch(() => {})
-    // Also load overlaps
     const params = new URLSearchParams({ workspace })
     fetch(`/api/speaker/diarization/overlaps?${params}`)
       .then(r => r.json()).then(data => {
         if (data.overlaps) setOverlaps(data.overlaps)
       }).catch(() => {})
-    // Load clustering & drift suggestions
-    fetch(`/api/speaker/diarization/clustering-suggestions?${params}`)
-      .then(r => r.json()).then(data => {
-        if (data.suggestions) setClusterSuggestions(data.suggestions)
-      }).catch(() => {})
-    fetch(`/api/speaker/diarization/drift-suggestions?${params}`)
-      .then(r => r.json()).then(data => {
-        if (data.suggestions) setDriftSuggestions(data.suggestions)
-      }).catch(() => {})
-    // Load screening + cross-model verification
     fetch('/api/speaker/screening/run', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -234,9 +232,6 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
     }).catch(() => {})
   }, [workspace])
 
-  const selectedLane = speakerLanes.find(l => l.speaker === selectedSpeakerId) || null
-  const selectedQuality = selectedSpeakerId ? speakerQualities[selectedSpeakerId] : null
-
   const handleSelectSpeaker = useCallback((speakerId: string, e: React.MouseEvent) => {
     if (e.ctrlKey || e.metaKey) {
       toggleSpeakerSelection(speakerId)
@@ -245,92 +240,112 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
     }
   }, [setSelectedSpeaker, toggleSpeakerSelection])
 
-  const handleAudition = useCallback(async (voiceId: string) => {
-    const voice = voicePresets.find(v => v.id === voiceId)
-    if (!voice) return
-    setAuditionLoading(voiceId)
-    try {
-      if (voice.engine === 'chattts') {
-        const res = await fetch('/api/tts/preview-chattts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: '你好，这是声线试听。', seed: 2 }),
-        })
-        if (res.ok) {
-          const blob = await res.blob()
-          const url = URL.createObjectURL(blob)
-          if (audioRef.current) { audioRef.current.src = url; audioRef.current.play() }
-        }
-      }
-    } finally { setAuditionLoading(null) }
-  }, [voicePresets])
-
   const handleMerge = useCallback(async () => {
     if (!mergeTarget || selectedSpeakerIds.length < 2) return
     const source = selectedSpeakerIds.find(id => id !== mergeTarget)
     if (!source) return
-    try {
-      await fetch('/api/speaker/diarization/merge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source_speaker: source, target_speaker: mergeTarget }),
-      })
-    } catch { /* API unavailable */ }
-    addDraft({
+    // P2 收敛: 统一走 patch (MergeEngine MERGE_SPEAKERS) — 端点写路径退役
+    const store = useAppStore.getState()
+    store.addDraft({
       eventId: source, opcode: 'MERGE_SPEAKERS',
       payload: { source, target: mergeTarget },
       before: {}, after: {}, timestamp: Date.now(),
     })
+    const ok = await store.applyDraft(source)
+    if (ok) {
+      const ws = store.workspace || ''
+      await store.fetchSpeakerLanes(ws)
+    }
     setMergeDialogOpen(false)
     setMergeTarget(null)
-  }, [mergeTarget, selectedSpeakerIds, addDraft])
+  }, [mergeTarget, selectedSpeakerIds])
 
   const handleCreateSpeaker = useCallback(async () => {
     if (!createName.trim()) return
-    const ws = useAppStore.getState().workspace || ''
-    try {
-      const res = await fetch('/api/speaker/diarization/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workspace: ws, display_name: createName.trim() }),
-      })
-      if (res.ok) {
-        // Refresh speaker lanes
-        await useAppStore.getState().fetchSpeakerLanes(ws)
-      }
-    } catch { /* API unavailable */ }
+    // P2 收敛: CREATE_SPEAKER 走 patch 落盘注册表 — 只 addDraft 不 apply 则刷新即丢
+    const store = useAppStore.getState()
+    const speakerId = `SPEAKER_${Date.now()}`
+    store.addDraft({
+      eventId: speakerId, opcode: 'CREATE_SPEAKER',
+      payload: { display_name: createName.trim() },
+      before: {}, after: { display_name: createName.trim() }, timestamp: Date.now(),
+    })
+    await store.applyDraft(speakerId)
     setCreateDialogOpen(false)
     setCreateName('')
   }, [createName])
 
   const handleLockSpeaker = useCallback((speakerId: string) => {
-    addDraft({
+    const store = useAppStore.getState()
+    store.addDraft({
       eventId: speakerId, opcode: 'LOCK_SPEAKER',
-      payload: {}, before: {}, after: {}, timestamp: Date.now(),
+      payload: { speaker: speakerId }, before: {}, after: {}, timestamp: Date.now(),
     })
-  }, [addDraft])
+    // 与 SpeakerLane 一致: 立即 apply 落盘 (注册表 is_locked)
+    void store.applyDraft(speakerId)
+  }, [])
 
-  const handleRename = useCallback((speakerId: string) => {
+  const handleRename = useCallback(async (speakerId: string) => {
     if (!editValue.trim()) { setEditingName(null); return }
-    addDraft({
+    const newName = editValue.trim()
+    // P2 收敛: 统一走 patch (UPDATE_SPEAKER) — rename 端点写路径退役
+    const store = useAppStore.getState()
+    store.addDraft({
       eventId: speakerId, opcode: 'RENAME_SPEAKER',
-      payload: { newName: editValue.trim() },
-      before: { displayName: speakerLanes.find(l => l.speaker === speakerId)?.display_name },
-      after: { displayName: editValue.trim() }, timestamp: Date.now(),
+      payload: { newName },
+      before: {}, after: { displayName: newName }, timestamp: Date.now(),
     })
-    const ws = useAppStore.getState().workspace || ''
-    fetch('/api/speaker/diarization/rename', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ speaker: speakerId, new_name: editValue.trim(), workspace: ws }),
-    }).catch(() => {})
+    const ok = await store.applyDraft(speakerId)
+    if (ok) {
+      const ws = store.workspace || ''
+      await store.fetchSpeakerLanes(ws)
+    }
     setEditingName(null)
-  }, [editValue, speakerLanes, addDraft])
+  }, [editValue])
 
   const handleSegmentClick = useCallback((_eventId: string, startTime: number) => {
     setPlayhead(startTime)
     onSeek?.(startTime)
   }, [setPlayhead, onSeek])
+
+  // Segment resize handlers
+  const handleResizeStart = useCallback((segId: string, edge: 'left' | 'right', e: React.MouseEvent, seg: SpeakerSegment, laneSpeaker: string) => {
+    e.preventDefault(); e.stopPropagation()
+    const startX = e.clientX
+    resizeRef.current = { segId, edge, startX, origStart: seg.start, origEnd: seg.end, lane: laneSpeaker }
+    setResizePreview({ segId, left: coord.timeToPixel(seg.start), width: Math.max(2, (seg.end - seg.start) * coord.pixelsPerSec) })
+
+    const onMove = (ev: MouseEvent) => {
+      const r = resizeRef.current; if (!r) return
+      const dx = (ev.clientX - startX) / coord.pixelsPerSec
+      let newStart = r.origStart; let newEnd = r.origEnd
+      if (r.edge === 'left') newStart = Math.max(0, Math.min(r.origEnd - 0.1, r.origStart + dx))
+      else newEnd = Math.max(r.origStart + 0.1, r.origEnd + dx)
+      // Store final values for commit
+      ;(r as any).finalStart = newStart; (r as any).finalEnd = newEnd
+      setResizePreview({ segId: r.segId, left: coord.timeToPixel(newStart), width: Math.max(2,(newEnd - newStart) * coord.pixelsPerSec) })
+    }
+    const onUp = async () => {
+      const r: any = resizeRef.current
+      if (r && r.finalStart != null) {
+        // Record patch (sole mutation path)
+        const store = useAppStore.getState()
+        store.addDraft({
+          eventId: segId, opcode: 'RESIZE_SEGMENT',
+          payload: { new_start: r.finalStart, new_end: r.finalEnd },
+          before: { start: r.origStart, end: r.origEnd },
+          after: { start: r.finalStart, end: r.finalEnd },
+          timestamp: Date.now(),
+        })
+        await store.applyDraft(segId)
+      }
+      resizeRef.current = null; setResizePreview(null)
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [coord.pixelsPerSec])
 
   const handleSegmentSelect = useCallback((segId: string, e: React.MouseEvent) => {
     if (e.ctrlKey || e.metaKey) {
@@ -341,7 +356,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
     }
     // Sync to store inspector — find the eventId if this is a real event
     for (const lane of speakerLanes) {
-      const seg = lane.segments.find(s => (s.eventId || '') === segId)
+      const seg = lane.segments.find(s => (s.eventId || s.id || '') === segId)
       if (seg && seg.eventId) { selectEvent(seg.eventId); break }
     }
   }, [speakerLanes, selectEvent])
@@ -355,23 +370,18 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
 
   // Reassign a single segment to a different speaker
   const handleReassignSegment = useCallback(async (segId: string, targetSpeaker: string) => {
-    const sourceLane = speakerLanes.find(l => l.segments.some(s => (s.eventId || '') === segId))
+    const sourceLane = speakerLanes.find(l => l.segments.some(s => (s.eventId || s.id || '') === segId))
     if (!sourceLane || sourceLane.speaker === targetSpeaker) return
     setContextMenu(null)
     try {
-      await fetch('/api/speaker/diarization/reassign', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          workspace,
-          segment_id: segId,
-          source_speaker: sourceLane.speaker,
-          target_speaker: targetSpeaker,
-        }),
+      const store = useAppStore.getState()
+      store.addDraft({
+        eventId: segId, opcode: 'ASSIGN_SPEAKER',
+        payload: { new_speaker: targetSpeaker, source_speaker: sourceLane.speaker },
+        before: { speaker: sourceLane.speaker }, after: { speaker: targetSpeaker },
+        timestamp: Date.now(),
       })
-      // Reload lanes after reassign
-      const ws = useAppStore.getState().workspace || ''
-      await useAppStore.getState().fetchSpeakerLanes(ws)
+      await store.applyDraft(segId)
     } catch {}
   }, [speakerLanes, workspace])
 
@@ -382,6 +392,14 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
     audio.src = `/api/speaker/diarization/waveform?workspace=${encodeURIComponent(workspace)}`
     audio.load()
   }, [workspace])
+
+  // ── Patch helpers (IR mutation must go through patch system) ──
+
+  const recordPatch = useCallback(async (eventId: string, opcode: string, payload: Record<string, unknown>, before: Record<string, unknown>, after: Record<string, unknown>) => {
+    const store = useAppStore.getState()
+    store.addDraft({ eventId, opcode, payload, before, after, timestamp: Date.now() })
+    await store.applyDraft(eventId)
+  }, [])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -427,11 +445,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
         case 'Delete':
           if (!selectedSegmentId) break
           e.preventDefault()
-          fetch('/api/speaker/diarization/split', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ speaker: selectedSpeakerId, segment_id: selectedSegmentId }),
-          }).catch(() => {})
+          recordPatch(selectedSegmentId, 'ANNOTATE', { key: 'deleted', value: true }, {}, { deleted: true })
           setSelectedSegmentId(null)
           break
         case 'ArrowLeft':
@@ -450,15 +464,9 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
               .flatMap(l => l.segments.map(s => ({ ...s, speaker: l.speaker })))
               .find(s => s.eventId === selectedSegmentId)
             if (seg) {
-              fetch('/api/speaker/diarization/split', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  speaker: seg.speaker,
-                  segment_index: '0',
-                  new_end: Math.max(0, seg.end + dir),
-                }),
-              }).catch(() => {})
+              recordPatch(selectedSegmentId, 'RESIZE_SEGMENT',
+                { new_end: Math.max(0, seg.end + dir) },
+                { end: seg.end }, { end: Math.max(0, seg.end + dir) })
             }
           }
           e.preventDefault()
@@ -466,12 +474,10 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
         case 'Enter':
           if (e.shiftKey && selectedSegmentId) {
             e.preventDefault()
-            // Split segment at playhead
-            fetch('/api/speaker/diarization/split', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ speaker: selectedSpeakerId, split_at: playheadPosition }),
-            }).catch(() => {})
+            const segToSplit = speakerLanes.flatMap(l => l.segments).find(s => (s.eventId || s.id || '') === selectedSegmentId)
+            if (segToSplit && playheadPosition > segToSplit.start + 0.1 && playheadPosition < segToSplit.end - 0.1) {
+              recordPatch(selectedSegmentId, 'SPLIT_SEGMENT', { split_point: playheadPosition }, {}, { split_point: playheadPosition })
+            }
           }
           break
       }
@@ -484,7 +490,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('click', closeMenu)
     }
-  }, [speakerLanes, selectedSegmentId, selectedSpeakerId, playheadPosition, totalDuration, setPlayhead, onSeek, workspace])
+  }, [speakerLanes, selectedSegmentId, selectedSpeakerId, playheadPosition, totalDuration, setPlayhead, onSeek, workspace, recordPatch])
 
   const handleRulerClick = useCallback((e: React.MouseEvent) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
@@ -492,38 +498,34 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
     const t = Math.max(0, Math.min(totalDuration, coord.pixelToTime(x)))
     setPlayhead(t)
     onSeek?.(t)
-    // Absorb any accumulated scrollLeft into trackScrollLeft (prevents dual-scroll drift)
-    const sl = -coord.timeToPixel(0) // read current internal scrollLeft
-    if (sl !== 0 && scrollRef.current) {
-      setTrackScrollLeft(trackScrollLeft + sl)
-      coord.centerOnTime(t) // resets scrollLeft
-    }
     justSeekedRef.current = true
     setTimeout(() => { justSeekedRef.current = false }, 300)
-  }, [coord, totalDuration, trackScrollLeft, setTrackScrollLeft, setPlayhead, onSeek])
+  }, [coord, totalDuration, setPlayhead, onSeek])
 
-  // Zoom — delegate to coord (same pattern as timeline)
+  // Zoom
   const handleZoomIn = useCallback(() => coord.zoomIn(), [coord])
   const handleZoomOut = useCallback(() => coord.zoomOut(), [coord])
 
-  // Wheel → zoom (ctrl) or scroll (absorbs scrollLeft like timeline)
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault()
-      if (e.deltaY < 0) coord.zoomIn()
-      else coord.zoomOut()
-    } else {
-      e.preventDefault()
-      const totalW = totalDuration * coord.pixelsPerSec
-      const clientW = scrollRef.current?.clientWidth || canvasW
-      const maxS = Math.max(0, totalW - clientW)
-      // timeToPixel(0) = -scrollLeft, so this absorbs scrollLeft into trackScrollLeft
-      const newScroll = trackScrollLeft - coord.timeToPixel(0) + e.deltaY
-      const clamped = Math.max(0, Math.min(maxS, newScroll))
-      coord.setScroll(0)
-      setTrackScrollLeft(clamped)
+  // Wheel → zoom (ctrl) or scroll — native listener for non-passive support
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault()
+        if (e.deltaY < 0) coord.zoomIn()
+        else coord.zoomOut()
+      } else {
+        e.preventDefault()
+        const totalW = totalDuration * coord.pixelsPerSec
+        const clientW = scrollRef.current?.clientWidth || canvasW
+        const maxS = Math.max(0, totalW - clientW)
+        setTrackScrollLeft(Math.max(0, Math.min(maxS, trackScrollLeft + e.deltaY)))
+      }
     }
-  }, [coord, totalDuration, canvasW, trackScrollLeft, setTrackScrollLeft])
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [totalDuration, coord, canvasW, trackScrollLeft, setTrackScrollLeft])
 
   // Time ruler ticks
   const timeRulerTicks = useMemo(() => {
@@ -534,7 +536,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
   }, [totalDuration, coord.pixelsPerSec])
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <Box sx={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', pb: 0.5 }}>
       {/* Header */}
       <Box sx={{
         p: 1.5, borderBottom: '1px solid #d0d5e0',
@@ -567,6 +569,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
         <FormControl size="small" sx={{ minWidth: 100 }}>
           <Select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)}
             sx={{ fontSize: '0.7rem' }}>
+            <MenuItem value="fixed" sx={{ fontSize: '0.7rem' }}>轨道固定</MenuItem>
             <MenuItem value="duration" sx={{ fontSize: '0.7rem' }}>按时长</MenuItem>
             <MenuItem value="confidence" sx={{ fontSize: '0.7rem' }}>按置信度</MenuItem>
             <MenuItem value="conflict" sx={{ fontSize: '0.7rem' }}>按冲突率</MenuItem>
@@ -631,16 +634,21 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
         {/* Left: Speaker list */}
         <Box sx={{
           width: 200, minWidth: 200, borderRight: '1px solid #d0d5e0',
-          overflow: 'hidden auto', bgcolor: '#e8ecf4',
+          overflow: 'hidden', bgcolor: '#e8ecf4', flexShrink: 0,
         }}>
+          {/* Spacer matching time ruler height */}
+          <Box sx={{ height: TIME_RULER_H, minHeight: TIME_RULER_H, borderBottom: '1px solid #c8cdd8' }} />
+          {/* Spacer matching waveform height */}
+          <Box sx={{ height: 48, minHeight: 48, bgcolor: '#dce2f0', borderBottom: '1px solid #c8cdd8' }} />
           {sortedSpeakers.map((lane) => {
             const quality = speakerQualities[lane.speaker]
             const isSelected = selectedSpeakerId === lane.speaker
             const isMulti = selectedSpeakerIds.includes(lane.speaker)
             return (
-              <Box key={lane.speaker} onClick={(e) => handleSelectSpeaker(lane.speaker, e)}
+              <Box key={lane.speaker} data-lane-id={lane.speaker} onClick={(e) => handleSelectSpeaker(lane.speaker, e)}
                 sx={{
-                  p: 1, cursor: 'pointer',
+                  p: 1, cursor: 'pointer', height: LANE_HEIGHT,
+                  display: 'flex', flexDirection: 'column', justifyContent: 'center',
                   borderBottom: '1px solid #d0d5e0',
                   bgcolor: isSelected ? 'rgba(99,102,241,0.12)' : isMulti ? 'rgba(99,102,241,0.06)' : 'transparent',
                   '&:hover': { bgcolor: 'rgba(99,102,241,0.08)' },
@@ -696,7 +704,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
                 <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', ml: 2.5 }}>
                   <Chip label={`${lane.segment_count}段`} size="small"
                     sx={{ fontSize: '0.55rem', height: 16, bgcolor: 'rgba(99,102,241,0.08)' }} />
-                  <Chip label={`${lane.total_duration.toFixed(0)}s`} size="small" variant="outlined"
+                  <Chip label={`${(lane.total_duration ?? 0).toFixed(0)}s`} size="small" variant="outlined"
                     sx={{ fontSize: '0.55rem', height: 16 }} />
                   {quality && quality.avgConfidence < 0.7 && (
                     <Chip icon={<WarningIcon sx={{ fontSize: 10 }} />} label="低置信度" size="small" color="warning"
@@ -713,14 +721,14 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
         </Box>
 
         {/* Center: Speaker timeline */}
-        <Box ref={centerRef} sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <Box ref={centerRef} sx={{ flex: '1 1 0%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {/* Time ruler */}
           <Box ref={rulerRef} onClick={handleRulerClick} sx={{
             position: 'relative', height: TIME_RULER_H, minHeight: TIME_RULER_H,
             bgcolor: '#dce2f0', borderBottom: '1px solid #c8cdd8',
             overflow: 'hidden', cursor: 'pointer',
           }}>
-            <Box sx={{ position: 'relative', width: totalDuration * coord.pixelsPerSec, height: '100%', transform: `translateX(${-trackScrollLeft}px)`, willChange: 'transform' }}>
+            <Box sx={{ position: 'relative', width: totalDuration * coord.pixelsPerSec, height: '100%', transform: 'none', willChange: 'transform' }}>
               {timeRulerTicks.map(t => {
                 const x = coord.timeToPixel(t)
                 return (
@@ -750,7 +758,8 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
           />
 
           {/* Lanes */}
-          <Box ref={scrollRef} onWheel={handleWheel} sx={{ flexGrow: 1, overflow: 'hidden', position: 'relative', bgcolor: '#f1f5f9' }}>
+          <Box ref={scrollRef}
+            sx={{ flexGrow: 1, overflow: "hidden", position: "relative", bgcolor: "#f1f5f9" }}>
             <Box sx={{
               width: totalDuration * coord.pixelsPerSec, minWidth: '100%',
               position: 'relative', minHeight: speakerLanes.length * LANE_HEIGHT,
@@ -759,7 +768,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
               {/* Playhead line */}
               <Box sx={{
                 position: 'absolute',
-                left: coord.timeToPixel(playheadPosition),
+                left: playheadPosition * coord.pixelsPerSec,
                 top: 0, bottom: 0, width: 2, bgcolor: '#FF5252', zIndex: 20, pointerEvents: 'none',
               }} />
               {/* Overlap markers */}
@@ -774,13 +783,13 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
                     backgroundImage: 'repeating-linear-gradient(-45deg, transparent, transparent 3px, rgba(239,68,68,0.15) 3px, rgba(239,68,68,0.15) 6px)',
                     zIndex: 5, pointerEvents: 'none',
                   }}>
-                    <Tooltip title={`重叠: ${ov.speakers.join(', ')}\n${ov.duration.toFixed(1)}s`}>
+                    <Tooltip title={`重叠: ${ov.speakers.join(', ')}\n${ov.duration.toFixed(1)}s`} disableInteractive>
                       <Box sx={{ width: '100%', height: '100%' }} />
                     </Tooltip>
                   </Box>
                 )
               })}
-              {speakerLanes.map((lane) => (
+              {sortedSpeakers.map((lane) => (
                 <Box key={lane.speaker} sx={{
                   height: LANE_HEIGHT,
                   borderBottom: '1px solid #d0d5e0',
@@ -793,11 +802,12 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
                   onDrop={(e) => {
                     e.preventDefault()
                     const segId = e.dataTransfer.getData('text/plain') || dragSegmentId
+                    console.log('🟢 DROP', segId, '→', lane.speaker)
                     if (segId) handleReassignSegment(segId, lane.speaker)
                     setDragSegmentId(null)
                   }}>
                   {lane.segments.map((seg, j) => {
-                    const left = coord.timeToPixel(seg.start)
+                    const left = seg.start * coord.pixelsPerSec
                     const width = Math.max(2, (seg.end - seg.start) * coord.pixelsPerSec)
                     const conf = seg.confidence
                     const segId = seg.eventId || `${lane.speaker}_seg_${j}`
@@ -815,33 +825,62 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
                     const hasWarning = screeningFlags.some((f: any) => f.severity === 'warning')
                     const hasDivergence = crossFlags.length > 0
                     const markerColor = hasCritical ? '#EF4444' : hasWarning ? '#F59E0B' : hasDivergence ? '#8B5CF6' : null
+                    const isResizing = resizePreview?.segId === segId
+                    const displayLeft = isResizing ? resizePreview!.left : left
+                    const displayWidth = isResizing ? resizePreview!.width : width
                     return (<Fragment key={j}>
-                      <Tooltip title={`${seg.text.slice(0, 80)}\n${seg.start.toFixed(1)}s-${seg.end.toFixed(1)}s | conf=${conf.toFixed(2)}`}>
+                      <Tooltip title={`${(seg.text || '').slice(0, 80)}\n${(seg.start ?? 0).toFixed(1)}s-${(seg.end ?? 0).toFixed(1)}s | conf=${(conf ?? 0).toFixed(2)}`}
+                        disableInteractive
+                        open={hoveredSegId === segId && dragSegmentId === null && resizePreview === null}
+                        onOpen={() => setHoveredSegId(segId)}
+                        onClose={() => setHoveredSegId(prev => (prev === segId ? null : prev))}>
                         <Box sx={{
-                          position: 'absolute', left, top: 10, height: LANE_HEIGHT - 20, width,
+                          position: 'absolute', left: displayLeft, top: 10, height: LANE_HEIGHT - 20, width: displayWidth,
                           bgcolor: bgColor, borderRadius: 0.5,
                           borderLeft: `2px solid ${lane.color}`,
                           border: isSegSelected ? `2px solid ${lane.color}` : 'none',
                           boxShadow: isSegSelected ? `0 0 0 2px rgba(99,102,241,0.4)`
                             : isPlaying ? `0 0 4px 2px rgba(255,82,82,0.4)` : 'none',
-                          cursor: 'pointer', zIndex: isSegSelected ? 4 : isPlaying ? 2 : 1,
+                          cursor: isResizing ? 'col-resize' : 'pointer', zIndex: isSegSelected ? 4 : isPlaying ? 2 : 1,
                           '&:hover': { filter: 'brightness(1.2)', zIndex: 3 },
                           opacity: dragSegmentId === segId ? 0.4 : 1,
                         }}
                           onClick={(e) => {
+                            if (isResizing) return
                             handleSegmentSelect(segId, e)
                             handleSegmentClick(segId, seg.start)
                           }}
                           onContextMenu={(e) => handleSegmentRightClick(segId, e)}
+                          data-segment-id={segId}
                           draggable
                           onDragStart={(e) => {
+                            console.log('🔵 DRAG_START', segId)
                             setDragSegmentId(segId)
+                            setHoveredSegId(null)  // HTML5 拖拽期间 mouseleave 被抑制, 不清则拖后残留 tooltip
                             e.dataTransfer.effectAllowed = 'move'
                             e.dataTransfer.setData('text/plain', segId)
                           }}
-                          onDragEnd={() => setDragSegmentId(null)}
+                          onDragEnd={() => {
+                            console.log('🔴 DRAG_END', segId)
+                            setDragSegmentId(null)
+                          }}
                         />
                       </Tooltip>
+                      {/* Resize handles — rendered as siblings ABOVE the segment for reliable hit-testing */}
+                      <Box onMouseDown={(e) => handleResizeStart(segId, 'left', e, seg, lane.speaker)} sx={{
+                        position: 'absolute', left: displayLeft, top: 10, height: LANE_HEIGHT - 20, width: '12px',
+                        cursor: 'col-resize',
+                        bgcolor: 'rgba(0,0,0,0.18)',
+                        '&:hover': { bgcolor: 'rgba(255,255,255,0.4)' },
+                        zIndex: 8,
+                      }} />
+                      <Box onMouseDown={(e) => handleResizeStart(segId, 'right', e, seg, lane.speaker)} data-resize-right={segId} sx={{
+                        position: 'absolute', left: displayLeft + displayWidth - 12, top: 10, height: LANE_HEIGHT - 20, width: '12px',
+                        cursor: 'col-resize',
+                        bgcolor: 'rgba(0,0,0,0.18)',
+                        '&:hover': { bgcolor: 'rgba(255,255,255,0.4)' },
+                        zIndex: 8,
+                      }} />
                       {markerColor && (
                         <Box sx={{
                           position: 'absolute', left: left + width - 6, top: 3,
@@ -860,377 +899,21 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
               )}
             </Box>
           </Box>
-
-          {/* Scrollbar — simple native drag, bypasses React event complexity */}
-          <SpeakerScrollbar
-            totalDuration={totalDuration}
-            pixelsPerSec={coord.pixelsPerSec}
-            trackScrollLeft={trackScrollLeft}
-            setTrackScrollLeft={setTrackScrollLeft}
-            onDragStart={() => { sliderDraggingRef.current = true }}
-            onDragEnd={() => { sliderDraggingRef.current = false }}
-          />
-        </Box>
-
-        {/* Right: Speaker Inspector */}
-        <Box sx={{
-          width: 280, minWidth: 280, borderLeft: '1px solid #d0d5e0',
-          overflow: 'hidden auto', bgcolor: '#e8ecf4', p: 1.5,
-        }}>
-          {selectedLane ? (
-            <>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                <Box sx={{ width: 12, height: 12, borderRadius: '50%', bgcolor: selectedLane.color, flexShrink: 0 }} />
-                <Typography variant="subtitle2" sx={{ fontSize: '0.8rem' }}>{selectedLane.display_name}</Typography>
-              </Box>
-
-              {/* Compact stats card */}
-              <Box sx={{
-                display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0.5, mb: 1.5,
-                bgcolor: '#f1f5f9', borderRadius: 1, p: 1,
-              }}>
-                <Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.55rem' }}>片段</Typography>
-                  <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 600 }}>{selectedLane.segment_count}</Typography>
-                </Box>
-                <Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.55rem' }}>总时长</Typography>
-                  <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 600 }}>{selectedLane.total_duration.toFixed(1)}s</Typography>
-                </Box>
-                {selectedQuality && (
-                  <>
-                    <Box>
-                      <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.55rem' }}>置信度</Typography>
-                      <Typography variant="body2" sx={{
-                        fontSize: '0.75rem', fontWeight: 600,
-                        color: selectedQuality.avgConfidence >= 0.9 ? '#10b981' : selectedQuality.avgConfidence >= 0.7 ? '#f59e0b' : '#ef4444',
-                      }}>
-                        {(selectedQuality.avgConfidence * 100).toFixed(0)}%
-                      </Typography>
-                    </Box>
-                    <Box>
-                      <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.55rem' }}>连续性</Typography>
-                      <Typography variant="body2" sx={{
-                        fontSize: '0.75rem', fontWeight: 600,
-                        color: selectedQuality.continuityScore >= 0.8 ? '#10b981' : '#f59e0b',
-                      }}>
-                        {(selectedQuality.continuityScore * 100).toFixed(0)}%
-                      </Typography>
-                    </Box>
-                  </>
-                )}
-                {selectedQuality && selectedQuality.conflictRate > 0 && (
-                  <Box sx={{ gridColumn: '1 / -1' }}>
-                    <Chip icon={<WarningIcon sx={{ fontSize: 10 }} />}
-                      label={`冲突率: ${(selectedQuality.conflictRate * 100).toFixed(0)}%`}
-                      size="small" color="warning" sx={{ fontSize: '0.6rem', height: 20 }} />
-                  </Box>
-                )}
-              </Box>
-
-              {/* Color picker */}
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>说话人颜色</Typography>
-              <Box sx={{ display: 'flex', gap: 0.5, mb: 1.5, flexWrap: 'wrap' }}>
-                {LANE_COLORS.map(c => (
-                  <Box key={c} onClick={() => {
-                    fetch('/api/speaker/diarization/rename', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ speaker: selectedLane.speaker, color: c, workspace }),
-                    }).catch(() => {})
-                  }}
-                    sx={{
-                      width: 22, height: 22, borderRadius: '50%', bgcolor: c,
-                      cursor: 'pointer', border: selectedLane.color === c ? '3px solid #1e293b' : '2px solid transparent',
-                      '&:hover': { transform: 'scale(1.15)' },
-                      transition: 'transform 0.1s',
-                    }} />
-                ))}
-                <label style={{
-                  width: 22, height: 22, borderRadius: '50%', cursor: 'pointer',
-                  background: `conic-gradient(red,yellow,lime,cyan,blue,magenta,red)`,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <input type="color" value={selectedLane.color}
-                    onChange={e => {
-                      fetch('/api/speaker/diarization/rename', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ speaker: selectedLane.speaker, color: e.target.value, workspace }),
-                      }).catch(() => {})
-                    }}
-                    style={{ width: 0, height: 0, opacity: 0, position: 'absolute' }} />
-                </label>
-              </Box>
-
-              {/* Voice binding */}
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>声线绑定</Typography>
-              <FormControl size="small" fullWidth sx={{ mb: 1 }}>
-                <Select value={selectedLane.voice_id || ''}
-                  onChange={(e) => bindVoice(selectedLane.speaker, e.target.value)}
-                  displayEmpty sx={{ fontSize: '0.7rem' }}>
-                  <MenuItem value="" sx={{ fontSize: '0.7rem' }}><em>未绑定</em></MenuItem>
-                  {voicePresets.map(v => (
-                    <MenuItem key={v.id} value={v.id} sx={{ fontSize: '0.7rem' }}>{v.name} ({v.engine})</MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              {selectedLane.voice_id && (
-                <Button size="small" variant="outlined"
-                  startIcon={auditionLoading === selectedLane.voice_id ? <CircularProgress size={12} /> : <PlayArrowIcon />}
-                  onClick={() => handleAudition(selectedLane.voice_id)}
-                  disabled={auditionLoading !== null}
-                  fullWidth sx={{ fontSize: '0.7rem', mb: 1 }}>试听声线</Button>
-              )}
-
-              <Divider sx={{ my: 1 }} />
-
-              {/* Actions */}
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                <Button size="small" variant="outlined" startIcon={<LockIcon />}
-                  onClick={() => handleLockSpeaker(selectedLane.speaker)}
-                  fullWidth sx={{ fontSize: '0.7rem', justifyContent: 'flex-start' }}>锁定说话人</Button>
-              </Box>
-
-              {/* Low-confidence segments */}
-              {selectedLane.segments.filter(s => s.confidence < 0.7).length > 0 && (
-                <>
-                  <Divider sx={{ my: 1 }} />
-                  <Typography variant="caption" color="warning.main" sx={{ display: 'block', mb: 0.5 }}>
-                    低置信度片段 ({selectedLane.segments.filter(s => s.confidence < 0.7).length})
-                  </Typography>
-                  {selectedLane.segments.filter(s => s.confidence < 0.7).slice(0, 5).map((s, j) => (
-                    <Box key={j} sx={{
-                      p: 0.5, mb: 0.5, borderRadius: 0.5, bgcolor: 'rgba(245,158,11,0.1)',
-                      cursor: 'pointer', '&:hover': { bgcolor: 'rgba(245,158,11,0.2)' },
-                    }} onClick={() => handleSegmentClick(s.eventId || `${selectedLane.speaker}_low_${j}`, s.start)}>
-                      <Typography variant="caption" sx={{ fontSize: '0.6rem', display: 'block' }} noWrap>
-                        {s.text.slice(0, 40)}{s.text.length > 40 ? '…' : ''}
-                      </Typography>
-                      <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.55rem' }}>
-                        {s.start.toFixed(1)}s-{s.end.toFixed(1)}s · conf={s.confidence.toFixed(2)}
-                      </Typography>
-                    </Box>
-                  ))}
-                </>
-              )}
-            </>
-          ) : (
-            <Box sx={{ textAlign: 'center', py: 4 }}>
-              <PersonIcon sx={{ fontSize: 40, color: 'text.disabled', mb: 1 }} />
-              <Typography variant="body2" color="text.secondary">选择一个说话人以查看详情</Typography>
-              <Typography variant="caption" color="text.disabled">可进行声线绑定、重命名、试听等操作</Typography>
-
-              {/* Verification summary */}
-              {verification && verification.issues.length > 0 && (
-                <Box sx={{ mt: 2, textAlign: 'left', borderTop: '1px solid #d0d5e0', pt: 1.5 }}>
-                  <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 1, fontSize: '0.65rem' }}>
-                    说话人质量报告
-                  </Typography>
-                  <Box sx={{ display: 'flex', gap: 0.5, mb: 1, flexWrap: 'wrap', justifyContent: 'center' }}>
-                    {verification.summary.errors > 0 && (
-                      <Chip label={`${verification.summary.errors} 错误`} size="small" color="error"
-                        sx={{ fontSize: '0.6rem', height: 20 }} />
-                    )}
-                    {verification.summary.warnings > 0 && (
-                      <Chip label={`${verification.summary.warnings} 警告`} size="small" color="warning"
-                        sx={{ fontSize: '0.6rem', height: 20 }} />
-                    )}
-                    {verification.summary.info > 0 && (
-                      <Chip label={`${verification.summary.info} 信息`} size="small" color="info"
-                        sx={{ fontSize: '0.6rem', height: 20 }} />
-                    )}
-                    {verification.passesAll && verification.summary.totalIssues === 0 && (
-                      <Chip label="全部通过" size="small" color="success"
-                        sx={{ fontSize: '0.6rem', height: 20 }} />
-                    )}
-                  </Box>
-                  <Box sx={{ maxHeight: 160, overflow: 'auto' }}>
-                    {verification.issues.slice(0, 8).map((issue: SpeakerVerificationIssue, idx: number) => (
-                      <Box key={idx} sx={{
-                        p: 0.5, mb: 0.5, borderRadius: 0.5, fontSize: '0.6rem',
-                        bgcolor: issue.severity === 'error' ? 'rgba(239,68,68,0.1)'
-                          : issue.severity === 'warning' ? 'rgba(245,158,11,0.1)' : 'rgba(59,130,246,0.06)',
-                        borderLeft: `3px solid ${issue.severity === 'error' ? '#ef4444'
-                          : issue.severity === 'warning' ? '#f59e0b' : '#3b82f6'}`,
-                      }}>
-                        <Typography variant="caption" sx={{ fontSize: '0.6rem', lineHeight: 1.3 }}>
-                          {issue.message}
-                        </Typography>
-                      </Box>
-                    ))}
-                  </Box>
-                </Box>
-              )}
-
-              {/* Screening + Cross-Model issues */}
-              {(() => {
-                const scrIssues = (screeningResults?.issues || []).filter((iss: any) =>
-                  iss.speaker_id === selectedSpeakerId || iss.segment_id === selectedSegmentId)
-                const crossIssues = (crossModelResults?.divergences || []).filter((d: any) =>
-                  d.pyannote_label === selectedSpeakerId || d.segment_id === selectedSegmentId)
-                const total = scrIssues.length + crossIssues.length
-                if (total === 0) return null
-                return (
-                  <Box sx={{ mt: 1.5, textAlign: 'left', borderTop: '1px solid #d0d5e0', pt: 1 }}>
-                    <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5, fontSize: '0.65rem' }}>
-                      质量筛查 ({total})
-                    </Typography>
-                    {scrIssues.map((iss: any, idx: number) => (
-                      <Box key={idx} sx={{ mb: 0.5, p: 0.5, borderRadius: 0.5, bgcolor: iss.severity === 'critical' ? '#fef2f2' : '#fffbeb' }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                          <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: iss.severity === 'critical' ? '#EF4444' : '#F59E0B', flexShrink: 0 }} />
-                          <Typography variant="caption" sx={{ fontSize: '0.6rem', fontWeight: 500 }}>{iss.rule}</Typography>
-                        </Box>
-                        <Typography variant="caption" sx={{ fontSize: '0.55rem', color: 'text.secondary' }}>{iss.message}</Typography>
-                      </Box>
-                    ))}
-                    {crossIssues.map((d: any, idx: number) => (
-                      <Box key={`cm_${idx}`} sx={{ mb: 0.5, p: 0.5, borderRadius: 0.5, bgcolor: '#f5f3ff' }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                          <Box sx={{ width: 6, height: 6, borderRadius: '50%', bgcolor: '#8B5CF6', flexShrink: 0 }} />
-                          <Typography variant="caption" sx={{ fontSize: '0.6rem', fontWeight: 500 }}>cross-model</Typography>
-                        </Box>
-                        <Typography variant="caption" sx={{ fontSize: '0.55rem', color: 'text.secondary' }}>
-                          pyannote→{d.pyannote_label}, WeSpeaker→{d.wespeaker_label} (cos={d.confidence?.toFixed(2)})
-                        </Typography>
-                      </Box>
-                    ))}
-                  </Box>
-                )
-              })()}
-
-              {/* Clustering suggestions */}
-              {clusterSuggestions.length > 0 && (
-                <Box sx={{ mt: 1.5, textAlign: 'left', borderTop: '1px solid #d0d5e0', pt: 1 }}>
-                  <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5, fontSize: '0.65rem' }}>
-                    相似说话人建议 ({clusterSuggestions.length})
-                  </Typography>
-                  {clusterSuggestions.map((cs, idx) => (
-                    <Box key={idx} sx={{
-                      p: 0.5, mb: 0.5, borderRadius: 0.5, bgcolor: 'rgba(99,102,241,0.06)',
-                      borderLeft: '3px solid #6366f1',
-                    }}>
-                      <Typography variant="caption" sx={{ fontSize: '0.6rem', display: 'block' }}>
-                        {cs.speaker_a} ↔ {cs.speaker_b} {(cs.similarity * 100).toFixed(0)}% 相似
-                      </Typography>
-                      <Button size="small" sx={{ fontSize: '0.55rem', minHeight: 18, mt: 0.25 }}
-                        onClick={() => {
-                          fetch('/api/speaker/diarization/merge', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ source_speaker: cs.speaker_a, target_speaker: cs.speaker_b, workspace }),
-                          }).catch(() => {})
-                        }}>
-                        合并
-                      </Button>
-                    </Box>
-                  ))}
-                </Box>
-              )}
-
-              {/* Drift warnings */}
-              {driftSuggestions.length > 0 && (
-                <Box sx={{ mt: 1.5, textAlign: 'left', borderTop: '1px solid #d0d5e0', pt: 1 }}>
-                  <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5, fontSize: '0.65rem' }}>
-                    说话人漂移警告 ({driftSuggestions.length})
-                  </Typography>
-                  {driftSuggestions.map((ds, idx) => (
-                    <Box key={idx} sx={{
-                      p: 0.5, mb: 0.5, borderRadius: 0.5, bgcolor: 'rgba(245,158,11,0.08)',
-                      borderLeft: '3px solid #f59e0b',
-                    }}>
-                      <Typography variant="caption" sx={{ fontSize: '0.6rem', display: 'block' }}>
-                        {ds.speaker_id}: {ds.suggestion}
-                      </Typography>
-                      <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.55rem' }}>
-                        漂移得分: {(ds.score * 100).toFixed(0)}%
-                      </Typography>
-                    </Box>
-                  ))}
-                </Box>
-              )}
-
-              {/* Low-confidence review mode toggle */}
-              {speakerLanes.some(l => l.segments.some(s => s.confidence < 0.7)) && (
-                <Button size="small" variant="outlined" color="warning"
-                  onClick={() => setReviewMode(!reviewMode)}
-                  sx={{ mt: 1.5, fontSize: '0.65rem' }}>
-                  {reviewMode ? '退出逐段审核' : '逐段审核低置信度'}
-                </Button>
-              )}
-
-              {/* Overlap info chip */}
-              {overlaps.length > 0 && (
-                <Box sx={{ mt: 1 }}>
-                  <Chip label={`${overlaps.length} 处重叠语音`} size="small" color="error"
-                    sx={{ fontSize: '0.6rem', height: 20 }} />
-                </Box>
-              )}
-            </Box>
-          )}
-
-          {/* Review mode overlay */}
-          {reviewMode && selectedLane && (
-            <Box sx={{
-              borderTop: '1px solid #d0d5e0', pt: 1, mt: 1, maxHeight: 300, overflow: 'auto',
-            }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
-                <Typography variant="caption" sx={{ fontWeight: 600, fontSize: '0.65rem', flexGrow: 1 }}>
-                  低置信度审核: {selectedLane.display_name}
-                </Typography>
-                <Chip label={`${reviewedSegments.size}/${selectedLane.segments.filter(s => s.confidence < 0.7).length}`}
-                  size="small" color="primary" sx={{ fontSize: '0.55rem', height: 18 }} />
-              </Box>
-              {selectedLane.segments.filter(s => s.confidence < 0.7).map((s, j) => {
-                const segId = s.eventId || `${selectedLane.speaker}_review_${j}`
-                const reviewed = reviewedSegments.has(segId)
-                return (
-                  <Box key={j} sx={{
-                    p: 0.5, mb: 0.5, borderRadius: 0.5, cursor: 'pointer',
-                    bgcolor: reviewed ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.1)',
-                    opacity: reviewed ? 0.6 : 1,
-                    '&:hover': { bgcolor: 'rgba(99,102,241,0.1)' },
-                  }} onClick={() => {
-                    handleSegmentClick(s.eventId || `${selectedLane.speaker}_seg_${j}`, s.start)
-                    setReviewedSegments(prev => {
-                      const next = new Set(prev)
-                      if (next.has(segId)) next.delete(segId)
-                      else next.add(segId)
-                      return next
-                    })
-                  }}>
-                    <Typography variant="caption" sx={{ fontSize: '0.6rem', display: 'block' }} noWrap>
-                      {s.text.slice(0, 50)}{s.text.length > 50 ? '…' : ''}
-                    </Typography>
-                    <Box sx={{ display: 'flex', gap: 0.5, mt: 0.25 }}>
-                      <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.55rem' }}>
-                        {s.start.toFixed(1)}s-{s.end.toFixed(1)}s
-                      </Typography>
-                      <Chip label={`${(s.confidence * 100).toFixed(0)}%`}
-                        size="small" color="warning" sx={{ fontSize: '0.5rem', height: 16 }} />
-                      {reviewed && <Chip label="已审核" size="small" color="success"
-                        sx={{ fontSize: '0.5rem', height: 16 }} />}
-                    </Box>
-                  </Box>
-                )
-              })}
-              <Button size="small" variant="text" color="primary"
-                onClick={() => {
-                  selectedLane.segments.filter(s => s.confidence >= 0.7).forEach(s => {
-                    const id = s.eventId || `${selectedLane.speaker}_hi_${s.start}`
-                    setReviewedSegments(prev => new Set([...prev, id]))
-                  })
-                }}
-                sx={{ fontSize: '0.6rem', mt: 0.5 }} fullWidth>
-                全部标记为已审核
-              </Button>
-            </Box>
-          )}
         </Box>
       </Box>
 
-      <audio ref={audioRef} style={{ display: 'none' }} />
+      {/* Native scrollbar — outside flex row, like timeline pattern */}
+      <SpeakerScrollbar
+          totalDuration={totalDuration}
+          pixelsPerSec={coord.pixelsPerSec}
+          trackScrollLeft={trackScrollLeft}
+          setTrackScrollLeft={setTrackScrollLeft}
+          containerWidth={centerRef.current?.clientWidth || 600}
+          onDragStart={() => { sliderDraggingRef.current = true }}
+          onDragEnd={() => { sliderDraggingRef.current = false }}
+        />
+
+        <audio ref={audioRef} style={{ display: 'none' }} />
 
       {/* Create speaker dialog */}
       <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} maxWidth="xs" fullWidth>
@@ -1284,7 +967,7 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
         <MenuItem dense onClick={() => {
           const seg = speakerLanes.flatMap(l =>
             l.segments.map(s => ({ ...s, speaker: l.speaker })))
-            .find(s => (s.eventId || '') === (contextMenu?.segmentId || ''))
+            .find(s => (s.eventId || s.id || '') === (contextMenu?.segmentId || ''))
           if (seg && contextMenu) {
             setEditingName(seg.speaker)
             setEditValue(seg.speaker)
@@ -1293,16 +976,28 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
         }} sx={{ fontSize: '0.75rem' }}>
           重命名说话人
         </MenuItem>
-        <MenuItem dense onClick={() => {
+        <MenuItem dense onClick={async () => {
           if (contextMenu?.segmentId) {
-            fetch('/api/speaker/diarization/split', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ speaker: selectedSpeakerId, split_at: playheadPosition }),
-            }).catch(() => {})
+            const segId = contextMenu.segmentId
+            // Record patch
+            const store = useAppStore.getState()
+            store.addDraft({
+              eventId: segId, opcode: 'SPLIT_SEGMENT',
+              payload: { split_point: playheadPosition },
+              before: {}, after: { split_point: playheadPosition },
+              timestamp: Date.now(),
+            })
+            await store.applyDraft(segId)
           }
           setContextMenu(null)
-        }} sx={{ fontSize: '0.75rem' }}>
+        }} sx={{ fontSize: '0.75rem' }}
+          disabled={(() => {
+            if (!contextMenu?.segmentId) return true
+            const seg = speakerLanes.flatMap(l => l.segments).find(s => (s.eventId || s.id || '') === contextMenu.segmentId)
+            if (!seg) return true
+            return playheadPosition <= seg.start + 0.1 || playheadPosition >= seg.end - 0.1
+          })()}
+        >
           在播放头处拆分
         </MenuItem>
         <Divider />
@@ -1310,8 +1005,11 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
           分配给说话人...
         </MenuItem>
         {speakerLanes.filter(l => {
-          const segLane = speakerLanes.find(ll => ll.segments.some(s => (s.eventId || '') === contextMenu?.segmentId))
-          return l.speaker !== segLane?.speaker
+          const segLane = speakerLanes.find(ll => ll.segments.some(s => {
+            const sid = s.eventId || s.id || ''
+            return sid === (contextMenu?.segmentId || '')
+          }))
+          return l.speaker !== (segLane?.speaker || '')
         }).map(l => (
           <MenuItem key={l.speaker} dense sx={{ fontSize: '0.7rem', pl: 3 }}
             onClick={() => handleReassignSegment(contextMenu?.segmentId || '', l.speaker)}>
@@ -1324,23 +1022,21 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
           if (contextMenu?.segmentId) {
             // Find adjacent segment in same lane and merge
             const lane = speakerLanes.find(l =>
-              l.segments.some(s => (s.eventId || '') === contextMenu.segmentId))
+              l.segments.some(s => (s.eventId || s.id || '') === contextMenu.segmentId))
             if (lane) {
               const sorted = [...lane.segments].sort((a, b) => a.start - b.start)
-              const idx = sorted.findIndex(s => (s.eventId || '') === contextMenu.segmentId)
+              const idx = sorted.findIndex(s => (s.eventId || s.id || '') === contextMenu.segmentId)
               if (idx >= 0 && idx < sorted.length - 1) {
                 const next = sorted[idx + 1]
-                // Merge: extend current segment to cover both
-                const body = JSON.stringify({
-                  speaker: lane.speaker,
-                  segment_id: contextMenu.segmentId,
-                  merge_with_next: { start: next.start, end: next.end },
+                // Record patch for merge
+                const store = useAppStore.getState()
+                store.addDraft({
+                  eventId: contextMenu.segmentId, opcode: 'MERGE',
+                  payload: { merge_with: next.eventId || next.id || '' },
+                  before: {}, after: { merged: true },
+                  timestamp: Date.now(),
                 })
-                fetch('/api/speaker/diarization/merge', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body,
-                }).catch(() => {})
+                store.applyDraft(contextMenu.segmentId)
               }
             }
           }
@@ -1349,14 +1045,19 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
           与下一段合并
         </MenuItem>
         <Divider />
-        <MenuItem dense onClick={() => {
+        <MenuItem dense onClick={async () => {
           if (contextMenu?.segmentId) {
+            const segId = contextMenu.segmentId
             setSelectedSegmentId(null)
-            fetch('/api/speaker/diarization/split', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ speaker: selectedSpeakerId, segment_id: contextMenu.segmentId }),
-            }).catch(() => {})
+            // Record patch
+            const store = useAppStore.getState()
+            store.addDraft({
+              eventId: segId, opcode: 'ANNOTATE',
+              payload: { key: 'deleted', value: true },
+              before: {}, after: { deleted: true },
+              timestamp: Date.now(),
+            })
+            await store.applyDraft(segId)
           }
           setContextMenu(null)
         }} sx={{ fontSize: '0.75rem', color: 'error.main' }}>
@@ -1369,35 +1070,23 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
 
 // ── SpeakerScrollbar — pure native DOM drag, no React synthetic events ──
 
-function SpeakerScrollbar({ totalDuration, pixelsPerSec, trackScrollLeft, setTrackScrollLeft, onDragStart, onDragEnd }: {
+function SpeakerScrollbar({ totalDuration, pixelsPerSec, trackScrollLeft, setTrackScrollLeft, containerWidth, onDragStart, onDragEnd }: {
   totalDuration: number
   pixelsPerSec: number
   trackScrollLeft: number
   setTrackScrollLeft: (v: number) => void
+  containerWidth: number
   onDragStart: () => void
   onDragEnd: () => void
 }) {
   const barRef = useRef<HTMLDivElement | null>(null)
-  const [barW, setBarW] = useState(0)
-
-  useEffect(() => {
-    const el = barRef.current
-    if (!el || el.clientWidth <= 0) return
-    setBarW(el.clientWidth)
-    const obs = new ResizeObserver((entries) => {
-      for (const e of entries) { if (e.contentRect.width > 0) setBarW(e.contentRect.width) }
-    })
-    obs.observe(el)
-    return () => obs.disconnect()
-  }, [])
 
   const totalW = totalDuration * pixelsPerSec
-  const maxSL = Math.max(0, totalW - (barW || 600))
-  const max = Math.max(maxSL, trackScrollLeft + 1, 100)
+  const max = Math.max(100, totalW - containerWidth * 0.7)
 
   return (
     <Box ref={barRef} sx={{
-      flexShrink: 0, borderTop: '1px solid #d0d5e0',
+      flexShrink: 0, width: '100%', borderTop: '1px solid #d0d5e0',
       bgcolor: '#e8ecf4', height: 14, position: 'relative', overflow: 'hidden',
     }}>
       <input
@@ -1405,14 +1094,13 @@ function SpeakerScrollbar({ totalDuration, pixelsPerSec, trackScrollLeft, setTra
         min={0}
         max={max}
         step={1}
-        value={trackScrollLeft}
+        value={Math.min(trackScrollLeft, max)}
         onChange={(e) => setTrackScrollLeft(Number(e.target.value))}
         onMouseDown={onDragStart}
         onMouseUp={onDragEnd}
         style={{
           width: '100%', height: '100%', margin: 0, padding: 0,
-          background: 'transparent', cursor: 'col-resize',
-          position: 'absolute', inset: 0,
+          cursor: 'col-resize', accentColor: '#6366F1',
         }}
       />
     </Box>

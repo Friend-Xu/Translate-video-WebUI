@@ -33,13 +33,20 @@ class RollbackManager:
         if es is None or target_version < 0 or target_version >= len(es.patches):
             return state
         kept = es.patches[:target_version + 1]
-        es.patches = kept
-        es.derivatives.clear()
-        for p in kept:
-            from core.runtime.config_resolver import deep_merge as _dm
-            _dm(es.derivatives, p.value)
+        self._replay(es, state, kept)
         self.dep_graph.invalidate(segment_id)
         return state
+
+    @staticmethod
+    def _replay(es, state: TimelineProjectState, patches: list) -> None:
+        """清空槽位容器并用 kept patches 经 PatchEngine 重放 (Phase 3B 类型化)。"""
+        from core.runtime.patch_engine import PatchEngine
+        es._data.clear()
+        es.patches = []
+        engine = PatchEngine()
+        for p in patches:
+            engine.apply(state, p)
+        es.patches = list(patches)
 
     def get_segment_versions(self, state: TimelineProjectState,
                              segment_id: str) -> list[dict]:
@@ -47,7 +54,7 @@ class RollbackManager:
         if es is None:
             return []
         return [
-            {"version": i, "patch_id": p.id, "op": str(p.op),
+            {"version": i, "patch_id": p.id, "op": p.op.value,
              "timestamp": p.timestamp, "author": p.author,
              "confidence": p.confidence}
             for i, p in enumerate(es.patches)
@@ -68,11 +75,7 @@ class RollbackManager:
                 continue
             kept = [p for p in es.patches
                     if target_timestamp is None or p.timestamp <= target_timestamp]
-            es.patches = kept
-            es.derivatives.clear()
-            for p in kept:
-                from core.runtime.config_resolver import deep_merge as _dm
-                _dm(es.derivatives, p.value)
+            self._replay(es, state, kept)
         return state
 
     def rollback_global(self, state: TimelineProjectState,

@@ -29,7 +29,11 @@ class SnapshotManager:
         data = {"label": name, "timestamp": time.time(), "patch_index": idx,
                 "events": {}, "speakers": {}}
         for eid, es in state.event_states.items():
-            data["events"][eid] = {"id": es.id, "derivatives": dict(es.derivatives)}
+            data["events"][eid] = {"id": es.id, "derivatives": {
+                # 类型化槽位序列化为 dict (Phase 3A)
+                k: (v.to_dict() if hasattr(v, "to_dict") else dict(v))
+                for k, v in es._data.items()
+            }}
         for sid, spk in state.ir.speakers.items():
             data["speakers"][sid] = {"id": spk.id, "name": spk.name, "config": spk.config}
         with open(path, "w", encoding="utf-8") as f:
@@ -44,7 +48,7 @@ class SnapshotManager:
         for eid, edata in data.get("events", {}).items():
             es = state.get_event(eid)
             if es and "derivatives" in edata:
-                es.derivatives.clear(); es.derivatives.update(edata["derivatives"])
+                es._data.clear(); es._data.update(edata["derivatives"])  # dict 由 _slot 迁移
         return data.get("patch_index", 0)
 
 def generate_undo_patch(original, previous_state):

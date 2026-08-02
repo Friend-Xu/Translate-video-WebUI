@@ -58,7 +58,7 @@ class IndexTTSCompositePass(TimelinePass):
         prompt_history: list[dict] = self._build_prompt_history(state)
 
         for es in state.sorted_events():
-            if es.tts.get("audio_ref"):
+            if es.tts.audio_ref:
                 continue
 
             ctx = self._build_context(es, prompt_map)
@@ -121,7 +121,7 @@ class IndexTTSCompositePass(TimelinePass):
                     deviation_before=deviation,
                     search_reached_limit=True,
                 )
-            es.tts["speed_decision"] = sd.as_dict()
+            es.tts.speed_decision = sd.as_dict()
 
             # Step 4: SCORE
             score = scorer.score(ctx, patch, prompt_history)
@@ -150,7 +150,7 @@ class IndexTTSCompositePass(TimelinePass):
                     if promoted:
                         es.provenance["voice_asset_promoted"] = promoted.asset_id
             else:
-                es.runtime["tts_status"] = "rejected"
+                es.runtime.tts_status = "rejected"
 
             self._update_prompt_history(prompt_history, ctx, patch)
 
@@ -174,7 +174,7 @@ class IndexTTSCompositePass(TimelinePass):
             tts = es.tts
             if tts.get("audio_ref") and tts.get("engine") == "indextts":
                 history.append({
-                    "speaker_id": es.speaker.get("speaker_id"),
+                    "speaker_id": es.speaker.speaker_id,
                     "speaker_audio": tts.get("speaker_audio", ""),
                     "duration": tts.get("duration", 0),
                     "emotion_used": tts.get("emo_alpha", ""),
@@ -198,7 +198,7 @@ class IndexTTSCompositePass(TimelinePass):
                        prompt_map: dict[str, str]) -> IndexTTSSegmentContext:
         trans_raw = es.translation
         translation = (trans_raw.get("text", "") if isinstance(trans_raw, dict) else str(trans_raw or "")) or es.ir.text_ref
-        speaker_id = es.speaker.get("speaker_id")
+        speaker_id = es.speaker.speaker_id
         return IndexTTSSegmentContext(
             segment_id=es.id,
             translation_text=translation,
@@ -206,5 +206,5 @@ class IndexTTSCompositePass(TimelinePass):
             speaker_id=speaker_id,
             speaker_embedding_ref=prompt_map.get(speaker_id or "", ""),
             duration_target=es.end - es.start,
-            semantic_embedding_ref=es.semantic.get("embedding_ref", ""),
+            semantic_embedding_ref=es.semantic.embedding_ref,
         )

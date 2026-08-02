@@ -100,11 +100,6 @@ export default function SpeakerInspectorTab({ event }: Props) {
       after: { displayName: editValue.trim() },
       timestamp: Date.now(),
     })
-    fetch('/api/speaker/diarization/rename', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ speaker: speakerId, new_name: editValue.trim() }),
-    }).catch(() => {})
     setEditingName(false)
   }, [editValue, speakerId, addDraft])
 
@@ -113,7 +108,7 @@ export default function SpeakerInspectorTab({ event }: Props) {
     addDraft({
       eventId: speakerId,
       opcode: 'LOCK_SPEAKER',
-      payload: {},
+      payload: { speaker: speakerId },
       before: {}, after: {},
       timestamp: Date.now(),
     })

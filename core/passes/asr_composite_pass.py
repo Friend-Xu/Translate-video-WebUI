@@ -10,6 +10,7 @@ ASRCompositePass — ASR 域三引擎编排 (Chapter 3 §3.1-3.4)
 这是整个 Timeline IR 的入口 Pass，将原始音频转换为结构化的 IR 状态。
 """
 from __future__ import annotations
+import logging
 from core.engine.pass_base import TimelinePass
 from core.ir.timeline_event import TimelineEventIR
 from core.ir.speaker import SpeakerNodeIR
@@ -19,6 +20,8 @@ from core.runtime.patch import Patch, OpCode
 from core.runtime.patch_engine import PatchEngine
 from core.adapters.whisper_adapter import WhisperAdapter, EngineContext
 from core.adapters.wav2vec2_adapter import Wav2Vec2Adapter
+
+logger = logging.getLogger(__name__)
 
 
 class ASRCompositePass(TimelinePass):
@@ -39,6 +42,30 @@ class ASRCompositePass(TimelinePass):
         self.enable_speaker_refine = enable_speaker_refine
         self.speaker_timeline = speaker_timeline
         self._workspace_dir = workspace_dir
+        self.alignment_enabled = True
+        self.align_lang = ""
+
+    def configure(self, event_config=None):
+        """接收 ConfigResolver 全槽位配置, 取 asr 子块 (P3 契约统一)。
+
+        参数桥 (cli_bridge) 把 CLI 的 --model/--device/--skip-align/--align-lang
+        等映射到 asr 槽位 — 单一路径, 消灭 CLI 参数直改 ctx。
+        """
+        cfg = event_config or {}
+        asr_cfg = cfg.get("asr") if isinstance(cfg.get("asr"), dict) else cfg
+        if "alignment_enabled" in asr_cfg:
+            self.alignment_enabled = bool(asr_cfg["alignment_enabled"])
+        lang = asr_cfg.get("language")
+        if lang and lang != "auto":
+            self.align_lang = lang
+            self.ctx.language = lang
+        field_map = {"model": "model_name", "compute_type": "compute_type",
+                     "num_workers": "num_workers"}
+        for src, dst in field_map.items():
+            if src in asr_cfg and asr_cfg[src] is not None:
+                setattr(self.ctx, dst, asr_cfg[src])
+        if "device" in asr_cfg and asr_cfg["device"]:
+            self.ctx.device = asr_cfg["device"]
 
     def apply(self, state: TimelineProjectState | None = None) -> TimelineProjectState:
         """执行完整 ASR 流程，返回填充了 asr/semantic 槽位的 ProjectState。"""
@@ -58,6 +85,13 @@ class ASRCompositePass(TimelinePass):
         segment_patches = [p for p in asr_patches if p.op == OpCode.SEGMENT_INSERT]
         meta_patches = [p for p in asr_patches if p.op == OpCode.ANNOTATE]
 
+        # 检测到的源语言回写 ctx — 对齐/后续 pass 按语言选模型,
+        # 缺失时曾误用 en 模型对齐日语导致对齐结果截断 (坏数据进 IR)
+        detected_lang = next(
+            (p.value.get("language") for p in meta_patches if p.value.get("language")), "")
+        if detected_lang:
+            ctx.language = detected_lang
+
         new_state = self._bootstrap_state(segment_patches)
         # Preserve global_patches from previous stages (e.g. LOAD stage audio_ref/vocals_ref)
         new_state.global_patches = list(state.global_patches) if state is not None else []
@@ -66,21 +100,27 @@ class ASRCompositePass(TimelinePass):
         for p in meta_patches:
             state.add_global_patch(p)
 
-        # Step 2: Wav2Vec2 对齐精炼
-        wav2vec = Wav2Vec2Adapter(
-            audio_path=self.audio_path, language=self.ctx.language or "en",
-        )
-        segments_for_align = self._collect_segments(state)
-        if segments_for_align:
-            align_patches = wav2vec.refine_alignment(segments_for_align)
-            for p in align_patches:
-                engine.apply(state, p)
+        # Step 2: Wav2Vec2 对齐精炼 (配置门控 — alignment_enabled=False 时跳过;
+        # 显式启用时失败必须响亮报错, 不再静默吞错)
+        if self.alignment_enabled:
+            wav2vec = Wav2Vec2Adapter(
+                audio_path=audio,
+                language=self.align_lang or self.ctx.language or "en",
+            )
+            segments_for_align = self._collect_segments(state)
+            if segments_for_align:
+                align_patches = wav2vec.refine_alignment(segments_for_align)
+                for p in align_patches:
+                    engine.apply(state, p)
+        else:
+            logger.info("asr.alignment_enabled=False — 跳过 wav2vec2 对齐与语义嵌入")
 
-        # Step 3: Wav2Vec2 semantic embedding
-        seg_ids = [es.id for es in state.sorted_events()]
-        sem_patches = wav2vec.extract_semantic(seg_ids)
-        for p in sem_patches:
-            engine.apply(state, p)
+        # Step 3: Wav2Vec2 semantic embedding (与对齐同一配置门控)
+        if self.alignment_enabled:
+            seg_ids = [es.id for es in state.sorted_events()]
+            sem_patches = wav2vec.extract_semantic(seg_ids)
+            for p in sem_patches:
+                engine.apply(state, p)
 
         # Step 4: Speaker refine (optional)
         if self.enable_speaker_refine and self.speaker_timeline:
@@ -97,10 +137,13 @@ class ASRCompositePass(TimelinePass):
 
         for p in patches:
             v = p.value
+            start, end = v.get("start", 0.0), v.get("end", 0.0)
+            if start >= end:
+                continue  # 边界清洗：跳过零时长 segment，坏数据不进 IR
             evt = TimelineEventIR(
                 id=p.target_id,
-                start=v.get("start", 0.0),
-                end=v.get("end", 0.0),
+                start=start,
+                end=end,
                 text_ref=v.get("text", ""),
                 speaker_ref=None,
                 source="asr",
@@ -113,11 +156,10 @@ class ASRCompositePass(TimelinePass):
         for p in patches:
             es = state.get_event(p.target_id)
             if es:
-                es.asr.update({
-                    "words": p.value.get("words", []),
-                    "confidence": p.confidence,
-                    "language": p.value.get("language", ""),
-                })
+                # 类型化槽位 (Phase 3A) — 显式字段赋值, 不用 dict 风格 update
+                es.asr.words = p.value.get("words", [])
+                es.asr.confidence = p.confidence
+                es.asr.language = p.value.get("language", "")
                 es.provenance.update({
                     "engine": p.value.get("source", "faster-whisper"),
                     "confidence": p.confidence,
@@ -129,13 +171,17 @@ class ASRCompositePass(TimelinePass):
         """收集 state 中的 segments 用于 wav2vec2 对齐。"""
         segments = []
         for es in state.sorted_events():
-            words = es.asr.get("words", [])
+            words = []
+            for w in es.asr.words:
+                start, end = w.get("start"), w.get("end")
+                if start is None or end is None or start >= end:
+                    continue  # adapter 边界清洗: 坏词不进入对齐输入
+                words.append({"word": w.get("word", ""), "start": start, "end": end})
             segments.append({
                 "text": es.ir.text_ref,
                 "start": es.start,
                 "end": es.end,
-                "words": [{"word": w.get("word", ""), "start": w.get("start", 0),
-                           "end": w.get("end", 0)} for w in words],
+                "words": words,
             })
         return segments
 
@@ -145,7 +191,7 @@ class ASRCompositePass(TimelinePass):
             from core.refiner import WordLevelRefiner
             all_words = []
             for es in state.sorted_events():
-                for w in es.asr.get("words", []):
+                for w in es.asr.words:
                     w_copy = dict(w)
                     w_copy["segment_id"] = es.id
                     all_words.append(w_copy)
@@ -156,7 +202,7 @@ class ASRCompositePass(TimelinePass):
             for w in refined["words"]:
                 es = state.get_event(w.get("segment_id", ""))
                 if es and "speaker" in w:
-                    es.speaker["speaker_id"] = w["speaker"]
-                    es.speaker["confidence"] = w.get("speaker_confidence", 0.0)
+                    es.speaker.speaker_id = w["speaker"]
+                    es.speaker.confidence = w.get("speaker_confidence", 0.0)
         except ImportError:
             pass

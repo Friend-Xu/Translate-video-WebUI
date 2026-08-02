@@ -12,7 +12,7 @@ v2.1: 九语义槽位 + Timeline 中间层 + 三类版本管理 + ASR 域适配�
 新系统以并行影子模式运行，双写输出，比对通过后逐步切换。
 """
 
-from core.ir import TimelineEventIR, SpeakerNodeIR, TimelineProjectIR, TimelineIR
+from core.ir import TimelineEventIR, SpeakerNodeIR, TimelineProjectIR
 from core.ir.version import SCHEMA_VERSION, IR_VERSION, PATCH_VERSION
 from core.runtime import (
     TimelineEventState,
@@ -34,7 +34,6 @@ __all__ = [
     "TimelineEventIR",
     "SpeakerNodeIR",
     "TimelineProjectIR",
-    "TimelineIR",
     # Version
     "SCHEMA_VERSION",
     "IR_VERSION",

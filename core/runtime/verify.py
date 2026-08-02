@@ -65,6 +65,9 @@ def _build_v2_output(segments: list[dict], speaker_timeline: list | None) -> dic
     # 构建 events
     events: dict[str, TimelineEventIR] = {}
     for i, seg in enumerate(segments):
+        start, end = seg.get("start", 0.0), seg.get("end", 0.0)
+        if start >= end:
+            continue  # 边界清洗：跳过零时长 segment，坏数据不进 IR
         eid = f"evt_{i + 1:03d}"
         spk = speaker_assignments.get(i) or seg.get("speaker")
         if spk and spk not in speakers:
@@ -72,8 +75,8 @@ def _build_v2_output(segments: list[dict], speaker_timeline: list | None) -> dic
 
         events[eid] = TimelineEventIR(
             id=eid,
-            start=seg.get("start", 0.0),
-            end=seg.get("end", 0.0),
+            start=start,
+            end=end,
             speaker_ref=spk,
             text_ref=seg.get("text", "").strip(),
             source="asr",

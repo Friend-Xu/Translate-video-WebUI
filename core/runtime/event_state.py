@@ -1,30 +1,37 @@
 """
 TimelineEventState — 事件的运行时状态
 
-持有 IR 引用（只读）+ 九语义槽位 + patches 链。
+持有 IR 引用（只读）+ 类型化槽位 + patches 链。
 这是 zero-deepcopy 架构的关键：不复制 IR，只在 state 层叠加变更。
 
 状态三层模型 (Chapter 2 §2.4):
   Raw State     — ir (TimelineEventIR), 不可变事实
-  Derived State — audio/asr/speaker/semantic/translation/tts, 引擎产出
+  Derived State — asr/speaker/semantic/translation/tts/emotion, 引擎产出
   Decision State — review/runtime/provenance, 门控决策
+
+Phase 3A: 槽位从 lazy dict 转正为类型化对象 (ASRData/SpeakerAssignment/
+Translation/TTSAudio/EmotionData/Review/Semantic/EventRuntime)。
+旧 dict 形态数据经 from_dict 迁移, 不丢失。
 """
 from __future__ import annotations
 from core.ir.timeline_event import TimelineEventIR
 from core.runtime.patch import Patch
+from core.runtime.event_model import (
+    ASRData, SpeakerAssignment, Semantic, Translation, TTSAudio,
+    EmotionData, Review, EventRuntime,
+)
 
 
 class TimelineEventState:
     """事件的运行时可变状态。
 
     - self.ir: 只读引用，绝不被修改 (Raw State)
-    - self.derivatives: 向后兼容属性，返回 _data 引用
-    - self.<named_slot>: 九槽位结构化访问 (Derived + Decision State)
+    - self.<slot>: 类型化槽位访问 (Derived + Decision State)
     - self.patches: 用户/AI 补丁链，按 timestamp 排序
     """
     __slots__ = (
         "_ir",
-        "_data",       # 向后兼容：自由字典存储
+        "_data",       # 槽位容器 (类型化对象 + provenance dict)
         "patches",     # list[Patch] — 变更日志
     )
 
@@ -53,87 +60,77 @@ class TimelineEventState:
     def speaker_ref(self) -> str | None:
         return self.ir.speaker_ref
 
-    # ── 向后兼容：derivatives 属性 ──────────────────────────
+    # ── 结构血缘 (split/merge 元数据, Phase 3B 收窄) ─────────
 
     @property
-    def derivatives(self) -> dict:
-        """向后兼容 — 返回自由字典引用，支持读/写/update"""
-        return self._data
+    def meta(self) -> dict:
+        """结构血缘元数据 — 仅存明确键集 (merged_from/split_at/split_from)。
 
-    @derivatives.setter
-    def derivatives(self, value: dict):
-        self._data = value
+        取代 derivatives 自由键写血缘 (Phase 3B: 关闭自由后门)。
+        """
+        if "meta" not in self._data:
+            self._data["meta"] = {}
+        return self._data["meta"]
 
-    # ── 九语义槽位 (Derived State) ──────────────────────────
+    # ── 槽位容器 ──────────────────────────────────────────
+
+    def _slot(self, name: str, cls):
+        """类型化槽位访问 — 缺失创建空对象, 旧 dict 形态迁移为类型化对象。"""
+        if name not in self._data:
+            self._data[name] = cls()
+        elif isinstance(self._data[name], dict):
+            self._data[name] = cls.from_dict(self._data[name])
+        return self._data[name]
+
+    # ── 类型化槽位 (Derived State) ─────────────────────────
 
     @property
-    def audio(self) -> dict:
-        """{vocals_ref, bgm_ref, sample_rate, channels, config}"""
-        if "audio" not in self._data:
-            self._data["audio"] = {"config": {}}
-        return self._data["audio"]
-
-    @property
-    def asr(self) -> dict:
+    def asr(self) -> ASRData:
         """{words, confidence, language, config}"""
-        if "asr" not in self._data:
-            self._data["asr"] = {"config": {}}
-        return self._data["asr"]
+        return self._slot("asr", ASRData)
 
     @property
-    def speaker(self) -> dict:
+    def speaker(self) -> SpeakerAssignment:
         """{speaker_id, embedding_ref, confidence, config}"""
-        if "speaker" not in self._data:
-            self._data["speaker"] = {"config": {}}
-        return self._data["speaker"]
+        return self._slot("speaker", SpeakerAssignment)
 
     @property
-    def semantic(self) -> dict:
-        """{embedding_ref, tokens, speech_rate_vector, config}"""
-        if "semantic" not in self._data:
-            self._data["semantic"] = {"config": {}}
-        return self._data["semantic"]
+    def semantic(self) -> Semantic:
+        """{embedding_ref, config}"""
+        return self._slot("semantic", Semantic)
 
     @property
-    def translation(self) -> dict:
-        """{text, engine, score, config}"""
-        if "translation" not in self._data:
-            self._data["translation"] = {"config": {}}
-        return self._data["translation"]
+    def translation(self) -> Translation:
+        """{text, engine, quality_score, similarity, ppl_ratio, config}"""
+        return self._slot("translation", Translation)
 
     @property
-    def tts(self) -> dict:
-        """{audio_ref, duration, engine, quality_score, config}"""
-        if "tts" not in self._data:
-            self._data["tts"] = {"config": {}}
-        return self._data["tts"]
+    def tts(self) -> TTSAudio:
+        """{audio_ref, duration, engine, quality_score, speed_decision, config}"""
+        return self._slot("tts", TTSAudio)
 
     @property
-    def emotion(self) -> dict:
-        """{valence, arousal, dominance, emotion_label, confidence, intensity, config} (Ch15)"""
-        if "emotion" not in self._data:
-            self._data["emotion"] = {"config": {}}
-        return self._data["emotion"]
+    def emotion(self) -> EmotionData:
+        """{emotion, valence, arousal, dominance, confidence, intensity, ...} (Ch15)"""
+        return self._slot("emotion", EmotionData)
 
-    # ── 九语义槽位 (Decision State) ─────────────────────────
+    # ── 类型化槽位 (Decision State) ─────────────────────────
 
     @property
-    def review(self) -> dict:
-        """{flags, notes, needs_human_review, config}"""
-        if "review" not in self._data:
-            self._data["review"] = {"config": {}}
-        return self._data["review"]
+    def review(self) -> Review:
+        """{review_status, flags, gate_decision, needs_human_review, notes, config}"""
+        return self._slot("review", Review)
 
     @property
-    def runtime(self) -> dict:
-        """{status, dirty, locked, generation_mode}"""
-        if "runtime" not in self._data:
-            self._data["runtime"] = {}
-        return self._data["runtime"]
+    def runtime(self) -> EventRuntime:
+        """{tts_status, generation_mode, reject_reason, engine_scores, ...}"""
+        return self._slot("runtime", EventRuntime)
+
+    # ── 评分暂存 (自由 dict, 引擎专属 key) ─────────────────
 
     @property
     def provenance(self) -> dict:
-        """{engine, confidence, timestamp, gate_decision}"""
+        """引擎评分暂存 — gate/engine 已迁出 (Phase 3a), 仅剩评分 key。"""
         if "provenance" not in self._data:
             self._data["provenance"] = {}
         return self._data["provenance"]

@@ -28,7 +28,7 @@ class OpenVoiceCompositePass(TimelinePass):
 
     触发条件:
       1. 主引擎结果被 Logic Gate 拒绝
-      2. es.runtime["tts_status"] == "rejected"
+      2. es.runtime.tts_status == "rejected"
       3. FallbackDecider.decide() → should_fallback=True
 
     编排顺序:
@@ -59,12 +59,12 @@ class OpenVoiceCompositePass(TimelinePass):
         # 收集被主引擎拒绝的 segment
         rejected = [
             es for es in state.sorted_events()
-            if es.runtime.get("tts_status") == "rejected" and not es.tts.get("audio_ref")
+            if es.runtime.tts_status == "rejected" and not es.tts.audio_ref
         ]
         total = max(len(list(state.sorted_events())), 1)
         fallback_count = sum(
             1 for es in state.sorted_events()
-            if es.tts.get("generation_mode") == "fallback"
+            if es.tts.generation_mode == "fallback"
         )
 
         if not rejected:
@@ -73,7 +73,7 @@ class OpenVoiceCompositePass(TimelinePass):
         for es in rejected:
             # Step 1: FallbackDecider
             primary_score = es.provenance.get("tts_score")
-            primary_error = es.runtime.get("tts_reject_reason")
+            primary_error = es.runtime.reject_reason
             decision = decider.decide(
                 segment_id=es.id,
                 primary_score=primary_score,
@@ -82,19 +82,19 @@ class OpenVoiceCompositePass(TimelinePass):
                 total_segments=total,
             )
             if not decision.should_fallback:
-                es.runtime["fallback_status"] = "denied"
-                es.runtime["fallback_deny_reason"] = decision.reason
+                es.runtime.engine_scores["fallback_status"] = "denied"
+                es.runtime.engine_scores["fallback_deny_reason"] = decision.reason
                 continue
 
             # Step 2: 构建 context
-            existing_audio = es.tts.get("audio_ref", "")
-            speaker_id = es.speaker.get("speaker_id")
+            existing_audio = es.tts.audio_ref
+            speaker_id = es.speaker.speaker_id
             ctx = OpenVoiceTransferContext(
                 segment_id=es.id,
                 source_audio_ref=existing_audio,
                 speaker_id=speaker_id,
                 reference_audio_ref=prompt_map.get(speaker_id or "", ""),
-                speaker_embedding_ref=es.speaker.get("embedding_ref", ""),
+                speaker_embedding_ref=es.speaker.embedding_ref,
                 duration_target=es.end - es.start,
                 fallback_reason=decision.reason,
             )
@@ -130,13 +130,13 @@ class OpenVoiceCompositePass(TimelinePass):
                     "speaker_match": score.speaker_match,
                     "fallback_validity": score.fallback_validity,
                 }
-                es.runtime["tts_status"] = "fallback_accepted"
-                es.runtime["generation_mode"] = "fallback"
-                es.runtime["fallback_reason"] = decision.reason
+                es.runtime.tts_status = "fallback_accepted"
+                es.runtime.generation_mode = "fallback"
+                es.runtime.engine_scores["fallback_reason"] = decision.reason
                 fallback_count += 1
             else:
-                es.runtime["tts_status"] = "fallback_rejected"
-                es.runtime["fallback_reject_reason"] = f"composite={score.composite:.2f}"
+                es.runtime.tts_status = "fallback_rejected"
+                es.runtime.engine_scores["fallback_reject_reason"] = f"composite={score.composite:.2f}"
 
             self._update_transfer_history(transfer_history, ctx, patch)
 
@@ -160,7 +160,7 @@ class OpenVoiceCompositePass(TimelinePass):
             tts = es.tts
             if tts.get("engine") == "openvoice":
                 history.append({
-                    "speaker_id": es.speaker.get("speaker_id"),
+                    "speaker_id": es.speaker.speaker_id,
                     "reference_audio": tts.get("reference_audio", ""),
                     "fallback_reason": tts.get("fallback_reason", ""),
                 })

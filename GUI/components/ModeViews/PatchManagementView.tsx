@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from 'react'
+import { useMemo, useState, useCallback, useEffect } from 'react'
 import {
   Box, Typography, Chip, IconButton, Tooltip, Button, Divider,
   ToggleButtonGroup, ToggleButton, Dialog, DialogTitle, DialogContent, DialogActions,
@@ -67,7 +67,10 @@ export default function PatchManagementView({ events }: Props) {
   const applyAllDrafts = useAppStore(s => s.applyAllDrafts)
   const discardAllDrafts = useAppStore(s => s.discardAllDrafts)
   const undoLastPatch = useAppStore(s => s.undoLastPatch)
+  const fetchPatchLog = useAppStore(s => s.fetchPatchLog)
   const navigateToEvent = useAppStore(s => s.navigateToEvent)
+
+  useEffect(() => { fetchPatchLog() }, [fetchPatchLog])
 
   const [selectedPatchId, setSelectedPatchId] = useState<string | null>(null)
   const [selectedPatchIds, setSelectedPatchIds] = useState<Set<string>>(new Set())
@@ -164,44 +167,60 @@ export default function PatchManagementView({ events }: Props) {
     }
   }, [])
 
-  const handleApply = useCallback((item: PatchViewItem) => {
+  const handleApply = useCallback(async (item: PatchViewItem) => {
     if (item.type === 'draft') {
       const eventId = item.targets[0]
-      if (eventId) applyDraft(eventId)
+      if (eventId) await applyDraft(eventId)
     } else if (item.type === 'ai_suggestion') {
       const eventId = item.targets[0]
-      if (eventId) addDraft({
-        eventId, opcode: 'APPLY_AI_SUGGESTION',
-        payload: { translation: events.find(e => e.id === eventId)?.translation || '' },
-        before: item.before || {}, after: item.after || {},
-        timestamp: Date.now(),
-      })
+      if (eventId) {
+        // 应用 AI 建议: 从 pendingDrafts 拿最新 suggestion (此前写旧译文 + 不提交 = 点了不生效)
+        const aiDraft = Array.from(pendingDrafts.values())
+          .find(d => d.eventId === eventId && d.opcode === 'AI_SUGGEST')
+        const suggestion = (aiDraft?.payload as any)?.suggestion || ''
+        addDraft({
+          eventId, opcode: 'APPLY_AI_SUGGESTION',
+          payload: { translation: suggestion },
+          before: item.before || {}, after: { translation: suggestion },
+          timestamp: Date.now(),
+        })
+        await applyDraft(eventId)
+      }
     }
-  }, [applyDraft, addDraft, events])
+  }, [applyDraft, addDraft, pendingDrafts])
 
   const handleUndo = useCallback(() => undoLastPatch(), [undoLastPatch])
   const handleToggleLock = useCallback((id: string) => {
     setLockedIds(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
   }, [])
 
-  const handleMerge = useCallback(() => {
+  const handleMerge = useCallback(async () => {
     const targets = Array.from(selectedPatchIds)
     if (targets.length < 2) return
     const selected = allPatchItems.filter(p => targets.includes(p.id))
-    const allTargets = [...new Set(selected.flatMap(p => p.targets))]
-    const mergedBefore = { ...selected[0].before }
-    const mergedAfter = { ...selected[selected.length - 1].after }
-    for (const t of allTargets) {
-      addDraft({
-        eventId: t, opcode: 'MERGED_PATCH',
-        payload: { sources: targets, mergedTargets: allTargets },
-        before: mergedBefore, after: mergedAfter,
-        timestamp: Date.now(),
-      })
+    // 合并补丁是坏设计 (生成的 MERGED_PATCH draft 无真实写入内容) —
+    // 改为批量应用选中的 draft/AI 建议, 已入库的 applied 跳过
+    for (const item of selected) {
+      const eventId = item.targets[0]
+      if (!eventId) continue
+      if (item.type === 'draft') {
+        await applyDraft(eventId)
+      } else if (item.type === 'ai_suggestion') {
+        const aiDraft = Array.from(pendingDrafts.values())
+          .find(d => d.eventId === eventId && d.opcode === 'AI_SUGGEST')
+        const suggestion = (aiDraft?.payload as any)?.suggestion || ''
+        addDraft({
+          eventId, opcode: 'APPLY_AI_SUGGESTION',
+          payload: { translation: suggestion },
+          before: item.before || {}, after: { translation: suggestion },
+          timestamp: Date.now(),
+        })
+        await applyDraft(eventId)
+      }
     }
     setMergeDialogOpen(false)
     setSelectedPatchIds(new Set())
-  }, [selectedPatchIds, allPatchItems, addDraft])
+  }, [selectedPatchIds, allPatchItems, applyDraft, addDraft, pendingDrafts])
 
   // Dependency tree for selected item
   const depTree = useMemo(() => {
@@ -281,10 +300,11 @@ export default function PatchManagementView({ events }: Props) {
                   key={item.id}
                   onClick={(e) => handleSelect(item.id, e)}
                   sx={{
-                    p: 1, cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)',
-                    bgcolor: isSelected ? 'action.selected' : isMulti ? 'action.hover' : 'transparent',
+                    p: 1.25, cursor: 'pointer', mb: 0.5, mx: 0.5, borderRadius: 1.5,
+                    border: '1px solid', borderColor: 'divider',
+                    bgcolor: isSelected ? 'action.selected' : isMulti ? 'action.hover' : 'background.paper',
                     opacity: item.isLocked ? 0.65 : 1,
-                    '&:hover': { bgcolor: 'action.hover' },
+                    '&:hover': { bgcolor: 'action.hover', borderColor: 'primary.light' },
                   }}
                 >
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
@@ -292,7 +312,7 @@ export default function PatchManagementView({ events }: Props) {
                     <Chip label={opcodeLabel(item.opcode)} size="small"
                       color={item.type === 'draft' ? 'default' : item.type === 'ai_suggestion' ? 'warning' : 'success'}
                       variant={item.type === 'applied' ? 'filled' : 'outlined'}
-                      sx={{ fontSize: '0.55rem', height: 18 }} />
+                      sx={{ fontSize: '0.65rem', height: 20 }} />
                     {item.isLocked && <LockIcon sx={{ fontSize: 12, color: 'text.disabled', ml: 'auto' }} />}
                     {item.conflicts.length > 0 && (
                       <Tooltip title={`与 ${item.conflicts.length} 个补丁冲突`}>
@@ -307,13 +327,13 @@ export default function PatchManagementView({ events }: Props) {
                     </Tooltip>
                   </Box>
                   <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', ml: 1.5 }}>
-                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.55rem' }}>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem' }}>
                       {item.targets.join(', ')}
                     </Typography>
-                    <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.55rem' }}>
+                    <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.65rem' }}>
                       · {typeof item.timestamp === 'string' ? new Date(item.timestamp).toLocaleTimeString() : new Date(item.timestamp).toLocaleTimeString()}
                     </Typography>
-                    <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.55rem' }}>
+                    <Typography variant="caption" color="text.disabled" sx={{ fontSize: '0.65rem' }}>
                       · {item.author}
                     </Typography>
                   </Box>

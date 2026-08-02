@@ -18,6 +18,8 @@ SpeakerCompositePass — Speaker Layer 完整流水线 (Chapter 4 §4.8)
 迭代精炼循环 (§4.8.2): 最多 2 轮，每轮后重算 centroid。
 """
 from __future__ import annotations
+import json
+import os
 from core.engine.pass_base import TimelinePass
 from core.runtime.project_state import TimelineProjectState
 from core.runtime.patch_engine import PatchEngine
@@ -47,11 +49,12 @@ class SpeakerCompositePass(TimelinePass):
         self._resolved_config: dict | None = None
 
     def configure(self, resolved_config: dict | None = None) -> None:
-        """接收 ConfigResolver 解析后的 speaker 槽位配置。"""
+        """接收 ConfigResolver 解析后的全槽位配置, 取 speaker 子块 (P3 契约统一)。"""
         cfg = resolved_config or {}
         self._resolved_config = cfg
-        if "clustering_threshold" in cfg:
-            self.enable_clustering = cfg["clustering_threshold"] > 0
+        speaker_cfg = cfg.get("speaker") if isinstance(cfg.get("speaker"), dict) else cfg
+        if "clustering_threshold" in speaker_cfg:
+            self.enable_clustering = speaker_cfg["clustering_threshold"] > 0
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         engine = PatchEngine()
@@ -69,6 +72,7 @@ class SpeakerCompositePass(TimelinePass):
             min_speakers=ns or 1,
             max_speakers=ns or 10,
         )
+        self._persist_speaker_timeline(speaker_timeline)
 
         # Step 2-3: Assignment + boundary detection
         segments = self._collect_segments(state)
@@ -135,7 +139,7 @@ class SpeakerCompositePass(TimelinePass):
             from core.refiner import WordLevelRefiner
             all_words = []
             for es in state.sorted_events():
-                for w in es.asr.get("words", []):
+                for w in es.asr.words:
                     w_copy = dict(w)
                     w_copy["segment_id"] = es.id
                     all_words.append(w_copy)
@@ -146,8 +150,8 @@ class SpeakerCompositePass(TimelinePass):
                 for w in refined["words"]:
                     es = state.get_event(w.get("segment_id", ""))
                     if es and "speaker" in w:
-                        es.speaker["speaker_id"] = w["speaker"]
-                        es.speaker["confidence"] = w.get("speaker_confidence", 0.0)
+                        es.speaker.speaker_id = w["speaker"]
+                        es.speaker.confidence = w.get("speaker_confidence", 0.0)
         except ImportError:
             pass
 
@@ -159,8 +163,34 @@ class SpeakerCompositePass(TimelinePass):
 
     def _write_speaker_registry(self, state: TimelineProjectState,
                                 speaker_timeline: list[tuple]) -> None:
+        from dataclasses import replace
         for spk_id, spk_node in state.ir.speakers.items():
             turns = [t for t in speaker_timeline if t[0] == spk_id]
             if turns and spk_node.confidence is None:
                 avg_conf = sum(t[3] for t in turns) / len(turns)
-                object.__setattr__(spk_node, "confidence", avg_conf)
+                # frozen IR 不可原地改: 用 replace 生成新节点替换, 而非 object.__setattr__
+                state.ir.speakers[spk_id] = replace(spk_node, confidence=avg_conf)
+
+    def _persist_speaker_timeline(self, speaker_timeline: list[tuple]) -> None:
+        """将 diarization 结果持久化为 speaker_timeline.json。
+
+        格式与 WebUI speaker_load 端点期望一致:
+          { speakers: [{id, name}], turns: [{speaker, start, end, confidence}] }
+        """
+        if not self.output_dir:
+            return
+        extract_dir = os.path.join(self.output_dir, "01_extract")
+        os.makedirs(extract_dir, exist_ok=True)
+
+        # 收集所有说话人 ID
+        speaker_ids = sorted(set(t[0] for t in speaker_timeline))
+        speakers = [{"id": sid, "name": sid} for sid in speaker_ids]
+
+        turns = [
+            {"speaker": t[0], "start": t[1], "end": t[2], "confidence": t[3]}
+            for t in speaker_timeline
+        ]
+
+        stl_path = os.path.join(extract_dir, "speaker_timeline.json")
+        with open(stl_path, "w", encoding="utf-8") as f:
+            json.dump({"speakers": speakers, "turns": turns}, f, ensure_ascii=False, indent=2)

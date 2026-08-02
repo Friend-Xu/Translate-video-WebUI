@@ -124,12 +124,21 @@ export default function OpsDashboard({
         }}>
           {!batch || batch.videos.length === 0 ? (
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-              <Box sx={{ textAlign: 'center' }}>
-                <HourglassEmptyIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1 }} />
-                <Typography variant="body2" color="text.secondary">暂无批处理任务</Typography>
-                <Typography variant="caption" color="text.disabled">
-                  点击"开始批处理"或将视频拖拽到窗口开始
+              <Box sx={{ textAlign: 'center', maxWidth: 360 }}>
+                <Box sx={{
+                  width: 64, height: 64, borderRadius: '50%', mx: 'auto', mb: 2,
+                  bgcolor: 'rgba(96,125,139,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <HourglassEmptyIcon sx={{ fontSize: 30, color: 'text.disabled' }} />
+                </Box>
+                <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 0.5 }}>暂无批处理任务</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  在项目中心选择视频并运行流水线，或在窗口拖拽视频加入队列
                 </Typography>
+                <Button size="small" variant="contained" startIcon={<PlayArrowIcon />}
+                  onClick={() => setMode('hub')}>
+                  前往项目中心
+                </Button>
               </Box>
             </Box>
           ) : (

@@ -44,29 +44,37 @@ class EmotionCompositePass(TimelinePass):
 
         for es in state.sorted_events():
             text = es.ir.text_ref or ""
+            # translation 是 dict (Phase 3a/3b 统一), 正确取 text;
+            # 无译文置空跳过对齐 (不再用 derivatives 兜底返回 dict)
             trans_raw = es.translation
-            trans = (trans_raw.get("text", "") if isinstance(trans_raw, dict) else str(trans_raw or "")) or es.derivatives.get("translation", "")
+            trans = trans_raw.get("text", "") if isinstance(trans_raw, dict) else str(trans_raw or "")
 
             ctx = EmotionRecognizerContext(text=text, segment_id=es.id,
                                            start=es.start, end=es.end)
             engine.apply(state, recognizer.recognize(ctx))
 
             ed = es.emotion
-            ev = EmotionVector(**{k: ed.get(k, 0.0) for k in
-                   ("emotion","valence","arousal","dominance","confidence","intensity")})
+            # 类型化槽位访问 (Phase 3A 后无 dict get — 修复 TTS E2E 崩溃)
+            ev = EmotionVector(
+                emotion=ed.emotion, valence=ed.valence, arousal=ed.arousal,
+                dominance=ed.dominance, confidence=ed.confidence,
+                intensity=ed.intensity,
+            )
 
             if not self.skip_alignment and trans:
                 ar = EmotionAlignmentChecker().check(ev, trans)
-                es.emotion["translation_aligned"] = ar.aligned
+                es.emotion.translation_aligned = ar.aligned
                 if ar.drift_type:
-                    es.emotion["drift_type"] = ar.drift_type
+                    es.emotion.drift_type = ar.drift_type
 
-            es.emotion["emotion_score"] = scorer.score(ev, prev).composite
+            es.emotion.emotion_score = scorer.score(ev, prev).composite
             gr = gate.decide(ev, prev)
-            es.emotion["gate_decision"] = gr.decision
+            es.emotion.gate_decision = gr.decision
             # WorkflowOrchestrator 读取: E1=accept, E2=downgrade, E3=repair
+            # (Phase1: 只写 emotion 槽, 不覆盖 review.gate_decision —
+            #  同键会让 TTS 阶段后文本门控 A/B/C 结果丢失)
             emap = {"accept": "E1", "downgrade": "E2", "repair": "E3"}
-            es.provenance["gate_decision"] = emap.get(gr.decision, "E1")
+            es.emotion.gate_decision = emap.get(gr.decision, "E1")
 
             route = router.route(ev)
             es.provenance["emotion_route"] = {

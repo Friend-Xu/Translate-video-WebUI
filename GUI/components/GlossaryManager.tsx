@@ -7,6 +7,7 @@ import {
 import AddIcon from '@mui/icons-material/AddRounded'
 import DeleteIcon from '@mui/icons-material/DeleteRounded'
 import SearchIcon from '@mui/icons-material/SearchRounded'
+import BookIcon from '@mui/icons-material/BookRounded'
 import { useAppStore } from '../store/useAppStore'
 
 interface DictInfo { name: string; description: string; termCount: number }
@@ -206,7 +207,7 @@ export default function GlossaryManager() {
       </Box>
 
       {/* Body */}
-      <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+      <Box sx={{ flex: 1, display: 'flex', overflow: 'hidden', maxWidth: 1360, mx: 'auto', width: '100%' }}>
         {/* Left: dict list */}
         <Box sx={{ width: 220, flexShrink: 0, borderRight: 1, borderColor: 'divider', p: 2, overflow: 'auto' }}>
           <Typography variant="caption" color="text.secondary" fontWeight={600} gutterBottom>
@@ -237,9 +238,26 @@ export default function GlossaryManager() {
         {/* Right: term editor */}
         <Box sx={{ flex: 1, p: 3, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           {!selectedDict ? (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 8, textAlign: 'center' }}>
-              选择左侧术语表开始编辑，或点击"新建术语表"创建
-            </Typography>
+            <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Box sx={{ textAlign: 'center', maxWidth: 340 }}>
+                <Box sx={{
+                  width: 64, height: 64, borderRadius: '50%', mx: 'auto', mb: 2,
+                  bgcolor: 'rgba(245,158,11,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <BookIcon sx={{ fontSize: 30, color: 'warning.main' }} />
+                </Box>
+                <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 0.5 }}>
+                  选择一个术语表开始编辑
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  已启用的术语表会注入到翻译 Prompt，确保专业术语翻译一致
+                </Typography>
+                <Button variant="contained" size="small" startIcon={<AddIcon />}
+                  onClick={() => setNewDictOpen(true)}>
+                  新建术语表
+                </Button>
+              </Box>
+            </Box>
           ) : loading ? (
             <CircularProgress size={24} sx={{ mt: 8, display: 'block', mx: 'auto' }} />
           ) : (
@@ -281,13 +299,19 @@ export default function GlossaryManager() {
               >
                 {items.map(it => (
                   <Box key={it.key} sx={{
-                    display: 'flex', alignItems: 'center', py: 0.25,
-                    '&:hover': { bgcolor: 'action.hover' }, borderRadius: 1, px: 1,
+                    display: 'flex', alignItems: 'center', py: 0.75, px: 1.25,
+                    mb: 0.5, borderRadius: 1.5,
+                    bgcolor: 'rgba(0,0,0,0.02)', border: '1px solid', borderColor: 'divider',
+                    '&:hover': { borderColor: 'primary.light', bgcolor: 'rgba(99,102,241,0.04)' },
                   }}>
-                      <Typography variant="body2" sx={{ width: '30%', fontFamily: 'monospace', fontSize: '0.8rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <Typography variant="body2" sx={{
+                        width: '28%', fontFamily: 'monospace', fontSize: '0.8rem',
+                        fontWeight: 500, color: 'text.primary',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>
                         {it.key}
                       </Typography>
-                      <Typography variant="body2" sx={{ color: 'text.secondary', mx: 1, flexShrink: 0 }}>→</Typography>
+                      <Typography variant="body2" sx={{ color: 'text.disabled', mx: 1.25, flexShrink: 0 }}>→</Typography>
                       <TextField variant="standard" size="small" value={it.value}
                         onChange={e => updateTerm(it.key, e.target.value)}
                         sx={{ flex: 1, '& input': { fontSize: '0.8rem' } }} />

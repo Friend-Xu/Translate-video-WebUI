@@ -1306,11 +1306,11 @@ core/refiner/
     ├── tvw profile <workspace>       → 工作空间 Profiling
     └── tvw gc <workspace>            → 工作空间清理/归档
 
-核心入口 (main_core.py):
-  main.py --use-core
-    └── main_core.py
+核心入口 (tvw.py run --use-core):
+  tvw.py --use-core
+    └── WorkflowOrchestrator
           ├── WorkflowPolicy         → 统一配置
-          ├── WorkflowOrchestrator   → 6 阶段编排 (LOAD→EXTRACT→TRANSLATE→VALIDATE→TTS→EXPORT)
+          ├── 6 阶段编排 (LOAD→EXTRACT→TRANSLATE→VALIDATE→TTS→EXPORT)
           ├── PassManager.run()      → 16 Pass 线性执行
           └── SynthesisEngine        → 5 层渲染输出
 
@@ -1354,7 +1354,6 @@ translate:
 Translate_video/
 ├── tvw.py                        # → 统一 CLI Runtime（8 命令：run/inspect/stage/validate/export/benchmark/profile/gc）🆕
 ├── main.py                       # → 旧架构主入口（extract→translate→TTS）
-├── main_core.py                  # → 新架构入口（WorkflowOrchestrator + PassManager）🆕
 ├── extract_subtitles.py          # → 主线编排器（薄层，~200 行）
 ├── translate_video.py            # → TTS 全流程入口（4 步：提取→翻译→TTS→拼接）
 ├── pipeline/                   # 主线 + TTS 模块
@@ -1397,7 +1396,7 @@ Translate_video/
 ├── docs/                       # 设计文档
 │   └── decisions/
 │       └── ADR-001-audio-duration-fix-strategy.md
-├── openvoice_cli/               # OpenVoice TTS CLI（vendored，8 .py 文件）🆕
+├── pipeline/openvoice_cli/       # OpenVoice 音色克隆引擎包（vendored, 被 vc_openvoice.py 消费）
 │   ├── attentions.py            # 注意力机制
 │   ├── commons.py               # 共享组件
 │   ├── models.py                # 模型定义
@@ -1484,7 +1483,6 @@ Select/Toggle 类型即时发送。
 | 端点 | 方法 | 功能 |
 |------|------|------|
 | `/api/timeline/config/apply` | POST | 应用单个 ConfigChange（OVERRIDE_CONFIG patch） |
-| `/api/timeline/config/batch` | POST | 批量应用多个配置变更 |
 | `/api/timeline/config/resolve` | GET | 获取事件的三级合并后最终配置 |
 | `/api/config/slots` | GET | 列出所有可配置槽位及其 Schema |
 

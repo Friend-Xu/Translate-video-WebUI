@@ -12,7 +12,6 @@ CLI 和 WebUI 共享此模块。封装所有胶水逻辑：
 from __future__ import annotations
 import json as _json
 import os
-import yaml as _yaml
 from pathlib import Path
 from typing import Callable
 
@@ -23,7 +22,7 @@ from core.engine.runtime_event import RuntimeEvent, RuntimeEventType as RET
 from core.config.workflow_policy import WorkflowPolicy, WorkflowStage
 from core.config.global_config import GlobalConfig
 from core.runtime.project_state import TimelineProjectState
-from core.runtime.synthesis import SynthesisEngine
+from core.runtime.timeline_io import persist_state
 from core.runtime.workspace import WorkspaceResolver
 from core.runtime.context import RuntimeContext
 
@@ -56,51 +55,6 @@ def load_transcript_data(workspace_dir: str) -> tuple:
     return segments, speaker_timeline
 
 
-# ── 翻译函数 ────────────────────────────────────────────
-
-def _load_translate_config() -> dict:
-    cfg_path = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
-    if os.path.isfile(cfg_path):
-        with open(cfg_path, "r", encoding="utf-8") as f:
-            return _yaml.safe_load(f).get("translate", {})
-    return {}
-
-
-def build_translate_fn() -> Callable[[str], str]:
-    """从 config/translate.yaml 构建 LLM 翻译闭包。"""
-    import requests
-    cfg = _load_translate_config()
-    api_key = cfg.get("api_key", "")
-    model = cfg.get("model", "deepseek-chat")
-    base_url = cfg.get("api_base_url", "https://api.deepseek.com")
-    system_prompt = (
-        cfg.get("custom_prompt", {}).get("single_prompt", "")
-        or "你是专业字幕翻译器。直接返回翻译结果，不要解释。"
-    )
-    temperature = cfg.get("temperature", 0.1)
-    max_tokens = cfg.get("max_tokens", 4000)
-    timeout = cfg.get("timeout", 120)
-
-    def _translate(tagged_text: str) -> str:
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": tagged_text},
-            ],
-            "temperature": temperature, "max_tokens": max_tokens,
-        }
-        resp = requests.post(
-            f"{base_url}/v1/chat/completions",
-            json=payload, headers=headers, timeout=timeout,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-
-    return _translate
-
-
 # ── Policy ──────────────────────────────────────────────
 
 def build_policy(
@@ -130,7 +84,7 @@ def build_policy(
 
 def build_pass_factory(
     ctx: RuntimeContext,
-    translate_fn: Callable[[str], str],
+    translate_fn: Callable[[str, str], str] | None,
     segments: list | None,
     speaker_timeline: list | None,
     output_path: str = "",
@@ -151,43 +105,6 @@ def build_pass_factory(
         output_dir=wsr.workspace_root,
         workspace_dir=wsr.workspace_root,
     )
-
-
-# ── 持久化 ──────────────────────────────────────────────
-
-def persist_timeline(state: TimelineProjectState, workspace_dir: str) -> str:
-    """将 Pipeline 输出按 v2.0 schema 持久化为 timeline.json。"""
-    engine = SynthesisEngine()
-    rendered = engine.render_all(state)
-    speakers_data = engine.render_speakers(state)
-
-    ir = state.ir
-    project_info = {
-        "schema_version": ir.schema_version,
-        "ir_version": ir.ir_version,
-        "source_video": ir.source_video,
-        "audio_sample_rate": ir.audio_sample_rate,
-        "language": ir.language,
-        "total_duration": ir.total_duration,
-    }
-
-    timeline_data = {
-        "schema_version": "2.0",
-        "project": project_info,
-        "events": rendered,
-        "speakers": {s["id"]: s for s in speakers_data},
-        "metadata": {
-            "generated_by": "core/pipeline.py",
-            "event_count": len(rendered),
-            "speaker_count": len(speakers_data),
-        },
-    }
-
-    tl_path = os.path.join(workspace_dir, "02_translate", "timeline.json")
-    os.makedirs(os.path.dirname(tl_path), exist_ok=True)
-    with open(tl_path, "w", encoding="utf-8") as f:
-        _json.dump(timeline_data, f, ensure_ascii=False, indent=2)
-    return tl_path
 
 
 # ── 主入口 ──────────────────────────────────────────────
@@ -230,8 +147,8 @@ def run_pipeline(
     # 1. 加载已有 transcript
     segments, speaker_timeline = load_transcript_data(ctx.workspace_dir)
 
-    # 2. 构建翻译函数
-    translate_fn = build_translate_fn()
+    # 2. 翻译由 LLMTranslationPass 默认客户端承担 (config/translate.yaml)
+    translate_fn = None
 
     # 3. 输出路径
     machine_srt = os.path.join(ctx.workspace_dir, "02_translate", "machine.srt")
@@ -268,8 +185,10 @@ def run_pipeline(
     )
     state = orchestrator.run(video_path)
 
-    # 9. 持久化 timeline.json
-    timeline_path = persist_timeline(state, ctx.workspace_dir)
+    # 9. 持久化 timeline.json (canonical: 01_extract/timeline.json, 含 translation_bible)
+    timeline_path = persist_state(
+        state, ctx.workspace_dir, video_path, target_lang,
+    )
     bus.emit_now(RuntimeEvent(
         event_type=RET.WORKFLOW_COMPLETED,
         payload={

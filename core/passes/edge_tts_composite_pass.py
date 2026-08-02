@@ -24,7 +24,7 @@ class EdgeTTSCompositePass(TimelinePass):
 
     触发条件:
       1. segment 没有任何有效 TTS 输出（主引擎 + OpenVoice 全部失败）
-      2. 或 es.runtime["tts_status"] in ("fallback_rejected", "rejected")
+      2. 或 es.runtime.tts_status in ("fallback_rejected", "rejected")
     """
 
     name = "edge_tts_composite"
@@ -41,8 +41,8 @@ class EdgeTTSCompositePass(TimelinePass):
 
         unvoiced = [
             es for es in state.sorted_events()
-            if not es.tts.get("audio_ref")
-            or es.tts.get("transfer_status") == "failed"
+            if not es.tts.audio_ref
+            or es.tts.transfer_status == "failed"
         ]
 
         if not unvoiced:
@@ -51,7 +51,7 @@ class EdgeTTSCompositePass(TimelinePass):
         adjuster = self._get_timing_adjuster()
 
         for es in unvoiced:
-            tts_status = es.runtime.get("tts_status", "")
+            tts_status = es.runtime.tts_status
             if tts_status == "fallback_rejected":
                 reason = "openvoice_fallback_failed"
             elif tts_status == "rejected":
@@ -76,7 +76,7 @@ class EdgeTTSCompositePass(TimelinePass):
                 continue
 
             patch, sd = self._synthesize_with_search(ctx, adjuster, target_dur)
-            es.tts["speed_decision"] = sd.as_dict()
+            es.tts.speed_decision = sd.as_dict()
 
             # ── LUFS 归一化 ──
             import os as _os
@@ -99,12 +99,12 @@ class EdgeTTSCompositePass(TimelinePass):
                     "duration_fit": score.duration_fit,
                     "language_match": score.language_match,
                 }
-                es.runtime["tts_status"] = "edge_tts_fallback"
-                es.runtime["generation_mode"] = "fallback"
-                es.runtime["fallback_reason"] = reason
+                es.runtime.tts_status = "edge_tts_fallback"
+                es.runtime.generation_mode = "fallback"
+                es.runtime.engine_scores["fallback_reason"] = reason
             else:
-                es.runtime["tts_status"] = "edge_tts_rejected"
-                es.runtime["edge_tts_reject_reason"] = f"composite={score.composite:.2f}"
+                es.runtime.tts_status = "edge_tts_rejected"
+                es.runtime.engine_scores["edge_tts_reject_reason"] = f"composite={score.composite:.2f}"
 
         return state
 

@@ -13,6 +13,7 @@ import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOverRounded'
 import SubtitlesIcon from '@mui/icons-material/SubtitlesRounded'
 import FileDownloadIcon from '@mui/icons-material/FileDownloadRounded'
 import PlayArrowIcon from '@mui/icons-material/PlayArrowRounded'
+import MemoryIcon from '@mui/icons-material/MemoryRounded'
 import EditNoteIcon from '@mui/icons-material/EditNoteRounded'
 import { useAppStore } from '../../store/useAppStore'
 import { CustomPromptDialog } from '../CustomPromptDialog'
@@ -80,6 +81,7 @@ export default function SettingsView() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [auditionLoading, setAuditionLoading] = useState(false)
+  const [releaseMsg, setReleaseMsg] = useState<string | null>(null)
 
   const PREVIEW_DEFAULTS: Record<string, string> = {
     chattts: '这是一个ChatTTS语音合成测试案例。',
@@ -94,11 +96,17 @@ export default function SettingsView() {
   const [fonts, setFonts] = useState<any[]>([])
   const [previewImg, setPreviewImg] = useState<string | null>(null)
   const [promptOpen, setPromptOpen] = useState(false)
+  // P5-A: 质量策略选项来自 core 注册表 (GET /api/config quality_strategies)
+  const [qualityStrategies, setQualityStrategies] = useState<string[]>([])
 
   useEffect(() => {
     fetch('/api/config')
       .then(r => r.json())
-      .then(data => setConfig(data.config || data))
+      .then(data => {
+        defaultsRef.current = data.defaults || {}
+        setQualityStrategies(data.quality_strategies || [])
+        setConfig(data.config || data)
+      })
       .catch(() => {})
       .finally(() => setLoading(false))
     fetch('/api/tts/speakers')
@@ -120,34 +128,73 @@ export default function SettingsView() {
     setPreviewText(PREVIEW_DEFAULTS[engine] || '试听文本。')
   }, [engine])
 
+  // P1 差异层: 只持久化用户改过的键; 值=默认 → 发 null (恢复默认, 删除差异)
+  const dirtyRef = useRef<Set<string>>(new Set())
+  const defaultsRef = useRef<Record<string, any>>({})
+
+  const set = (key: string, value: any) => {
+    dirtyRef.current.add(key)
+    setConfig((prev: Record<string, any>) => ({ ...prev, [key]: value }))
+  }
+
+  const buildPatch = useCallback((): Record<string, any> | null => {
+    const dirty = [...dirtyRef.current]
+    if (dirty.length === 0) return null
+    const patch: Record<string, any> = {}
+    for (const k of dirty) {
+      if (config[k] === undefined) continue
+      patch[k] = config[k] === defaultsRef.current[k] ? null : config[k]
+    }
+    dirtyRef.current = new Set()
+    return Object.keys(patch).length > 0 ? patch : null
+  }, [config])
+
   const save = useCallback(async () => {
     setSaving(true)
+    try {
+      const patch = buildPatch()
+      if (patch) {
+        await fetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ config: patch, workspace }),
+        })
+      }
+    } catch {}
+    setSaving(false)
+  }, [buildPatch, workspace])
+
+  const handleResetAll = useCallback(async () => {
+    // P4: 恢复默认 = 清空差异层 (POST null 删除全部键, 后端回落到系统默认)
+    const reset: Record<string, any> = {}
+    for (const k of Object.keys(config)) reset[k] = null
+    dirtyRef.current = new Set()
+    setConfig(defaultsRef.current || {})
+    if (Object.keys(reset).length === 0) return
     try {
       await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config, workspace }),
+        body: JSON.stringify({ config: reset }),
       })
     } catch {}
-    setSaving(false)
-  }, [config, workspace])
+  }, [config])
 
-  const set = (key: string, value: any) =>
-    setConfig((prev: Record<string, any>) => ({ ...prev, [key]: value }))
-
-  // 自动保存：任何字段变化 800ms 后自动写 settings.json（跳过首次加载）
+  // 自动保存：任何字段变化 800ms 后差异提交（跳过首次加载）
   const initialLoad = useRef(true)
   useEffect(() => {
     if (initialLoad.current) { initialLoad.current = false; return }
     const timer = setTimeout(() => {
+      const patch = buildPatch()
+      if (!patch) return
       fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ config, workspace }),
+        body: JSON.stringify({ config: patch, workspace }),
       }).catch(() => {})
     }, 800)
     return () => clearTimeout(timer)
-  }, [config, workspace])
+  }, [config, workspace, buildPatch])
 
   const handleAudition = async () => {
     setAuditionLoading(true)
@@ -180,6 +227,21 @@ export default function SettingsView() {
       }
     } catch (e) { console.error('ChatTTS audition error:', e) }
     finally { setAuditionLoading(false) }
+  }
+
+  const handleReleaseChatTTS = async () => {
+    setReleaseMsg(null)
+    try {
+      const res = await fetch('/api/tts/release-chattts', { method: 'POST' })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: res.statusText }))
+        setReleaseMsg(`释放失败: ${err.detail || res.statusText}`)
+        return
+      }
+      setReleaseMsg('已释放 — GPU 显存已归还给流水线')
+    } catch (e: any) {
+      setReleaseMsg(`释放失败: ${e.message}`)
+    }
   }
 
   const handleEdgeAudition = async () => {
@@ -231,7 +293,7 @@ export default function SettingsView() {
         max_lines: String(config.caption_max_lines ?? 2),
         font_size_factor: String(config.caption_font_size_factor ?? 0.030),
         caption_width_ratio: String(config.caption_width_ratio ?? 0.85),
-        font_size_mode: 'fixed',
+        font_size_mode: (config.caption_font_size ?? 0) > 0 ? 'fixed' : 'adaptive',
         text_zh: 'Minecraft我的世界 村民交易',
         text_en: 'Minecraft Villager Trade x64',
         engine: 'pil',
@@ -269,6 +331,8 @@ export default function SettingsView() {
         </Box>
         <Box sx={{ display: 'flex', gap: 1 }}>
           <Button variant="outlined" size="small" onClick={() => setMode('hub')}>返回</Button>
+          <Button variant="outlined" size="small" color="warning"
+            onClick={handleResetAll} disabled={saving}>恢复默认</Button>
           <Button variant="contained" size="small"
             startIcon={saving ? <CircularProgress size={14} /> : <SaveIcon />}
             onClick={save} disabled={saving}>保存</Button>
@@ -276,7 +340,7 @@ export default function SettingsView() {
       </Box>
 
       {/* Card Grid */}
-      <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
+      <Box sx={{ flex: 1, overflow: 'auto', p: 3, maxWidth: 1360, mx: 'auto', width: '100%' }}>
         <Grid container spacing={2}>
           {/* 1. 音频预处理 */}
           <Grid size={{ xs: 12, sm: 6, md: 4 }}>
@@ -379,51 +443,52 @@ export default function SettingsView() {
               <Slider size="small" value={config.top_p ?? 0.9} min={0} max={1} step={0.05}
                 onChange={(_, v) => set('top_p', v)} sx={{ mb: 1 }} />
 
-              {/* ── 质量门控 ── */}
-              <FormControlLabel control={<Switch size="small" checked={config.quality_gate !== false}
-                onChange={e => set('quality_gate', e.target.checked)} />} label="质量门禁" />
-              {config.quality_gate !== false && <>
-                <FormControl fullWidth size="small" sx={{ mt: 1, mb: 1.5 }}>
-                  <InputLabel>门控模式</InputLabel>
-                  <Select value={config.verification_mode || 'logic_gate'}
-                    onChange={e => set('verification_mode', e.target.value)} label="门控模式">
-                    <MenuItem value="logic_gate">三门逻辑 (Gate A→C→B)</MenuItem>
-                    <MenuItem value="joint_formula">联合公式 (Joint Formula)</MenuItem>
-                  </Select>
-                </FormControl>
+              {/* ── 质量门控 (P5-A: 选项来自 core 策略注册表, 单一事实源) ── */}
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                质量门控由翻译策略驱动（始终启用）
+              </Typography>
+              <FormControl fullWidth size="small" sx={{ mb: 1.5 }}>
+                <InputLabel>质量策略</InputLabel>
+                <Select value={config.verification_mode || 'logic_gate'}
+                  onChange={e => set('verification_mode', e.target.value)} label="质量策略">
+                  {(qualityStrategies.length > 0 ? qualityStrategies : ['logic_gate', 'xcomet']).map(s => (
+                    <MenuItem key={s} value={s}>
+                      {s === 'logic_gate' ? '三门逻辑 (MiniLM 语义 + PPL 自然度)'
+                        : s === 'xcomet' ? 'XCOMET 模型评分'
+                        : s}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
 
-                {(config.verification_mode || 'logic_gate') === 'logic_gate' ? <>
-                  <Typography variant="caption" color="text.secondary">
-                    Gate A 语义底线: {config.semantic_threshold ?? 0.70}
-                  </Typography>
-                  <Slider size="small" value={config.semantic_threshold ?? 0.70}
-                    min={0.50} max={0.95} step={0.05}
-                    onChange={(_, v) => set('semantic_threshold', v)} sx={{ mb: 1 }} />
-                  <Typography variant="caption" color="text.secondary">
-                    Gate C 退化容忍: {config.sim_drop_limit ?? 0.05}
-                  </Typography>
-                  <Slider size="small" value={config.sim_drop_limit ?? 0.05}
-                    min={0} max={0.20} step={0.01}
-                    onChange={(_, v) => set('sim_drop_limit', v)} sx={{ mb: 1 }} />
-                </> : <>
-                  <Typography variant="caption" color="text.secondary">
-                    PPL 权重 (β): {config.gate_beta ?? 0.6}
-                  </Typography>
-                  <Slider size="small" value={config.gate_beta ?? 0.6}
-                    min={0.1} max={0.9} step={0.1}
-                    onChange={(_, v) => set('gate_beta', v)} sx={{ mb: 1 }} />
-                  <Typography variant="caption" color="text.secondary">
-                    语义权重 (γ): {config.gate_gamma ?? 0.4}
-                  </Typography>
-                  <Slider size="small" value={config.gate_gamma ?? 0.4}
-                    min={0.1} max={0.9} step={0.1}
-                    onChange={(_, v) => set('gate_gamma', v)} sx={{ mb: 1 }} />
-                </>}
+              {(config.verification_mode || 'logic_gate') === 'logic_gate' && <>
+                <Typography variant="caption" color="text.secondary">
+                  Gate A 语义底线: {config.semantic_threshold ?? 0.70}
+                </Typography>
+                <Slider size="small" value={config.semantic_threshold ?? 0.70}
+                  min={0.50} max={0.95} step={0.05}
+                  onChange={(_, v) => set('semantic_threshold', v)} sx={{ mb: 1 }} />
+                <Typography variant="caption" color="text.secondary">
+                  Gate C 退化容忍: {config.sim_drop_limit ?? 0.05}
+                </Typography>
+                <Slider size="small" value={config.sim_drop_limit ?? 0.05}
+                  min={0} max={0.20} step={0.01}
+                  onChange={(_, v) => set('sim_drop_limit', v)} sx={{ mb: 1 }} />
+              </>}
 
-                <FormControlLabel control={<Switch size="small"
-                  checked={config.joint_verification === true}
-                  onChange={e => set('joint_verification', e.target.checked)} />}
-                  label="闭环验证 (PPL 二次门控)" />
+              {(config.verification_mode || 'logic_gate') === 'xcomet' && <>
+                <Typography variant="caption" color="text.secondary">
+                  Gate A 自动通过线: {config.gate_threshold_accept ?? 0.52}
+                </Typography>
+                <Slider size="small" value={config.gate_threshold_accept ?? 0.52}
+                  min={0} max={1} step={0.05}
+                  onChange={(_, v) => set('gate_threshold_accept', v)} sx={{ mb: 1 }} />
+                <Typography variant="caption" color="text.secondary">
+                  Gate C 重翻线: {config.gate_threshold_reject ?? 0.24}
+                </Typography>
+                <Slider size="small" value={config.gate_threshold_reject ?? 0.24}
+                  min={0} max={1} step={0.05}
+                  onChange={(_, v) => set('gate_threshold_reject', v)} sx={{ mb: 1 }} />
               </>}
 
               {/* ── 提示词 ── */}
@@ -497,9 +562,22 @@ export default function SettingsView() {
                 <Button variant="outlined" size="small" fullWidth
                   startIcon={auditionLoading ? <CircularProgress size={14} /> : <PlayArrowIcon />}
                   onClick={handleAudition} disabled={auditionLoading}
-                  sx={{ mb: 2 }}>
+                  sx={{ mb: 1 }}>
                   {auditionLoading ? '合成中…' : '试听音色'}
                 </Button>
+
+                <Button size="small" color="inherit" fullWidth
+                  startIcon={<MemoryIcon />} onClick={handleReleaseChatTTS}
+                  sx={{ mb: 1, fontSize: '0.7rem' }}>
+                  释放显存 (归还给流水线)
+                </Button>
+                {releaseMsg && (
+                  <Typography variant="caption"
+                    color={releaseMsg.startsWith('释放失败') ? 'error' : 'success.main'}
+                    sx={{ display: 'block', mb: 1, fontSize: '0.65rem' }}>
+                    {releaseMsg}
+                  </Typography>
+                )}
 
                 <Typography variant="caption" color="text.secondary">
                   温度: {config.chattts_temperature ?? 0.3}
@@ -711,13 +789,22 @@ export default function SettingsView() {
 
               <FormControl fullWidth size="small" sx={{ mb: 1.5 }}>
                 <InputLabel>字号模式</InputLabel>
-                <Select value={config.font_size_mode || 'adaptive'}
-                  onChange={e => set('font_size_mode', e.target.value)} label="字号模式">
+                <Select
+                  value={(config.caption_font_size ?? 0) > 0 ? 'fixed' : 'adaptive'}
+                  onChange={e => {
+                    // P4 单源: font_size_mode 派生自 caption_font_size, 不再独立存键
+                    if (e.target.value === 'fixed' && !(config.caption_font_size > 0)) {
+                      set('caption_font_size', 36)
+                    } else if (e.target.value === 'adaptive') {
+                      set('caption_font_size', 0)
+                    }
+                  }}
+                  label="字号模式">
                   <MenuItem value="adaptive">自适应 (按视频宽度)</MenuItem>
                   <MenuItem value="fixed">固定字号</MenuItem>
                 </Select>
               </FormControl>
-              {(config.font_size_mode || 'adaptive') === 'fixed' && (
+              {((config.caption_font_size ?? 0) > 0) && (
                 <TextField fullWidth size="small" label="最大字号 (px, 0=不限)" type="number"
                   value={config.max_font_size ?? 0}
                   onChange={e => set('max_font_size', parseInt(e.target.value) || 0)}

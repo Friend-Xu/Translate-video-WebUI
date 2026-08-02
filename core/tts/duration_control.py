@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class SpeedDecision:
-    """调速决策结果 — 写入 es.tts["speed_decision"]。
+    """调速决策结果 — 写入 es.tts.speed_decision。
 
     由各引擎 Composite Pass 在 TTS 阶段填充，
     VideoExportPass 只读不写。
@@ -112,7 +112,7 @@ class DurationController:
             video_speed_min: 视频减速下限
 
         Returns:
-            SpeedDecision — 写入 es.tts["speed_decision"]
+            SpeedDecision — 写入 es.tts.speed_decision
         """
         sd = SpeedDecision(
             original_duration=actual,

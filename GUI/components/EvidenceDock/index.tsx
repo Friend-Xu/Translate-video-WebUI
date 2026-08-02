@@ -7,29 +7,21 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircleRounded'
 import PendingIcon from '@mui/icons-material/PendingRounded'
 import { useAppStore } from '../../store/useAppStore'
 import { LAYOUT_PRESETS } from '../../types/modes'
-import { LogPanel } from '../sections/LogPanel'
-import type { LogEntry, EventViewModel } from '../../types'
-import type { ConnectionState } from '../../hooks/useSSE'
+import type { EventViewModel } from '../../types'
 import type { BatchStatus } from '../../types'
 
-type DockView = 'log' | 'aiTrace' | 'patchDiff' | 'taskOutput' | 'debug'
+type DockView = 'aiTrace' | 'patchDiff' | 'taskOutput' | 'debug'
 
 interface Props {
-  logs?: LogEntry[]
-  connectionState?: ConnectionState
-  logFirstIndex?: number
-  logTotal?: number
-  onLoadOlder?: () => void
   events?: EventViewModel[]
   passTrace?: string[]
   batchStatus?: BatchStatus | null
 }
 
 const TAB_LABELS: Record<DockView, string> = {
-  log: '日志',
   aiTrace: 'AI 追踪',
-  patchDiff: '补丁差异',
-  taskOutput: '任务输出',
+  patchDiff: '补丁列表',
+  taskOutput: '任务状态',
   debug: '调试',
 }
 
@@ -43,8 +35,6 @@ const PASS_NAMES: Record<string, string> = {
 }
 
 export default function EvidenceDock({
-  logs = [], connectionState = 'closed',
-  logFirstIndex = 0, logTotal = 0, onLoadOlder,
   events = [], passTrace, batchStatus,
 }: Props) {
   const mode = useAppStore(s => s.mode)
@@ -53,6 +43,7 @@ export default function EvidenceDock({
   const toggleDockCollapsed = useAppStore(s => s.toggleDockCollapsed)
   const pendingDrafts = useAppStore(s => s.pendingDrafts)
   const appliedPatches = useAppStore(s => s.appliedPatches)
+  const debugMode = useAppStore(s => s.debugMode)
 
   const [activeView, setActiveView] = useState<DockView>(preset.defaultDockView)
 
@@ -67,6 +58,11 @@ export default function EvidenceDock({
     ? passTrace
     : events.length > 0 ? events[0]?.passTrace ?? [] : []
 
+  // 调试 tab 仅在 debugMode 时出现 (开发者工具不混入用户界面)
+  const visibleTabs = (Object.keys(TAB_LABELS) as DockView[])
+    .filter(v => v !== 'debug' || debugMode)
+  const visibleView: DockView = visibleTabs.includes(activeView) ? activeView : 'patchDiff'
+
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <Box sx={{
@@ -76,11 +72,11 @@ export default function EvidenceDock({
       }}>
         <Collapse in={!collapsed} orientation="horizontal">
           <Tabs
-            value={activeView}
+            value={visibleView}
             onChange={(_, v) => setActiveView(v)}
             sx={{ minHeight: 32, '& .MuiTab-root': { minHeight: 32, py: 0, fontSize: '0.72rem' } }}
           >
-            {(Object.keys(TAB_LABELS) as DockView[]).map(tab => (
+            {visibleTabs.map(tab => (
               <Tab key={tab} label={TAB_LABELS[tab]} value={tab} />
             ))}
           </Tabs>
@@ -96,18 +92,7 @@ export default function EvidenceDock({
 
       <Collapse in={!collapsed}>
         <Box sx={{ flexGrow: 1, overflow: 'hidden', height: 168 }}>
-          {activeView === 'log' && (
-            <LogPanel
-              logs={logs}
-              showTitle={false}
-              connectionState={connectionState}
-              logFirstIndex={logFirstIndex}
-              logTotal={logTotal}
-              onLoadOlder={onLoadOlder}
-            />
-          )}
-
-          {activeView === 'aiTrace' && (
+          {visibleView === 'aiTrace' && (
             <Box sx={{ p: 1.5, height: '100%', overflow: 'auto' }}>
               <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
                 Pass 链路 — 翻译与 TTS 推理流程
@@ -127,7 +112,7 @@ export default function EvidenceDock({
             </Box>
           )}
 
-          {activeView === 'patchDiff' && (
+          {visibleView === 'patchDiff' && (
             <Box sx={{ p: 1.5, height: '100%', overflow: 'auto' }}>
               <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
                 补丁与草案
@@ -156,7 +141,7 @@ export default function EvidenceDock({
             </Box>
           )}
 
-          {activeView === 'taskOutput' && (
+          {visibleView === 'taskOutput' && (
             <Box sx={{ p: 1.5, height: '100%', overflow: 'auto' }}>
               <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
                 批处理任务状态
@@ -183,7 +168,7 @@ export default function EvidenceDock({
             </Box>
           )}
 
-          {activeView === 'debug' && (
+          {visibleView === 'debug' && (
             <Box sx={{ p: 1.5, height: '100%', overflow: 'auto', display: 'flex', flexDirection: 'column' }}>
               <Typography variant="caption" color="text.secondary" sx={{ mb: 0.5, display: 'block' }}>
                 Store State

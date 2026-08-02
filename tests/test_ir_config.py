@@ -135,8 +135,8 @@ class TestDeltaStorage:
         assert es is not None
 
         # 设置事件级覆盖：仅覆盖 model
-        es.asr.setdefault("config", {})
-        es.asr["config"]["model"] = "large-v3"
+        es.asr.config
+        es.asr.config["model"] = "large-v3"
 
         # 解析完整配置
         resolved = config_resolver.resolve_event_config(
@@ -178,8 +178,8 @@ class TestDeltaStorage:
         es = project_state.get_event("evt_001")
         assert es is not None
 
-        es.asr.setdefault("config", {})
-        es.asr["config"]["model"] = "large-v3"
+        es.asr.config
+        es.asr.config["model"] = "large-v3"
 
         resolved = config_resolver.resolve_event_config(
             "evt_001", "asr", project_state,
@@ -213,8 +213,8 @@ class TestThreeLevelResolution:
         assert es is not None
 
         # 设置事件覆盖
-        es.asr.setdefault("config", {})
-        es.asr["config"]["model"] = "large-v3"
+        es.asr.config
+        es.asr.config["model"] = "large-v3"
 
         resolved = config_resolver.resolve_event_config(
             "evt_001", "asr", project_state,
@@ -230,15 +230,15 @@ class TestThreeLevelResolution:
         assert es is not None
 
         # 先设置覆盖
-        es.asr.setdefault("config", {})
-        es.asr["config"]["model"] = "large-v3"
+        es.asr.config
+        es.asr.config["model"] = "large-v3"
         resolved_before = config_resolver.resolve_event_config(
             "evt_001", "asr", project_state,
         )
         assert resolved_before["model"] == "large-v3"
 
         # 模拟 RESET_CONFIG：删除 model 字段
-        es.asr["config"].pop("model", None)
+        es.asr.config.pop("model", None)
         resolved_after = config_resolver.resolve_event_config(
             "evt_001", "asr", project_state,
         )
@@ -251,8 +251,8 @@ class TestThreeLevelResolution:
         es = project_state.get_event("evt_001")
         assert es is not None
 
-        es.translation.setdefault("config", {})
-        es.translation["config"]["gate"] = {"threshold_accept": 0.90}
+        es.translation.config
+        es.translation.config["gate"] = {"threshold_accept": 0.90}
 
         resolved = config_resolver.resolve_event_config(
             "evt_001", "translation", project_state,
@@ -269,11 +269,11 @@ class TestThreeLevelResolution:
         es = project_state.get_event("evt_001")
         assert es is not None
 
-        es.asr.setdefault("config", {})
-        es.asr["config"]["model"] = "large-v3"
+        es.asr.config
+        es.asr.config["model"] = "large-v3"
 
         # null 覆盖 → 删除事件级覆盖 → 恢复全局默认 "turbo"
-        es.asr["config"]["model"] = None
+        es.asr.config["model"] = None
         resolved = config_resolver.resolve_event_config(
             "evt_001", "asr", project_state,
         )
@@ -365,18 +365,18 @@ class TestConfigUndoChain:
         es = project_state.get_event("evt_003")
         assert es is not None
 
-        es.translation.setdefault("config", {})
-        es.translation["config"].setdefault("gate", {})
+        es.translation.config
+        es.translation.config.setdefault("gate", {})
 
         # 记录每次修改前的值
         history = []
         for v in [0.80, 0.90, 0.95]:
-            history.append(es.translation["config"]["gate"].get("threshold_accept"))
-            es.translation["config"]["gate"]["threshold_accept"] = v
+            history.append(es.translation.config["gate"].get("threshold_accept"))
+            es.translation.config["gate"]["threshold_accept"] = v
 
         # 回退到第三次修改前的值
         assert history[2] == 0.90
-        es.translation["config"]["gate"]["threshold_accept"] = history[2]
+        es.translation.config["gate"]["threshold_accept"] = history[2]
         resolved = config_resolver.resolve_event_config(
             "evt_003", "translation", project_state,
         )
@@ -415,8 +415,8 @@ class TestSpeakerLevelInheritance:
         assert es is not None
 
         # 事件级覆盖
-        es.tts.setdefault("config", {})
-        es.tts["config"]["engine"] = "edge"
+        es.tts.config
+        es.tts.config["engine"] = "edge"
 
         resolved = config_resolver.resolve_event_config(
             "evt_001", "tts", project_state,

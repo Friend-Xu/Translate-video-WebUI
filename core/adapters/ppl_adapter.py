@@ -45,10 +45,8 @@ class PPLAdapter:
             id=f"ppl_{ctx.segment_id}", target_id=ctx.segment_id,
             op=OpCode.ANNOTATE,
             value={
-                "translation": {
-                    "ppl": round(ppl, 2), "ppl_ratio": round(ratio, 4),
-                    "naturalness_flagged": flagged,
-                },
+                # ppl/naturalness_flagged 只落 provenance (translation 类型化槽位无这些字段)
+                "translation": {"ppl_ratio": round(ratio, 4)},
                 "provenance": {
                     "gate_naturalness": {
                         "model": "Qwen2-0.5B", "ppl": round(ppl, 2),

@@ -217,7 +217,7 @@ export default function ProjectHubPage() {
       appendLog({ _id: Date.now(), level: 'ERROR', message: `启动失败: ${e}`, timestamp: new Date().toISOString() } as LogEntry)
       setPhase('review')
     }
-  }, [workspace, manifest?.video_path, lang, targetLang, selectedPresetId, appendLog, setStatus, loadLogTail, pollStatus])
+  }, [workspace, manifest?.video_path, lang, targetLang, selectedPresetId, numSpeakers, appendLog, setStatus, loadLogTail, pollStatus])
 
   const handleCancel = useCallback(() => {
     cancelPipeline()
@@ -258,7 +258,7 @@ export default function ProjectHubPage() {
   // ── Hub View ──
   if (phase === 'hub') {
     return (
-      <Box sx={{ height: '100%', overflow: 'auto', p: 4 }}>
+      <Box sx={{ height: '100%', overflow: 'auto', p: 4, maxWidth: 1360, mx: 'auto' }}>
         <Box sx={{ mb: 4, textAlign: 'center' }}>
           <Typography variant="h4" fontWeight={700} gutterBottom>Timeline Runtime System</Typography>
           <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 600, mx: 'auto', mb: 1.5 }}>
@@ -428,10 +428,11 @@ export default function ProjectHubPage() {
                               body: JSON.stringify({ path: ws.path }),
                             }).catch(() => {})
                           }} />
-                        <Box sx={{ flexGrow: 1, minWidth: 0, cursor: isRunning ? 'pointer' : (ws.runtimeState === 'ready' || ws.runtimeState === 'complete') ? 'pointer' : 'default' }}
+                        <Box sx={{ flexGrow: 1, minWidth: 0, cursor: 'pointer' }}
                           onClick={() => {
                             if (ws.runtimeState === 'ready' || ws.runtimeState === 'complete') handleOpenWorkspace(ws)
                             else if (isRunning) { loadWorkspace(ws.path); setPhase('running') }
+                            else handleOpenWorkspace(ws)  // New/uninitialized: 可打开, 数据缺失时响亮报错 (禁止静默 no-op)
                           }}>
                           <Typography variant="body2" fontWeight={600} noWrap>{ws.name}</Typography>
                           <Typography variant="caption" color="text.secondary" noWrap>{ws.videoPath?.split(/[/\\]/).pop() || ws.path}</Typography>
@@ -480,7 +481,7 @@ export default function ProjectHubPage() {
   const activeStep = phase === 'config' ? 0 : phase === 'review' ? 1 : 2
 
   return (
-    <Box sx={{ height: '100%', overflow: 'auto', p: 3 }}>
+    <Box sx={{ height: '100%', overflow: 'auto', p: 3, maxWidth: 1360, mx: 'auto', width: '100%' }}>
       <Box sx={{ mb: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
           <Button size="medium" variant="outlined" color="primary" onClick={() => { setPhase('hub') }}>

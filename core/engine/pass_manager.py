@@ -58,7 +58,12 @@ class PassManager:
         return current, diffs
 
     def _configure_pass(self, name: str, state: TimelineProjectState) -> None:
-        """在 apply() 前调用 pass.configure()，注入配置。(批次03 §五)"""
+        """在 apply() 前调用 pass.configure()，注入配置。(批次03 §五)
+
+        契约 (P3 统一): resolved_config 为 {slot: {field: value}} 全槽位 dict,
+        pass 按自己的槽位取子块。同时注入 _resolver 供 pass 在 apply() 内
+        逐事件解析 (Event > Speaker > Global 三级覆盖)。
+        """
         resolver = self._config_resolver
         if resolver is None:
             return
@@ -70,6 +75,7 @@ class PassManager:
                       "emotion", "semantic", "review"):
             slot_configs[slot] = resolver._global.get_slot_defaults(slot)
         p.configure(slot_configs)
+        p._resolver = resolver
 
     def _resolve_order(self) -> None:
         """Kahn 拓扑排序"""

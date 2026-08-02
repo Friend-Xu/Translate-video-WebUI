@@ -15,7 +15,7 @@ import DiagnosisCard from '../DiagnosisCard'
 import InspectorPanel from '../InspectorPanel'
 import { useConfigInspector } from '../../hooks/useConfigInspector'
 import SpeakerInspectorTab from './SpeakerInspectorTab'
-import { MOCK_ISSUES } from '../../mocks/mockData'
+import WordSplitDialog from './WordSplitDialog'
 import type { EventViewModel } from '../../types'
 import type { InspectorTab, PatchDraft } from '../../types/modes'
 
@@ -33,6 +33,7 @@ export default function IRInspector({ event }: Props) {
   const addDraft = useAppStore(s => s.addDraft)
   const setMode = useAppStore(s => s.setMode)
   const navigateToEvent = useAppStore(s => s.navigateToEvent)
+  const reviewFlags = useAppStore(s => s.reviewFlags)
   const preset = LAYOUT_PRESETS[mode]
   const visibleTabs = preset.inspectorTabs
   const [activeTab, setActiveTab] = useState<InspectorTab>(visibleTabs[0] || 'content')
@@ -40,6 +41,9 @@ export default function IRInspector({ event }: Props) {
   const [editText, setEditText] = useState('')
   const [editTranslation, setEditTranslation] = useState('')
   const [editing, setEditing] = useState(false)
+  const [splitDialogOpen, setSplitDialogOpen] = useState(false)
+  const [ttsLoading, setTtsLoading] = useState(false)
+  const [ttsDuration, setTtsDuration] = useState<number | null>(null)
 
   // Config inspector hook
   const configInspector = useConfigInspector(event?.id ?? null)
@@ -65,6 +69,31 @@ export default function IRInspector({ event }: Props) {
     setEditing(false)
   }, [event, editText, editTranslation, addDraft])
 
+  const handleTtsPreview = useCallback(async () => {
+    if (!event) return
+    const text = event.translation || event.text
+    if (!text) return
+    setTtsLoading(true)
+    try {
+      const res = await fetch('/api/tts/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engine: 'edge', text }),
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      if (data.audio_base64) {
+        const binary = atob(data.audio_base64)
+        const bytes = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+        const audio = new Audio(URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' })))
+        audio.play().catch(() => {})
+        if (data.duration) setTtsDuration(data.duration)
+      }
+    } catch { /* non-fatal */ }
+    finally { setTtsLoading(false) }
+  }, [event])
+
   if (!event) {
     return (
       <Box sx={{ p: 3, textAlign: 'center' }}>
@@ -75,7 +104,7 @@ export default function IRInspector({ event }: Props) {
     )
   }
 
-  const eventIssues = MOCK_ISSUES.filter(i => i.eventId === event.id)
+  const eventIssues = reviewFlags.filter(i => i.eventId === event.id)
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -139,7 +168,8 @@ export default function IRInspector({ event }: Props) {
                 </Box>
                 <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap', mt: 1 }}>
                   <Button size="small" variant="outlined" startIcon={<EditIcon />} onClick={handleStartEdit}>编辑翻译</Button>
-                  <Button size="small" variant="outlined" startIcon={<SplitIcon />}>切分</Button>
+                  <Button size="small" variant="outlined" startIcon={<SplitIcon />}
+                    onClick={() => setSplitDialogOpen(true)}>切分</Button>
                   <Button size="small" variant="outlined" startIcon={<MergeIcon />}>合并上文</Button>
                   <Button size="small" variant="outlined" startIcon={<VoiceIcon />}>重标说话人</Button>
                 </Box>
@@ -208,15 +238,21 @@ export default function IRInspector({ event }: Props) {
                   </Typography>
                 </Typography>
               </Box>
+              {ttsDuration !== null && (
+                <Box>
+                  <Typography variant="caption" color="text.secondary">实测语音时长</Typography>
+                  <Typography variant="body2">{ttsDuration.toFixed(2)}s</Typography>
+                </Box>
+              )}
               <Box>
                 <Typography variant="caption" color="text.secondary">TTS 引擎</Typography>
                 <Chip label="edge-tts (默认)" size="small" variant="outlined" sx={{ fontSize: '0.65rem' }} />
               </Box>
+              <Button size="small" variant="contained" disabled={ttsLoading || !(event.translation || event.text)}
+                onClick={handleTtsPreview} sx={{ alignSelf: 'flex-start', textTransform: 'none' }}>
+                {ttsLoading ? '合成中...' : '试听 TTS 预览'}
+              </Button>
             </Box>
-            <Divider sx={{ my: 1.5 }} />
-            <Typography variant="caption" color="text.secondary">
-              TTS 预览与语速调节将在集成真实引擎后可用
-            </Typography>
           </Box>
         )}
 
@@ -294,6 +330,12 @@ export default function IRInspector({ event }: Props) {
           />
         )}
       </Box>
+
+      <WordSplitDialog
+        event={event}
+        open={splitDialogOpen}
+        onClose={() => setSplitDialogOpen(false)}
+      />
     </Box>
   )
 }

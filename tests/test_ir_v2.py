@@ -7,7 +7,6 @@ import pytest
 from core.ir.timeline_event import TimelineEventIR
 from core.ir.speaker import SpeakerNodeIR
 from core.ir.project import TimelineProjectIR
-from core.ir.timeline import TimelineIR
 from core.ir.version import SCHEMA_VERSION, IR_VERSION, PATCH_VERSION, check_schema_compatible
 from core.runtime.event_state import TimelineEventState
 from core.runtime.project_state import TimelineProjectState
@@ -16,47 +15,38 @@ from core.runtime.synthesis import SynthesisEngine
 
 
 class TestNineSlots:
-    """九语义槽位默认值验证"""
+    """槽位默认值验证 (Phase 3A: 类型化对象, audio 死槽已删)"""
 
     def test_all_slots_default_empty(self):
         es = TimelineEventState(TimelineEventIR(
             id="e1", start=0, end=1, text_ref="hello", speaker_ref=None,
         ))
-        # v3.0: all slots lazy-init with {"config": {}}
-        assert es.audio == {"config": {}}
-        assert es.asr == {"config": {}}
-        assert es.speaker == {"config": {}}
-        assert es.semantic == {"config": {}}
-        assert es.translation == {"config": {}}
-        assert es.tts == {"config": {}}
-        assert es.review == {"config": {}}
-        # runtime and provenance slots don't have config sub-dict
-        assert es.runtime == {}
+        assert es.asr.words == []
+        assert es.speaker.speaker_id is None
+        assert es.semantic.embedding_ref == ""
+        assert es.translation.text == ""
+        assert es.tts.audio_ref == ""
+        assert es.review.review_status == "pending"
+        assert es.runtime.tts_status == ""
         assert es.provenance == {}
+        # audio 是死槽 (Phase 3b 上移项目级), 不应存在
+        assert not hasattr(es, "audio")
 
     def test_slot_lazy_init(self):
         es = TimelineEventState(TimelineEventIR(
             id="e1", start=0, end=1, text_ref="hello", speaker_ref=None,
         ))
-        t = es.translation
-        t["text"] = "hola"
-        assert es.translation["text"] == "hola"
+        es.translation.text = "hola"
+        assert es.translation.text == "hola"
 
-    def test_derivatives_backward_compat(self):
+    def test_meta_lineage_slot(self):
+        """Phase 3B: 血缘元数据走 meta, 不污染槽位容器自由键。"""
         es = TimelineEventState(TimelineEventIR(
             id="e1", start=0, end=1, text_ref="hello", speaker_ref=None,
         ))
-        es.derivatives["key"] = "val"
-        assert es.derivatives["key"] == "val"
-        assert es.derivatives is es._data
-
-    def test_derivatives_setter(self):
-        es = TimelineEventState(TimelineEventIR(
-            id="e1", start=0, end=1, text_ref="hello", speaker_ref=None,
-        ))
-        es.derivatives = {"a": 1}
-        assert es.derivatives["a"] == 1
-        assert es._data["a"] == 1
+        es.meta["merged_from"] = ["e0"]
+        assert es.meta["merged_from"] == ["e0"]
+        assert "meta" in es._data
 
 
 class TestSpeakerV21:
@@ -101,7 +91,6 @@ class TestOpCodeEnum:
         assert OpCode.MERGE == "merge"
         assert OpCode.SPLIT == "split"
         assert OpCode.REPLACE == "replace"
-        assert OpCode.PROPAGATE == "propagate"
 
     def test_new_opcodes(self):
         assert OpCode.SEGMENT_INSERT == "segment_insert"
@@ -150,35 +139,6 @@ class TestVersionSystem:
         assert ir.language is None
 
 
-class TestTimelineIR:
-    """Timeline 中间层验证"""
-
-    def test_construct_defaults(self):
-        tl = TimelineIR(id="tl_001")
-        assert tl.id == "tl_001"
-        assert tl.tracks == ()
-        assert tl.segment_order == ()
-        assert tl.patch_history_ref is None
-        assert tl.snapshot_list == ()
-        assert tl.quality_summary is None
-        assert tl.repair_queue == ()
-        assert tl.schema_version == "2.1"
-
-    def test_with_segments(self):
-        tl = TimelineIR(
-            id="tl_001",
-            segment_order=("seg_001", "seg_002", "seg_003"),
-            tracks=("vocal", "bgm"),
-        )
-        assert len(tl.segment_order) == 3
-        assert tl.tracks == ("vocal", "bgm")
-
-    def test_frozen(self):
-        tl = TimelineIR(id="tl_001")
-        with pytest.raises(Exception):
-            tl.id = "new"
-
-
 class TestSynthesisFiveLayer:
     """SynthesisEngine 5 层渲染验证"""
 
@@ -198,25 +158,25 @@ class TestSynthesisFiveLayer:
         es = TimelineEventState(TimelineEventIR(
             id="e1", start=0, end=1, text_ref="hello", speaker_ref=None,
         ))
-        es.derivatives["translation"] = "hola"
-        es.derivatives["emotion"] = "happy"
+        es.translation.text = "hola"
+        es.emotion.emotion = "happy"
         synth = SynthesisEngine()
         result = synth.render(es)
-        assert result["translation"] == "hola"
-        assert result["emotion"] == "happy"
+        assert result["translation"]["text"] == "hola"
+        assert result["emotion"]["emotion"] == "happy"
 
     def test_patches_override_derivatives(self):
         es = TimelineEventState(TimelineEventIR(
             id="e1", start=0, end=1, text_ref="hello", speaker_ref=None,
         ))
-        es.derivatives["translation"] = "hola"
+        es.translation.text = "hola"
         es.add_patch(Patch(
             id="p1", target_id="e1", op="replace",
-            value={"translation": "replaced"},
+            value={"translation": {"text": "replaced"}},
         ))
         synth = SynthesisEngine()
         result = synth.render(es)
-        assert result["translation"] == "replaced"
+        assert result["translation"]["text"] == "replaced"
 
     def test_render_speakers_with_new_fields(self):
         spk = SpeakerNodeIR(
@@ -256,29 +216,29 @@ class TestStateClassification:
         es = TimelineEventState(TimelineEventIR(
             id="e1", start=0, end=1, text_ref="hello", speaker_ref=None,
         ))
-        es.translation["text"] = "hola"
-        es.tts["audio_ref"] = "tts://seg.wav"
-        assert "text" in es.translation
-        assert "audio_ref" in es.tts
+        es.translation.text = "hola"
+        es.tts.audio_ref = "tts://seg.wav"
+        assert es.translation.text == "hola"
+        assert es.tts.audio_ref == "tts://seg.wav"
 
     def test_decision_state_in_slots(self):
         es = TimelineEventState(TimelineEventIR(
             id="e1", start=0, end=1, text_ref="hello", speaker_ref=None,
         ))
-        es.runtime["status"] = "accepted"
-        es.runtime["generation_mode"] = "primary"
+        es.runtime.status = "accepted"
+        es.runtime.generation_mode = "primary"
         es.provenance["engine"] = "cosyvoice"
-        es.review["needs_human_review"] = False
-        assert es.runtime["status"] == "accepted"
+        es.review.needs_human_review = False
+        assert es.runtime.status == "accepted"
         assert es.provenance["engine"] == "cosyvoice"
 
     def test_slots_independent(self):
         es = TimelineEventState(TimelineEventIR(
             id="e1", start=0, end=1, text_ref="hello", speaker_ref=None,
         ))
-        es.translation["text"] = "a"
-        es.tts["audio_ref"] = "b"
-        assert es.translation["text"] == "a"
-        assert es.tts["audio_ref"] == "b"
-        assert "text" not in es.tts
-        assert "audio_ref" not in es.translation
+        es.translation.text = "a"
+        es.tts.audio_ref = "b"
+        assert es.translation.text == "a"
+        assert es.tts.audio_ref == "b"
+        assert es.translation.engine == ""       # 类型化字段隔离
+        assert es.tts.duration == 0.0

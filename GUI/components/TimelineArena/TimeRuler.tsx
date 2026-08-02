@@ -21,9 +21,7 @@ export default function TimeRuler({ coord, totalDuration, canvasWidth, markers, 
     if (!onClick) return
     const rect = e.currentTarget.getBoundingClientRect()
     const x = e.clientX - rect.left
-    // Use visual position only — ruler doesn't have translateX, so exclude externalScrollLeft
-    const t = (x - coord.timeToPixel(0)) / coord.pixelsPerSec
-    onClick(t)
+    onClick(coord.pixelToTime(x))
   }
 
   const handleMouseMove = (e: React.MouseEvent) => {

@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """
-Translate Video — 一站式翻译管线
+Translate Video — 一站式翻译管线 (core/ WorkflowOrchestrator 统一驱动)
 
-基于项目现有成熟模块编排：
-  extract_subtitles.py  → 字幕提取 + 强制对齐（指定 --lang 时自动启用 wav2vec2）
-  SRT_Translator        → 翻译
-  TermReplacer          → 术语替换
-  TtsPipeline           → TTS 合成 + 视频合并（新管线）
+三个 stage 全部委托 core 编排器:
+  extract   → LOAD+EXTRACT passes (缺陷检测/音频/分离/VAD/ASR/对齐/说话人)
+  translate → TRANSLATE passes (bible + 逐句 + xCOMET 质量闭环)
+  TTS       → TTS+EXPORT passes (配音 + 字幕渲染 + 视频合并)
 
 用法:
     python main.py <视频路径> [--lang en] [--engine chattts] [--skip-tts]
-
-参数与 translate_video.py、extract_subtitles.py 保持一致。
 """
 
 from __future__ import annotations
@@ -208,6 +205,23 @@ def _create_manifest(video: str) -> dict:
     return data
 
 
+def _manifest_ensure_v2(data: dict) -> dict:
+    """旧格式 manifest (v1: 无 version/pipeline/state) 显式迁移到 v2 schema。
+
+    保留已有字段 (video_path/runtime_state/files)，补齐 v2 生命周期键；
+    步骤状态初始 pending，由 PipelineCheckpoint 控制实际重跑。
+    """
+    if "pipeline" not in data:
+        data["version"] = 2
+        data["state"] = "draft"
+        data["pipeline"] = {"extract": "pending", "translate": "pending", "tts": "pending"}
+        data.setdefault("files", {})
+        data.setdefault("timeline_frozen_at", None)
+        data.setdefault("created_at", "")
+        data.setdefault("updated_at", "")
+    return data
+
+
 def _manifest_set_step(video: str, step: str, status: str) -> None:
     """更新管线步骤状态。"""
     ws = _workspace_dir(video)
@@ -216,6 +230,7 @@ def _manifest_set_step(video: str, step: str, status: str) -> None:
         return
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
+    data = _manifest_ensure_v2(data)
     data["pipeline"][step] = status
     _save_manifest(video, data)
 
@@ -228,6 +243,7 @@ def _manifest_set_files(video: str, file_map: dict) -> None:
         return
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
+    data = _manifest_ensure_v2(data)
     data["files"].update(file_map)
     _save_manifest(video, data)
 
@@ -241,23 +257,11 @@ def _ensure_workspace(video: str) -> None:
         _create_manifest(video)
 
 
-def _rename_extract_files(extract_dir: str, video_name: str) -> None:
-    """将 extract_subtitles 产出的文件重命名为工作目录标准名。"""
-    import shutil
-    file_map = {
-        f"{video_name}.srt": "source.srt",
-        f"{video_name}.json": "transcript.json",
-        f"{video_name}.wav": "audio.wav",
-        f"{video_name}_(Vocals).wav": "vocals.wav",
-        f"{video_name}_(Instrumental).wav": "instrumental.wav",
-        f"{video_name}_vad_segments.json": "vad_segments.json",
-    }
-    for old_name, new_name in file_map.items():
-        src = os.path.join(extract_dir, old_name)
-        if os.path.isfile(src):
-            dst = os.path.join(extract_dir, new_name)
-            if src != dst:
-                shutil.move(src, dst)
+def _normalize_core_extract_files(state, extract_dir: str, video_name: str,
+                                  skip_demucs: bool) -> None:
+    """core LOAD+EXTRACT 产物 → 工作目录标准名 (实现见 core/compat/cli_bridge)。"""
+    from core.compat.cli_bridge import normalize_core_extract_files
+    normalize_core_extract_files(state, extract_dir, video_name, skip_demucs)
 
 
 def step_extract(video: str, lang: str | None, model: str, device: str,
@@ -268,11 +272,11 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
                   enable_speaker_diarization: bool = False,
                   force: bool = False,
                   checkpoint: PipelineCheckpoint | None = None) -> None:
-    """步骤 1: 委托 extract_subtitles.py 完成全流程。
+    """步骤 1 (core): WorkflowOrchestrator LOAD+EXTRACT (架构收束 P2)。
 
-    含缺陷检测(N1.5)、音频提取(N2)、背景乐提取(N2.5)、
-    VAD+转录(N3)、wav2vec2 对齐(N3.5，指定 --lang 时启用)、
-    JSON→SRT(N4)。
+    缺陷检测、音频提取、背景乐分离、VAD+ASR、wav2vec2 对齐、说话人分离
+    统一由 core passes 执行, persist v2 timeline.json (唯一事实源)。
+    extract_subtitles.py 已退役。
     """
     ws_dir = _workspace_dir(video)
     ck = checkpoint or PipelineCheckpoint.load(ws_dir)
@@ -299,73 +303,55 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
     print("\n[1/3] 字幕提取...")
     ck.start_step("extract")
     ck.save()
-    script = os.path.join(PROJECT_ROOT, "extract_subtitles.py")
-    cmd = [
-        sys.executable, script,
-        video,
-        "--out-dir", extract_dir,
-        "--model", model,
-        "--device", device,
-        "--compute-type", compute_type,
-    ]
-    if lang:
-        cmd.extend(["--lang", lang])
-    if skip_defect_check:
-        cmd.append("--skip-defect-check")
-    if skip_demucs:
-        cmd.append("--skip-demucs")
-    if skip_align:
-        cmd.append("--skip-align")
-    if align_lang:
-        cmd.extend(["--align-lang", align_lang])
-    if num_workers > 1:
-        cmd.extend(["--num-workers", str(num_workers)])
-    if enable_speaker_diarization:
-        cmd.append("--enable-speaker-diarization")
 
-    # 子进程 UTF-8 输出兼容（Windows GBK 终端）
-    env = os.environ.copy()
-    env["PYTHONIOENCODING"] = "utf-8"
+    from types import SimpleNamespace
+    from core.engine import WorkflowOrchestrator
+    from core.config.workflow_policy import WorkflowPolicy
+    from core.config.global_config import GlobalConfig
+    from core.compat.cli_bridge import build_pass_factory
+    from core.runtime.timeline_io import persist_state
 
-    from pipeline.ntstatus import decode_exit_code, is_native_crash, is_retryable
+    target_lang = lang or "zh"
+    policy = WorkflowPolicy.extract_only_preset(target_lang=target_lang)
+    gcfg = GlobalConfig()
 
-    MAX_RETRIES = 3
-    print(f"  运行: extract_subtitles.py")
-    for attempt in range(1, MAX_RETRIES + 1):
-        result = subprocess.run(cmd, cwd=PROJECT_ROOT, env=env)
-        if result.returncode == 0:
-            break
+    args = SimpleNamespace(
+        model=model, device=device, compute_type=compute_type,
+        num_workers=num_workers, skip_demucs=skip_demucs,
+        skip_defect_check=skip_defect_check, skip_align=skip_align,
+        align_lang=align_lang, engine=None, num_speakers=0,
+        enable_speaker_diarization=enable_speaker_diarization,
+        enable_emotion=False, verification_mode=None,
+        caption_font=None, caption_font_size=None, caption_font_color=None,
+        caption_stroke_width=None, caption_stroke_color=None,
+        caption_bg_color=None, caption_alignment=None, caption_position=None,
+        caption_max_lines=None, caption_width_ratio=None,
+    )
+    pass_factory = build_pass_factory(args, video, ws_dir, target_lang, gcfg)
 
-        status_name, status_desc = decode_exit_code(result.returncode)
-        if is_retryable(result.returncode) and attempt < MAX_RETRIES:
-            print(f"  [checkpoint] 本机崩溃 ({status_name})，"
-                  f"清理 CUDA 并重试 (尝试 {attempt + 1}/{MAX_RETRIES})...")
-            print(f"              原因: {status_desc.split('。')[0]}。")
-            try:
-                import torch
-                torch.cuda.empty_cache()
-            except Exception:
-                pass
-            import gc
-            gc.collect()
-            import time
-            time.sleep(2.0)
-            continue
+    orchestrator = WorkflowOrchestrator(policy=policy, global_config=gcfg)
+    orchestrator.set_pass_factory(pass_factory)
 
-        # 重试用尽或不可重试的错误
-        error_type = "INFRASTRUCTURE" if is_native_crash(result.returncode) else "APPLICATION"
-        error_msg = f"{status_name}: {status_desc.split('。')[0]} (code={result.returncode})"
-        ck.fail_step("extract", error_msg, error_type=error_type)
+    def _orchestrator_progress(report) -> None:
+        print(f"  [{report.stage_label}] {report.message}")
+
+    orchestrator.set_progress_callback(_orchestrator_progress)
+
+    try:
+        state = orchestrator.run(video)
+    except Exception as exc:
+        logger.error(f"WorkflowOrchestrator 提取失败: {exc}")
+        print(f"  [X] 字幕提取失败: {exc}")
+        ck.fail_step("extract", str(exc), error_type="APPLICATION")
         ck.save()
-        if attempt > 1:
-            print(f"  [X] 字幕提取失败 (重试 {MAX_RETRIES} 次均失败)")
-        print(f"  [X] {error_msg}")
-        if is_native_crash(result.returncode):
-            print(f"  [checkpoint] 建议: 重启服务器以重置 GPU 上下文后重试")
-        sys.exit(result.returncode)
+        sys.exit(1)
 
-    # 标准化文件名
-    _rename_extract_files(extract_dir, name)
+    # persist v2 timeline.json (唯一事实源, GUI 可读)
+    persist_state(state, ws_dir, video, target_lang,
+                  project_id=os.path.basename(ws_dir))
+
+    # 产物标准名适配 (后续步骤依赖 audio.wav/vocals.wav/instrumental.wav/source.srt)
+    _normalize_core_extract_files(state, extract_dir, name, skip_demucs)
 
     ws = workspace_paths(video)
 
@@ -403,11 +389,27 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
     print("  [OK] 字幕提取完成")
 
 
+def _load_target_lang() -> str:
+    """从 config/translate.yaml 读目标语言 (与旧路径一致), 无配置显式默认 zh。"""
+    translate_yaml = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
+    if not os.path.isfile(translate_yaml):
+        return "zh"
+    import yaml as _yaml
+    with open(translate_yaml, "r", encoding="utf-8") as _f:
+        _tc = _yaml.safe_load(_f) or {}
+    _tl = (_tc.get("translate") or {}).get("target_lang", "")
+    return _tl if _tl else "zh"
+
+
 def step_translate_core(video: str, force: bool = False) -> str:
-    """步骤 2 (core): 使用 WorkflowOrchestrator 驱动翻译 + SRT 导出。(批次02 §四第二步)"""
+    """步骤 2 (core 默认): 使用 WorkflowOrchestrator 驱动翻译 + SRT 导出。(批次02 §四第二步)
+
+    CLI 默认路径 (Phase 4 收敛): 新引擎 (bible + 逐句 + 质量闭环)。
+    完成后 persist v2 到 01_extract/timeline.json (唯一事实源, GUI 编辑可读译文)。
+    """
     from core.engine import WorkflowOrchestrator
     from core.engine.pass_factory import create_pass_factory
-    from core.config import GlobalConfig, WorkflowPolicy
+    from core.config import WorkflowPolicy
     from core.engine.progress import ProgressReport
 
     ws_dir = _workspace_dir(video)
@@ -430,6 +432,7 @@ def step_translate_core(video: str, force: bool = False) -> str:
     with open(transcript_path, "r", encoding="utf-8") as f:
         transcript = json.load(f)
     segments = transcript.get("segments", [])
+    source_lang = transcript.get("language", "")
 
     speaker_timeline = None
     if os.path.exists(speaker_timeline_path):
@@ -440,42 +443,58 @@ def step_translate_core(video: str, force: bool = False) -> str:
             for t in st_data.get("turns", [])
         ]
 
-    # 加载 LLM 翻译函数
-    import yaml
-    cfg_path = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
-    with open(cfg_path, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f).get("translate", {})
-    api_key = cfg.get("api_key", "")
-    model = cfg.get("model", "deepseek-chat")
+    # 目标语言从 translate.yaml 读 (CLI 切默认后保持一致), 驱动 policy + 翻译 pass
+    target_lang = _load_target_lang()
 
-    def _translate(tagged_text: str) -> str:
-        import requests
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": "你是专业字幕翻译器。输入是带标签的多行文本，每行: [event_id] 原文。请翻译为中文，保持完全相同标签格式。只返回翻译结果。"},
-                {"role": "user", "content": tagged_text},
-            ],
-            "temperature": 0.1, "max_tokens": 4000,
-        }
-        resp = requests.post("https://api.deepseek.com/v1/chat/completions", json=payload, headers=headers, timeout=120)
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
-
+    # 翻译由 LLMTranslationPass 默认客户端承担 (config/translate.yaml),
+    # 无 key 时响亮报错并置人工审核, 不再静默 mock。
     # 构建 Pass 工厂（闭包注入运行时依赖）
     machine_srt = os.path.join(ws_dir, "02_translate", "machine.srt")
     os.makedirs(os.path.dirname(machine_srt), exist_ok=True)
+    audio_path = os.path.join(ws_dir, "01_extract", "audio.wav")
+    # 质量策略按配置选择 (translate.yaml verification_mode: logic_gate|xcomet →
+    # GlobalConfig gate.mode); quality_check 与 refine_translation 共用, 保证重翻闭环判定一致
+    from core.quality.protocol import create_strategy
+    from core.config.global_config import GlobalConfig as _GC
+    # from_legacy_yaml 默认路径为空串 (不读 yaml) — 显式传 config 路径
+    global_config = _GC.from_legacy_yaml("config/translate.yaml", "config/tts.yaml")
+    gate_mode = global_config.project.translation.get("gate", {}).get("mode", "xcomet")
     factory = create_pass_factory(
-        translate_fn=_translate,
+        translate_fn=None,
+        target_lang=target_lang,
         segments=segments,
         speaker_timeline=speaker_timeline,
         output_path=machine_srt,
+        video_path=video,
+        audio_path=audio_path,
+        workspace_dir=ws_dir,
+        quality_strategy=create_strategy(gate_mode),
     )
 
-    # 构建编排器（使用 quick_preset，绕过 Gate 快速跑通 TRANSLATE → EXPORT）
-    policy = WorkflowPolicy.quick_preset("zh")
-    global_config = GlobalConfig()
+    # 构建编排器（CLI 专用: EXTRACT 阶段用注入的提取产物建事件, 不重跑 ASR;
+    # TRANSLATE 含质量闭环 (quality_check + refine_translation);
+    # 去掉 TTS 阶段, CLI 翻译步骤只产出译文 + SRT)
+    policy = WorkflowPolicy.quick_preset(target_lang)
+    from core.config.workflow_policy import StageConfig, WorkflowStage
+    policy.stages[WorkflowStage.EXTRACT] = StageConfig(
+        stage=WorkflowStage.EXTRACT,
+        passes=["asr_to_ir", "segmentation", "semantic_merge"],
+    )
+    policy.stages[WorkflowStage.TRANSLATE] = StageConfig(
+        stage=WorkflowStage.TRANSLATE,
+        passes=["preprocess_translation", "translate", "quality_check",
+                "refine_translation"],
+    )
+    policy.stages.pop(WorkflowStage.TTS, None)
+    # 续跑场景 (v2 timeline 已有事件): 跳过 EXTRACT, 直接走翻译链 —
+    # asr_to_ir 无条件重建会丢已加载译文, 且对空 words 事件切分产生坏段
+    tl_path_check = os.path.join(ws_dir, "01_extract", "timeline.json")
+    if os.path.isfile(tl_path_check):
+        with open(tl_path_check, "r", encoding="utf-8") as f:
+            _tl_data = json.load(f)
+        if _tl_data.get("events"):
+            policy.stages.pop(WorkflowStage.EXTRACT, None)
+    global_config = _GC.from_legacy_yaml("config/translate.yaml", "config/tts.yaml")
     orchestrator = WorkflowOrchestrator(
         policy=policy,
         global_config=global_config,
@@ -502,7 +521,7 @@ def step_translate_core(video: str, force: bool = False) -> str:
     print(f"  PassManager 完成: {len(state.ir.events)} events")
     print(f"  SRT 导出: {machine_srt}")
 
-    # 导出 timeline_v2.json
+    # 导出 timeline_v2.json (02_translate, GUI SRT 桥接优先读)
     from core.runtime import SynthesisEngine
     synth = SynthesisEngine()
     rendered = synth.render_all(state)
@@ -510,148 +529,15 @@ def step_translate_core(video: str, force: bool = False) -> str:
     with open(timeline_v2_path, "w", encoding="utf-8") as f:
         json.dump(rendered, f, ensure_ascii=False, indent=2)
 
+    # Phase 4 收敛: persist v2 到 01_extract/timeline.json (唯一事实源, GUI 编辑可读译文)
+    from core.runtime.timeline_io import persist_state
+    persist_state(state, ws_dir, video, source_lang,
+                  project_id=os.path.basename(ws_dir))
+
     ck.complete_step("translate_core")
     ck.save()
     print("  [OK] 翻译 (core) 完成")
     return machine_srt
-
-
-def step_translate(video: str, srt_path: str, force: bool, backup_dir: str = "",
-                   checkpoint: PipelineCheckpoint | None = None,
-                   skip_semantic_validation: bool = False,
-                   skip_naturalness_check: bool = False,
-                   verification_mode: str | None = None) -> str:
-    """步骤 2: 翻译 + 术语替换。
-
-    输出到工作目录 02_translate/machine.srt。
-    """
-    target = os.path.dirname(video)
-    name = os.path.splitext(os.path.basename(video))[0]
-    ws = workspace_paths(video)
-    output = ws["machine_srt"] if ws else os.path.join(target, f"{name}_project", "02_translate", "machine.srt")
-
-    ws_dir = _workspace_dir(video)
-    ck = checkpoint or PipelineCheckpoint.load(ws_dir)
-
-    # 验证输出文件是否存在（用户可能删了部分文件希望重跑）
-    ck.verify_files({"machine_srt": output})
-
-    if ck.is_step_done("translate") and not force:
-        print(f"  [OK] 翻译已完成 (checkpoint)，跳过")
-        _manifest_set_step(video, "translate", "completed")
-        _manifest_set_files(video, {"machine_srt": "02_translate/machine.srt"})
-        return output
-
-    # Fallback: old file-existence check (backward compat, no checkpoint yet)
-    if os.path.isfile(output) and not force and not ck.is_step_done("translate"):
-        print(f"  [OK] 翻译文件已存在: {output}")
-        _manifest_set_step(video, "translate", "completed")
-        _manifest_set_files(video, {"machine_srt": "02_translate/machine.srt"})
-        return output
-
-    logger.info("[STAGE] [2/4] 字幕翻译 + 术语替换开始")
-    print("\n[2/3] 字幕翻译 + 术语替换...")
-    ck.start_step("translate")
-    ck.save()
-
-    sys.path.insert(0, PROJECT_ROOT)
-
-    from SRT.SRT_Translator import SRTTranslator
-
-    translator = SRTTranslator()
-    if skip_semantic_validation:
-        translator.semantic_check = False
-    if skip_naturalness_check:
-        translator.naturalness_check = False
-    if verification_mode:
-        translator.verification_mode = verification_mode
-    auto_srt, pending = translator.translate(
-        srt_path,
-        timeline_path=ws["timeline"] if ws and os.path.isfile(ws.get("timeline", "")) else None,
-    )
-
-    if pending:
-        ck.fail_step("translate", "manual review pending", error_type="USER")
-        ck.save()
-        print(f"\n[!] 有 {getattr(translator.log, 'manual_pending', '?')} 组需人工翻译")
-        print(f"  待翻文件: {pending}")
-        print("  请完成人工翻译后重新运行")
-        sys.exit(0)
-
-    # 将翻译结果移到工作目录
-    if os.path.isfile(auto_srt) and auto_srt != output:
-        import shutil
-        os.makedirs(os.path.dirname(output), exist_ok=True)
-        shutil.move(auto_srt, output)
-
-    if os.path.isfile(output):
-
-        from pipeline.checkpoint import _file_sha256
-        ck.complete_step("translate", output_hashes={"machine_srt": _file_sha256(output)})
-        ck.save()
-    else:
-        ck.fail_step("translate", "no output file produced", error_type="APPLICATION")
-        ck.save()
-        print(f"  [OK] 翻译完成: {auto_srt}")
-        return auto_srt
-
-    print(f"  [OK] 翻译 + 术语替换完成: {output}")
-
-    # 将翻译日志统一移到 02_translate/ 目录
-    _translate_dir = os.path.dirname(output)
-    _src_base = os.path.splitext(srt_path)[0]
-    for _log_suffix in ["-translate-log.json", "-translate-io-log.json",
-                        "-translate-semantic-flagged.json", "-prompt-manifest.json"]:
-        _log_src = _src_base + _log_suffix
-        _log_dst = os.path.join(_translate_dir, os.path.basename(_log_src))
-        if os.path.isfile(_log_src) and _log_src != _log_dst:
-            import shutil as _shutil
-            _shutil.move(_log_src, _log_dst)
-
-    _manifest_set_step(video, "translate", "completed")
-    _manifest_set_files(video, {
-        "machine_srt": "02_translate/machine.srt",
-        "translate_log": "02_translate/source-translate-log.json",
-        "translate_io_log": "02_translate/source-translate-io-log.json",
-        "translate_semantic_flagged": "02_translate/source-translate-semantic-flagged.json",
-        "prompt_manifest": "02_translate/source-prompt-manifest.json",
-    })
-    if backup_dir:
-        backup_step("02_translate", [output], backup_dir)
-
-    # 多维翻译质量评估 (step 2.5)
-    try:
-        from pipeline.quality_assessor import QualityAssessor
-        ws = workspace_paths(video)
-        if ws:
-            qa_cfg = _load_translate_cfg_field("quality_assessment", {})
-            if qa_cfg.get("enabled", True) and not (skip_semantic_validation and skip_naturalness_check):
-                assessor = QualityAssessor(
-                    ws_dir=ws["workspace"],
-                    semantic_threshold=qa_cfg.get("dimensions", {}).get("semantic", {}).get("threshold", 0.70),
-                    naturalness_threshold=qa_cfg.get("dimensions", {}).get("naturalness", {}).get("threshold", 3.0),
-                    source_lang=_load_translate_cfg_field("source_lang", "auto"),
-                )
-                assessor.run()
-                _manifest_set_files(video, {
-                    "quality_report": "02_translate/quality_report.json",
-                })
-    except Exception as e:
-        print(f"  [WARN] QualityAssessor 运行失败 (non-fatal): {e}")
-
-    return output
-
-
-def _load_translate_cfg_field(field: str, default=None):
-    """从 translate.yaml 读取单个配置字段"""
-    import yaml as _yaml
-    cfg_path = os.path.join(os.path.dirname(__file__), "config", "translate.yaml")
-    try:
-        with open(cfg_path, "r", encoding="utf-8") as f:
-            cfg = _yaml.safe_load(f)
-        return cfg.get("translate", {}).get(field, default)
-    except Exception:
-        return default
 
 
 def step_tts(
@@ -693,10 +579,11 @@ def step_tts(
     cosyvoice_tts_lang: str | None = None,
     enable_emotion: bool | None = None,
 ) -> None:
-    """步骤 3: TTS 合成 + 视频合并（新管线 TtsPipeline）
+    """步骤 3 (core): WorkflowOrchestrator TTS+EXPORT (架构收束 P4 — TtsPipeline 退役)。
 
-    支持 edge / chattts / cosyvoice 引擎，GPU 编码自动检测，
-    自动合并视频段输出最终文件。
+    TTS 合成 + 字幕渲染 + 视频合并统一由 core passes 执行:
+      TTS stage (引擎 composite, ChatTTS worker 隔离为协作层) → EXPORT stage
+      (SRTExportPass + VideoExportPass → 06_export/dubbed.mp4)。
     """
     ws = workspace_paths(video)
     if not ws:
@@ -705,8 +592,6 @@ def step_tts(
 
     ws_dir = _workspace_dir(video)
     ck = PipelineCheckpoint.load(ws_dir)
-
-    instrumental = ws["instrumental_wav"] if os.path.isfile(ws["instrumental_wav"]) else None
     final_output = ws["dubbed_mp4"]
 
     # 验证输出文件是否存在（用户可能删了部分文件希望重跑）
@@ -723,160 +608,98 @@ def step_tts(
         _manifest_set_step(video, "tts", "completed")
         return
 
-    if not instrumental:
-        if skip_demucs:
-            print(f"\n[3/3] [INFO] Demucs 已跳过，不使用背景音乐")
-        else:
-            print()
-            print(f"[WARN] [3/3] 找不到伴奏文件: {ws['instrumental_wav']}，将不使用背景音乐继续合成（可加 --skip-demucs 消除此警告）")
+    if not skip_demucs and not os.path.isfile(ws["instrumental_wav"]):
+        print(f"\n[WARN] [3/3] 找不到伴奏文件: {ws['instrumental_wav']}，将不使用背景音乐继续合成")
 
     logger.info("[STAGE] [3/4] TTS 语音合成开始")
     print(f"\n[3/3] TTS 语音合成 + 视频合并 ({engine})...")
     ck.start_step("tts")
     ck.save()
 
-    from pipeline.tts_config import TTSConfig, EDGE_VOICE_MAP
+    from types import SimpleNamespace
+    from core.engine import WorkflowOrchestrator
+    from core.config.workflow_policy import WorkflowPolicy
+    from core.config.global_config import GlobalConfig
+    from core.compat.cli_bridge import build_pass_factory
+    from core.runtime.timeline_io import persist_state
 
-    cfg = TTSConfig.from_yaml(config_path) if config_path and os.path.isfile(config_path) else TTSConfig()
-
-    cfg.engine_type = engine
-    if enable_emotion is not None:
-        cfg.enable_emotion = enable_emotion
-
-    # 目标语言：从 translate.yaml 读取并写入 TTSConfig（驱动 EdgeTTS 语音自动选择）
-    translate_yaml = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
-    if os.path.isfile(translate_yaml):
-        try:
-            import yaml as _yaml
-            with open(translate_yaml, "r", encoding="utf-8") as _f:
-                _tc = _yaml.safe_load(_f) or {}
-            _tl = (_tc.get("translate") or {}).get("target_lang", "")
-            if _tl:
-                cfg.target_lang = _tl
-                # __post_init__ already ran in from_yaml() / TTSConfig(); re-apply auto voice
-                if cfg.voice == "zh-CN-XiaoxiaoNeural" and _tl in EDGE_VOICE_MAP:
-                    cfg.voice = EDGE_VOICE_MAP[_tl]
-        except Exception:
-            pass
-
-    # ── 音色克隆 CLI 覆盖 ──
-    if voice_clone_engine is not None:
-        cfg.voice_clone_engine = voice_clone_engine
-        if voice_clone_engine != "none":
-            cfg.enable_openvoice = True  # 向后兼容旧标志
-    if voice_clone_device is not None:
-        cfg.voice_clone_device = voice_clone_device
-    if vram_limit is not None:
-        cfg.voice_clone_vram_limit_mb = vram_limit
-    if clone_concurrency is not None:
-        cfg.voice_clone_concurrency = clone_concurrency
-    if cosyvoice_mode is not None:
-        cfg.cosyvoice_mode = cosyvoice_mode
-    if cosyvoice_model_version is not None:
-        cfg.cosyvoice_model_version = cosyvoice_model_version
-    if cosyvoice_model_path is not None:
-        cfg.cosyvoice_model_path = cosyvoice_model_path
-    if cosyvoice_tts_model_version is not None:
-        cfg.cosyvoice_tts_model_version = cosyvoice_tts_model_version
-    if cosyvoice_tts_model_path is not None:
-        cfg.cosyvoice_tts_model_path = cosyvoice_tts_model_path
-    if cosyvoice_tts_prompt_audio is not None:
-        cfg.cosyvoice_tts_prompt_audio = cosyvoice_tts_prompt_audio
-    if cosyvoice_tts_prompt_text is not None:
-        cfg.cosyvoice_tts_prompt_text = cosyvoice_tts_prompt_text
-    if cosyvoice_tts_mode is not None:
-        cfg.cosyvoice_tts_mode = cosyvoice_tts_mode
-    if cosyvoice_tts_lang is not None:
-        cfg.cosyvoice_tts_lang = cosyvoice_tts_lang
-
-    # ── 字幕配置: CaptionConfig 文件 > 单独 CLI args（后者覆盖） ──
-    if caption_config_path and os.path.isfile(caption_config_path):
-        from pipeline.caption_config import CaptionConfig
-        caption_cfg = CaptionConfig.from_yaml(caption_config_path)
-        cfg.apply_caption_overrides(caption_cfg)
-
-    if caption_font:
-        cfg.caption_font = caption_font
-    if caption_font_size_mode:
-        cfg.caption_font_size_mode = caption_font_size_mode
-    if caption_font_size is not None:
-        cfg.caption_font_size = caption_font_size
-    if caption_font_color:
-        cfg.caption_font_color = caption_font_color
-    if caption_stroke_width is not None:
-        cfg.caption_stroke_width = caption_stroke_width
-    if caption_stroke_color:
-        cfg.caption_stroke_color = caption_stroke_color
-    if caption_bg_color:
-        cfg.caption_bg_color = caption_bg_color
-    if caption_alignment:
-        cfg.caption_alignment = caption_alignment
-    if caption_position:
-        cfg.caption_position = caption_position
-    if caption_max_lines is not None:
-        cfg.caption_max_lines = caption_max_lines
-    if caption_max_font_size is not None:
-        cfg.caption_max_font_size = caption_max_font_size
-    if caption_font_size_factor is not None:
-        cfg.caption_font_size_factor = caption_font_size_factor
-    if caption_width_ratio is not None:
-        cfg.caption_width_ratio = caption_width_ratio
-    if no_optimize_subtitles:
-        cfg.enable_subtitle_optimization = False
-    cfg.enable_merge = True
-    cfg.final_output_path = final_output
-    cfg.output_dir = ws["tts_dir"]
-    cfg.video_output_dir = os.path.join(ws["tts_dir"], "video")
-
-    # GPU 编码器自动检测（含 preset 调整）
-    from pipeline.gpu_detect import apply_best_encoder_to_config, _ENCODER_PRESETS
-    apply_best_encoder_to_config(cfg)
-    if cfg.video_codec in _ENCODER_PRESETS:
-        cfg.video_preset = _ENCODER_PRESETS[cfg.video_codec]  # 兼容硬件编码器 preset
-        print(f"  [GPU 检测] codec={cfg.video_codec} preset={cfg.video_preset}")
+    # 无法承载到 core TTS 阶段的 legacy 参数 — 显式报错 (Fail Loud, 不静默忽略)
+    unsupported = {
+        "voice_clone_engine": voice_clone_engine,
+        "voice_clone_device": voice_clone_device,
+        "vram_limit": vram_limit,
+        "clone_concurrency": clone_concurrency,
+        "cosyvoice_mode": cosyvoice_mode,
+        "cosyvoice_model_path": cosyvoice_model_path,
+        "cosyvoice_tts_model_path": cosyvoice_tts_model_path,
+        "cosyvoice_tts_prompt_audio": cosyvoice_tts_prompt_audio,
+        "cosyvoice_tts_prompt_text": cosyvoice_tts_prompt_text,
+        "cosyvoice_tts_mode": cosyvoice_tts_mode,
+    }
+    active = [k for k, v in unsupported.items() if v not in (None, "", "none")]
+    if active:
+        print(f"[X] 以下参数在 core TTS 阶段不再支持 (架构收束, 无法承载): {active}")
+        ck.fail_step("tts", f"unsupported flags: {active}", error_type="APPLICATION")
+        ck.save()
+        sys.exit(1)
 
     # force 模式下清除上次的输出视频段，确保全新生成
     if force:
-        import glob
-        video_dir = cfg.video_output_dir
+        import glob as _glob
+        video_dir = os.path.join(ws["tts_dir"], "video")
         if os.path.isdir(video_dir):
             removed = 0
-            for f in glob.glob(os.path.join(video_dir, "TTS_*.mp4")):
+            for f in _glob.glob(os.path.join(video_dir, "TTS_*.mp4")):
                 os.remove(f)
                 removed += 1
             if removed:
                 print(f"  [force] 已清除 {removed} 个旧视频段")
 
-    # 运行 TtsPipeline（ChatTTS CUDA 隔离由持久子进程 chattts_worker.py 处理）
-    from pipeline.tts_pipeline import TtsPipeline
+    target_lang = _load_target_lang()
+    policy = WorkflowPolicy.export_preset(target_lang=target_lang)
+    gcfg = GlobalConfig()
 
-    pipeline = TtsPipeline(cfg)
-    tts_failed = False
-    tts_error_msg = ""
+    args = SimpleNamespace(
+        engine=engine, num_speakers=0, enable_speaker_diarization=False,
+        enable_emotion=enable_emotion, verification_mode=None,
+        caption_font=caption_font, caption_font_size=caption_font_size,
+        caption_font_color=caption_font_color,
+        caption_stroke_width=caption_stroke_width,
+        caption_stroke_color=caption_stroke_color,
+        caption_bg_color=caption_bg_color,
+        caption_alignment=caption_alignment, caption_position=caption_position,
+        caption_max_lines=caption_max_lines, caption_width_ratio=caption_width_ratio,
+        caption_font_size_mode=caption_font_size_mode,
+        caption_max_font_size=caption_max_font_size,
+        caption_font_size_factor=caption_font_size_factor,
+        caption_config_path=caption_config_path,
+        no_optimize_subtitles=no_optimize_subtitles,
+        cosyvoice_model_version=cosyvoice_tts_model_version or cosyvoice_model_version,
+        cosyvoice_tts_lang=cosyvoice_tts_lang,
+    )
+    pass_factory = build_pass_factory(args, video, ws_dir, target_lang, gcfg)
+
+    orchestrator = WorkflowOrchestrator(policy=policy, global_config=gcfg)
+    orchestrator.set_pass_factory(pass_factory)
+
+    def _orchestrator_progress(report) -> None:
+        print(f"  [{report.stage_label}] {report.message}")
+
+    orchestrator.set_progress_callback(_orchestrator_progress)
+
     try:
-        pipeline.run(
-            video_path=video,
-            instrumental_path=instrumental,
-            translated_srt_path=srt_translated,
-            source_srt_path=srt_source,
-        )
+        state = orchestrator.run(video)
     except Exception as exc:
-        tts_failed = True
-        tts_error_msg = f"{type(exc).__name__}: {exc}"
-        import traceback
-        traceback.print_exc()
-    finally:
-        pipeline.cleanup()
-
-    if tts_failed:
-        ck.fail_step("tts", tts_error_msg, error_type="APPLICATION")
+        logger.error(f"WorkflowOrchestrator TTS 失败: {exc}")
+        print(f"\n[X] TTS 合成失败: {exc}")
+        ck.fail_step("tts", str(exc), error_type="APPLICATION")
         ck.save()
-        print(f"\n[X] TTS 合成失败: {tts_error_msg}")
-        print(f"  [checkpoint] TTS 已标记为失败，视频段保留在 {cfg.video_output_dir}/")
-        print(f"  [checkpoint] 重启后可断点续传 (已处理的片段会自动跳过)")
-        _manifest_set_step(video, "tts", "failed")
         sys.exit(1)
-    elif os.path.isfile(final_output):
+
+    persist_state(state, ws_dir, video, target_lang,
+                  project_id=os.path.basename(ws_dir))
+
+    if os.path.isfile(final_output):
         sz = os.path.getsize(final_output)
         from pipeline.checkpoint import _file_sha256
         ck.complete_step("tts", output_hashes={"dubbed_mp4": _file_sha256(final_output)})
@@ -890,7 +713,7 @@ def step_tts(
         print(f"  [checkpoint] TTS 已标记为失败，重启后可断点续传")
         _manifest_set_step(video, "tts", "failed")
         sys.exit(1)
-    _manifest_set_files(video, {"dubbed": "04_output/dubbed.mp4"})
+    _manifest_set_files(video, {"dubbed": "06_export/dubbed.mp4"})
     if backup_dir:
         backup_step("03_tts_done", [final_output], backup_dir)
 
@@ -1014,17 +837,11 @@ def main():
                         help="whisper 并发 worker 数 (1=串行, 2~4=并行)")
     parser.add_argument("--enable-speaker-diarization", action="store_true",
                         help="启用说话人分离 (pyannote, 默认关闭)")
-    parser.add_argument("--skip-semantic-validation", action="store_true",
-                        help="翻译完成后跳过语义校验")
-    parser.add_argument("--skip-naturalness-check", action="store_true",
-                        help="翻译完成后跳过自然度检查 (PPL)")
     parser.add_argument("--verification-mode", default=None,
                         choices=["joint_formula", "logic_gate"],
                         help="闭环验证模式: joint_formula (联合公式) | logic_gate (逻辑门控)")
     parser.add_argument("--skip-translate", action="store_true",
                         help="跳过翻译")
-    parser.add_argument("--use-core", action="store_true",
-                        help="使用 core/ PassManager 架构翻译（替代 SRT_Translator）")
     parser.add_argument("--skip-tts", action="store_true",
                         help="跳过 TTS 合成")
     parser.add_argument("--force", action="store_true",
@@ -1136,16 +953,10 @@ def main():
             sys.exit(1)
 
         # ── 步骤 2: 翻译 ──
+        # core 新引擎 (bible + 逐句 + 质量闭环) — SRT_Translator 已退役 (架构收束 P3)
         srt_translated = srt_source
         if not args.skip_translate:
-            if args.use_core:
-                srt_translated = step_translate_core(video, force=args.force)
-            else:
-                srt_translated = step_translate(video, srt_source, force=args.force, backup_dir=args.backup_dir,
-                                                  checkpoint=ck,
-                                                  skip_semantic_validation=args.skip_semantic_validation,
-                                                  skip_naturalness_check=args.skip_naturalness_check,
-                                                  verification_mode=args.verification_mode)
+            srt_translated = step_translate_core(video, force=args.force)
         else:
             print("[2/3] 翻译 — 已跳过 (--skip-translate)")
             existing = guess_translated_srt(video)
@@ -1154,7 +965,7 @@ def main():
                 print(f"  使用已有翻译: {os.path.basename(existing)}")
 
         # ── 步骤 3: TTS ──
-        # 翻译阶段全部 CPU（MiniLM + QualityAssessor），
+        # 翻译阶段全部 CPU（质量门控 + xCOMET），
         # ChatTTS 运行在独立子进程中，无需主进程 CUDA 清理。
 
         if args.bootstrap:

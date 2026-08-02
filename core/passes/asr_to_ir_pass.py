@@ -49,7 +49,20 @@ class ASRToIRPass(TimelinePass):
             )
 
         ir = TimelineProjectIR(events=events, speakers=speakers)
-        return TimelineProjectState(ir)
+        state = TimelineProjectState(ir)
+        for i, seg in enumerate(self.segments):
+            eid = f"evt_{i + 1:03d}"
+            es = state.get_event(eid)
+            if es is None:
+                continue
+            words = seg.get("words") or []
+            if words:
+                es.asr.words = [w for w in words if isinstance(w, dict)]
+                confs = [w.get("confidence") for w in es.asr.words
+                         if isinstance(w.get("confidence"), (int, float))]
+                if confs:
+                    es.asr.confidence = sum(confs) / len(confs)
+        return state
 
     def _assign_speakers(self) -> dict[int, str]:
         mapping: dict[int, str] = {}

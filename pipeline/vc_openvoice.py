@@ -129,7 +129,7 @@ class OpenVoiceCloner:
             # Source embedding: from the TTS audio (the voice to convert FROM).
             # Cached since all TTS segments share the same TTS engine voice.
             if self._src_embedding is None:
-                import openvoice_cli.se_extractor as se_extractor
+                import pipeline.openvoice_cli.se_extractor as se_extractor
                 self._src_embedding, _ = se_extractor.get_se(
                     tts_audio_path,
                     self._model,
@@ -222,7 +222,7 @@ class OpenVoiceCloner:
         if self._model is not None:
             return
 
-        from openvoice_cli.api import ToneColorConverter
+        from pipeline.openvoice_cli.api import ToneColorConverter
 
         ckpt_dir = os.path.join(
             self.config.model_dir, "openvoice_v2", "converter"
@@ -246,7 +246,7 @@ class OpenVoiceCloner:
         self, color_audio_path: str
     ) -> torch.Tensor:
         """Return the speaker embedding, using disk cache if available."""
-        import openvoice_cli.se_extractor as se_extractor
+        import pipeline.openvoice_cli.se_extractor as se_extractor
 
         self._load_model()
 
@@ -274,7 +274,7 @@ class OpenVoiceCloner:
 
     def _unload_whisper(self) -> None:
         """Unload the Whisper model so low-VRAM devices don't OOM."""
-        import openvoice_cli.se_extractor as se_extractor
+        import pipeline.openvoice_cli.se_extractor as se_extractor
 
         if se_extractor.model is not None:
             del se_extractor.model

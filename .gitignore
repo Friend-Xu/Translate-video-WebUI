@@ -38,7 +38,13 @@ file/
 # Temporary and diagnostic files
 _*.py
 !__init__.py
+!__main__.py
 *.wav
+
+# Test artifacts & worktree deps
+_deps/
+GUI/test-results/
+/speaker*.png
 
 # Build artifacts
 *.spec
@@ -135,3 +141,13 @@ tools/rubberband/
 bash.exe.stackdump
 models/CosyVoice/third_party/Matcha-TTS
 models/CosyVoice/third_party/Matcha-TTS.bak
+
+# Test trial artifacts (Playwright scripts + screenshots)
+GUI/test_trail/
+/test_trail/
+
+# Vendored inactive — spleeter entry
+spleeter/
+
+# Competitor analysis
+/竞品/

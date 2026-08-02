@@ -28,7 +28,7 @@ class TTSCompositePass(TimelinePass):
         self._resolved_config: dict | None = None
 
     def configure(self, resolved_config: dict | None = None) -> None:
-        """接收 ConfigResolver 解析后的 tts 槽位配置。"""
+        """接收 ConfigResolver 解析后的全槽位配置 (P3 契约统一)。"""
         self._resolved_config = resolved_config or {}
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
@@ -36,17 +36,23 @@ class TTSCompositePass(TimelinePass):
         adapter = ChatTTSAdapter(
             speaker_seed=self.speaker_seed, output_dir=self.output_dir,
         )
-        # 配置注入 (批次 B): ConfigResolver → Pass → Adapter
-        if self._resolved_config:
-            adapter.configure(self._resolved_config)
+        # 配置注入 (批次 B): ConfigResolver → Pass → Adapter; 取 tts 槽位子块
+        tts_cfg = self._resolved_config.get("tts") if isinstance(
+            (self._resolved_config or {}).get("tts"), dict) else self._resolved_config
+        if tts_cfg:
+            adapter.configure(tts_cfg)
         emotion_modeler = EmotionModeler()
         duration_ctrl = DurationController()
         scorer = TTSScorer()
         speaker_history = self._build_speaker_history(state)
 
         for es in state.sorted_events():
-            if es.tts.get("audio_ref"):
+            if es.tts.audio_ref:
                 continue
+            # P3: 逐事件解析 (Event > Speaker > Global) — 事件级 config 覆盖生效
+            resolver = getattr(self, "_resolver", None)
+            if resolver is not None:
+                adapter.configure(resolver.resolve_event_config(es.id, "tts", state))
 
             ctx = self._build_context(es)
             if not ctx.translation_text:
@@ -73,7 +79,7 @@ class TTSCompositePass(TimelinePass):
                 patch.value["duration"], ctx.duration_target,
             )
             if action == "split":
-                es.runtime["tts_status"] = "needs_split"
+                es.runtime.tts_status = "needs_split"
                 continue
 
             # ── 调速决策 + RubberBand 拉伸 ──
@@ -94,7 +100,7 @@ class TTSCompositePass(TimelinePass):
                         engine_has_native_rate=True,
                     )
 
-            es.tts["speed_decision"] = sd.as_dict()
+            es.tts.speed_decision = sd.as_dict()
 
             score = scorer.score(ctx, patch, speaker_history)
             patch.confidence = score.composite
@@ -108,7 +114,7 @@ class TTSCompositePass(TimelinePass):
                     "emotion_consistency": score.emotion_consistency,
                 }
             else:
-                es.runtime["tts_status"] = "rejected"
+                es.runtime.tts_status = "rejected"
 
             self._update_history(speaker_history, ctx, patch)
 
@@ -126,21 +132,21 @@ class TTSCompositePass(TimelinePass):
             segment_id=es.id,
             translation_text=translation,
             source_text=es.ir.text_ref,
-            speaker_id=es.speaker.get("speaker_id"),
-            speaker_embedding_ref=es.speaker.get("embedding_ref", ""),
+            speaker_id=es.speaker.speaker_id,
+            speaker_embedding_ref=es.speaker.embedding_ref,
             duration_target=es.end - es.start,
-            semantic_embedding_ref=es.semantic.get("embedding_ref", ""),
+            semantic_embedding_ref=es.semantic.embedding_ref,
         )
 
     @staticmethod
     def _build_speaker_history(state: TimelineProjectState) -> list[dict]:
         history = []
         for es in state.sorted_events():
-            if es.tts.get("audio_ref"):
+            if es.tts.audio_ref:
                 history.append({
-                    "speaker_id": es.speaker.get("speaker_id"),
-                    "emotion_hint": es.tts.get("emotion_hint", ""),
-                    "duration": es.tts.get("duration", 0),
+                    "speaker_id": es.speaker.speaker_id,
+                    "emotion_hint": es.tts.emotion_hint,
+                    "duration": es.tts.duration,
                 })
         return history
 

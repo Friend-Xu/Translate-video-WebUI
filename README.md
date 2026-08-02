@@ -156,14 +156,14 @@ Full architecture → [`ARCHITECTURE.md`](ARCHITECTURE.md)
 ### Extract Only
 
 ```bash
-.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --lang zh
-.venv\Scripts\python extract_subtitles.py source_file/test.mp4 --lang zh --num-workers 2
+.venv\Scripts\python main.py source_file/test.mp4 --lang zh --skip-translate --skip-tts
+.venv\Scripts\python main.py source_file/test.mp4 --lang zh --skip-translate --skip-tts --num-workers 2
 ```
 
-### Translate Only
+### Translate Only (core 新引擎, 需已提取的工作区)
 
 ```bash
-.venv\Scripts\python -m SRT.SRT_Translator path/to/file.srt
+.venv\Scripts\python main.py source_file/test.mp4 --skip-tts
 ```
 
 ### VAD Benchmark
@@ -212,6 +212,28 @@ cd GUI && npm run dev
 ```
 
 Visit `http://localhost:5173`.
+
+**WebUI Screenshots:**
+
+![Project Center](GUI/screenshoot/项目中心.png)
+
+*Project Center — create / open / manage video workspaces*
+
+![Speaker Review](GUI/screenshoot/说话人.png)
+
+*Speaker Review — per-speaker segments with voice profile and re-review*
+
+![Subtitle Review](GUI/screenshoot/字幕校验.png)
+
+*Subtitle Review — proofread translations, mark entries, re-run TTS*
+
+![Glossary](GUI/screenshoot/术语表.png)
+
+*Glossary — term dictionary management*
+
+![Patch](GUI/screenshoot/补丁.png)
+
+*Patch — timeline edits & AI suggestions as patch list*
 
 **WebUI Panels:**
 
@@ -309,38 +331,24 @@ test_project/
 
 ```
 Translate_video/
-├── main.py                  # Entry point: 3-step pipeline + --use-core flag
-├── extract_subtitles.py     # Subtitle extraction (standalone)
-├── core/                    # Adapter-Pass-Gate architecture (NEW)
-│   ├── engine/              # PassManager + PassBase
-│   ├── ir/                  # Timeline IR v2 (immutable data model)
-│   ├── adapters/            # 11 external engine wrappers
-│   ├── passes/              # 14 orchestration passes
-│   ├── gates/               # 2 quality gates (TextGate, EmotionGate)
-│   ├── scoring/             # 8 scorers (Translation, Emotion, ASR, TTS×5)
-│   ├── runtime/             # Patch engine + state management
-│   ├── emotion/             # Emotion space + alignment
-│   ├── speaker/             # Speaker diarization modules
-│   ├── tts/                 # TTS control modules
-│   └── refiner/             # Translation refinement
-├── timeline/                # IR migration layer + dual-write
-│   ├── abstract.py          # Unified consumer protocol
-│   ├── fusion.py            # Old/new IR merge engine
-│   ├── dual_write.py        # Dual-write infrastructure
-│   ├── api/timeline.py      # Gray-release routing
-│   ├── adapters/            # Old/new IR adapters
-│   ├── patch/               # Patch model + conflict detection
-│   ├── recovery/            # Replay + snapshot
-│   └── ui_adapter/          # IR → UI mapper
-├── schemas/                 # JSON Schema definitions
-│   ├── timeline.schema.json
-│   ├── export_config.schema.json
-│   ├── patch_log.schema.json
-│   └── speaker_map.schema.json
-├── main_core.py             # core/ pipeline standalone entry
-├── pipeline/                # Core modules
-│   ├── audio.py             # Audio extraction + C2 defect fix
-│   ├── transcriber.py       # Silero VAD + faster-whisper + wav2vec2
+├── main.py                  # CLI entry: 3 stages all via WorkflowOrchestrator
+├── tvw.py                   # Unified CLI + WebUI subprocess channel (core pipeline)
+├── core/                    # Orchestration layer
+│   ├── engine/              # WorkflowOrchestrator + PassManager + pass_factory
+│   ├── ir/                  # Timeline IR v2 (frozen dataclasses)
+│   ├── adapters/            # External engine wrappers (whisper/wav2vec2/pyannote/tts…)
+│   ├── passes/              # Orchestration passes (LOAD/EXTRACT/TRANSLATE/TTS/EXPORT)
+│   ├── gates/               # Quality gates (TextGate, EmotionGate)
+│   ├── scoring/             # Engine scorers
+│   ├── runtime/             # PatchEngine + timeline_io (唯一写路径)
+│   ├── config/              # GlobalConfig + slot defaults + workflow policy
+│   ├── quality/             # Quality strategies (xCOMET-lite / logic_gate)
+│   ├── compat/              # cli_bridge (CLI 参数 → 槽位单一映射)
+│   └── suggestion/          # AI 建议 (待迁移, 见 timeline/)
+├── timeline/                # AI 建议只读链 (待退役 → core/suggestion)
+│   ├── api/timeline.py      # generate_candidate_patches (唯一消费者 GUI/server.py)
+│   ├── rules/ scorer/ patch/ # signal→score→plan
+├── pipeline/                # Execution layer (被 core adapters 薄包装)
 │   ├── video_info.py        # Video metadata
 │   ├── gpu_detect.py        # GPU/encoder auto-detection
 │   ├── demucs_instr.py      # Demucs vocal/BGM separation
@@ -348,12 +356,10 @@ Translate_video/
 │   ├── audio_stretch.py     # Rubber Band time-stretching
 │   ├── subtitle_optimizer.py
 │   └── utils.py
-├── SRT/                     # Subtitle processing
-│   ├── SRT_Translator.py    # LLM translation (3-tier fallback)
-│   ├── glossary_injector.py # On-demand term injection
-│   ├── TranslationVerifier.py
-│   ├── TermReplacer.py
-│   └── VAD_Segmenter.py
+├── SRT/                     # Execution layer (被 core adapters 包装)
+│   ├── MediaValidator.py    # C2 defect detect + aresample fix
+│   ├── TranslationVerifier.py # cross-lingual similarity
+│   └── VAD_Segmenter.py     # Silero VAD
 ├── whisperx_local/          # wav2vec2 forced alignment
 ├── GUI/                     # React WebUI
 │   ├── server.py            # FastAPI backend

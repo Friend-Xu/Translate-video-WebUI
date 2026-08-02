@@ -10,7 +10,7 @@
 - OpenVoiceCompositePass: OpenVoice + fallback transfer → IR (Ch8)
 - EdgeTTSCompositePass: Edge TTS + last resort → IR (Ch9)
 - SemanticMergePass:    合并同 speaker 短间隔相邻事件
-- LLMTranslationPass:   标签化纯文本 LLM 翻译
+- LLMTranslationPass:   逐句并发 LLM 翻译 (邻居窗口 + 全局 bible/全文)
 - SRTExportPass:        SynthesisEngine.render_all() → .srt
 - VideoExportPass:      TTS 音频 → 视频段 → ffmpeg 合并 → 成品视频
 """

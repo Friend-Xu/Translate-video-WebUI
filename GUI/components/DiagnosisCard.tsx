@@ -31,6 +31,18 @@ const FIX_SUGGESTIONS: Record<string, { label: string; action: string }[]> = {
     { label: '重新说话人识别', action: 're-diarize' },
     { label: '手动标定说话人', action: 'manual-speaker' },
   ],
+  speaker_conflict: [
+    { label: '重新说话人识别', action: 're-diarize' },
+    { label: '手动标定说话人', action: 'manual-speaker' },
+  ],
+  emotion_jump: [
+    { label: '复查情绪标注', action: 'review-emotion' },
+    { label: '手动修复', action: 'manual' },
+  ],
+  length_exceeded: [
+    { label: '拆分字幕', action: 'split' },
+    { label: '精简译文', action: 'shorten' },
+  ],
 }
 
 export default function DiagnosisCard({ issue, onFix }: Props) {

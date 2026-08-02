@@ -12,9 +12,7 @@ export default function ZoomScrollbar({ coord, totalDuration, canvasWidth }: Pro
   const barRef = useRef<HTMLDivElement | null>(null)
   const [dragging, setDragging] = useState<'none' | 'center' | 'left' | 'right'>('none')
 
-  const { visibleRange, pixelsPerSec } = coord
-  const totalW = totalDuration * pixelsPerSec
-  const scale = Math.min(1, canvasWidth / totalW)
+  const { visibleRange } = coord
   const thumbLeft = visibleRange.startTime / totalDuration * canvasWidth
   const thumbWidth = Math.max(4, (visibleRange.endTime - visibleRange.startTime) / totalDuration * canvasWidth)
 
@@ -23,15 +21,15 @@ export default function ZoomScrollbar({ coord, totalDuration, canvasWidth }: Pro
     setDragging(part)
 
     const startX = e.clientX
-    const startScroll = coord.timeToPixel(0)
+    const startTime = visibleRange.startTime + (visibleRange.endTime - visibleRange.startTime) / 2
     const startLeft = thumbLeft
     const startWidth = thumbWidth
 
     const onMove = (ev: MouseEvent) => {
       const dx = ev.clientX - startX
       if (part === 'center') {
-        const newScroll = startScroll - dx / scale
-        coord.setScroll(Math.max(0, newScroll))
+        const dt = dx / canvasWidth * totalDuration
+        coord.centerOnTime(startTime - dt)
       } else if (part === 'left') {
         const newLeft = startLeft + dx
         const newRight = startLeft + startWidth
@@ -57,7 +55,7 @@ export default function ZoomScrollbar({ coord, totalDuration, canvasWidth }: Pro
 
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
-  }, [coord, totalDuration, canvasWidth, thumbLeft, thumbWidth, scale, visibleRange.startTime])
+  }, [coord, totalDuration, canvasWidth, thumbLeft, thumbWidth, visibleRange.startTime])
 
   const handleBarClick = useCallback((e: React.MouseEvent) => {
     if (dragging !== 'none') return

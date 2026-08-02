@@ -12,6 +12,7 @@ from __future__ import annotations
 
 AUDIO_DEFAULTS: dict = {
     "skip_demucs": False,
+    "validate_defect": True,
     "vad_threshold": 0.5,
     "silence_handling": "keep",
     "loudness_compensation": True,

@@ -216,7 +216,7 @@ class SpeakerDiarizer:
         if not os.path.isfile(vocals_path):
             raise FileNotFoundError(f"人声文件不存在: {vocals_path}")
 
-        cache_path = self._cache_path(vocals_path)
+        cache_path = self._cache_path(vocals_path, min_speakers, max_speakers)
         if not force and os.path.isfile(cache_path):
             logger.info("使用缓存: %s", cache_path)
             return self._load_cache(cache_path)
@@ -273,10 +273,11 @@ class SpeakerDiarizer:
 
     # ── cache ──────────────────────────────────────────────
 
-    def _cache_path(self, vocals_path: str) -> str:
+    def _cache_path(self, vocals_path: str, min_speakers: int = 0, max_speakers: int = 0) -> str:
         file_hash = _hash_file(vocals_path)
+        spk_tag = f"_s{min_speakers}-{max_speakers}" if min_speakers or max_speakers else ""
         os.makedirs(str(DIAR_CACHE_DIR), exist_ok=True)
-        return os.path.join(str(DIAR_CACHE_DIR), f"tl_{file_hash[:16]}.json")
+        return os.path.join(str(DIAR_CACHE_DIR), f"tl_{file_hash[:16]}{spk_tag}.json")
 
     def _load_cache(self, path: str) -> list:
         with open(path, "r", encoding="utf-8") as f:

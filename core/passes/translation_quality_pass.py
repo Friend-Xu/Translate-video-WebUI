@@ -21,24 +21,32 @@ class TranslationQualityPass(TimelinePass):
                  auto_retry: bool = False, semantic_threshold: float = 0.70,
                  naturalness_threshold: float = 3.0):
         self._strategy = quality_strategy
+        self._slot_config: dict = {}
         # 保留旧参数签名用于向后兼容 — 当 strategy 为 None 时自动用 logic_gate
         self._skip_minilm = skip_minilm
         self._skip_ppl = skip_ppl
 
     def configure(self, resolved_config: dict | None = None) -> None:
-        if resolved_config and "quality_strategy" in resolved_config:
-            self._strategy = resolved_config["quality_strategy"]
+        # resolved_config 是槽位配置 {slot: {…}}, 保存供 apply 读 gate.mode
+        if resolved_config:
+            self._slot_config = dict(resolved_config)
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         strategy = self._strategy
         if strategy is None:
+            # 配置接线: GlobalConfig translation.gate.mode 决定策略 (logic_gate|xcomet)
+            gate_cfg = (self._slot_config.get("translation") or {}).get("gate") or {}
+            mode = gate_cfg.get("mode", "xcomet")
             from core.quality.protocol import create_strategy
-            strategy = create_strategy("logic_gate")
+            strategy = create_strategy(mode)
 
         try:
             strategy.warmup()
-        except Exception:
-            pass
+        except Exception as e:
+            # warmup 失败也要走 score_batch 的诚实降级, 不静默吞
+            import logging
+            logging.getLogger(__name__).warning(
+                "质量策略 %s warmup 失败: %s", getattr(strategy, "name", "?"), e)
 
         verdicts = strategy.score_batch(state)
 
@@ -46,12 +54,13 @@ class TranslationQualityPass(TimelinePass):
             verdict = verdicts.get(es.id)
             if verdict is None:
                 continue
-            es.provenance["gate_decision"] = verdict.gate_decision
-            es.translation["quality_score"] = verdict.score
+            es.review.gate_decision = verdict.gate_decision
+            es.translation.quality_score = verdict.score
             if verdict.sub_scores:
-                for k, v in verdict.sub_scores.items():
-                    es.translation[k] = v
+                # 子评分并入 provenance.translation_quality (类型化后 translation 槽无动态 key)
+                tq = es.provenance.setdefault("translation_quality", {})
+                tq.update(verdict.sub_scores)
             if verdict.needs_human:
-                es.review["needs_human_review"] = True
+                es.review.needs_human_review = True
 
         return state
