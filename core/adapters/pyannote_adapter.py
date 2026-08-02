@@ -161,4 +161,12 @@ class PyannoteAdapter:
                     speakers_seen[spk_id]["time"], clamped_start,
                 )
 
-        return sorted(speakers_seen.values(), key=lambda x: x["time"])
+        result = sorted(speakers_seen.values(), key=lambda x: x["time"])
+        # 去重等时边界 — pyannote 重叠 turn 同时开始会产生零时长切分
+        # (实测: evt_009_spk00 start==end 65.48)。坏数据在 adapter 边界清洗。
+        deduped: list[dict] = []
+        for b in result:
+            if deduped and b["time"] == deduped[-1]["time"]:
+                continue
+            deduped.append(b)
+        return deduped

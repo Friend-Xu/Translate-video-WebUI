@@ -1,36 +1,9 @@
 """
-Timeline 模块 — AI Assisted Timeline Editing System
+Timeline 模块 — AI Assisted Timeline Editing System (Phase 4 收敛后精简版)
 
-Timeline-first / Patch-driven / Verification-based architecture.
-
-提供:
-- TimelineIR / TimelineSegment / TimelineWord / SpeakerMapEntry — 核心数据结构
-- JSON 序列化 / 反序列化 / 版本迁移
-- 版本化 Pydantic schema (v1.1)
-- Patch Engine (6 fixed opcodes, apply, planner, conflict detection)
-- Rule Feature Extractor + Scoring Engine
-- Speaker 三层模型 (Acoustic / Logical / Runtime)
-- Recovery (undo, replay, snapshot, DAG)
-- Safety Gate (validator)
-- Public API layer
-
-用法:
-    from timeline import TimelineIR, TimelineSegment, TimelineWord
-    from timeline import save_json, load_json, from_extract_result
-    from timeline.api import generate_candidate_patches, apply_user_patch, undo_last_patch
+写路径 (apply/undo/log) 已迁移到 core PatchEngine + timeline_io。
+仅剩只读 AI 建议链 (api/rules/scorer/patch) 存活, 等待迁移 core/suggestion。
+ir/io/fusion (v1 提取格式) 已随 extract_subtitles.py 退役 (架构收束 P2)。
 """
 
-from .ir import TimelineIR, TimelineSegment, TimelineWord, SpeakerMapEntry
-from .io import save_json, load_json, migrate
-from .fusion import from_extract_result
-
-__all__ = [
-    "TimelineIR",
-    "TimelineSegment",
-    "TimelineWord",
-    "SpeakerMapEntry",
-    "save_json",
-    "load_json",
-    "migrate",
-    "from_extract_result",
-]
+__all__ = []

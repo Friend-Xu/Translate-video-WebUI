@@ -10,6 +10,7 @@ ASRCompositePass — ASR 域三引擎编排 (Chapter 3 §3.1-3.4)
 这是整个 Timeline IR 的入口 Pass，将原始音频转换为结构化的 IR 状态。
 """
 from __future__ import annotations
+import logging
 from core.engine.pass_base import TimelinePass
 from core.ir.timeline_event import TimelineEventIR
 from core.ir.speaker import SpeakerNodeIR
@@ -19,6 +20,8 @@ from core.runtime.patch import Patch, OpCode
 from core.runtime.patch_engine import PatchEngine
 from core.adapters.whisper_adapter import WhisperAdapter, EngineContext
 from core.adapters.wav2vec2_adapter import Wav2Vec2Adapter
+
+logger = logging.getLogger(__name__)
 
 
 class ASRCompositePass(TimelinePass):
@@ -39,6 +42,30 @@ class ASRCompositePass(TimelinePass):
         self.enable_speaker_refine = enable_speaker_refine
         self.speaker_timeline = speaker_timeline
         self._workspace_dir = workspace_dir
+        self.alignment_enabled = True
+        self.align_lang = ""
+
+    def configure(self, event_config=None):
+        """接收 ConfigResolver 全槽位配置, 取 asr 子块 (P3 契约统一)。
+
+        参数桥 (cli_bridge) 把 CLI 的 --model/--device/--skip-align/--align-lang
+        等映射到 asr 槽位 — 单一路径, 消灭 CLI 参数直改 ctx。
+        """
+        cfg = event_config or {}
+        asr_cfg = cfg.get("asr") if isinstance(cfg.get("asr"), dict) else cfg
+        if "alignment_enabled" in asr_cfg:
+            self.alignment_enabled = bool(asr_cfg["alignment_enabled"])
+        lang = asr_cfg.get("language")
+        if lang and lang != "auto":
+            self.align_lang = lang
+            self.ctx.language = lang
+        field_map = {"model": "model_name", "compute_type": "compute_type",
+                     "num_workers": "num_workers"}
+        for src, dst in field_map.items():
+            if src in asr_cfg and asr_cfg[src] is not None:
+                setattr(self.ctx, dst, asr_cfg[src])
+        if "device" in asr_cfg and asr_cfg["device"]:
+            self.ctx.device = asr_cfg["device"]
 
     def apply(self, state: TimelineProjectState | None = None) -> TimelineProjectState:
         """执行完整 ASR 流程，返回填充了 asr/semantic 槽位的 ProjectState。"""
@@ -73,27 +100,27 @@ class ASRCompositePass(TimelinePass):
         for p in meta_patches:
             state.add_global_patch(p)
 
-        # Step 2: Wav2Vec2 对齐精炼（失败不影响主流程）
-        try:
+        # Step 2: Wav2Vec2 对齐精炼 (配置门控 — alignment_enabled=False 时跳过;
+        # 显式启用时失败必须响亮报错, 不再静默吞错)
+        if self.alignment_enabled:
             wav2vec = Wav2Vec2Adapter(
-                audio_path=self.audio_path, language=self.ctx.language or "en",
+                audio_path=audio,
+                language=self.align_lang or self.ctx.language or "en",
             )
             segments_for_align = self._collect_segments(state)
             if segments_for_align:
                 align_patches = wav2vec.refine_alignment(segments_for_align)
                 for p in align_patches:
                     engine.apply(state, p)
-        except Exception:
-            pass  # alignment is optional — ASR segments are usable without it
+        else:
+            logger.info("asr.alignment_enabled=False — 跳过 wav2vec2 对齐与语义嵌入")
 
-        # Step 3: Wav2Vec2 semantic embedding（失败不影响主流程）
-        try:
+        # Step 3: Wav2Vec2 semantic embedding (与对齐同一配置门控)
+        if self.alignment_enabled:
             seg_ids = [es.id for es in state.sorted_events()]
             sem_patches = wav2vec.extract_semantic(seg_ids)
             for p in sem_patches:
                 engine.apply(state, p)
-        except Exception:
-            pass
 
         # Step 4: Speaker refine (optional)
         if self.enable_speaker_refine and self.speaker_timeline:

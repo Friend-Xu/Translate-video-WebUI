@@ -260,23 +260,11 @@ def _ensure_workspace(video: str) -> None:
         _create_manifest(video)
 
 
-def _rename_extract_files(extract_dir: str, video_name: str) -> None:
-    """将 extract_subtitles 产出的文件重命名为工作目录标准名。"""
-    import shutil
-    file_map = {
-        f"{video_name}.srt": "source.srt",
-        f"{video_name}.json": "transcript.json",
-        f"{video_name}.wav": "audio.wav",
-        f"{video_name}_(Vocals).wav": "vocals.wav",
-        f"{video_name}_(Instrumental).wav": "instrumental.wav",
-        f"{video_name}_vad_segments.json": "vad_segments.json",
-    }
-    for old_name, new_name in file_map.items():
-        src = os.path.join(extract_dir, old_name)
-        if os.path.isfile(src):
-            dst = os.path.join(extract_dir, new_name)
-            if src != dst:
-                shutil.move(src, dst)
+def _normalize_core_extract_files(state, extract_dir: str, video_name: str,
+                                  skip_demucs: bool) -> None:
+    """core LOAD+EXTRACT 产物 → 工作目录标准名 (实现见 core/compat/cli_bridge)。"""
+    from core.compat.cli_bridge import normalize_core_extract_files
+    normalize_core_extract_files(state, extract_dir, video_name, skip_demucs)
 
 
 def step_extract(video: str, lang: str | None, model: str, device: str,
@@ -287,11 +275,11 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
                   enable_speaker_diarization: bool = False,
                   force: bool = False,
                   checkpoint: PipelineCheckpoint | None = None) -> None:
-    """步骤 1: 委托 extract_subtitles.py 完成全流程。
+    """步骤 1 (core): WorkflowOrchestrator LOAD+EXTRACT (架构收束 P2)。
 
-    含缺陷检测(N1.5)、音频提取(N2)、背景乐提取(N2.5)、
-    VAD+转录(N3)、wav2vec2 对齐(N3.5，指定 --lang 时启用)、
-    JSON→SRT(N4)。
+    缺陷检测、音频提取、背景乐分离、VAD+ASR、wav2vec2 对齐、说话人分离
+    统一由 core passes 执行, persist v2 timeline.json (唯一事实源)。
+    extract_subtitles.py 已退役。
     """
     ws_dir = _workspace_dir(video)
     ck = checkpoint or PipelineCheckpoint.load(ws_dir)
@@ -318,73 +306,55 @@ def step_extract(video: str, lang: str | None, model: str, device: str,
     print("\n[1/3] 字幕提取...")
     ck.start_step("extract")
     ck.save()
-    script = os.path.join(PROJECT_ROOT, "extract_subtitles.py")
-    cmd = [
-        sys.executable, script,
-        video,
-        "--out-dir", extract_dir,
-        "--model", model,
-        "--device", device,
-        "--compute-type", compute_type,
-    ]
-    if lang:
-        cmd.extend(["--lang", lang])
-    if skip_defect_check:
-        cmd.append("--skip-defect-check")
-    if skip_demucs:
-        cmd.append("--skip-demucs")
-    if skip_align:
-        cmd.append("--skip-align")
-    if align_lang:
-        cmd.extend(["--align-lang", align_lang])
-    if num_workers > 1:
-        cmd.extend(["--num-workers", str(num_workers)])
-    if enable_speaker_diarization:
-        cmd.append("--enable-speaker-diarization")
 
-    # 子进程 UTF-8 输出兼容（Windows GBK 终端）
-    env = os.environ.copy()
-    env["PYTHONIOENCODING"] = "utf-8"
+    from types import SimpleNamespace
+    from core.engine import WorkflowOrchestrator
+    from core.config.workflow_policy import WorkflowPolicy
+    from core.config.global_config import GlobalConfig
+    from core.compat.cli_bridge import build_pass_factory
+    from core.runtime.timeline_io import persist_state
 
-    from pipeline.ntstatus import decode_exit_code, is_native_crash, is_retryable
+    target_lang = lang or "zh"
+    policy = WorkflowPolicy.extract_only_preset(target_lang=target_lang)
+    gcfg = GlobalConfig()
 
-    MAX_RETRIES = 3
-    print(f"  运行: extract_subtitles.py")
-    for attempt in range(1, MAX_RETRIES + 1):
-        result = subprocess.run(cmd, cwd=PROJECT_ROOT, env=env)
-        if result.returncode == 0:
-            break
+    args = SimpleNamespace(
+        model=model, device=device, compute_type=compute_type,
+        num_workers=num_workers, skip_demucs=skip_demucs,
+        skip_defect_check=skip_defect_check, skip_align=skip_align,
+        align_lang=align_lang, engine=None, num_speakers=0,
+        enable_speaker_diarization=enable_speaker_diarization,
+        enable_emotion=False, verification_mode=None,
+        caption_font=None, caption_font_size=None, caption_font_color=None,
+        caption_stroke_width=None, caption_stroke_color=None,
+        caption_bg_color=None, caption_alignment=None, caption_position=None,
+        caption_max_lines=None, caption_width_ratio=None,
+    )
+    pass_factory = build_pass_factory(args, video, ws_dir, target_lang, gcfg)
 
-        status_name, status_desc = decode_exit_code(result.returncode)
-        if is_retryable(result.returncode) and attempt < MAX_RETRIES:
-            print(f"  [checkpoint] 本机崩溃 ({status_name})，"
-                  f"清理 CUDA 并重试 (尝试 {attempt + 1}/{MAX_RETRIES})...")
-            print(f"              原因: {status_desc.split('。')[0]}。")
-            try:
-                import torch
-                torch.cuda.empty_cache()
-            except Exception:
-                pass
-            import gc
-            gc.collect()
-            import time
-            time.sleep(2.0)
-            continue
+    orchestrator = WorkflowOrchestrator(policy=policy, global_config=gcfg)
+    orchestrator.set_pass_factory(pass_factory)
 
-        # 重试用尽或不可重试的错误
-        error_type = "INFRASTRUCTURE" if is_native_crash(result.returncode) else "APPLICATION"
-        error_msg = f"{status_name}: {status_desc.split('。')[0]} (code={result.returncode})"
-        ck.fail_step("extract", error_msg, error_type=error_type)
+    def _orchestrator_progress(report) -> None:
+        print(f"  [{report.stage_label}] {report.message}")
+
+    orchestrator.set_progress_callback(_orchestrator_progress)
+
+    try:
+        state = orchestrator.run(video)
+    except Exception as exc:
+        logger.error(f"WorkflowOrchestrator 提取失败: {exc}")
+        print(f"  [X] 字幕提取失败: {exc}")
+        ck.fail_step("extract", str(exc), error_type="APPLICATION")
         ck.save()
-        if attempt > 1:
-            print(f"  [X] 字幕提取失败 (重试 {MAX_RETRIES} 次均失败)")
-        print(f"  [X] {error_msg}")
-        if is_native_crash(result.returncode):
-            print(f"  [checkpoint] 建议: 重启服务器以重置 GPU 上下文后重试")
-        sys.exit(result.returncode)
+        sys.exit(1)
 
-    # 标准化文件名
-    _rename_extract_files(extract_dir, name)
+    # persist v2 timeline.json (唯一事实源, GUI 可读)
+    persist_state(state, ws_dir, video, target_lang,
+                  project_id=os.path.basename(ws_dir))
+
+    # 产物标准名适配 (后续步骤依赖 audio.wav/vocals.wav/instrumental.wav/source.srt)
+    _normalize_core_extract_files(state, extract_dir, name, skip_demucs)
 
     ws = workspace_paths(video)
 

@@ -666,6 +666,8 @@ class PatchEngine:
             spk = bnd.get("speaker", "")
             t_start = bnd.get("time", target.start)
             t_end = boundaries[i + 1]["time"] if i + 1 < len(boundaries) else target.end
+            if t_end <= t_start:
+                continue  # 边界清洗: 零时长段不进 IR (adapter 侧已去重, 防御 GUI 侧)
 
             ir = TimelineEventIR(
                 id=seg_id,

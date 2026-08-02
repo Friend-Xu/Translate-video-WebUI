@@ -59,6 +59,8 @@ class AudioPreprocessCompositePass(TimelinePass):
         audio_cfg = cfg.get("audio") if isinstance(cfg.get("audio"), dict) else cfg
         if "skip_demucs" in audio_cfg:
             self.skip_demucs = audio_cfg["skip_demucs"]
+        if "validate_defect" in audio_cfg:
+            self.skip_defect_check = not audio_cfg["validate_defect"]
 
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         engine = PatchEngine()
@@ -78,7 +80,7 @@ class AudioPreprocessCompositePass(TimelinePass):
         extract_dir = os.path.join(ws_root, "01_extract")
         os.makedirs(extract_dir, exist_ok=True)
 
-        # Step 1: 缺陷诊断
+        # Step 1: 缺陷诊断 (可选 — 仅信息; --skip-defect-check 跳过诊断 patch)
         if not self.skip_defect_check:
             defect_ctx = AudioDefectContext(
                 video_path=video_path,
@@ -89,14 +91,21 @@ class AudioPreprocessCompositePass(TimelinePass):
             patch = validator.diagnose(defect_ctx)
             engine.apply(state, patch)
 
-            # Step 2: 音频提取 + C2 修复
-            audio_path = os.path.join(
-                extract_dir,
-                f"{stem}_extracted.wav",
-            )
-            defect_ctx.output_audio_path = audio_path
-            patch = validator.repair_and_extract(defect_ctx)
-            engine.apply(state, patch)
+        # Step 2: 音频提取 + C2 修复 (始终执行 — repair_and_extract 内部自带
+        # diagnose 判定修复; 跳过诊断不影响提取, 与 legacy --skip-defect-check 语义一致)
+        audio_path = os.path.join(
+            extract_dir,
+            f"{stem}_extracted.wav",
+        )
+        defect_ctx = AudioDefectContext(
+            video_path=video_path,
+            sample_rate=self.sample_rate,
+            channels=self.channels,
+            output_audio_path=audio_path,
+        )
+        validator = MediaValidatorAdapter()
+        patch = validator.repair_and_extract(defect_ctx)
+        engine.apply(state, patch)
 
         # Step 3: Demucs 人声分离
         vocals_ref = ""
