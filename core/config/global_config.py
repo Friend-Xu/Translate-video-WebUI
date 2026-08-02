@@ -58,8 +58,8 @@ class ProjectPolicy:
         "custom_prompt": "",
         "gate": {
             "mode": "xcomet",
-            "threshold_accept": 0.80,
-            "threshold_reject": 0.60,
+            "threshold_accept": 0.52,
+            "threshold_reject": 0.24,
             "beta": 0.6,
             "gamma": 0.4,
             "sim_drop_limit": 0.05,
@@ -234,6 +234,19 @@ class GlobalConfig:
                     "semantic_threshold": "threshold_accept",
                     "sim_drop_limit": "sim_drop_limit",
                 })
+                # 显式 gate 段 (threshold_accept/reject 等) 直接映射,
+                # 覆盖 legacy semantic_threshold 映射 — translate.yaml 的
+                # semantic_threshold 仍保留给 logic_gate 语义检查使用
+                explicit_gate = translate_cfg.get("gate")
+                if isinstance(explicit_gate, dict):
+                    _map_leaf(explicit_gate, gate_cfg, {
+                        "mode": "mode",
+                        "threshold_accept": "threshold_accept",
+                        "threshold_reject": "threshold_reject",
+                        "beta": "beta",
+                        "gamma": "gamma",
+                        "sim_drop_limit": "sim_drop_limit",
+                    })
 
         if tts_cfg_path and os.path.exists(tts_cfg_path):
             with open(tts_cfg_path, "r", encoding="utf-8") as f:

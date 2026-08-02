@@ -552,8 +552,8 @@ def _snake_defaults() -> dict:
         "api_base_url": "https://api.deepseek.com",
         "quality_gate": True,
         "verification_mode": "logic_gate",
-        "gate_threshold_accept": 0.80,
-        "gate_threshold_reject": 0.60,
+        "gate_threshold_accept": 0.52,
+        "gate_threshold_reject": 0.24,
         "gate_beta": 0.6,
         "gate_gamma": 0.4,
         "sim_drop_limit": 0.05,
@@ -3608,7 +3608,8 @@ async def timeline_ai_suggest(req: AiSuggestRequest):
     settings = load_settings()
     pipeline_cfg = settings.get("pipeline", {})
     api_type = pipeline_cfg.get("apiType") or pipeline_cfg.get("api_type") or "deepseek"
-    api_key = pipeline_cfg.get("apiKey") or pipeline_cfg.get("api_key") or ""
+    api_key = (pipeline_cfg.get("apiKey") or pipeline_cfg.get("api_key") or
+               os.environ.get("DEEPSEEK_API_KEY", "") or "")
     api_base = pipeline_cfg.get("apiBaseUrl") or pipeline_cfg.get("api_base_url") or ""
     api_model = pipeline_cfg.get("apiModel") or pipeline_cfg.get("api_model") or "deepseek-chat"
 

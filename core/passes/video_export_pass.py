@@ -76,8 +76,30 @@ class VideoExportPass(TimelinePass):
         except Exception:
             pass  # GPU 检测失败回退 libx264 — 编码器不影响正确性, 只影响速度
 
+        # ── 字幕渲染器 (必须传给 VideoSegmenter, 否则字幕静默不渲染) ──
+        renderer = None
+        if self.caption or bool(self.caption_config):
+            from pipeline.tts_caption import CaptionRenderer
+            cap_cfg = self.caption_config
+            renderer = CaptionRenderer(
+                font_path=cap_cfg.get("font", "./models/font/Minecraft_font/5_Minecraft_AE_zh_en.ttf"),
+                font_size=cap_cfg.get("font_size") or None,
+                font_color=cap_cfg.get("font_color", "white"),
+                stroke_color=cap_cfg.get("stroke_color", "black"),
+                stroke_width=cap_cfg.get("stroke_width", 0.5),
+                bg_color=cap_cfg.get("bg_color", (0, 0, 0, 128)),
+                max_lines=cap_cfg.get("max_lines", 2),
+                caption_width_ratio=cap_cfg.get("width_ratio", 0.85),
+                alignment=cap_cfg.get("alignment", "center"),
+                position=cap_cfg.get("position", "bottom"),
+                font_size_factor=cap_cfg.get("font_size_factor", 0.030),
+                font_size_mode=cap_cfg.get("font_size_mode", "adaptive"),
+                max_font_size=cap_cfg.get("max_font_size") or None,
+            )
+
         seg = VideoSegmenter(video_output_dir=video_dir,
-                             caption=self.caption or bool(self.caption_config),
+                             caption=renderer is not None,
+                             caption_renderer=renderer.render if renderer else None,
                              video_codec=video_codec,
                              video_preset=video_preset)
 
@@ -95,29 +117,11 @@ class VideoExportPass(TimelinePass):
 
         video = VideoFileClip(self.video_path)
 
-        # ── 字幕拆分优化 ──
+        # ── 字幕拆分优化 (失败回退单段字幕, 响亮日志) ──
         caption_groups_all = None
-        if self.caption_config.get("enable_subtitle_optimization", True):
+        if renderer is not None and self.caption_config.get("enable_subtitle_optimization", True):
             try:
-                from pipeline.tts_caption import CaptionRenderer
                 from pipeline.subtitle_optimizer import optimize
-
-                cap_cfg = self.caption_config
-                renderer = CaptionRenderer(
-                    font_path=cap_cfg.get("font", "./models/font/Minecraft_font/5_Minecraft_AE_zh_en.ttf"),
-                    font_size=cap_cfg.get("font_size") or None,
-                    font_color=cap_cfg.get("font_color", "white"),
-                    stroke_color=cap_cfg.get("stroke_color", "black"),
-                    stroke_width=cap_cfg.get("stroke_width", 0.5),
-                    bg_color=cap_cfg.get("bg_color", (0, 0, 0, 128)),
-                    max_lines=cap_cfg.get("max_lines", 2),
-                    caption_width_ratio=cap_cfg.get("width_ratio", 0.85),
-                    alignment=cap_cfg.get("alignment", "center"),
-                    position=cap_cfg.get("position", "bottom"),
-                    font_size_factor=cap_cfg.get("font_size_factor", 0.030),
-                    font_size_mode=cap_cfg.get("font_size_mode", "adaptive"),
-                    max_font_size=cap_cfg.get("max_font_size") or None,
-                )
 
                 subs_target = [(t["start"], t["end"], t["text"]) for t in tasks]
                 subs_source = [(t["start"], t["end"], "") for t in tasks]
@@ -131,6 +135,9 @@ class VideoExportPass(TimelinePass):
                     )
             except Exception:
                 caption_groups_all = None
+                from pipeline.logger import get_logger
+                get_logger(__name__).warning(
+                    "字幕拆分优化失败, 回退单段字幕", exc_info=True)
 
         for i, task in enumerate(tasks):
             tts_path = task["audio_path"]
