@@ -224,7 +224,7 @@ Browser (localhost:5173) → Vite dev server → proxy /api/* → uvicorn (local
 - **Model storage** — all models cached in `models/` (gitignored), managed by `pipeline/model_manager.py`. HF endpoint: `hf-mirror.com`.
 - **Resume** — TTS 断点续传由 core TTS stage 的 `es.tts.audio_ref` skip 承担（旧 ResumeManager 已退役）
 - **Checkpoint** — `PipelineCheckpoint` at workspace root (`project.json` variant). SHA256-based change detection. `verify_files()` auto-detects manually deleted outputs.
-- **Vendored but inactive** — `spleeter/`, `OpenVoice/`, `Minecraft_dict/` are vendored copies (inactive). `SwinIR/` removed. Active: `core/`, `pipeline/`, `SRT/`, `core/adapters/whisperx_local/`, `openvoice_cli/`.
+- **Vendored but inactive** — `Minecraft_dict/` is a vendored copy (inactive, user data). `SwinIR/` removed. Active: `core/`, `pipeline/`, `SRT/`, `core/adapters/whisperx_local/`, `pipeline/openvoice_cli/` (voice-clone 引擎包, 被 pipeline/vc_openvoice.py 消费).
 - **Skip flags** — `--skip-demucs`, `--skip-defect-check`, `--skip-extract/translate/tts`, `--skip-align`, `--skip-semantic-validation`, `--skip-naturalness-check`. Backup: `--backup-dir <dir>`.
 - **python-multipart** — required by FastAPI `UploadFile`; installed in venv but not declared in requirements.
 - **Vite HMR** — frontend changes auto-reload at `localhost:5173`, but backend changes may need uvicorn restart (new endpoints are sometimes missed by `--reload`).

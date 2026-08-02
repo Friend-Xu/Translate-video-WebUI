@@ -1,9 +1,9 @@
 import os
 import argparse
 from tqdm import tqdm
-from openvoice_cli.downloader import download_checkpoint
-from openvoice_cli.api import ToneColorConverter
-import openvoice_cli.se_extractor as se_extractor
+from pipeline.openvoice_cli.downloader import download_checkpoint
+from pipeline.openvoice_cli.api import ToneColorConverter
+import pipeline.openvoice_cli.se_extractor as se_extractor
 import glob
 
 def tune_one(input_file,ref_file,output_file,device):

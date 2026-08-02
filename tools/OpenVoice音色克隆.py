@@ -1,6 +1,6 @@
 import os
-from openvoice_cli.api import ToneColorConverter
-import openvoice_cli.se_extractor as se_extractor
+from pipeline.openvoice_cli.api import ToneColorConverter
+import pipeline.openvoice_cli.se_extractor as se_extractor
 
 def load_openvoice_model(version = "v2", device='cuda:0'):
     try:

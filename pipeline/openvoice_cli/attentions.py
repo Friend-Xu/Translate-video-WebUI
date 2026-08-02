@@ -3,7 +3,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-import openvoice_cli.commons as commons
+import pipeline.openvoice_cli.commons as commons
 import logging
 
 logger = logging.getLogger(__name__)

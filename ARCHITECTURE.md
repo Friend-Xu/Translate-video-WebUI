@@ -1396,7 +1396,7 @@ Translate_video/
 ├── docs/                       # 设计文档
 │   └── decisions/
 │       └── ADR-001-audio-duration-fix-strategy.md
-├── openvoice_cli/               # OpenVoice TTS CLI（vendored，8 .py 文件）🆕
+├── pipeline/openvoice_cli/       # OpenVoice 音色克隆引擎包（vendored, 被 vc_openvoice.py 消费）
 │   ├── attentions.py            # 注意力机制
 │   ├── commons.py               # 共享组件
 │   ├── models.py                # 模型定义
