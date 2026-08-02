@@ -53,6 +53,19 @@ class CosyVoiceCompositePass(TimelinePass):
         self.fp16 = fp16
         self.default_speed = default_speed
 
+    def configure(self, event_config=None) -> None:
+        """接收 ConfigResolver 全槽位配置, 取 tts 子块 (参数桥 cli_bridge)。"""
+        cfg = event_config or {}
+        tts_cfg = cfg.get("tts") if isinstance(cfg.get("tts"), dict) else cfg
+        if tts_cfg.get("cosyvoice_model_version"):
+            self.model_version = tts_cfg["cosyvoice_model_version"]
+        if tts_cfg.get("default_lang"):
+            self.default_lang = tts_cfg["default_lang"]
+        if "fp16" in tts_cfg:
+            self.fp16 = bool(tts_cfg["fp16"])
+        if tts_cfg.get("default_speed"):
+            self.default_speed = float(tts_cfg["default_speed"])
+
     def apply(self, state: TimelineProjectState) -> TimelineProjectState:
         engine = PatchEngine()
         cross_lingual = CrossLingualProcessor()

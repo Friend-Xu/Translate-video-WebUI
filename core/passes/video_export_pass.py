@@ -63,8 +63,23 @@ class VideoExportPass(TimelinePass):
         from pipeline.tts_video import VideoSegmenter
         from moviepy import VideoFileClip, AudioFileClip
 
+        # GPU 编码器自动检测 (复用 gpu_detect — legacy step_tts 独占, 桥入 core)
+        video_codec = "libx264"
+        video_preset: str | None = "medium"
+        try:
+            from pipeline.gpu_detect import detect_best_encoder, _ENCODER_PRESETS
+            from pipeline.utils import get_ffmpeg_exe
+            best = detect_best_encoder(get_ffmpeg_exe())
+            if best:
+                video_codec = best
+                video_preset = _ENCODER_PRESETS.get(best, "medium")
+        except Exception:
+            pass  # GPU 检测失败回退 libx264 — 编码器不影响正确性, 只影响速度
+
         seg = VideoSegmenter(video_output_dir=video_dir,
-                             caption=self.caption or bool(self.caption_config))
+                             caption=self.caption or bool(self.caption_config),
+                             video_codec=video_codec,
+                             video_preset=video_preset)
 
         # 读取 Demucs 分离的背景乐
         bgm_ref = state.get_global_bgm_ref()
@@ -99,6 +114,9 @@ class VideoExportPass(TimelinePass):
                     caption_width_ratio=cap_cfg.get("width_ratio", 0.85),
                     alignment=cap_cfg.get("alignment", "center"),
                     position=cap_cfg.get("position", "bottom"),
+                    font_size_factor=cap_cfg.get("font_size_factor", 0.030),
+                    font_size_mode=cap_cfg.get("font_size_mode", "adaptive"),
+                    max_font_size=cap_cfg.get("max_font_size") or None,
                 )
 
                 subs_target = [(t["start"], t["end"], t["text"]) for t in tasks]

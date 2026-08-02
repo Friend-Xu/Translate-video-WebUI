@@ -8,22 +8,45 @@ core → pipeline 单向依赖 (适配器模式本意)。
 from __future__ import annotations
 import os
 
-# 传给 create_pass_factory 的 caption 字段 (仅非 None 传入)
-_CAPTION_FIELDS = (
-    "caption_font", "caption_font_size", "caption_font_color",
-    "caption_stroke_width", "caption_stroke_color", "caption_bg_color",
-    "caption_alignment", "caption_position", "caption_max_lines",
-    "caption_width_ratio",
-)
+# CLI caption 参数 → caption_config dict 键映射 (无前缀键, 与 VideoExportPass/
+# config/caption.yaml 消费一致)。caption_font → font 等。
+_CAPTION_FIELD_MAP: dict[str, str] = {
+    "caption_font": "font",
+    "caption_font_size": "font_size",
+    "caption_font_color": "font_color",
+    "caption_stroke_width": "stroke_width",
+    "caption_stroke_color": "stroke_color",
+    "caption_bg_color": "bg_color",
+    "caption_alignment": "alignment",
+    "caption_position": "position",
+    "caption_max_lines": "max_lines",
+    "caption_width_ratio": "width_ratio",
+    "caption_font_size_mode": "font_size_mode",
+    "caption_max_font_size": "max_font_size",
+    "caption_font_size_factor": "font_size_factor",
+}
 
 
 def build_caption_config(args) -> dict:
-    """从 CLI args 提取非 None 的字幕配置字段。"""
-    return {
-        attr: getattr(args, attr, None)
-        for attr in _CAPTION_FIELDS
-        if getattr(args, attr, None) is not None
-    }
+    """从 CLI args 构建 caption_config dict (无前缀键)。
+
+    caption_config_path (YAML) 为底, CLI 单独 flag 覆盖。
+    """
+    cfg: dict = {}
+    path = getattr(args, "caption_config_path", None)
+    if path and os.path.isfile(path):
+        from pipeline.caption_config import CaptionConfig
+        yaml_cfg = CaptionConfig.from_yaml(path)
+        for key, val in vars(yaml_cfg).items():
+            if val is not None and val != "":
+                cfg[key] = val
+    for attr, key in _CAPTION_FIELD_MAP.items():
+        val = getattr(args, attr, None)
+        if val is not None:
+            cfg[key] = val
+    if getattr(args, "no_optimize_subtitles", False):
+        cfg["enable_subtitle_optimization"] = False
+    return cfg
 
 
 def apply_cli_slot_overrides(args, gcfg) -> None:
@@ -56,6 +79,20 @@ def apply_cli_slot_overrides(args, gcfg) -> None:
         audio["validate_defect"] = False
     if audio:
         overrides["audio"] = audio
+
+    tts: dict = {}
+    for src, dst in (("engine", "engine"), ("enable_emotion", "enable_emotion")):
+        val = getattr(args, src, None)
+        if val is not None:
+            tts[dst] = val
+    if getattr(args, "cosyvoice_model_version", None):
+        tts["cosyvoice_model_version"] = args.cosyvoice_model_version
+    if getattr(args, "cosyvoice_tts_model_version", None):
+        tts["cosyvoice_model_version"] = args.cosyvoice_tts_model_version
+    if getattr(args, "cosyvoice_tts_lang", None):
+        tts["default_lang"] = args.cosyvoice_tts_lang
+    if tts:
+        overrides["tts"] = tts
 
     if overrides:
         gcfg.apply_slot_overrides(overrides)

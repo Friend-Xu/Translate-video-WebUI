@@ -540,8 +540,6 @@ def step_translate_core(video: str, force: bool = False) -> str:
     return machine_srt
 
 
-
-
 def step_tts(
     video: str,
     srt_source: str,
@@ -581,10 +579,11 @@ def step_tts(
     cosyvoice_tts_lang: str | None = None,
     enable_emotion: bool | None = None,
 ) -> None:
-    """步骤 3: TTS 合成 + 视频合并（新管线 TtsPipeline）
+    """步骤 3 (core): WorkflowOrchestrator TTS+EXPORT (架构收束 P4 — TtsPipeline 退役)。
 
-    支持 edge / chattts / cosyvoice 引擎，GPU 编码自动检测，
-    自动合并视频段输出最终文件。
+    TTS 合成 + 字幕渲染 + 视频合并统一由 core passes 执行:
+      TTS stage (引擎 composite, ChatTTS worker 隔离为协作层) → EXPORT stage
+      (SRTExportPass + VideoExportPass → 06_export/dubbed.mp4)。
     """
     ws = workspace_paths(video)
     if not ws:
@@ -593,8 +592,6 @@ def step_tts(
 
     ws_dir = _workspace_dir(video)
     ck = PipelineCheckpoint.load(ws_dir)
-
-    instrumental = ws["instrumental_wav"] if os.path.isfile(ws["instrumental_wav"]) else None
     final_output = ws["dubbed_mp4"]
 
     # 验证输出文件是否存在（用户可能删了部分文件希望重跑）
@@ -611,160 +608,98 @@ def step_tts(
         _manifest_set_step(video, "tts", "completed")
         return
 
-    if not instrumental:
-        if skip_demucs:
-            print(f"\n[3/3] [INFO] Demucs 已跳过，不使用背景音乐")
-        else:
-            print()
-            print(f"[WARN] [3/3] 找不到伴奏文件: {ws['instrumental_wav']}，将不使用背景音乐继续合成（可加 --skip-demucs 消除此警告）")
+    if not skip_demucs and not os.path.isfile(ws["instrumental_wav"]):
+        print(f"\n[WARN] [3/3] 找不到伴奏文件: {ws['instrumental_wav']}，将不使用背景音乐继续合成")
 
     logger.info("[STAGE] [3/4] TTS 语音合成开始")
     print(f"\n[3/3] TTS 语音合成 + 视频合并 ({engine})...")
     ck.start_step("tts")
     ck.save()
 
-    from pipeline.tts_config import TTSConfig, EDGE_VOICE_MAP
+    from types import SimpleNamespace
+    from core.engine import WorkflowOrchestrator
+    from core.config.workflow_policy import WorkflowPolicy
+    from core.config.global_config import GlobalConfig
+    from core.compat.cli_bridge import build_pass_factory
+    from core.runtime.timeline_io import persist_state
 
-    cfg = TTSConfig.from_yaml(config_path) if config_path and os.path.isfile(config_path) else TTSConfig()
-
-    cfg.engine_type = engine
-    if enable_emotion is not None:
-        cfg.enable_emotion = enable_emotion
-
-    # 目标语言：从 translate.yaml 读取并写入 TTSConfig（驱动 EdgeTTS 语音自动选择）
-    translate_yaml = os.path.join(PROJECT_ROOT, "config", "translate.yaml")
-    if os.path.isfile(translate_yaml):
-        try:
-            import yaml as _yaml
-            with open(translate_yaml, "r", encoding="utf-8") as _f:
-                _tc = _yaml.safe_load(_f) or {}
-            _tl = (_tc.get("translate") or {}).get("target_lang", "")
-            if _tl:
-                cfg.target_lang = _tl
-                # __post_init__ already ran in from_yaml() / TTSConfig(); re-apply auto voice
-                if cfg.voice == "zh-CN-XiaoxiaoNeural" and _tl in EDGE_VOICE_MAP:
-                    cfg.voice = EDGE_VOICE_MAP[_tl]
-        except Exception:
-            pass
-
-    # ── 音色克隆 CLI 覆盖 ──
-    if voice_clone_engine is not None:
-        cfg.voice_clone_engine = voice_clone_engine
-        if voice_clone_engine != "none":
-            cfg.enable_openvoice = True  # 向后兼容旧标志
-    if voice_clone_device is not None:
-        cfg.voice_clone_device = voice_clone_device
-    if vram_limit is not None:
-        cfg.voice_clone_vram_limit_mb = vram_limit
-    if clone_concurrency is not None:
-        cfg.voice_clone_concurrency = clone_concurrency
-    if cosyvoice_mode is not None:
-        cfg.cosyvoice_mode = cosyvoice_mode
-    if cosyvoice_model_version is not None:
-        cfg.cosyvoice_model_version = cosyvoice_model_version
-    if cosyvoice_model_path is not None:
-        cfg.cosyvoice_model_path = cosyvoice_model_path
-    if cosyvoice_tts_model_version is not None:
-        cfg.cosyvoice_tts_model_version = cosyvoice_tts_model_version
-    if cosyvoice_tts_model_path is not None:
-        cfg.cosyvoice_tts_model_path = cosyvoice_tts_model_path
-    if cosyvoice_tts_prompt_audio is not None:
-        cfg.cosyvoice_tts_prompt_audio = cosyvoice_tts_prompt_audio
-    if cosyvoice_tts_prompt_text is not None:
-        cfg.cosyvoice_tts_prompt_text = cosyvoice_tts_prompt_text
-    if cosyvoice_tts_mode is not None:
-        cfg.cosyvoice_tts_mode = cosyvoice_tts_mode
-    if cosyvoice_tts_lang is not None:
-        cfg.cosyvoice_tts_lang = cosyvoice_tts_lang
-
-    # ── 字幕配置: CaptionConfig 文件 > 单独 CLI args（后者覆盖） ──
-    if caption_config_path and os.path.isfile(caption_config_path):
-        from pipeline.caption_config import CaptionConfig
-        caption_cfg = CaptionConfig.from_yaml(caption_config_path)
-        cfg.apply_caption_overrides(caption_cfg)
-
-    if caption_font:
-        cfg.caption_font = caption_font
-    if caption_font_size_mode:
-        cfg.caption_font_size_mode = caption_font_size_mode
-    if caption_font_size is not None:
-        cfg.caption_font_size = caption_font_size
-    if caption_font_color:
-        cfg.caption_font_color = caption_font_color
-    if caption_stroke_width is not None:
-        cfg.caption_stroke_width = caption_stroke_width
-    if caption_stroke_color:
-        cfg.caption_stroke_color = caption_stroke_color
-    if caption_bg_color:
-        cfg.caption_bg_color = caption_bg_color
-    if caption_alignment:
-        cfg.caption_alignment = caption_alignment
-    if caption_position:
-        cfg.caption_position = caption_position
-    if caption_max_lines is not None:
-        cfg.caption_max_lines = caption_max_lines
-    if caption_max_font_size is not None:
-        cfg.caption_max_font_size = caption_max_font_size
-    if caption_font_size_factor is not None:
-        cfg.caption_font_size_factor = caption_font_size_factor
-    if caption_width_ratio is not None:
-        cfg.caption_width_ratio = caption_width_ratio
-    if no_optimize_subtitles:
-        cfg.enable_subtitle_optimization = False
-    cfg.enable_merge = True
-    cfg.final_output_path = final_output
-    cfg.output_dir = ws["tts_dir"]
-    cfg.video_output_dir = os.path.join(ws["tts_dir"], "video")
-
-    # GPU 编码器自动检测（含 preset 调整）
-    from pipeline.gpu_detect import apply_best_encoder_to_config, _ENCODER_PRESETS
-    apply_best_encoder_to_config(cfg)
-    if cfg.video_codec in _ENCODER_PRESETS:
-        cfg.video_preset = _ENCODER_PRESETS[cfg.video_codec]  # 兼容硬件编码器 preset
-        print(f"  [GPU 检测] codec={cfg.video_codec} preset={cfg.video_preset}")
+    # 无法承载到 core TTS 阶段的 legacy 参数 — 显式报错 (Fail Loud, 不静默忽略)
+    unsupported = {
+        "voice_clone_engine": voice_clone_engine,
+        "voice_clone_device": voice_clone_device,
+        "vram_limit": vram_limit,
+        "clone_concurrency": clone_concurrency,
+        "cosyvoice_mode": cosyvoice_mode,
+        "cosyvoice_model_path": cosyvoice_model_path,
+        "cosyvoice_tts_model_path": cosyvoice_tts_model_path,
+        "cosyvoice_tts_prompt_audio": cosyvoice_tts_prompt_audio,
+        "cosyvoice_tts_prompt_text": cosyvoice_tts_prompt_text,
+        "cosyvoice_tts_mode": cosyvoice_tts_mode,
+    }
+    active = [k for k, v in unsupported.items() if v not in (None, "", "none")]
+    if active:
+        print(f"[X] 以下参数在 core TTS 阶段不再支持 (架构收束, 无法承载): {active}")
+        ck.fail_step("tts", f"unsupported flags: {active}", error_type="APPLICATION")
+        ck.save()
+        sys.exit(1)
 
     # force 模式下清除上次的输出视频段，确保全新生成
     if force:
-        import glob
-        video_dir = cfg.video_output_dir
+        import glob as _glob
+        video_dir = os.path.join(ws["tts_dir"], "video")
         if os.path.isdir(video_dir):
             removed = 0
-            for f in glob.glob(os.path.join(video_dir, "TTS_*.mp4")):
+            for f in _glob.glob(os.path.join(video_dir, "TTS_*.mp4")):
                 os.remove(f)
                 removed += 1
             if removed:
                 print(f"  [force] 已清除 {removed} 个旧视频段")
 
-    # 运行 TtsPipeline（ChatTTS CUDA 隔离由持久子进程 chattts_worker.py 处理）
-    from pipeline.tts_pipeline import TtsPipeline
+    target_lang = _load_target_lang()
+    policy = WorkflowPolicy.export_preset(target_lang=target_lang)
+    gcfg = GlobalConfig()
 
-    pipeline = TtsPipeline(cfg)
-    tts_failed = False
-    tts_error_msg = ""
+    args = SimpleNamespace(
+        engine=engine, num_speakers=0, enable_speaker_diarization=False,
+        enable_emotion=enable_emotion, verification_mode=None,
+        caption_font=caption_font, caption_font_size=caption_font_size,
+        caption_font_color=caption_font_color,
+        caption_stroke_width=caption_stroke_width,
+        caption_stroke_color=caption_stroke_color,
+        caption_bg_color=caption_bg_color,
+        caption_alignment=caption_alignment, caption_position=caption_position,
+        caption_max_lines=caption_max_lines, caption_width_ratio=caption_width_ratio,
+        caption_font_size_mode=caption_font_size_mode,
+        caption_max_font_size=caption_max_font_size,
+        caption_font_size_factor=caption_font_size_factor,
+        caption_config_path=caption_config_path,
+        no_optimize_subtitles=no_optimize_subtitles,
+        cosyvoice_model_version=cosyvoice_tts_model_version or cosyvoice_model_version,
+        cosyvoice_tts_lang=cosyvoice_tts_lang,
+    )
+    pass_factory = build_pass_factory(args, video, ws_dir, target_lang, gcfg)
+
+    orchestrator = WorkflowOrchestrator(policy=policy, global_config=gcfg)
+    orchestrator.set_pass_factory(pass_factory)
+
+    def _orchestrator_progress(report) -> None:
+        print(f"  [{report.stage_label}] {report.message}")
+
+    orchestrator.set_progress_callback(_orchestrator_progress)
+
     try:
-        pipeline.run(
-            video_path=video,
-            instrumental_path=instrumental,
-            translated_srt_path=srt_translated,
-            source_srt_path=srt_source,
-        )
+        state = orchestrator.run(video)
     except Exception as exc:
-        tts_failed = True
-        tts_error_msg = f"{type(exc).__name__}: {exc}"
-        import traceback
-        traceback.print_exc()
-    finally:
-        pipeline.cleanup()
-
-    if tts_failed:
-        ck.fail_step("tts", tts_error_msg, error_type="APPLICATION")
+        logger.error(f"WorkflowOrchestrator TTS 失败: {exc}")
+        print(f"\n[X] TTS 合成失败: {exc}")
+        ck.fail_step("tts", str(exc), error_type="APPLICATION")
         ck.save()
-        print(f"\n[X] TTS 合成失败: {tts_error_msg}")
-        print(f"  [checkpoint] TTS 已标记为失败，视频段保留在 {cfg.video_output_dir}/")
-        print(f"  [checkpoint] 重启后可断点续传 (已处理的片段会自动跳过)")
-        _manifest_set_step(video, "tts", "failed")
         sys.exit(1)
-    elif os.path.isfile(final_output):
+
+    persist_state(state, ws_dir, video, target_lang,
+                  project_id=os.path.basename(ws_dir))
+
+    if os.path.isfile(final_output):
         sz = os.path.getsize(final_output)
         from pipeline.checkpoint import _file_sha256
         ck.complete_step("tts", output_hashes={"dubbed_mp4": _file_sha256(final_output)})
@@ -778,7 +713,7 @@ def step_tts(
         print(f"  [checkpoint] TTS 已标记为失败，重启后可断点续传")
         _manifest_set_step(video, "tts", "failed")
         sys.exit(1)
-    _manifest_set_files(video, {"dubbed": "04_output/dubbed.mp4"})
+    _manifest_set_files(video, {"dubbed": "06_export/dubbed.mp4"})
     if backup_dir:
         backup_step("03_tts_done", [final_output], backup_dir)
 

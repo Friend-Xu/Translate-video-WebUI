@@ -207,16 +207,18 @@ class PatchEngine:
         }
 
     def _update_tts_audio(self, state: TimelineProjectState, patch: Patch) -> dict:
-        """UPDATE_TTS_AUDIO — 写入 tts slot, 不用 _replace 顶层塞 audio_ref。
+        """UPDATE_TTS_AUDIO — 写入 tts slot (类型化对象, Phase 3A 后无 dict update)。
 
-        修复: 旧 _replace 把 audio_ref/duration/engine 塞到 _data 顶层,
-        导致各 TTS pass 的 es.tts.audio_ref skip 检查读空槽。
+        修复: 旧实现 slot.update(patch.value) 对 TTSAudio dataclass 崩溃
+        (实测 TTS E2E 'TTSAudio' object has no attribute 'update')。
         """
         target = state.get_event(patch.target_id)
         if target is None:
             return {"status": "error", "reason": f"target not found: {patch.target_id}"}
-        slot = target.tts  # lazy-init dict (含 config)
-        slot.update(patch.value)
+        slot = target.tts
+        for k, v in patch.value.items():
+            if hasattr(slot, k):
+                setattr(slot, k, v)
         target.add_patch(patch)
         return {
             "status": "applied",

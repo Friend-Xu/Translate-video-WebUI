@@ -28,6 +28,44 @@ import numpy as np
 
 from pipeline.logger import get_logger
 
+
+# ── worker 数计算 (架构收束 P4: 从 tts_pipeline.py 迁入) ──────────
+
+_CHATTS_MODEL_SIZE_GB = 2.0
+_CHATTS_VRAM_OVERHEAD_GB = 0.5
+
+_chattts_workers_cache: int | None = None
+
+
+def calc_chattts_workers(model_size_gb: float = _CHATTS_MODEL_SIZE_GB,
+                         overhead_gb: float = _CHATTS_VRAM_OVERHEAD_GB,
+                         total_vram_mb: int | None = None) -> int:
+    """根据 GPU 显存计算 ChatTTS 可并行加载的模型副本数。
+
+    每个 worker 加载一份独立模型（~2.37 GB），需要充足显存。
+    结果在进程生命周期内不变，首次计算后缓存。
+
+    通过 total_vram_mb 传入已知显存可避免在调用进程中 import torch
+    （import torch 会初始化 CUDA 上下文且无法释放）。
+    CUDA 不可用时回退 1 worker (性能参数, 非数据正确性)。
+    """
+    global _chattts_workers_cache
+    if _chattts_workers_cache is not None:
+        return _chattts_workers_cache
+    try:
+        if total_vram_mb is not None:
+            total_gb = total_vram_mb / 1024.0
+        else:
+            import torch
+            if not torch.cuda.is_available():
+                raise RuntimeError("CUDA not available")
+            total_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+        available = total_gb - overhead_gb
+        _chattts_workers_cache = max(1, int(available / model_size_gb))
+    except (ImportError, RuntimeError):
+        _chattts_workers_cache = 1
+    return _chattts_workers_cache
+
 logger = get_logger(__name__)
 
 _DIGIT_MAP = {"0": "零", "1": "一", "2": "二", "3": "三", "4": "四",

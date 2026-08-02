@@ -98,8 +98,6 @@ DIST_DIR = Path(__file__).resolve().parent / "dist"
 JOBS_DIR = Path(__file__).resolve().parent / "jobs"
 BATCHES_DIR = Path(__file__).resolve().parent / "batches"
 SETTINGS_PATH = Path(__file__).resolve().parent / "settings.json"
-CONFIG_YAML = PROJECT_ROOT / "SRT" / "Config.yaml"
-CONFIG_BAK = PROJECT_ROOT / "SRT" / "Config.yaml.bak"
 FONT_DIR = PROJECT_ROOT / "models" / "font"
 
 app = FastAPI(title="Translate Video GUI API")
@@ -590,21 +588,6 @@ def _snake_defaults() -> dict:
         "audio_codec": "aac",
         "audio_bitrate": "192k",
     }
-
-
-def ensure_backup() -> None:
-    if not CONFIG_BAK.exists() and CONFIG_YAML.exists():
-        shutil.copy2(CONFIG_YAML, CONFIG_BAK)
-
-
-def load_config_yaml() -> dict:
-    with open(CONFIG_YAML, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
-
-
-def write_config_yaml(data: dict) -> None:
-    with open(CONFIG_YAML, "w", encoding="utf-8") as f:
-        yaml.dump(data, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
 
 
 class RunRequest(BaseModel):

@@ -54,8 +54,12 @@ class EmotionCompositePass(TimelinePass):
             engine.apply(state, recognizer.recognize(ctx))
 
             ed = es.emotion
-            ev = EmotionVector(**{k: ed.get(k, 0.0) for k in
-                   ("emotion","valence","arousal","dominance","confidence","intensity")})
+            # 类型化槽位访问 (Phase 3A 后无 dict get — 修复 TTS E2E 崩溃)
+            ev = EmotionVector(
+                emotion=ed.emotion, valence=ed.valence, arousal=ed.arousal,
+                dominance=ed.dominance, confidence=ed.confidence,
+                intensity=ed.intensity,
+            )
 
             if not self.skip_alignment and trans:
                 ar = EmotionAlignmentChecker().check(ev, trans)

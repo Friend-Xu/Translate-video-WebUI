@@ -54,7 +54,7 @@ def compat_chattts_factory():
 
 
 def compat_calc_chattts_workers():
-    from pipeline.tts_pipeline import calc_chattts_workers
+    from pipeline.tts_chattts import calc_chattts_workers
     return calc_chattts_workers
 
 
