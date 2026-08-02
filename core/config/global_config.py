@@ -58,8 +58,8 @@ class ProjectPolicy:
         "custom_prompt": "",
         "gate": {
             "mode": "xcomet",
-            "threshold_accept": 0.52,
-            "threshold_reject": 0.24,
+            "threshold_accept": 0.86,
+            "threshold_reject": 0.64,
             "beta": 0.6,
             "gamma": 0.4,
             "sim_drop_limit": 0.05,
