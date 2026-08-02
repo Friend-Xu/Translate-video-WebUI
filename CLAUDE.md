@@ -94,7 +94,7 @@ EXPORT   SRTExportPass → VideoExportPass (配音合并)
 | `core/` | 编排层 (WorkflowOrchestrator, passes, adapters, PatchEngine, timeline_io, quality 策略) |
 | `pipeline/` | 执行层 — TTS engines (edge/chattts/cosyvoice), RubberBand stretch, speed strategy, loudness, voice cloning (vc_*), caption rendering, video merging, checkpoint resume, model management (被 core adapters 薄包装) |
 | `SRT/` | 执行层 — MediaValidator / VAD_Segmenter / TranslationVerifier (被 core adapters 包装) |
-| `whisperx_local/` | wav2vec2 forced alignment (~20ms precision), core/adapters/whisperx_local/ 是权威副本 |
+| `core/adapters/whisperx_local/` | wav2vec2 forced alignment (~20ms precision) — 对齐子进程经 sys.path 插入 core/adapters 直接 import, 根目录无 shim |
 | `GUI/` | FastAPI + React/TypeScript WebUI, Vite dev proxy to uvicorn |
 | `config/` | YAML configs: `translate.yaml` (gitignored), `tts.yaml`, `caption.yaml`, `cosyvoice.yaml`, `external_subtitle.yaml`, `runtime_tts.yaml` |
 
@@ -222,9 +222,9 @@ Browser (localhost:5173) → Vite dev server → proxy /api/* → uvicorn (local
 - **CosyVoice v3 `<|endofprompt|>`** — v3 requires this token separator between conditioning prefix and speech text. v2 does not. Placed as: `"You are a helpful assistant.<|zh|><|endofprompt|>{text}"`.
 - **CosyVoice modes** — only `cross_lingual` is supported (validated in `TTSConfig.__post_init__`). `zero_shot` was inferior quality and removed. `text_frontend=False` is mandatory during inference to prevent tag parsing as text.
 - **Model storage** — all models cached in `models/` (gitignored), managed by `pipeline/model_manager.py`. HF endpoint: `hf-mirror.com`.
-- **Resume** — `ResumeManager` checks for existing `TTS_{start}_{end}.mp4`; no separate state file.
+- **Resume** — TTS 断点续传由 core TTS stage 的 `es.tts.audio_ref` skip 承担（旧 ResumeManager 已退役）
 - **Checkpoint** — `PipelineCheckpoint` at workspace root (`project.json` variant). SHA256-based change detection. `verify_files()` auto-detects manually deleted outputs.
-- **Vendored but inactive** — `spleeter/`, `OpenVoice/`, `SwinIR/`, `Minecraft_dict/` are vendored copies. Only `pipeline/`, `SRT/`, `whisperx_local/`, `openvoice_cli/` are active.
+- **Vendored but inactive** — `spleeter/`, `OpenVoice/`, `Minecraft_dict/` are vendored copies (inactive). `SwinIR/` removed. Active: `core/`, `pipeline/`, `SRT/`, `core/adapters/whisperx_local/`, `openvoice_cli/`.
 - **Skip flags** — `--skip-demucs`, `--skip-defect-check`, `--skip-extract/translate/tts`, `--skip-align`, `--skip-semantic-validation`, `--skip-naturalness-check`. Backup: `--backup-dir <dir>`.
 - **python-multipart** — required by FastAPI `UploadFile`; installed in venv but not declared in requirements.
 - **Vite HMR** — frontend changes auto-reload at `localhost:5173`, but backend changes may need uvicorn restart (new endpoints are sometimes missed by `--reload`).
