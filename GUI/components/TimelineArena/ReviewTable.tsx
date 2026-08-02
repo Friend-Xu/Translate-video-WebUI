@@ -160,6 +160,7 @@ const SubtitleRowMemo = React.memo(function SubtitleRow({
 
 export default function ReviewTable({ events, workspace, onSeek }: Props) {
   const reviewEntries = useAppStore(s => s.reviewEntries)
+  const reviewReloadToken = useAppStore(s => s.reviewReloadToken)
   const searchQuery = useAppStore(s => s.reviewSearchQuery)
   const filterMode = useAppStore(s => s.reviewFilterMode)
   const loadReviewEntries = useAppStore(s => s.loadReviewEntries)
@@ -174,7 +175,7 @@ export default function ReviewTable({ events, workspace, onSeek }: Props) {
   const [currentEntryIndex, setCurrentEntryIndex] = useState<number | null>(null)
   const [toastVisible, setToastVisible] = useState(false)
 
-  // Load from API on mount / workspace change
+  // Load from API on mount / workspace change / 外部编辑后 (reviewReloadToken 递增)
   const effectiveWorkspace = workspace || storeWorkspace
   useEffect(() => {
     if (effectiveWorkspace) {
@@ -194,14 +195,18 @@ export default function ReviewTable({ events, workspace, onSeek }: Props) {
       }))
       reset(entries)
     }
-  }, [effectiveWorkspace, events, loadReviewEntries])
+    // events 引用不在此依赖 — 编辑后的重拉由 reviewReloadToken 精确驱动
+    // (events 每次 applyDraft 都换引用, 直接依赖会让校验界面每次编辑多拉一次)
+  }, [effectiveWorkspace, reviewReloadToken, loadReviewEntries])
 
-  // Sync store entries → local undoable state when API returns data
+  // Sync store entries → local undoable state when API returns data.
+  // 依赖引用 (非 length): 长度不变的编辑 (译文/说话人变更) 也必须刷新 —
+  // 否则本地残留旧数据, 保存会用旧译文覆盖新译文 (数据回滚 bug)
   useEffect(() => {
     if (reviewEntries.length > 0) {
       reset(reviewEntries)
     }
-  }, [reviewEntries.length])
+  }, [reviewEntries])
 
   // Filter
   const filtered = useMemo(() => {

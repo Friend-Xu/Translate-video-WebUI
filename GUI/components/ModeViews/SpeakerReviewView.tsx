@@ -56,7 +56,6 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
   const selectedSpeakerIds = useAppStore(s => s.selectedSpeakerIds)
   const setSelectedSpeaker = useAppStore(s => s.setSelectedSpeaker)
   const toggleSpeakerSelection = useAppStore(s => s.toggleSpeakerSelection)
-  const addDraft = useAppStore(s => s.addDraft)
   const setMode = useAppStore(s => s.setMode)
   const workspace = useAppStore(s => s.workspace)
   const playheadPosition = useAppStore(s => s.playheadPosition)
@@ -263,21 +262,28 @@ export default function SpeakerReviewView({ events, speakers: externalSpeakers, 
 
   const handleCreateSpeaker = useCallback(async () => {
     if (!createName.trim()) return
-    addDraft({
-      eventId: `SPEAKER_${Date.now()}`, opcode: 'CREATE_SPEAKER',
+    // P2 收敛: CREATE_SPEAKER 走 patch 落盘注册表 — 只 addDraft 不 apply 则刷新即丢
+    const store = useAppStore.getState()
+    const speakerId = `SPEAKER_${Date.now()}`
+    store.addDraft({
+      eventId: speakerId, opcode: 'CREATE_SPEAKER',
       payload: { display_name: createName.trim() },
       before: {}, after: { display_name: createName.trim() }, timestamp: Date.now(),
     })
+    await store.applyDraft(speakerId)
     setCreateDialogOpen(false)
     setCreateName('')
   }, [createName])
 
   const handleLockSpeaker = useCallback((speakerId: string) => {
-    addDraft({
+    const store = useAppStore.getState()
+    store.addDraft({
       eventId: speakerId, opcode: 'LOCK_SPEAKER',
       payload: { speaker: speakerId }, before: {}, after: {}, timestamp: Date.now(),
     })
-  }, [addDraft])
+    // 与 SpeakerLane 一致: 立即 apply 落盘 (注册表 is_locked)
+    void store.applyDraft(speakerId)
+  }, [])
 
   const handleRename = useCallback(async (speakerId: string) => {
     if (!editValue.trim()) { setEditingName(null); return }

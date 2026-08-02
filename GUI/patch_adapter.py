@@ -32,6 +32,7 @@ _LEGACY_TO_OP: dict[str, OpCode] = {
     "MERGE_SPEAKERS": OpCode.MERGE_SPEAKERS,
     "CREATE_SPEAKER": OpCode.REGISTER_SPEAKER,
     "RENAME_SPEAKER": OpCode.UPDATE_SPEAKER,
+    "BIND_VOICE": OpCode.UPDATE_SPEAKER,
     "LOCK_SPEAKER": OpCode.LOCK_SPEAKER,
     # P3-A 收敛: timeline 编辑假 draft 补映射 (此前降级 ANNOTATE 静默零写入)
     "MOVE_EVENT": OpCode.UPDATE_BOUNDS,
@@ -147,6 +148,12 @@ def legacy_to_core(d: dict) -> Patch:
             "speaker_id": target_id,
             "name": payload.get("newName", payload.get("name", "")),
             "color": payload.get("color"),
+        }
+    elif op_raw == "BIND_VOICE":
+        # 声线绑定/解绑 — UPDATE_SPEAKER 写注册表 voice_id (此前仅本地 lanes, 刷新即丢)
+        value = {
+            "speaker_id": target_id,
+            "voice_id": payload.get("voice_id", ""),
         }
     elif op_raw == "LOCK_SPEAKER":
         value = {

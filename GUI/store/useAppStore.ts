@@ -72,6 +72,8 @@ export interface AppState {
   reviewSearchQuery: string
   reviewFilterMode: ReviewFilterMode
   reviewTranslatedSrtPath: string
+  // 编辑成功后 +1 — 字幕校验界面据此重拉 (外部编辑 → 校验界面同步的唯一触发源)
+  reviewReloadToken: number
 
   // Workspace state (TRV-PLAN-2026-001 §8.2)
   dataSource: DataSource
@@ -170,6 +172,7 @@ export interface AppState {
   updateReviewEntry: (index: number, update: Partial<SubtitleEntry>) => void
   setReviewSearchQuery: (q: string) => void
   setReviewFilterMode: (mode: ReviewFilterMode) => void
+  bumpReviewReload: () => void
   loadReviewEntries: (workspaceOverride?: string) => Promise<void>
   saveReviewEntries: () => Promise<void>
 }
@@ -180,6 +183,7 @@ const OPCODE_MAP: Record<string, string> = {
   ASSIGN_SPEAKER: 'ASSIGN_SPEAKER',
   MERGE_SPEAKERS: 'MERGE_SPEAKERS',
   RENAME_SPEAKER: 'RENAME_SPEAKER',
+  BIND_VOICE: 'BIND_VOICE',
   LOCK_SPEAKER: 'LOCK_SPEAKER',
   CREATE_SPEAKER: 'CREATE_SPEAKER',
   SPLIT_SEGMENT: 'SPLIT',
@@ -277,6 +281,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   reviewSearchQuery: '',
   reviewFilterMode: 'all' as ReviewFilterMode,
   reviewTranslatedSrtPath: '',
+  reviewReloadToken: 0,
 
   // Workspace defaults (TRV-PLAN-2026-001)
   dataSource: 'mock' as DataSource,
@@ -559,6 +564,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ pendingDrafts: next, appliedPatches: patches, events: newEvents })
     // 说话人 lane 本地同步 (零请求): 拖拽/resize/assign 改变事件边界与归属
     get().syncSpeakerLanesFromEvents(serverEvents)
+    // 外部编辑完成 → 字幕校验界面重拉 (内容可能已变)
+    get().bumpReviewReload()
 
     // review flags 是唯一随编辑变化的派生数据 — 单独轻量刷新
     if (ws) await get().fetchReviewFlags(ws)
@@ -640,6 +647,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     })
     // 说话人 lane 本地同步 (零请求): 批量操作同样改变事件边界/归属
     if (latestEvents) get().syncSpeakerLanesFromEvents(latestEvents)
+    // 批量编辑完成 → 字幕校验界面重拉
+    if (newPatches.length > 0) get().bumpReviewReload()
     if (ws && newPatches.length > 0 && latestEvents) {
       await get().fetchReviewFlags(ws)
     }
@@ -700,6 +709,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const serverEvents = (data.events || {}) as Record<string, EventViewModel>
     const undoneEvents = Object.values(serverEvents).sort((a, b) => a.start - b.start)
     set({ appliedPatches: patches.slice(0, -1), events: undoneEvents })
+    // 撤销完成 → 字幕校验界面重拉 (事件内容可能已回滚)
+    get().bumpReviewReload()
 
     // 撤销后刷新 — fetchPatchLog/fetchSpeakerLanes 内部已响亮, 不再静默吞 rejection
     get().fetchPatchLog()
@@ -856,11 +867,22 @@ export const useAppStore = create<AppState>((set, get) => ({
   setVoicePresets: (presets) => set({ voicePresets: presets }),
   setSpeakerQualities: (qualities) => set({ speakerQualities: qualities }),
   bindVoice: (speakerId, voiceId) => {
-    const lanes = get().speakerLanes.map(l =>
+    const store = get()
+    const prev = store.speakerLanes.find(l => l.speaker === speakerId)?.voice_id || ''
+    // 本地即时反馈 + BIND_VOICE patch 落盘注册表 (此前仅本地 lanes, 刷新即丢)
+    const lanes = store.speakerLanes.map(l =>
       l.speaker === speakerId ? { ...l, voice_id: voiceId } : l
     )
     set({ speakerLanes: lanes })
-    const name = get().speakerLanes.find(l => l.speaker === speakerId)?.display_name || speakerId
+    const name = store.speakerLanes.find(l => l.speaker === speakerId)?.display_name || speakerId
+    store.addDraft({
+      eventId: speakerId, opcode: 'BIND_VOICE',
+      payload: { voice_id: voiceId },
+      before: { voice_id: prev }, after: { voice_id: voiceId },
+      timestamp: Date.now(),
+    })
+    // 失败经 applyDraft 响亮报错 (store.error), 本地反馈回滚靠下次刷新
+    void store.applyDraft(speakerId)
     recordUserAction(voiceId ? 'bound' : 'unbound', `说话人 ${name}`,
       voiceId ? `绑定声线 ${voiceId}` : '解绑声线')
   },
@@ -1120,6 +1142,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   })),
   setReviewSearchQuery: (q) => set({ reviewSearchQuery: q }),
   setReviewFilterMode: (mode) => set({ reviewFilterMode: mode }),
+  bumpReviewReload: () => set(state => ({ reviewReloadToken: state.reviewReloadToken + 1 })),
 
   loadReviewEntries: async (workspaceOverride) => {
     const ws = workspaceOverride || get().workspace

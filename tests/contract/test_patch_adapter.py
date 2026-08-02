@@ -113,6 +113,8 @@ class TestLegacyAdapter:
              OpCode.REGISTER_SPEAKER, {"speaker_id": "SPK_NEW", "display_name": "新角色"}),
             ("RENAME_SPEAKER", {"newName": "主角", "color": "#FF0000"}, ["SPK_A"],
              OpCode.UPDATE_SPEAKER, {"speaker_id": "SPK_A", "name": "主角", "color": "#FF0000"}),
+            ("BIND_VOICE", {"voice_id": "voice_chattts_01"}, ["SPK_A"],
+             OpCode.UPDATE_SPEAKER, {"speaker_id": "SPK_A", "voice_id": "voice_chattts_01"}),
             ("LOCK_SPEAKER", {"speaker": "SPK_A"}, ["SPK_A"],
              OpCode.LOCK_SPEAKER, {"speaker_id": "SPK_A", "locked": True}),
         ]

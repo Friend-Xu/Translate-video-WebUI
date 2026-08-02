@@ -628,3 +628,44 @@ describe('P3-F 操作审计 ui_ops (调试量化, localStorage 零请求)', () =
     expect(useAppStore.getState().uiOps.length).toBe(300)
   })
 })
+
+describe('bindVoice 落盘 (P5)', () => {
+  it('绑定声线 → 发 BIND_VOICE patch (UPDATE_SPEAKER 写注册表, 不再仅本地)', async () => {
+    let sentPatch: any = null
+    mockFetchByUrl((url, init) => {
+      if (url.includes('/api/timeline/patch/apply')) {
+        sentPatch = JSON.parse(String(init?.body))
+        return jsonResponse({ status: 'applied', events: {} })
+      }
+      return jsonResponse({ flags: [] })
+    })
+    useAppStore.setState({
+      speakerLanes: [{ speaker: 'SPK_A', display_name: 'A', voice_id: '', segments: [], segment_count: 0, total_duration: 0 }],
+    })
+
+    useAppStore.getState().bindVoice('SPK_A', 'voice_chattts_01')
+    await new Promise(r => setTimeout(r, 10))
+
+    expect(sentPatch).not.toBeNull()
+    expect(sentPatch.patch.opcode).toBe('BIND_VOICE')
+    expect(sentPatch.patch.payload.voice_id).toBe('voice_chattts_01')
+    expect(sentPatch.patch.targets).toEqual(['SPK_A'])
+    // 本地 lanes 即时反馈
+    expect(useAppStore.getState().speakerLanes[0].voice_id).toBe('voice_chattts_01')
+  })
+
+  it('后端失败 → store.error 响亮 (绑定不假装成功)', async () => {
+    mockFetchByUrl((url) => {
+      if (url.includes('/api/timeline/patch/apply')) return jsonResponse({ detail: 'speaker 不存在' }, 422)
+      return jsonResponse({ flags: [] })
+    })
+    useAppStore.setState({
+      speakerLanes: [{ speaker: 'SPK_GHOST', display_name: 'G', voice_id: '', segments: [], segment_count: 0, total_duration: 0 }],
+    })
+
+    useAppStore.getState().bindVoice('SPK_GHOST', 'voice_x')
+    await new Promise(r => setTimeout(r, 10))
+
+    expect(useAppStore.getState().error).toContain('speaker 不存在')
+  })
+})

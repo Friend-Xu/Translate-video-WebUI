@@ -580,6 +580,40 @@ class PatchEngine:
             if es.speaker.speaker_id in from_ids:
                 es.speaker.speaker_id = into_id
 
+        # 注册表: from 节点的绑定元数据 (voice_id/engine/voice_profile/锁定态)
+        # 转移到 into (绑定不丢), 再清理被合并节点 — 残留注册表会让
+        # speakerNames/color 重建时出现幽灵说话人
+        from core.ir.speaker import SpeakerNodeIR
+        into_node = state.ir.speakers.get(into_id)
+        transfer: dict = {}
+        for fid in from_ids:
+            node = state.ir.speakers.get(fid)
+            if node is None:
+                continue
+            if not transfer:
+                transfer = {
+                    "voice_id": node.voice_id,
+                    "engine": node.engine,
+                    "voice_profile": node.voice_profile,
+                    "is_locked": node.is_locked,
+                }
+            state.ir.speakers.pop(fid, None)
+        if into_node is not None and transfer:
+            state.ir.speakers[into_id] = SpeakerNodeIR(
+                id=into_node.id,
+                name=into_node.name,
+                voice_id=into_node.voice_id or transfer["voice_id"],
+                engine=into_node.engine or transfer["engine"],
+                voice_profile=into_node.voice_profile or transfer["voice_profile"],
+                color=into_node.color,
+                is_locked=into_node.is_locked or transfer["is_locked"],
+                embedding_ref=into_node.embedding_ref,
+                gender_prob=into_node.gender_prob,
+                voice_style=into_node.voice_style,
+                confidence=into_node.confidence,
+                config=into_node.config,
+            )
+
         state.add_global_patch(patch)
         self._sync_ir_events(state)
         return {
@@ -606,7 +640,7 @@ class PatchEngine:
         return {"status": "applied", "op": "register_speaker", "speaker_id": speaker_id}
 
     def _update_speaker(self, state: TimelineProjectState, patch: Patch) -> dict:
-        """注册表说话人字段更新 (name/color) — 不可变节点重建保留其余字段。"""
+        """注册表说话人字段更新 (name/color/voice_id) — 不可变节点重建保留其余字段。"""
         speaker_id = patch.value.get("speaker_id", patch.target_id)
         node = state.ir.speakers.get(speaker_id)
         if node is None:
@@ -615,7 +649,7 @@ class PatchEngine:
         state.ir.speakers[speaker_id] = SpeakerNodeIR(
             id=node.id,
             name=patch.value.get("name", node.name),
-            voice_id=node.voice_id,
+            voice_id=patch.value.get("voice_id", node.voice_id),
             engine=node.engine,
             voice_profile=node.voice_profile,
             color=patch.value.get("color", node.color),

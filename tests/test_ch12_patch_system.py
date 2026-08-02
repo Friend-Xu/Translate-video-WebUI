@@ -89,9 +89,51 @@ class TestPatchEngineV2:
         assert state.get_event("evt_001").speaker.speaker_id == "SPK_X"
 
     def test_merge_speakers(self, engine, state):
-        p = Patch(id="p1", target_id="SPK_00", op=OpCode.MERGE_SPEAKERS,
-                  value={"from_ids": ["SPK_01"], "into_id": "SPK_00"})
+        p = Patch(id="p1", target_id="SPEAKER_00", op=OpCode.MERGE_SPEAKERS,
+                  value={"from_ids": ["SPEAKER_01"], "into_id": "SPEAKER_00"})
         assert engine.apply(state, p)["status"] == "applied"
+        # 事件重映射到 into (IR speaker_ref 是事实源; 槽位由 load_state 填充, 真实路径测试覆盖)
+        assert state.get_event("evt_002").speaker_ref == "SPEAKER_00"
+        # 注册表清理 (P3: 残留注册表 → 幽灵说话人)
+        assert "SPEAKER_01" not in state.ir.speakers
+        assert "SPEAKER_00" in state.ir.speakers
+
+    def test_merge_speakers_transfers_voice_binding(self, engine, state):
+        """from 节点的声线绑定/引擎/锁定态转移到 into — 绑定不丢。"""
+        from dataclasses import replace
+        state.ir.speakers["SPEAKER_01"] = replace(
+            state.ir.speakers["SPEAKER_01"],
+            voice_id="voice_chattts_01", engine="chattts",
+            voice_profile={"seed": 42}, is_locked=True,
+        )
+        p = Patch(id="p1", target_id="SPEAKER_00", op=OpCode.MERGE_SPEAKERS,
+                  value={"from_ids": ["SPEAKER_01"], "into_id": "SPEAKER_00"})
+        assert engine.apply(state, p)["status"] == "applied"
+        into = state.ir.speakers["SPEAKER_00"]
+        assert into.voice_id == "voice_chattts_01"
+        assert into.engine == "chattts"
+        assert into.voice_profile == {"seed": 42}
+        assert into.is_locked is True
+        assert "SPEAKER_01" not in state.ir.speakers
+
+    def test_merge_speakers_undo_replay_consistent(self, engine, state):
+        """undo (pristine 还原 + 重放链) 后注册表一致 — 重放 MERGE 再次清理 from 节点。"""
+        from copy import deepcopy
+        pristine = deepcopy(state)
+        p = Patch(id="p1", target_id="SPEAKER_00", op=OpCode.MERGE_SPEAKERS,
+                  value={"from_ids": ["SPEAKER_01"], "into_id": "SPEAKER_00"})
+        engine.apply(state, p)
+
+        # GUI undo 语义: pristine 还原 → 注册表恢复, 事件 speaker 还原
+        undone = deepcopy(pristine)
+        assert "SPEAKER_01" in undone.ir.speakers
+        assert undone.get_event("evt_002").speaker_ref == "SPEAKER_01"
+
+        # 重做 (pristine + 重放 MERGE) → 注册表再次清理, 无幽灵残留
+        replayed = deepcopy(pristine)
+        PatchEngine().apply(replayed, p)
+        assert "SPEAKER_01" not in replayed.ir.speakers
+        assert replayed.get_event("evt_002").speaker_ref == "SPEAKER_00"
 
     def test_register_speaker(self, engine, state):
         """注册表新增说话人 (P2 收敛: 注册表级操作统一走 patch)。"""
